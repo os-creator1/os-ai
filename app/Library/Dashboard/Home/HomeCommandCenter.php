@@ -701,14 +701,8 @@ final class HomeCommandCenter
             }
         }
 
-        $suggested = (int) $google['activation']['suggested'];
-        $examples = $google['activation']['examples'];
         $evidence = ['No Google keywords are being tracked for this business yet, so MotionGrove has no ranking data to report.'];
-
-        if ($suggested > 0) {
-            $evidence[] = 'We prepared ' . $suggested . ' suggested ' . ($suggested === 1 ? 'search' : 'searches') . ' from your business details'
-                . ($examples === [] ? '.' : ', for example "' . implode('" and "', $examples) . '".');
-        }
+        $evidence[] = 'The keyword page offers suggestions based on your saved business details when available.';
 
         $evidence[] = 'Knowing which searches bring you up is the starting point for earning more booking enquiries from Google.';
         $evidence[] = 'Next: review the searches, choose the ones that fit, and start tracking. You decide what is tracked.';
@@ -726,7 +720,7 @@ final class HomeCommandCenter
             'status' => 'ready',
             'statusLabel' => 'Ready to act on',
             'needsMoreInfo' => false,
-            'action' => ['label' => $suggested > 0 ? 'Review suggested keywords' : 'Choose keywords to track', 'url' => $google['url'], 'drawer' => null, 'drawerUrl' => null],
+            'action' => ['label' => 'Choose keywords to track', 'url' => $google['url'], 'drawer' => null, 'drawerUrl' => null],
             'detailUrl' => null,
             'explanation' => null,
             'metric' => null,
@@ -743,7 +737,7 @@ final class HomeCommandCenter
 
         $url = $this->links->url($context, $user, $entitlements, 'customer.workspaces.businesses.seo.keywords.index', $scoped, ['view_seo'], 'seo_basic_visibility');
 
-        return $url === null ? null : $this->googleVisibility->summary($business, (int) $user->id, $url, null, \Illuminate\Support\Facades\Gate::forUser($user)->allows('manage_seo'));
+        return $url === null ? null : $this->googleVisibility->summary($business, (int) $user->id, $url, null, \Illuminate\Support\Facades\Gate::forUser($user)->allows('manage_seo'), $entitlements->allows('seo_rank_tracking'));
     }
 
     private function handling(array $bands, ?array $growth): array

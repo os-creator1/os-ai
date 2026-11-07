@@ -162,6 +162,8 @@ final class CustomerMenuBuilder
         // fail closed and silently hide the entry, even once Available.
         'seo_basic_visibility',
         'seo_module',
+        // Reused by Growth Home keyword activation from this same query-free snapshot.
+        'seo_rank_tracking',
         // Google Ads (Google Ads Module V1, contract 23 §7). Two independent
         // decisions: ads_basic_visibility gates the Ads entry itself, its
         // Overview and Settings (Core+); google_ads_module additionally gates

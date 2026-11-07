@@ -4,10 +4,7 @@ namespace App\Library\Dashboard\Home;
 
 use App\Enums\Seo\SeoRankTrackingState;
 use App\Library\Seo\Rank\SeoRankHistoryReader;
-use App\Library\Seo\Rank\SeoRankEntitlement;
 use App\Library\Seo\SeoConfig;
-use App\Library\Seo\SeoKeywordSuggester;
-use App\Library\Seo\SeoLocationScope;
 use App\Library\Seo\SeoKeywordManager;
 use App\Models\Business;
 use App\Models\SeoRankTarget;
@@ -27,16 +24,13 @@ final class HomeGoogleVisibility
         private readonly SeoKeywordManager $keywords,
         private readonly SeoRankHistoryReader $history,
         private readonly SeoConfig $config,
-        private readonly SeoKeywordSuggester $suggester,
-        private readonly SeoLocationScope $locationScope,
-        private readonly SeoRankEntitlement $rankEntitlement,
     ) {
     }
 
     /**
      * @return array{state: string, label: string, detail: ?string, url: ?string}
      */
-    public function summary(Business $business, int $actorUserId, ?string $keywordsUrl, ?CarbonImmutable $now = null, bool $mayManage = false): array
+    public function summary(Business $business, int $actorUserId, ?string $keywordsUrl, ?CarbonImmutable $now = null, bool $mayManage = false, bool $rankEntitled = false): array
     {
         $now ??= CarbonImmutable::now('UTC');
 
@@ -50,7 +44,7 @@ final class HomeGoogleVisibility
 
             if ($targetIds === []) {
                 return $this->result('not_tracking', 'Not tracking', 'Add keywords to see how you appear on Google.', $keywordsUrl)
-                    + ['activation' => $mayManage ? $this->activation($business, $actorUserId, $active) : null];
+                    + ['activation' => $mayManage && $rankEntitled ? ['available' => true] : null];
             }
 
             $read = $this->history->thirtyDayChanges($targetIds, $now, $this->config->rankStaleAfterDays());
@@ -89,30 +83,8 @@ final class HomeGoogleVisibility
         };
     }
 
-    /**
-     * What MotionGrove can truthfully offer to start tracking: only when this Business's plan includes rank tracking. The suggestions are the
-     * existing SeoKeywordSuggester's (saved niche, services and service area) — no second engine, no provider call, nothing is saved here.
-     *
-     * @return array{suggested: int, examples: array<int, string>}|null
-     */
-    private function activation(Business $business, int $actorUserId, $activeKeywords): ?array
-    {
-        try {
-            if ($this->rankEntitlement->planFor($business) === null) {
-                return null;
-            }
-
-            $locations = $this->locationScope->accessibleLocations($actorUserId, $business)->filter(fn ($l) => $l->isActive())->values();
-            $all = $this->keywords->listVisible($actorUserId, $business);
-            $suggestions = $this->suggester->suggest($business, $locations, $all, $activeKeywords->count());
-        } catch (Throwable $e) {
-            report($e);
-
-            return null;
-        }
-
-        return ['suggested' => count($suggestions), 'examples' => array_slice(array_map(fn ($s) => (string) $s->phrase, $suggestions), 0, 2)];
-    }
+    // Keyword suggestions are deliberately loaded by the existing Keywords page, not Home.
+    // Home uses the existing request entitlement snapshot; no paid provider or extra SEO setup reads.
 
     private function result(string $state, string $label, string $detail, ?string $url): array
     {

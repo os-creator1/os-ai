@@ -67,7 +67,7 @@ class GrowthHomeSeoActivationTest extends TestCase
     {
         [$customer, $business] = $this->tenant(WorkspacePlanTier::Growth, 'Urgent Venue', 'Urgent Account');
         $this->reviewLink($business);
-        $this->conversationWith($business, [['incoming', $this->minutesAgo(40)]]);
+        $this->conversationWith($business, [['incoming', now()->subMinutes(40)]]);
         $this->authenticateAs($customer);
 
         $html = $this->html();
