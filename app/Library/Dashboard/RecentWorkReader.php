@@ -368,7 +368,7 @@ final class RecentWorkReader
                 at: CarbonImmutable::parse((string) $run->created_at),
                 routeName: 'customer.workspaces.businesses.seo.audit.index',
                 permissions: ['view_seo'],
-                featureKey: 'seo_basic_visibility',
+                featureKey: 'seo_module',
             );
         }
 
@@ -390,6 +390,7 @@ final class RecentWorkReader
                 at: CarbonImmutable::parse((string) $crawl->finished_at),
                 routeName: 'customer.workspaces.businesses.website.external.audit',
                 permissions: ['website'],
+                featureKey: 'website_generation',
             );
         }
 

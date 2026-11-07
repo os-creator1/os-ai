@@ -17,7 +17,7 @@
 <div class="hv2-layout gh-root" data-role="growth-home">
     <div class="hv2-main">
         <section class="hv2-section" aria-label="Performance" data-role="growth-performance">
-            <div class="hv2-kpis" data-role="kpis" style="--hv2-kpis: {{ max(1, $kpis->count() + ($google !== null ? 1 : 0)) }}">
+            <div class="hv2-kpis" data-role="kpis" style="--hv2-kpis: {{ max(1, count($kpis) + ($google !== null ? 1 : 0)) }}">
                 @if($google !== null)
                     <div class="hv2-kpi hv2-kpi--lead" data-role="google-visibility" data-state="{{ $google['state'] }}">
                         <span class="hv2-kpi__label">Google visibility</span>

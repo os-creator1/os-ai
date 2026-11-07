@@ -120,6 +120,8 @@ class RecentWorkSeoActivityTest extends TestCase
         $this->assertContains('external_audit_completed|External website audit completed: 2 issues found', $audit);
         $this->assertContains('external_audit_partial|External website audit finished with partial coverage: 2 issues found', $audit);
         $this->assertCount(3, $audit, 'Failed, running and queued audits are not results.');
+        $this->assertSame('seo_module', $this->byKey($this->items($business), 'seo_audit')[0]->featureKey, 'Internal audit links use the actual SEO Module entitlement.');
+        $this->assertSame('website_generation', $this->byKey($this->items($business), 'external_audit')[0]->featureKey, 'External audit links use the Website entitlement.');
         $this->assertSame([], array_filter($audit, fn ($t) => preg_match('/fixed|resolved|improved/i', $t)));
     }
 
