@@ -180,7 +180,7 @@ class HomeCommandCenterTest extends TestCase
         $this->assertStringNotContainsString('data-role="setup-step"', $html, 'A finished setup shows no setup step.');
     }
 
-    public function test_a_healthy_quiet_business_is_normal_with_a_truthful_all_clear_and_caught_up_state(): void
+    public function test_a_healthy_quiet_growth_business_without_rank_tracking_has_one_seo_move_and_no_urgent_problems(): void
     {
         [$customer] = $this->tenant(WorkspacePlanTier::Growth, 'Calm Venue', 'Calm Account');
         $this->authenticateAs($customer);
@@ -188,15 +188,16 @@ class HomeCommandCenterTest extends TestCase
         $home = $this->command($customer->user);
 
         $this->assertSame(HomeCommandCenter::STATE_NORMAL, $home['state']);
-        $this->assertNull($home['primary']);
-        $this->assertTrue($home['caughtUp']);
+        $this->assertSame('seo_keyword_activation', $home['primary']['key'], 'SEO setup is useful even without an urgent problem.');
+        $this->assertFalse($home['caughtUp']);
         $this->assertTrue($home['attention']['allClear']);
         $this->assertFalse($home['attention']['unknown']);
         $this->assertStringContainsString('Welcome to Calm Venue', $home['briefing']['text']);
-        $this->assertSame('clear', $home['status']['key']);
+        $this->assertSame('attention', $home['status']['key']);
         $html = $this->home()->assertOk()->getContent();
-        $this->assertStringContainsString('data-role="caught-up"', $html);
-        $this->assertStringNotContainsString('data-role="next-best-move"', $html);
+        $this->assertStringContainsString('data-move="seo_keyword_activation"', $html);
+        $this->assertStringContainsString('data-role="next-best-move"', $html);
+        $this->assertStringNotContainsString('data-role="caught-up"', $html);
     }
 
     public function test_a_broken_provider_makes_the_business_broken_and_is_never_called_all_clear(): void
