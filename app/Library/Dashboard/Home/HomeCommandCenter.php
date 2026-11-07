@@ -119,6 +119,8 @@ final class HomeCommandCenter
             $primaryAttentionType = null;
         }
 
+        $primary = $this->withUnknowns($primary, $nbm, $growth, $context);
+
         $queue = [];
 
         if (is_array($growth)) {
@@ -692,7 +694,7 @@ final class HomeCommandCenter
             $category = is_array($growth) && ($growth['head'] ?? null) !== null && ($growth['head']->uid ?? null) === $uid
                 ? \App\Library\Growth\GrowthRuleRegistry::find((string) $growth['head']->type)?->definition()->category
                 : null;
-            $strong = in_array($category, [\App\Enums\Growth\GrowthCategory::Seo, \App\Enums\Growth\GrowthCategory::Website, \App\Enums\Growth\GrowthCategory::LocalPresence, \App\Enums\Growth\GrowthCategory::LeadResponse], true)
+            $strong = in_array($category, [\App\Enums\Growth\GrowthCategory::Seo, \App\Enums\Growth\GrowthCategory::Website, \App\Enums\Growth\GrowthCategory::LocalPresence, \App\Enums\Growth\GrowthCategory::LeadResponse, \App\Enums\Growth\GrowthCategory::Bookings, \App\Enums\Growth\GrowthCategory::Forms], true)
                 && ($primary['confidence'] ?? null) !== 'Limited data';
             $ads = is_array($head) && str_contains(strtolower((string) ($head['source_module'] ?? '')), 'ads');
 
@@ -726,6 +728,43 @@ final class HomeCommandCenter
             'metric' => null,
             'aiAction' => null,
         ];
+    }
+
+    /**
+     * Growth Home only: one plain line on what MotionGrove does NOT know, appended to the move's own evidence (shown under "Why this?").
+     * It classifies the move by the Growth rule's own category (visibility, lead response, booking path) and never states a rate,
+     * a count or an uplift. Contacts and bookings are separate populations here: no conversion rate is ever derived from them.
+     *
+     * @param  array<string, mixed>|null  $primary
+     * @param  array<string, mixed>|null  $growth
+     * @return array<string, mixed>|null
+     */
+    private function withUnknowns(?array $primary, mixed $nbm, ?array $growth, CustomerContext $context): ?array
+    {
+        if ($primary === null || $context->frameWorkspace()?->tier !== \App\Enums\Entitlement\WorkspacePlanTier::Growth) {
+            return $primary;
+        }
+
+        $uid = is_array($nbm) ? ($nbm['move']['subjectUid'] ?? null) : null;
+        $category = $primary['key'] === 'seo_keyword_activation'
+            ? \App\Enums\Growth\GrowthCategory::Seo
+            : (is_array($growth) && ($growth['head'] ?? null) !== null && $uid !== null && ($growth['head']->uid ?? null) === $uid
+                ? \App\Library\Growth\GrowthRuleRegistry::find((string) $growth['head']->type)?->definition()->category
+                : null);
+
+        $unknown = match (true) {
+            $primary['key'] === AttentionType::ConversationsAwaitingReply->value,
+            $category === \App\Enums\Growth\GrowthCategory::LeadResponse => 'Not known yet: how quickly customers are usually answered, and whether a reply leads to a booking.',
+            in_array($category, [\App\Enums\Growth\GrowthCategory::Bookings, \App\Enums\Growth\GrowthCategory::Forms, \App\Enums\Growth\GrowthCategory::Website], true) => 'Not known yet: how many enquiries or bookings this is costing you. New contacts and bookings are counted separately, so no conversion rate is claimed.',
+            in_array($category, [\App\Enums\Growth\GrowthCategory::Seo, \App\Enums\Growth\GrowthCategory::LocalPresence], true) => 'Not known yet: how many visitors or enquiries Google sends you. Search traffic is not measured here.',
+            default => null,
+        };
+
+        if ($unknown !== null) {
+            $primary['evidence'] = array_values(array_merge($primary['evidence'] ?? [], [$unknown]));
+        }
+
+        return $primary;
     }
 
     /** Stored-observation summary for Growth Home only; null (card omitted, nothing read) when this actor may not open SEO keywords. */
