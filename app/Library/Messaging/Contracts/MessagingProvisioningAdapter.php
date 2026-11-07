@@ -60,6 +60,12 @@ interface MessagingProvisioningAdapter
      * acknowledgement — realistically always Pending; see
      * RegistrationSubmissionResult's own docblock.
      */
+    /**
+     * Read-only progress check of an accepted number order. Never writes at the
+     * carrier, never charges. See NumberOrderCheckResult.
+     */
+    public function checkNumberOrder(string $phoneNumber, string $messagingProfileId, ?string $parentOrderId): \App\Library\Messaging\DTO\NumberOrderCheckResult;
+
     public function submitRegistration(MessagingRegistrationSubmission $submission): RegistrationSubmissionResult;
 
     /**

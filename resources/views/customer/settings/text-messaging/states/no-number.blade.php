@@ -26,6 +26,13 @@
         </x-alert>
     @endif
 
+    @isset($failedOrder)
+        <x-alert variant="warning" icon="alert-circle" class="mb-2" data-role="number-order-failed">
+            <strong class="d-block">We couldn't finish {{ $failedOrder->phone_number }}</strong>
+            The carrier could not complete that number, and our team has been alerted to review the charge for it. Please contact support before choosing another number.
+        </x-alert>
+    @endisset
+
     @unless($available)
         <div class="sr-callout sr-callout--warn" data-role="preview-notice" role="status">
             <x-ds-icon name="clock" size="16" />

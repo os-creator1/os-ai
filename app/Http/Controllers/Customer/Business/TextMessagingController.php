@@ -105,6 +105,20 @@ class TextMessagingController extends CustomerBaseController
 
         [, $business] = $this->resolveBusinessTenancy($workspaceUid, $businessUid);
 
+        // A purchase that is still being finished at the carrier: show its progress (never
+        // another purchase form). Completed orders fall through to the normal state below.
+        $openOrder = $this->provisioning->openOrderFor($business);
+
+        if ($openOrder !== null && $this->identities->resolveForBusiness($business) === null) {
+            return view('customer.settings.text-messaging.states.number-processing', [
+                'workspaceUid' => $workspaceUid,
+                'businessUid' => $businessUid,
+                'order' => $openOrder,
+                'statusUrl' => route('customer.workspaces.businesses.text-messaging.number.order-status', [$workspaceUid, $businessUid]),
+                'showUrl' => route('customer.workspaces.businesses.text-messaging.show', [$workspaceUid, $businessUid]),
+            ]);
+        }
+
         $situation = $this->situation($business);
 
         return match ($situation['state']) {
@@ -119,6 +133,58 @@ class TextMessagingController extends CustomerBaseController
             'number_required' => $this->renderNoNumber($workspaceUid, $businessUid, $situation, numberTypeLocked: PhoneNumberType::Local),
             default => $this->renderNoNumber($workspaceUid, $businessUid, $situation),
         };
+    }
+
+    /** The purchase is being finished in the background: land on the progress page, no error. */
+    private function numberBeingSetUp(string $workspaceUid, string $businessUid): RedirectResponse
+    {
+        return redirect()->route('customer.workspaces.businesses.text-messaging.show', [$workspaceUid, $businessUid]);
+    }
+
+    /**
+     * Polled by the "Setting up your number…" page. Business-authorized and tenant-scoped (the order
+     * is looked up by THIS Business only). Each poll may nudge a read-only carrier check, throttled
+     * per order, so the page completes promptly even before the next scheduler tick.
+     */
+    public function numberOrderStatus(string $workspaceUid, string $businessUid): \Illuminate\Http\JsonResponse
+    {
+        $this->authorize('view_numbers');
+
+        [, $business] = $this->resolveBusinessTenancy($workspaceUid, $businessUid);
+
+        $order = \App\Models\BusinessMessagingNumberOrder::query()->where('business_id', (int) $business->id)->orderByDesc('id')->first();
+
+        if ($order !== null && $order->isOpen()) {
+            $order = app(\App\Library\Messaging\NumberOrderReconciler::class)->nudge($order);
+        }
+
+        $showUrl = route('customer.workspaces.businesses.text-messaging.show', [$workspaceUid, $businessUid]);
+        $hasNumber = $this->identities->resolveForBusiness($business) !== null;
+
+        $payload = match (true) {
+            $order !== null && $order->isOpen() && ! $hasNumber => [
+                'state' => $order->status === \App\Models\BusinessMessagingNumberOrder::NEEDS_ATTENTION ? 'delayed' : 'processing',
+                'phone_number' => $order->phone_number,
+                'message' => $order->status === \App\Models\BusinessMessagingNumberOrder::NEEDS_ATTENTION
+                    ? 'This is taking longer than usual. Our team has been alerted and your number will be finished automatically. You have not been charged twice, and you do not need to buy it again.'
+                    : 'Setting up your number…',
+            ],
+            $hasNumber || ($order !== null && $order->status === \App\Models\BusinessMessagingNumberOrder::COMPLETED) => [
+                'state' => 'completed',
+                'phone_number' => $order?->phone_number,
+                'message' => 'Your number is ready.',
+                'redirect_url' => $showUrl,
+            ],
+            $order !== null && $order->status === \App\Models\BusinessMessagingNumberOrder::FAILED => [
+                'state' => 'failed',
+                'phone_number' => $order->phone_number,
+                'message' => 'The carrier could not complete this number. Our team has been alerted to review the charge for this order. Please contact support before choosing another number.',
+                'redirect_url' => $showUrl,
+            ],
+            default => ['state' => 'none', 'phone_number' => null, 'message' => '', 'redirect_url' => $showUrl],
+        };
+
+        return response()->json($payload)->header('Cache-Control', 'no-store');
     }
 
     // -----------------------------------------------------------------
@@ -247,6 +313,12 @@ class TextMessagingController extends CustomerBaseController
         [, $business] = $this->resolveBusinessTenancy($workspaceUid, $businessUid);
         $this->guardNoExistingNumber($business);
 
+        // A purchase is already being set up (second click, refresh, retry): never place another
+        // order — just show its progress.
+        if ($this->provisioning->openOrderFor($business) !== null) {
+            return $this->numberBeingSetUp($workspaceUid, $businessUid);
+        }
+
         if (! $this->provisioningOpenFor($business)) {
             return $this->textMessagingError($workspaceUid, $businessUid, 'Number setup is not available for this Business yet.');
         }
@@ -270,10 +342,22 @@ class TextMessagingController extends CustomerBaseController
 
         try {
             $number = $this->provisioning->provisionNumber($business, $candidate);
+
+            if ($number instanceof \App\Models\BusinessMessagingNumberOrder) {
+                return $this->numberBeingSetUp($workspaceUid, $businessUid);
+            }
         } catch (MessagingProviderNotConfiguredException) {
             return $this->textMessagingError($workspaceUid, $businessUid, 'Number setup is not available in this environment yet.');
         } catch (MessagingIdentityConflictException) {
+            // Lost a race with a purchase that is already in progress: show it, do not error.
+            if ($this->provisioning->openOrderFor($business) !== null) {
+                return $this->numberBeingSetUp($workspaceUid, $businessUid);
+            }
+
             return $this->textMessagingError($workspaceUid, $businessUid, 'This Business already has a number set up.');
+        } catch (\App\Library\Messaging\Exceptions\MessagingPlatformFundsException) {
+            // Our own carrier account, not the customer's wallet: nothing was ordered or charged.
+            return $this->textMessagingError($workspaceUid, $businessUid, 'Number purchases are temporarily unavailable on our side. Nothing was charged. Our team has been alerted; please try again later rather than choosing a different number.');
         } catch (MessagingRegistrationRecoveryRequiredException) {
             return $this->textMessagingError($workspaceUid, $businessUid, 'We couldn\'t confirm this number order with our carrier partner. Please don\'t try again; our team has been alerted and will follow up. The charge for this order is awaiting confirmation from the carrier: if the carrier confirms no number was bought it is refunded in full, and you will not be charged twice.');
         } catch (MessagingFundingUnavailableException $e) {
@@ -972,6 +1056,10 @@ class TextMessagingController extends CustomerBaseController
             'candidate' => null,
             'candidateOffers' => [],
             'candidateToken' => null,
+            // A recently failed (carrier-rejected) order is explained once here, never silently dropped.
+            'failedOrder' => \App\Models\BusinessMessagingNumberOrder::query()
+                ->where('business_id', (int) $business->id)->where('status', \App\Models\BusinessMessagingNumberOrder::FAILED)
+                ->where('updated_at', '>=', now()->subDay())->orderByDesc('id')->first(),
             'verificationChargeDisclosure' => $this->registrations->chargeDisclosureFor(PhoneNumberType::Local),
             'numberPreview' => $this->charges->forNumberPurchase($business),
             'localRegistrationPreview' => $this->charges->forLocalRegistration($business),

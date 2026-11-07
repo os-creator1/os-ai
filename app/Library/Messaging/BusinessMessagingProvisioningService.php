@@ -15,6 +15,7 @@ use App\Library\Messaging\Exceptions\MessagingProviderNotConfiguredException;
 use App\Models\Business;
 use App\Models\BusinessMessagingIdentity;
 use App\Models\BusinessMessagingNumber;
+use App\Models\BusinessMessagingNumberOrder;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 
@@ -95,7 +96,7 @@ class BusinessMessagingProvisioningService
      *                                                  when a concurrent request
      *                                                  won the reservation first
      */
-    public function provisionNumber(Business $business, AvailableNumberCandidate $candidate): BusinessMessagingNumber
+    public function provisionNumber(Business $business, AvailableNumberCandidate $candidate): BusinessMessagingNumber|BusinessMessagingNumberOrder
     {
         // Deliberately NOT caught here — provisionNumber() must never be
         // reachable at all unless the caller already confirmed
@@ -122,6 +123,26 @@ class BusinessMessagingProvisioningService
             BusinessMessagingIdentityStatus::Pending,
         );
 
+        // The durable order record, written BEFORE the carrier is contacted. Two database
+        // guards (one open order per Business and per number) make a second concurrent
+        // purchase impossible even if the identity check above were bypassed.
+        try {
+            $order = BusinessMessagingNumberOrder::query()->create([
+                'business_id' => (int) $business->id,
+                'business_messaging_identity_id' => (int) $identity->id,
+                'phone_number' => $candidate->phoneNumber,
+                'number_type' => $candidate->numberType->value,
+                'status' => BusinessMessagingNumberOrder::PLACING,
+                'upfront_cost_micro' => $candidate->upfrontCostMicro,
+                'monthly_cost_micro' => $candidate->monthlyCostMicro,
+                'cost_currency' => $candidate->currency,
+            ]);
+        } catch (\Illuminate\Database\UniqueConstraintViolationException $e) {
+            $identity->delete();
+
+            throw new MessagingIdentityConflictException('A number order for this Business or number is already in progress.', 0, $e);
+        }
+
         try {
             $result = $adapter->provisionNumber($business, $candidate);
         } catch (\Throwable $e) {
@@ -129,9 +150,32 @@ class BusinessMessagingProvisioningService
             // refused it outright — nothing real exists to reconcile, so
             // the placeholder is freed for another attempt rather than
             // left stuck "pending" forever.
+            $order->delete();
             $identity->delete();
 
             throw $e;
+        }
+
+        // Accepted but unfinished (Telnyx `pending`) or outcome unseen (timeout/5xx):
+        // a normal "processing" order. The wallet was charged exactly once by the
+        // adapter; the reconciler finishes the purchase without any further charge.
+        if ($result->processing) {
+            $now = now();
+            $order->forceFill([
+                'status' => BusinessMessagingNumberOrder::PROCESSING,
+                'messaging_profile_id' => $result->messagingProfileId,
+                'provider_order_id' => $result->parentOrderId,
+                'usage_reservation_id' => $result->reservationId,
+                'accepted_at' => $now,
+                'purchased_at' => $now,
+                'next_check_at' => $now->copy()->addSeconds(NumberOrderReconciler::backoffSeconds(0)),
+            ])->save();
+
+            // The real profile id replaces the placeholder (still Pending): nothing is lost
+            // if this process dies right here.
+            $identity->forceFill(['messaging_profile_id' => $result->messagingProfileId])->save();
+
+            return $order->fresh();
         }
 
         // The provider call succeeded: persist its real identifiers onto
@@ -170,8 +214,27 @@ class BusinessMessagingProvisioningService
                 $number = $number->fresh();
             }
 
+            $order->forceFill([
+                'status' => BusinessMessagingNumberOrder::COMPLETED,
+                'messaging_profile_id' => $result->messagingProfileId,
+                'provider_phone_number_id' => $result->providerPhoneNumberId,
+                'usage_reservation_id' => $result->reservationId,
+                'accepted_at' => now(),
+                'purchased_at' => now(),
+                'completed_at' => now(),
+            ])->save();
+
             return $number;
         } catch (\Throwable $e) {
+            // Keep the order open (blocks any second purchase) and visible to operators.
+            $order->forceFill([
+                'status' => BusinessMessagingNumberOrder::NEEDS_ATTENTION,
+                'messaging_profile_id' => $result->messagingProfileId,
+                'provider_phone_number_id' => $result->providerPhoneNumberId,
+                'usage_reservation_id' => $result->reservationId,
+                'escalated_at' => now(),
+            ])->save();
+
             $this->incidents->record(
                 business: $business,
                 stage: 'number_attach_failed_after_provider_success',
@@ -184,6 +247,16 @@ class BusinessMessagingProvisioningService
 
             throw $e;
         }
+    }
+
+    /** The Business's unfinished number order, if any (placing, processing or needing attention). */
+    public function openOrderFor(Business $business): ?BusinessMessagingNumberOrder
+    {
+        return BusinessMessagingNumberOrder::query()
+            ->where('business_id', (int) $business->id)
+            ->whereIn('status', BusinessMessagingNumberOrder::OPEN_STATUSES)
+            ->orderByDesc('id')
+            ->first();
     }
 
     /**

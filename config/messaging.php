@@ -137,6 +137,11 @@ return [
      * Telnyx's cost_information already includes it, set this to 0 so it is never charged twice.
      * Snapshotted on each number at purchase (sms_addon_monthly_cost_micro).
      */
+    // Pending number orders: minutes before an unfinished order alerts operators (polling continues),
+    // and days after which automatic polling stops.
+    'number_order_escalate_minutes' => (int) env('MESSAGING_NUMBER_ORDER_ESCALATE_MINUTES', 120),
+    'number_order_give_up_days' => (int) env('MESSAGING_NUMBER_ORDER_GIVE_UP_DAYS', 7),
+
     'number_sms_addon_monthly_cost_micro' => (int) env('MESSAGING_NUMBER_SMS_ADDON_MONTHLY_COST_MICRO', 100000),
 
     // Disclosure-only: the possible one-time carrier campaign review fee shown
