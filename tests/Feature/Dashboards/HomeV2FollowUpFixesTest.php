@@ -159,7 +159,7 @@ class HomeV2FollowUpFixesTest extends TestCase
         $this->contactsAdded($business, 1, '2025-02-01'); // months before either reporting period
         $this->authenticateAs($owner);
 
-        $this->assertStringContainsString('data-home-layout="home"', $this->homeHtml());
+        $this->assertStringContainsString('data-home-layout="growth"', $this->homeHtml());
     }
 
     public function test_an_old_conversation_alone_also_counts_as_history(): void
@@ -168,7 +168,7 @@ class HomeV2FollowUpFixesTest extends TestCase
         $this->conversationWith($business, [['outgoing', '2025-03-01 10:00:00']]);
         $this->authenticateAs($owner);
 
-        $this->assertStringContainsString('data-home-layout="home"', $this->homeHtml());
+        $this->assertStringContainsString('data-home-layout="growth"', $this->homeHtml());
     }
 
     public function test_a_business_with_no_history_at_all_is_still_new(): void
@@ -187,6 +187,6 @@ class HomeV2FollowUpFixesTest extends TestCase
             $mock->shouldReceive('hasAnyContact')->andThrow(new RuntimeException('contacts unavailable'));
         });
 
-        $this->assertStringContainsString('data-home-layout="home"', $this->homeHtml(), 'Not proven new, so not the new-business Home.');
+        $this->assertStringContainsString('data-home-layout="growth"', $this->homeHtml(), 'Not proven new, so not the new-business Home.');
     }
 }

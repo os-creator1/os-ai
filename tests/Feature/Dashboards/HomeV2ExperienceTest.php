@@ -144,7 +144,7 @@ class HomeV2ExperienceTest extends TestCase
         $contacts = $this->kpi($html, 'contacts');
 
         $this->assertStringContainsString('data-role="headline-figure">0<', $contacts);
-        $this->assertStringContainsString('data-tone="same"', $contacts);
+        $this->assertStringContainsString('hv2-badge--same', $contacts);
         $this->assertStringContainsString('>Same<', $contacts);
     }
 
@@ -158,7 +158,7 @@ class HomeV2ExperienceTest extends TestCase
         $contacts = $this->kpi($this->home(['range' => 'this_month'])->assertOk()->getContent(), 'contacts');
 
         $this->assertStringContainsString('First month', $contacts);
-        $this->assertStringContainsString('data-tone="neutral"', $contacts);
+        $this->assertStringContainsString('hv2-badge--neutral', $contacts);
         $this->assertStringNotContainsString('▲', $contacts);
         $this->assertStringNotContainsString('▼', $contacts);
     }
@@ -175,7 +175,7 @@ class HomeV2ExperienceTest extends TestCase
 
         $up = $this->kpi($html, 'contacts');
         $this->assertStringContainsString('▲ 3', $up);
-        $this->assertStringContainsString('data-tone="up"', $up);
+        $this->assertStringContainsString('hv2-badge--up', $up);
 
         // And a decline is information, not an error: 1 now against 3 before.
         [$other, $quiet] = $this->tenant(WorkspacePlanTier::Growth, 'Decline Venue', 'Decline Account');
@@ -184,26 +184,50 @@ class HomeV2ExperienceTest extends TestCase
         $this->authenticateAs($other);
         $down = $this->kpi($this->home()->assertOk()->getContent(), 'contacts');
         $this->assertStringContainsString('▼ 2', $down);
-        $this->assertStringContainsString('data-tone="down"', $down);
+        $this->assertStringContainsString('hv2-badge--down', $down);
         $this->assertDoesNotMatchRegularExpression('/\b(error|failed|alert)\b/i', strip_tags($down));
     }
 
-    public function test_every_card_opens_a_filtered_list_for_exactly_its_period(): void
+    public function test_the_growth_contacts_card_opens_a_filtered_list_for_exactly_its_period(): void
     {
-        [$customer, $business] = $this->tenant(WorkspacePlanTier::Growth, 'Link Venue', 'Link Account');
+        [$customer] = $this->tenant(WorkspacePlanTier::Growth, 'Link Venue', 'Link Account');
+        $this->authenticateAs($customer);
+
+        $contacts = html_entity_decode($this->kpi($this->home()->assertOk()->getContent(), 'contacts'));
+
+        $this->assertStringContainsString('created_from=2026-09-01', $contacts, 'The period start.');
+        $this->assertStringContainsString('created_to=2026-09-10', $contacts, 'The period end.');
+        $this->assertStringContainsString('<a ', $contacts, 'A real link, not a dead card.');
+    }
+
+    /** Core only: the Growth Home no longer renders the Waiting-for-reply card (waiting customers are its Best next move instead). */
+    public function test_core_cards_open_a_filtered_list_for_exactly_their_period_and_waiting_opens_the_inbox_waiting_list(): void
+    {
+        [$customer] = $this->tenant(WorkspacePlanTier::Core, 'Core Link Venue', 'Core Link Account');
         $this->authenticateAs($customer);
 
         $html = $this->home()->assertOk()->getContent();
 
         $contacts = html_entity_decode($this->kpi($html, 'contacts'));
-        $this->assertStringContainsString('created_from=2026-09-01', $contacts, 'The period start.');
-        $this->assertStringContainsString('created_to=2026-09-10', $contacts, 'The period end.');
-        $this->assertStringContainsString('<a ', $contacts, 'A real link, not a dead card.');
+        $this->assertStringContainsString('created_from=2026-09-01', $contacts);
+        $this->assertStringContainsString('created_to=2026-09-10', $contacts);
 
-        // Waiting for reply is a current state: it opens the inbox's own waiting list.
         $waiting = html_entity_decode($this->kpi($html, 'waiting'));
         $this->assertStringContainsString('filter=waiting', $waiting);
         $this->assertStringContainsString('<a ', $waiting);
+    }
+
+    public function test_the_growth_home_has_no_waiting_card_chart_or_revenue_prompt(): void
+    {
+        [$customer] = $this->tenant(WorkspacePlanTier::Growth, 'Slim Venue', 'Slim Account');
+        $this->authenticateAs($customer);
+
+        $html = $this->home()->assertOk()->getContent();
+
+        $this->assertStringNotContainsString('data-kpi="waiting"', $html);
+        $this->assertStringNotContainsString('data-role="chart-plot"', $html);
+        $this->assertStringNotContainsString('data-role="revenue-prompt"', $html);
+        $this->assertSame(0, substr_count($html, 'data-kpi="revenue"'));
     }
 
     public function test_a_card_the_actor_cannot_open_is_not_a_link(): void
@@ -219,7 +243,7 @@ class HomeV2ExperienceTest extends TestCase
 
     public function test_revenue_is_never_a_metric_and_the_quiet_prompt_leads_to_payments(): void
     {
-        [$customer] = $this->tenant(WorkspacePlanTier::Growth, 'Money Venue', 'Money Account');
+        [$customer] = $this->tenant(WorkspacePlanTier::Core, 'Money Venue', 'Money Account');
         $this->authenticateAs($customer);
 
         $html = $this->home()->assertOk()->getContent();
@@ -251,7 +275,7 @@ class HomeV2ExperienceTest extends TestCase
 
     public function test_the_chart_shows_real_data_for_a_young_business_and_only_explains_an_empty_series(): void
     {
-        [$customer, $business, $workspace] = $this->tenant(WorkspacePlanTier::Growth, 'Chart Venue', 'Chart Account');
+        [$customer, $business, $workspace] = $this->tenant(WorkspacePlanTier::Core, 'Chart Venue', 'Chart Account');
         $this->contactsAdded($business, 3, '2026-09-02');
         $this->authenticateAs($customer);
 
