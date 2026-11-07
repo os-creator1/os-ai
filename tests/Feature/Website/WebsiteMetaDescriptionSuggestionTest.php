@@ -6,6 +6,7 @@ use App\Enums\Entitlement\WorkspacePlanTier;
 use App\Library\Entitlement\EntitlementManager;
 use App\Library\Website\WebsiteAiGenerationClient;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\DB;
 use Tests\Feature\Website\Concerns\CreatesWebsiteFixtures;
 use Tests\TestCase;
 
