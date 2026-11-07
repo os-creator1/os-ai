@@ -32,7 +32,7 @@ class SeoMetaFixPublishFlowTest extends TestCase
         app(EntitlementManager::class)->changePlan($workspace, WorkspacePlanTier::Growth, $this->platformAdminId(), 'Fix flow test.');
         $website = $this->createWebsite($business);
         $page = $this->homePage($website, ['title' => 'Photo Booth Rentals']);
-        $this->authenticateAsCustomer($customer);
+        $this->authenticateAsCustomer($customer, ['website', 'view_seo', 'manage_seo']);
 
         $this->post(route('customer.workspaces.businesses.website.publish', [$workspace->uid, $business->uid]))->assertRedirect();
 
