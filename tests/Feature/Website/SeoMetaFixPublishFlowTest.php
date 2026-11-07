@@ -6,10 +6,8 @@ use App\Enums\Entitlement\WorkspacePlanTier;
 use App\Library\Entitlement\EntitlementManager;
 use App\Library\Seo\SeoAuditRunner;
 use App\Library\Website\WebsiteAiGenerationClient;
-use App\Library\Website\WebsitePublisher;
 use App\Models\WebsiteRevision;
 use Illuminate\Foundation\Testing\RefreshDatabase;
-use Illuminate\Validation\ValidationException;
 use Tests\Feature\Website\Concerns\CreatesWebsiteFixtures;
 use Tests\TestCase;
 
@@ -122,8 +120,11 @@ class SeoMetaFixPublishFlowTest extends TestCase
         $this->audit($business, $website);
         $this->save($workspace, $business, $page, ['meta_description' => self::DESCRIPTION]);
 
-        $this->mock(WebsitePublisher::class, fn ($m) => $m->shouldReceive('publish')->andThrow(ValidationException::withMessages(['website' => 'Publishing failed.'])));
-        $this->post(route('customer.workspaces.businesses.website.publish', [$workspace->uid, $business->uid]));
+        // A genuinely invalid draft causes the REAL publisher to reject the operation.
+        // Do not mock WebsitePublisher: it is final, and the HTTP error mapping matters here.
+        \Illuminate\Support\Facades\DB::table('website_pages')->where('id', $page->id)->update(['is_home' => false]);
+        $this->post(route('customer.workspaces.businesses.website.publish', [$workspace->uid, $business->uid]))
+            ->assertSessionHas('status', 'error');
 
         $this->assertSame($revision, (int) $website->fresh()->published_revision_id, 'The live site is unchanged.');
         $html = $this->auditPage($workspace, $business);
