@@ -80,6 +80,7 @@ final class RecentWorkReader
             $this->websiteVersions($business),
             $this->completedRecommendations($business),
             $this->automationFailures($business),
+            $this->automationSuccesses($business, $locationIds),
             $this->googleWork($business),
             $this->businessDetailUpdates($business),
         );
@@ -188,6 +189,47 @@ final class RecentWorkReader
             $items[] = new RecentWorkItem(
                 key: 'automation_failed',
                 text: $group['automation'] . ' failed ' . $failures . ' ' . ($failures === 1 ? 'time' : 'times'),
+                at: $group['at'],
+                routeName: 'customer.workspaces.businesses.automations.workflows.index',
+                permissions: ['automations'],
+                featureKey: 'automations',
+            );
+        }
+
+        return $items;
+    }
+
+    /**
+     * Verified automation outcomes (the analytics seam owns the reads, as for failures). "Sent N automated messages" counts only
+     * succeeded send executions; manual messages never create automation executions, so they can never be labelled automated.
+     *
+     * @return array<int, RecentWorkItem>
+     */
+    private function automationSuccesses(Business $business, \Closure $locationIds): array
+    {
+        $found = $this->analyticsQueries->recentAutomationSuccesses($business, self::PER_SOURCE_LIMIT, $locationIds);
+
+        if ($found === null) {
+            return [];
+        }
+
+        $items = [];
+
+        foreach ($found['followUps'] as $group) {
+            $items[] = new RecentWorkItem(
+                key: 'automation_messages_sent',
+                text: 'Sent ' . $group['count'] . ' automated ' . ($group['count'] === 1 ? 'message' : 'messages') . ' (' . Str::limit($group['automation'], 60) . ')',
+                at: $group['at'],
+                routeName: 'customer.workspaces.businesses.automations.workflows.index',
+                permissions: ['automations'],
+                featureKey: 'automations',
+            );
+        }
+
+        foreach ($found['workflows'] as $group) {
+            $items[] = new RecentWorkItem(
+                key: 'workflow_completed',
+                text: Str::limit($group['workflow'], 60) . ' completed for ' . $group['count'] . ' ' . ($group['count'] === 1 ? 'contact' : 'contacts'),
                 at: $group['at'],
                 routeName: 'customer.workspaces.businesses.automations.workflows.index',
                 permissions: ['automations'],

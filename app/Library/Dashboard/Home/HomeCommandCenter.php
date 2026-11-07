@@ -617,7 +617,7 @@ final class HomeCommandCenter
             $status = match (true) {
                 $item['key'] === 'automation_failed' => 'failed',
                 $item['key'] === 'recommendation_completed' => 'completed',
-                in_array($item['key'], ['seo_audit_completed', 'external_audit_completed', 'rank_check_scheduled', 'rank_check_manual', 'article_published'], true) => 'completed',
+                in_array($item['key'], ['seo_audit_completed', 'external_audit_completed', 'automation_messages_sent', 'workflow_completed', 'rank_check_scheduled', 'rank_check_manual', 'article_published'], true) => 'completed',
                 default => 'recorded',
             };
             $id = $item['key'] . '|' . $item['text'] . '|' . $item['at']->format('c');
