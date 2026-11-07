@@ -97,6 +97,8 @@
         @csrf
         @if ($page)
             @method('PUT')
+            {{-- Stale-draft guard: the save is refused if this page changed after the editor was opened (another tab, a rebuild). --}}
+            <input type="hidden" name="draft_token" value="{{ $page->draftToken() }}">
         @endif
 
         <div class="mg-pf-grid">
@@ -172,8 +174,10 @@
                             <div class="mt-1" data-role="suggest-description">
                                 <button type="button" class="btn btn-sm btn-outline-secondary" id="suggest-desc-btn" data-url="{{ route('customer.workspaces.businesses.website.pages.suggestDescription', [$workspaceUid, $businessUid, $page->uid]) }}">Suggest description</button>
                                 <div id="suggest-desc-panel" class="mt-1" hidden role="status">
-                                    <p class="mg-muted mb-1" id="suggest-desc-text"></p>
-                                    <button type="button" class="btn btn-sm btn-primary" id="suggest-desc-use">Use this</button>
+                                    <p class="mg-muted mb-0"><strong>Current:</strong> <span id="suggest-desc-current"></span></p>
+                                    <p class="mg-muted mb-1"><strong>Proposed:</strong> <span id="suggest-desc-text"></span></p>
+                                    <p class="mg-muted mb-1">Nothing is saved or published until you choose Save, and publishing is a separate step.</p>
+                                    <button type="button" class="btn btn-sm btn-primary" id="suggest-desc-use">Use this in the form</button>
                                     <button type="button" class="btn btn-sm btn-link" id="suggest-desc-dismiss">Dismiss</button>
                                     <span class="mg-muted ms-1">Not saved until you save the page.</span>
                                 </div>
@@ -503,7 +507,7 @@
             fetch(suggestBtn.dataset.url, { method: 'POST', headers: { 'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').content, 'Accept': 'application/json' } })
                 .then(function (r) { return r.json().catch(function () { return {}; }); })
                 .then(function (d) {
-                    if (d && d.ok && d.description) { proposed = d.description; sText.textContent = proposed; sPanel.hidden = false; }
+                    if (d && d.ok && d.description) { proposed = d.description; sText.textContent = proposed; document.getElementById('suggest-desc-current').textContent = metaEl.value.trim() !== '' ? metaEl.value.trim() : '(empty)'; sPanel.hidden = false; }
                     else { sErr.textContent = (d && d.message) || 'A suggestion is not available right now.'; sErr.hidden = false; }
                 })
                 .catch(function () { sErr.textContent = 'A suggestion is not available right now.'; sErr.hidden = false; })

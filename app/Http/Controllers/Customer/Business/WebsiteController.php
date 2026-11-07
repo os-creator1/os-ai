@@ -462,12 +462,27 @@ class WebsiteController extends CustomerBaseController
         // generation/rebuild that deletes-and-recreates every page can
         // never interleave with this update.
         try {
-            $this->generationCoordinator->runExclusive($website, function () use ($website, $pageUid, $attributes) {
+            $stale = $this->generationCoordinator->runExclusive($website, function () use ($website, $pageUid, $attributes, $request) {
                 $locked = $this->resolvePage($website, $pageUid);
+
+                // Never silently overwrite newer work: a form that carries a draft token is saved only if the page is unchanged since it was opened.
+                if ($request->filled('draft_token') && (string) $request->input('draft_token') !== $locked->draftToken()) {
+                    return true;
+                }
+
                 $this->draftPages->updatePage($website, $locked, $attributes);
+
+                return false;
             });
         } catch (GenerationInProgressException $e) {
             return redirect()->back()->with(['status' => 'error', 'message' => $e->getMessage()]);
+        }
+
+        if ($stale) {
+            return redirect()->route('customer.workspaces.businesses.website.pages.edit', [$workspaceUid, $businessUid, $page->uid])->with([
+                'status' => 'error',
+                'message' => 'This page changed since you opened it, so nothing was saved. Review the current page and apply your change again.',
+            ]);
         }
 
         return redirect()->route('customer.workspaces.businesses.website.pages.edit', [$workspaceUid, $businessUid, $page->uid])->with([

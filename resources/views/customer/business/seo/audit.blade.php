@@ -134,8 +134,10 @@
                                         @if (isset($draftFixes[$loop->index]))
                                             @php $fix = $draftFixes[$loop->index]; @endphp
                                             <div class="mt-50" data-role="audit-draft-fix">
-                                                @if ($fix['draftFixed'])
-                                                    <span class="text-caption text-muted">Updated in your draft. Publish to make it live.</span>
+                                                @if ($fix['live'])
+                                                    <span class="text-caption text-muted" data-role="audit-fix-live">Published: your live website now has this. Run the audit again to confirm the finding is resolved.</span>
+                                                @elseif ($fix['draftFixed'])
+                                                    <span class="text-caption text-muted" data-role="audit-fix-drafted">Updated in your draft. Publish to make it live.</span>
                                                 @endif
                                                 <a href="{{ $fix['url'] }}" data-role="audit-draft-fix-link">{{ $fix['label'] }}</a>
                                             </div>
