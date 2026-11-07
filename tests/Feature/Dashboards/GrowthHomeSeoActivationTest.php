@@ -52,6 +52,17 @@ class GrowthHomeSeoActivationTest extends TestCase
         $this->assertDoesNotMatchRegularExpression('/lost traffic|you are losing|ranking (is|are) poor|projected|estimated bookings/i', $html);
     }
 
+    public function test_essential_first_use_setup_precedes_keyword_tracking(): void
+    {
+        [$customer, $business] = $this->bareTenant(WorkspacePlanTier::Growth, 'Unconfigured Venue', 'Unconfigured Account');
+        $this->authenticateAs($customer);
+
+        $html = $this->html();
+
+        $this->assertStringContainsString('data-role="setup-step"', $html);
+        $this->assertStringNotContainsString('data-move="seo_keyword_activation"', $html, 'Required first-use setup outranks optional keyword tracking.');
+    }
+
     public function test_urgent_customer_issues_still_win(): void
     {
         [$customer, $business] = $this->tenant(WorkspacePlanTier::Growth, 'Urgent Venue', 'Urgent Account');

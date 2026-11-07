@@ -109,7 +109,9 @@ final class HomeCommandCenter
 
         // Growth Home only: with nothing urgent and no better-supported opportunity, getting Google keyword visibility started comes first.
         $google = $this->googleVisibility($business, $context, $user, $entitlements, $scoped);
-        $activation = $this->seoActivation($primary, $nbm, $growth, $google);
+        $activation = ($journey !== null && ($journey['essentialIncomplete'] ?? false))
+            ? null // Essential booking/setup steps come before optional SEO measurement on a new Business.
+            : $this->seoActivation($primary, $nbm, $growth, $google);
 
         if ($activation !== null) {
             $primary = $activation;
