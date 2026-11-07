@@ -466,7 +466,7 @@ class WebsiteController extends CustomerBaseController
                 $locked = $this->resolvePage($website, $pageUid);
 
                 // Never silently overwrite newer work: a form that carries a draft token is saved only if the page is unchanged since it was opened.
-                if ($request->filled('draft_token') && (string) $request->input('draft_token') !== (string) $locked->updated_at?->getTimestamp()) {
+                if ($request->filled('draft_token') && (string) $request->input('draft_token') !== $locked->draftToken()) {
                     return true;
                 }
 

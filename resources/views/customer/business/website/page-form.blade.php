@@ -98,7 +98,7 @@
         @if ($page)
             @method('PUT')
             {{-- Stale-draft guard: the save is refused if this page changed after the editor was opened (another tab, a rebuild). --}}
-            <input type="hidden" name="draft_token" value="{{ $page->updated_at?->getTimestamp() }}">
+            <input type="hidden" name="draft_token" value="{{ $page->draftToken() }}">
         @endif
 
         <div class="mg-pf-grid">

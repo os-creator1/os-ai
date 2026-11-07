@@ -46,6 +46,16 @@ class WebsitePage extends Model
         $this->uid = (string) Str::uuid();
     }
 
+    /**
+     * Optimistic concurrency token for the entire mutable draft page.
+     * A state fingerprint catches edits within the same database timestamp second,
+     * unlike an updated_at-only token. It is not an authorization mechanism.
+     */
+    public function draftToken(): string
+    {
+        return hash('sha256', json_encode($this->getAttributes(), JSON_THROW_ON_ERROR));
+    }
+
     public function website(): BelongsTo
     {
         return $this->belongsTo(Website::class);

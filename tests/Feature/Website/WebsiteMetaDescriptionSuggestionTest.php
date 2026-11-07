@@ -143,7 +143,7 @@ class WebsiteMetaDescriptionSuggestionTest extends TestCase
         $this->ai(json_encode(['description' => self::GOOD]));
 
         $proposed = $this->suggest($workspace, $business, $page)->assertOk()->json('description');
-        $this->save($workspace, $business, $page, ['meta_description' => $proposed, 'draft_token' => $page->fresh()->updated_at->getTimestamp()]);
+        $this->save($workspace, $business, $page, ['meta_description' => $proposed, 'draft_token' => $page->fresh()->draftToken()]);
 
         $this->assertSame(self::GOOD, $page->fresh()->meta_description);
         $this->assertNull($page->website->fresh()->published_revision_id, 'Saving is not publishing.');
@@ -153,12 +153,37 @@ class WebsiteMetaDescriptionSuggestionTest extends TestCase
     {
         [$customer, $business, $workspace, $page] = $this->growthTenant();
         $this->authenticateAsCustomer($customer);
-        $token = $page->fresh()->updated_at->getTimestamp() - 60; // the editor was opened before the page last changed
+        $token = $page->fresh()->draftToken(); // a captured token before a different draft mutation
+
+        DB::table('website_pages')->where('id', $page->id)->update(['meta_description' => 'Newer draft work']);
 
         $this->save($workspace, $business, $page, ['meta_description' => 'Stale proposal that must not win.', 'draft_token' => $token])
             ->assertSessionHas('status', 'error');
 
         $this->assertNotSame('Stale proposal that must not win.', $page->fresh()->meta_description);
+    }
+
+    public function test_two_edits_in_the_same_timestamp_second_cannot_overwrite_each_other(): void
+    {
+        [$customer, $business, $workspace, $page] = $this->growthTenant();
+        $this->authenticateAsCustomer($customer);
+        $original = $page->fresh();
+        $token = $original->draftToken();
+        $unchangedTimestamp = $original->updated_at->format('Y-m-d H:i:s');
+
+        // Simulate a concurrent edit without advancing the DB's second-resolution timestamp.
+        DB::table('website_pages')->where('id', $page->id)->update([
+            'meta_description' => 'More recent content from another editor.',
+            'updated_at' => $unchangedTimestamp,
+        ]);
+
+        $this->save($workspace, $business, $page, [
+            'meta_description' => 'Outdated content',
+            'draft_token' => $token,
+        ])->assertSessionHas('status', 'error');
+
+        $this->assertSame('More recent content from another editor.', $page->fresh()->meta_description);
+        $this->assertSame($unchangedTimestamp, $page->fresh()->updated_at->format('Y-m-d H:i:s'));
     }
 
     public function test_another_businesss_page_cannot_be_changed(): void
