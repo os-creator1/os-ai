@@ -532,6 +532,86 @@ class BusinessAnalyticsQueries
     }
 
     /**
+     * Verified automation outcomes for Recent work, grouped per automation (or workflow) per Business-local day. Two bounded reads:
+     *
+     *  - follow-ups: `automation_executions` rows whose terminal status is `succeeded` (the dispatcher reported the send done; a row is
+     *    one logical execution, so a retried execution counts once, by its final status) for `send_message` actions. Pending, failed,
+     *    skipped and merely attempted rows never count, and a failed execution can never also appear here: one row has one status.
+     *  - workflows: enrollments that reached `completed` after running at least one step. Completion is NOT proof of a booking or a reply.
+     *
+     * Nothing about the contact, the message or any payload is read; only the automation / workflow name and a count leave this method.
+     * `$workflowLocationIds` is called lazily, and only when a Location-bound enrollment is read (null result = no Location restriction).
+     * Absent (null) when the table is missing, like recentAutomationFailures().
+     *
+     * @return array{followUps: array<int, array{automation: string, count: int, at: CarbonImmutable}>, workflows: array<int, array{workflow: string, count: int, at: CarbonImmutable}>}|null
+     */
+    public function recentAutomationSuccesses(Business $business, int $limit = 10, ?\Closure $workflowLocationIds = null): ?array
+    {
+        $fanOut = max(1, $limit) * 20;
+
+        try {
+            $sends = DB::table('automation_executions as e')
+                ->join('automations as a', 'a.id', '=', 'e.automation_id')
+                ->where('e.business_id', $business->id)
+                ->where('a.business_id', $business->id)
+                ->where('e.status', AutomationExecutionStatus::Succeeded->value)
+                ->where('a.action_type', 'send_message')
+                ->whereNotNull('e.completed_at')
+                ->orderByDesc('e.completed_at')
+                ->orderByDesc('e.id')
+                ->limit($fanOut)
+                ->get(['e.automation_id', 'e.completed_at', 'a.name']);
+
+            $runs = DB::table('automation_enrollments as n')
+                ->join('automation_workflows as w', 'w.id', '=', 'n.workflow_id')
+                ->where('n.business_id', $business->id)
+                ->where('w.business_id', $business->id)
+                ->where('n.status', 'completed')
+                ->where('n.step_count', '>', 0)
+                ->whereNotNull('n.completed_at')
+                ->orderByDesc('n.completed_at')
+                ->orderByDesc('n.id')
+                ->limit($fanOut)
+                ->get(['n.workflow_id', 'n.completed_at', 'n.business_location_id', 'w.name']);
+        } catch (QueryException $exception) {
+            if ((int) ($exception->errorInfo[1] ?? 0) === 1146) {
+                return null;
+            }
+
+            throw $exception;
+        }
+
+        if ($runs->contains(fn ($row) => $row->business_location_id !== null) && $workflowLocationIds !== null) {
+            $reach = $workflowLocationIds();
+
+            if ($reach !== null) {
+                $runs = $runs->filter(fn ($row) => $row->business_location_id === null || in_array((int) $row->business_location_id, $reach, true))->values();
+            }
+        }
+
+        $timezone = (string) ($business->timezone ?: config('app.timezone', 'UTC'));
+        $group = function ($rows, string $idColumn, string $nameKey) use ($timezone, $fanOut, $limit): array {
+            $groups = [];
+
+            foreach ($rows as $row) {
+                $at = CarbonImmutable::parse((string) $row->completed_at);
+                $key = (int) $row->{$idColumn} . '@' . $at->setTimezone($timezone)->format('Y-m-d');
+                $groups[$key] ??= [$nameKey => (string) $row->name, 'count' => 0, 'at' => $at];
+                $groups[$key]['count']++;
+            }
+
+            // A full read may have cut the oldest day short: drop it rather than report a count that might be low.
+            if ($rows->count() === $fanOut && count($groups) > 1) {
+                array_pop($groups);
+            }
+
+            return array_values(array_slice($groups, 0, $limit));
+        };
+
+        return ['followUps' => $group($sends, 'automation_id', 'automation'), 'workflows' => $group($runs, 'workflow_id', 'workflow')];
+    }
+
+    /**
      * C3 — one page of campaigns created in range (most recent first),
      * then exactly two grouped aggregates over that page's ids, both
      * additionally constrained by business_id (§6, §11.2).
