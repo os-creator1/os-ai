@@ -107,7 +107,7 @@ class HomeV2PresentationTest extends TestCase
 
     public function test_the_third_card_is_the_real_waiting_count_with_honest_states(): void
     {
-        [$owner, $business] = $this->tenant(WorkspacePlanTier::Growth, 'Waiting Venue', 'Waiting Account');
+        [$owner, $business] = $this->tenant(WorkspacePlanTier::Core, 'Waiting Venue', 'Waiting Account');
         $this->authenticateAs($owner);
 
         // None waiting: a real zero, calm.

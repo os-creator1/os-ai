@@ -95,7 +95,13 @@ class GrowthHomeAcceptanceTest extends TestCase
         $this->assertSame([], array_diff($linked, $own), 'Only this Business\'s recommendations are linked.');
         $this->assertStringNotContainsString($foreignUid, $html);
         $this->assertStringNotContainsString($foreignTitle, $html);
-        $this->assertLessThanOrEqual(2, substr_count($html, 'data-role="whats-next-item"'), 'At most two secondary actions.');
+        $this->assertLessThanOrEqual(1, substr_count($html, 'data-role="secondary-opportunity"'), 'At most one compact secondary action.');
+        $shown = [];
+        preg_match_all('/data-uid="([^"]+)"/', $html, $m);
+        foreach ($m[1] as $uid) {
+            $shown[$uid] = ($shown[$uid] ?? 0) + 1;
+        }
+        $this->assertSame([], array_filter($shown, fn (int $n): bool => $n > 1), 'No recommendation is shown twice.');
         $this->assertLessThanOrEqual(1, substr_count($html, 'data-role="next-best-move"'), 'One primary move.');
         $this->assertStringContainsString($workspace->uid . '/businesses/' . $business->uid . '/growth/opportunities/', $html, 'Links are scoped to this Workspace and Business.');
         // The deterministic order: the highest-priority recommendation is never left out in favour of a lower one.
@@ -162,23 +168,5 @@ class GrowthHomeAcceptanceTest extends TestCase
 
         $this->assertStringNotContainsString('data-role="growth-home"', $html);
         $this->assertStringContainsString('data-role="home-greeting"', $html);
-    }
-
-    public function test_already_set_up_follows_persisted_evidence_and_shrinks_when_the_evidence_goes(): void
-    {
-        [$owner, $business] = $this->tenant(WorkspacePlanTier::Growth, 'Evidence Venue', 'Evidence Account');
-        $this->authenticateAs($owner);
-
-        $before = substr_count($this->home(), 'data-role="configured-item"');
-        $this->assertGreaterThan(0, $before, 'A finished-setup fixture lists persisted steps.');
-
-        // Remove the evidence for online booking: the type stays active, but nobody is assigned to it.
-        DB::table('booking_type_staff')->delete();
-        $html = $this->home();
-
-        $this->assertTrue(
-            ! str_contains($html, 'data-role="growth-home"') || substr_count($html, 'data-role="configured-item"') < $before,
-            'A step whose evidence is gone is no longer listed as set up.',
-        );
     }
 }

@@ -28,27 +28,18 @@ class GrowthHomeExperienceTest extends TestCase
     {
         $html = $this->html(WorkspacePlanTier::Growth, 'Growth Sections');
 
-        foreach (['data-role="growth-home"', 'data-role="growth-stand"', 'data-role="growth-progress"', 'data-role="growth-handling"', 'data-band="ask"', 'data-role="home-growth"'] as $marker) {
+        foreach (['data-role="growth-home"', 'data-role="growth-performance"', 'data-role="growth-activity"', 'data-band="ask"'] as $marker) {
             $this->assertStringContainsString($marker, $html, $marker);
         }
         $this->assertSame(1, substr_count($html, 'data-role="home-ask"'), 'One assistant, one box.');
         $this->assertStringContainsString('gh-root', $html, 'The scoped mobile styles hook is present.');
     }
 
-    public function test_growth_home_lists_only_verified_setup_and_never_a_percentage(): void
-    {
-        $html = $this->html(WorkspacePlanTier::Growth, 'Growth Configured');
-
-        $this->assertStringContainsString('data-role="growth-configured"', $html, 'A finished-setup fixture has real configured steps.');
-        $this->assertStringNotContainsString('data-role="progress-verified"', $html, 'No evaluation exists, so no verified score is claimed.');
-        $this->assertDoesNotMatchRegularExpression('/\d+\s*%\s*(complete|done|set up)/i', $html);
-    }
-
     public function test_core_home_never_carries_growth_only_sections(): void
     {
         $html = $this->html(WorkspacePlanTier::Core, 'Core Sections');
 
-        foreach (['data-role="growth-home"', 'data-role="growth-configured"', 'data-role="growth-evidence"'] as $marker) {
+        foreach (['data-role="growth-home"', 'data-role="growth-performance"', 'data-role="growth-evidence"'] as $marker) {
             $this->assertStringNotContainsString($marker, $html, $marker);
         }
         $this->assertStringContainsString('data-role="home-greeting"', $html);

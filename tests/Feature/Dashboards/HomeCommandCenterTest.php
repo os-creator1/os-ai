@@ -80,9 +80,8 @@ class HomeCommandCenterTest extends TestCase
 
         $html = $this->home()->assertOk()->getContent();
         $this->assertStringContainsString('data-role="growth-home"', $html);
-        $this->assertStringContainsString('data-role="progress-unknown"', $html);
         $this->assertStringNotContainsString('data-role="progress-verified"', $html);
-        $this->assertStringNotContainsString('data-role="whats-next-item"', $html);
+        $this->assertStringNotContainsString('data-role="secondary-opportunity"', $html);
     }
     public function test_an_agencys_own_business_keeps_the_existing_home_even_with_growth_data(): void
     {
@@ -123,9 +122,9 @@ class HomeCommandCenterTest extends TestCase
         $this->assertStringContainsString('data-home-layout="growth"', $html);
         $this->assertStringContainsString('data-role="growth-home"', $html);
         $this->assertLessThanOrEqual(1, substr_count($html, 'data-role="next-best-move"'));
-        $this->assertSame(2, substr_count($html, 'data-role="whats-next-item"'));
-        $this->assertStringContainsString('Growth score 72', $html);
-        $this->assertStringNotContainsString('data-role="progress-delta"', $html, 'No earlier score, so no movement is claimed.');
+        $this->assertLessThanOrEqual(1, substr_count($html, 'data-role="secondary-opportunity"'), 'One compact secondary opportunity.');
+        $this->assertStringNotContainsString('Growth score', $html, 'The score is no longer a Growth Home section.');
+        $this->assertStringNotContainsString('data-role="progress-delta"', $html);
     }
     public function test_growth_plan_failed_growth_read_is_unknown_never_a_verified_result(): void
     {
@@ -136,9 +135,8 @@ class HomeCommandCenterTest extends TestCase
 
         $html = $this->home()->assertOk()->getContent();
         $this->assertStringContainsString('data-role="growth-home"', $html);
-        $this->assertStringContainsString('data-role="progress-unknown"', $html);
         $this->assertStringNotContainsString('data-role="progress-verified"', $html);
-        $this->assertStringNotContainsString('data-role="whats-next-item"', $html);
+        $this->assertStringNotContainsString('data-role="secondary-opportunity"', $html);
     }
     // ── States ───────────────────────────────────────────────────────────
 
@@ -157,8 +155,12 @@ class HomeCommandCenterTest extends TestCase
         $this->assertFalse($steps['booking_type']);
 
         $html = $this->home()->assertOk()->getContent();
+        // Growth keeps its unified Home: the model is still in setup, but the page shows ONE next step, never the checklist.
         $this->assertStringContainsString('data-home-state="setup"', $html);
-        $this->assertStringContainsString('data-role="setup-steps"', $html);
+        $this->assertStringContainsString('data-home-layout="growth"', $html);
+        $this->assertStringContainsString('data-role="setup-step"', $html);
+        $this->assertSame(1, substr_count($html, 'data-role="setup-step"'));
+        $this->assertStringNotContainsString('data-role="setup-steps"', $html);
         $this->assertStringNotContainsString("You're all caught up", html_entity_decode($html), 'A business still being set up is not "all caught up".');
     }
 
@@ -173,7 +175,9 @@ class HomeCommandCenterTest extends TestCase
         $home = $this->command($customer->user);
         $this->assertNotSame(HomeCommandCenter::STATE_SETUP, $home['state']);
         $this->assertNull($home['setup']);
-        $this->assertStringNotContainsString('data-role="setup-steps"', $this->home()->assertOk()->getContent());
+        $html = $this->home()->assertOk()->getContent();
+        $this->assertStringNotContainsString('data-role="setup-steps"', $html);
+        $this->assertStringNotContainsString('data-role="setup-step"', $html, 'A finished setup shows no setup step.');
     }
 
     public function test_a_healthy_quiet_business_is_normal_with_a_truthful_all_clear_and_caught_up_state(): void
@@ -190,7 +194,9 @@ class HomeCommandCenterTest extends TestCase
         $this->assertFalse($home['attention']['unknown']);
         $this->assertStringContainsString('Welcome to Calm Venue', $home['briefing']['text']);
         $this->assertSame('clear', $home['status']['key']);
-        $this->assertStringContainsString('data-status="clear"', $this->home()->assertOk()->getContent());
+        $html = $this->home()->assertOk()->getContent();
+        $this->assertStringContainsString('data-role="caught-up"', $html);
+        $this->assertStringNotContainsString('data-role="next-best-move"', $html);
     }
 
     public function test_a_broken_provider_makes_the_business_broken_and_is_never_called_all_clear(): void
@@ -243,8 +249,10 @@ class HomeCommandCenterTest extends TestCase
         $this->assertContains(AttentionType::WebsiteUnpublished->value, $attentionKeys, 'A different problem still appears.');
         $this->assertTrue($home['attention']['hasPrimaryException']);
         $html = $this->home()->assertOk()->getContent();
-        $this->assertStringContainsString('data-role="needs-details"', $html, 'Growth Home still exposes other actionable problems.');
-        $this->assertStringContainsString('data-band="needs_attention"', $html);
+        // The unified Growth Home shows exactly one Best next move; the other problem stays in the model (asserted above) and is not repeated as a second primary.
+        $this->assertSame(1, substr_count($html, 'data-role="next-best-move"'));
+        $this->assertStringContainsString('1 customer needs a reply', $html);
+        $this->assertStringNotContainsString('data-band="needs_attention"', $html, 'The old attention list is retired on Growth.');
     }
 
     public function test_a_waiting_customer_opens_the_follow_up_drawer_not_just_a_link(): void
@@ -279,7 +287,7 @@ class HomeCommandCenterTest extends TestCase
         $this->assertSame(2, $home['primary']['metric']['value'], 'The figure is the awaiting-reply count the Conversations band read.');
         $this->assertSame('waiting for you', $home['primary']['metric']['caption']);
         $this->assertSame(['value', 'caption'], array_keys($home['primary']['metric']), 'Only the current waiting count; no derived denominator.');
-        $this->assertMatchesRegularExpression('/data-role="needs-count">\s*2\s*</', $this->home()->assertOk()->getContent(), 'The card leads with the real waiting count.');
+        $this->assertStringContainsString('2 customers need a reply', $this->home()->assertOk()->getContent(), 'The card states the real waiting count.');
         $this->assertSame('attention', $home['status']['key']);
         $this->assertSame('1 thing needs you', $home['status']['pill']);
     }
@@ -355,7 +363,7 @@ class HomeCommandCenterTest extends TestCase
         $this->assertArrayNotHasKey('of', $home['primary']['metric'], 'No "of 3 conversations in this period": that would compare two populations.');
 
         $html = $this->home()->assertOk()->getContent();
-        $this->assertMatchesRegularExpression('/data-role="needs-count">\s*1\s*</', $html);
+        $this->assertStringContainsString('1 customer needs a reply', $html);
         $this->assertSame(1, preg_match('#<section[^>]*data-band="next_best_move".*?</section>#s', $html, $needs));
         $this->assertDoesNotMatchRegularExpression('/\bof\s+\d+\b/i', strip_tags($needs[0]), 'The card shows the waiting count alone.');
     }

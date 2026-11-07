@@ -64,6 +64,7 @@ final class HomeCommandCenter
         private readonly HomeV2Presenter $v2,
         private readonly HomeV2Facts $v2Facts,
         private readonly HomeBookingReader $bookingReader,
+        private readonly HomeGoogleVisibility $googleVisibility,
     ) {
     }
 
@@ -219,6 +220,9 @@ final class HomeCommandCenter
                 'hasPrimaryException' => $primaryAttentionType !== null,
             ],
             'handling' => $this->handling($bands, $growth),
+            'activity' => $this->activity($bands),
+            'currentWork' => $this->currentWork($growth),
+            'googleVisibility' => $this->googleVisibility($business, $context, $user, $entitlements, $scoped),
             'completedWork' => $this->completedWork($bands),
             // The CURRENT number of customers waiting for a reply (the Conversations band's own actor-scoped figure, including zero);
             // null when that band is not available to this actor or could not be read.
@@ -593,6 +597,63 @@ final class HomeCommandCenter
         }
 
         return $rows;
+    }
+
+    /**
+     * Growth Home's "MotionGrove at work" feed: DATED recorded work only, newest first, deduplicated, max 10. A recommendation completion is
+     * 'completed' and an automation failure 'failed'; everything else the source records (website version, Google link, business details)
+     * is only 'recorded' — the source does not prove MotionGrove did it automatically. Awaiting-approval / in-progress recommendations
+     * have no reliable timestamp, so they are returned separately by currentWork() and never interleaved with the dated feed.
+     *
+     * @return array<int, array{key: string, text: string, status: string, at: mixed, url: ?string}>
+     */
+    private function activity(array $bands): array
+    {
+        $recent = $bands[DashboardSnapshot::BAND_RECENT_WORK] ?? null;
+        $rows = [];
+        $seen = [];
+
+        foreach (is_array($recent) ? $recent['items'] : [] as $item) {
+            $status = match (true) {
+                $item['key'] === 'automation_failed' => 'failed',
+                $item['key'] === 'recommendation_completed' => 'completed',
+                default => 'recorded',
+            };
+            $id = $item['key'] . '|' . $item['text'] . '|' . $item['at']->format('c');
+
+            if (isset($seen[$id])) {
+                continue;
+            }
+
+            $seen[$id] = true;
+            $rows[] = ['key' => $item['key'], 'text' => $item['text'], 'status' => $status, 'at' => $item['at'], 'url' => $item['url']];
+        }
+
+        usort($rows, fn (array $a, array $b): int => $b['at'] <=> $a['at']);
+
+        return array_slice($rows, 0, 10);
+    }
+
+    /**
+     * Work waiting on the customer or under way, from the Growth band's own recommendation states. Undated by design.
+     *
+     * @return array<int, array{key: string, text: string, status: string, at: mixed, url: ?string}>
+     */
+    private function currentWork(?array $growth): array
+    {
+        return array_slice(array_values(array_filter($this->handling([], $growth), fn (array $r): bool => $r['at'] === null)), 0, 3);
+    }
+
+    /** Stored-observation summary for Growth Home only; null (card omitted, nothing read) when this actor may not open SEO keywords. */
+    private function googleVisibility(Business $business, CustomerContext $context, User $user, MenuEntitlements $entitlements, array $scoped): ?array
+    {
+        if ($context->frameWorkspace()?->tier !== \App\Enums\Entitlement\WorkspacePlanTier::Growth) {
+            return null;
+        }
+
+        $url = $this->links->url($context, $user, $entitlements, 'customer.workspaces.businesses.seo.keywords.index', $scoped, ['view_seo'], 'seo_basic_visibility');
+
+        return $url === null ? null : $this->googleVisibility->summary($business, (int) $user->id, $url);
     }
 
     private function handling(array $bands, ?array $growth): array
