@@ -45,12 +45,25 @@ class GrowthHomeLeadResponseTest extends TestCase
 
         $text = $this->evidence();
 
-        $this->assertStringContainsString('The oldest message still waiting for a reply arrived', $text);
+        $this->assertStringContainsString('Of the conversations your inbox marks as waiting, the longest-waiting thread last heard from the customer on', $text);
         $this->assertMatchesRegularExpression('/\(1 hour ago\)/', $text);
         $this->assertStringContainsString('whether a reply leads to a booking', $text, 'The booking outcome stays unknown.');
         $this->assertStringContainsString('how quickly you usually reply', $text, 'Historical reply speed is not measured.');
         $this->assertStringNotContainsString('1909555', $text, 'No phone number in the summary.');
         $this->assertStringNotContainsString('Fixture message', $text, 'No message content in the summary.');
+    }
+
+    public function test_multiple_incoming_messages_in_one_thread_use_the_last_message_not_the_first(): void
+    {
+        [$customer, $business] = $this->tenant(WorkspacePlanTier::Growth, 'Repeated Waiting Venue', 'Repeated Waiting Account');
+        $this->conversationWith($business, [['incoming', $this->minutesAgo(180)], ['incoming', $this->minutesAgo(60)]]);
+        $this->authenticateAs($customer);
+
+        $text = $this->evidence();
+
+        $this->assertStringContainsString('longest-waiting thread last heard from the customer', $text);
+        $this->assertMatchesRegularExpression('/\\(1 hour ago\\)/', $text);
+        $this->assertStringNotContainsString('(3 hours ago)', $text, 'The inbox waiting state orders threads by their most recent inbound message, not by the earliest message in a streak.');
     }
 
     public function test_with_several_waiting_the_oldest_one_is_reported(): void
@@ -84,7 +97,7 @@ class GrowthHomeLeadResponseTest extends TestCase
         $this->conversationWith($business, [['incoming', $this->minutesAgo(200)], ['outgoing', $this->minutesAgo(190)]]);
         $this->authenticateAs($customer);
 
-        $this->assertStringNotContainsString('still waiting for a reply arrived', $this->home()->assertOk()->getContent());
+        $this->assertStringNotContainsString('longest-waiting thread last heard from the customer on', $this->home()->assertOk()->getContent());
     }
 
     public function test_another_business_never_supplies_the_age(): void

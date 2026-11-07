@@ -771,8 +771,8 @@ final class HomeCommandCenter
             if ($waiting !== null) {
                 $timezone = (string) ($business->timezone ?: config('app.timezone', 'UTC'));
                 $primary['evidence'] = array_values(array_merge($primary['evidence'] ?? [], [
-                    'The oldest message still waiting for a reply arrived ' . $waiting->setTimezone($timezone)->format('M j, g:i A') . ' (' . $waiting->diffForHumans(['parts' => 1]) . ').',
-                    'Next: open the waiting conversations and reply. Customers who hear back sooner are more likely to book.',
+                    'Of the conversations your inbox marks as waiting, the longest-waiting thread last heard from the customer on ' . $waiting->setTimezone($timezone)->format('M j, g:i A') . ' (' . $waiting->diffForHumans(['parts' => 1]) . ').',
+                    'Next: review the conversations currently marked waiting and reply where needed.',
                 ]));
             }
         }
@@ -784,7 +784,7 @@ final class HomeCommandCenter
         return $primary;
     }
 
-    /** When the oldest still-unanswered customer message arrived (the inbox's own waiting definition); null when none can be identified. */
+    /** Timestamp of the latest inbound in the longest-waiting thread, per the inbox's current waiting definition. Not the first unanswered message of a multi-inbound streak. */
     private function oldestWaiting(Business $business, int $actorUserId): ?CarbonImmutable
     {
         try {
