@@ -99,7 +99,7 @@ class SeoMetaFixPublishFlowTest extends TestCase
 
         // Published, but not yet verified by an audit: the old audit still lists the findings and nothing is called resolved.
         $awaiting = $this->auditPage($workspace, $business);
-        $this->assertStringContainsString('data-role="audit-fix-live"', $awaiting);
+        $this->assertStringContainsString('data-role="audit-fix-published-pending"', $awaiting);
         $this->assertStringNotContainsString('data-role="audit-resolved"', $awaiting);
 
         // 7. A fresh internal audit of the published revision no longer has the findings: only now is it resolved.

@@ -75,6 +75,14 @@
                 @endif
             </div>
 
+            @if (! empty($publishedPending))
+                <div class="mb-1" data-role="audit-fix-published-pending">
+                    @foreach ($publishedPending as $item)
+                        <p class="text-caption mb-25">Published, awaiting a fresh audit: {{ $item['title'] }} now has a {{ $item['what'] }} in the current published revision. The finding is not yet verified resolved.</p>
+                    @endforeach
+                </div>
+            @endif
+
             @if (! empty($resolved))
                 <div class="mb-1" data-role="audit-resolved">
                     @foreach ($resolved as $item)

@@ -63,6 +63,7 @@ class SeoAuditController extends CustomerBaseController
 
         return view('customer.business.seo.audit', [
             'resolved' => $this->resolvedByFreshAudit($business, $auditPage),
+            'publishedPending' => $this->publishedPendingFreshAudit($business, $auditPage),
             'draftFixes' => $this->draftFixes($workspace, $business, $workspaceUid, $businessUid, $auditPage->findings),
             'workspaceUid' => $workspaceUid,
             'businessUid' => $businessUid,
@@ -228,6 +229,80 @@ class SeoAuditController extends CustomerBaseController
 
         return $fixes;
     }
+    /**
+     * Conservative interim evidence only when the CURRENT published revision has no audit yet:
+     * a prior completed audit found a blank field, and the new immutable published revision
+     * contains a nonblank value for the SAME page. This is not a resolved finding.
+     * The reader's current-revision-only findings must never be replaced with stale findings.
+     *
+     * @return array<int, array{title: string, what: string}>
+     */
+    private function publishedPendingFreshAudit(Business $business, \\App\\Library\\Seo\\SeoAuditPage $auditPage): array
+    {
+        if ($auditPage->state() !== \\App\\Library\\Seo\\SeoAuditPage::STATE_NOT_CHECKED) {
+            return [];
+        }
+
+        $website = Website::query()->where('business_id', $business->id)->first(['id', 'published_revision_id']);
+
+        if ($website === null || $website->published_revision_id === null) {
+            return [];
+        }
+
+        $prior = collect($auditPage->history)->first(
+            fn ($run) => $run->status === \\App\\Enums\\Seo\\SeoAuditRunStatus::Completed
+                && (int) $run->rule_set_version === SeoAuditRuleRegistry::VERSION
+                && (int) $run->website_revision_id !== (int) $website->published_revision_id
+        );
+
+        if ($prior === null) {
+            return [];
+        }
+
+        $raw = DB::table('website_revisions')
+            ->where('website_id', $website->id)
+            ->where('id', $website->published_revision_id)
+            ->value('snapshot');
+        $decoded = json_decode((string) $raw, true);
+        $pages = [];
+
+        foreach (($decoded['pages'] ?? []) as $page) {
+            if (is_array($page) && isset($page['uid'])) {
+                $pages[(string) $page['uid']] = $page;
+            }
+        }
+
+        $blank = [SeoAuditRuleRegistry::SEO_TITLE_BLANK, SeoAuditRuleRegistry::META_DESCRIPTION_BLANK];
+        $findings = DB::table('seo_audit_findings')
+            ->where('seo_audit_run_id', $prior->id)
+            ->whereIn('rule_key', $blank)
+            ->whereNotNull('page_uid')
+            ->orderBy('id')
+            ->limit(100)
+            ->get(['page_uid', 'rule_key']);
+        $result = [];
+
+        foreach ($findings as $finding) {
+            $page = $pages[(string) $finding->page_uid] ?? null;
+            $field = $finding->rule_key === SeoAuditRuleRegistry::SEO_TITLE_BLANK ? 'seo_title' : 'meta_description';
+
+            if ($page === null || trim((string) ($page['seo'][$field] ?? '')) === '') {
+                continue;
+            }
+
+            $result[] = [
+                'title' => (string) ($page['title'] ?? 'A page'),
+                'what' => $field === 'seo_title' ? 'page title' : 'description',
+            ];
+
+            if (count($result) >= 5) {
+                break;
+            }
+        }
+
+        return $result;
+    }
+
     /**
      * Blank title / description findings that the PREVIOUS completed audit of this Website had and the latest audit no longer has: the
      * only evidence that a fix is resolved. Publishing alone never produces an entry. Two bounded reads, on this page only.
