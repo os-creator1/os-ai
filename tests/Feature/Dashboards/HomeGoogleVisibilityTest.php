@@ -116,4 +116,24 @@ class HomeGoogleVisibilityTest extends TestCase
         $this->assertSame('improving', $s['state']);
         $this->assertStringContainsString('organic', (string) $s['detail']);
     }
+
+    public function test_activation_is_offered_only_when_nothing_is_tracked_and_the_actor_may_manage(): void
+    {
+        [$owner, $business] = $this->rankTenant();
+        $visibility = app(HomeGoogleVisibility::class);
+
+        $off = $visibility->summary($business, (int) $owner->user_id, '/keywords');
+        $this->assertSame('not_tracking', $off['state']);
+        $this->assertNull($off['activation'], 'A view-only actor is offered nothing to start.');
+
+        $offPlan = $visibility->summary($business, (int) $owner->user_id, '/keywords', null, true, false);
+        $this->assertNull($offPlan['activation'], 'Actor permission alone does not imply rank-tracking entitlement.');
+        $on = $visibility->summary($business, (int) $owner->user_id, '/keywords', null, true, true);
+        $this->assertSame(['available' => true], $on['activation']);
+
+        $this->track($owner, $business, $this->keyword($owner, $business));
+        $tracked = $visibility->summary($business, (int) $owner->user_id, '/keywords', null, true, true);
+        $this->assertArrayNotHasKey('activation', $tracked, 'Existing tracking suppresses the setup offer.');
+        $this->assertSame('establishing', $tracked['state'], 'And no ranking is claimed before results exist.');
+    }
 }

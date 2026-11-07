@@ -30,7 +30,7 @@ final class HomeGoogleVisibility
     /**
      * @return array{state: string, label: string, detail: ?string, url: ?string}
      */
-    public function summary(Business $business, int $actorUserId, ?string $keywordsUrl, ?CarbonImmutable $now = null): array
+    public function summary(Business $business, int $actorUserId, ?string $keywordsUrl, ?CarbonImmutable $now = null, bool $mayManage = false, bool $rankEntitled = false): array
     {
         $now ??= CarbonImmutable::now('UTC');
 
@@ -43,7 +43,8 @@ final class HomeGoogleVisibility
                 ->pluck('id')->map(fn ($id) => (int) $id)->all();
 
             if ($targetIds === []) {
-                return $this->result('not_tracking', 'Not tracking', 'Add keywords to see how you appear on Google.', $keywordsUrl);
+                return $this->result('not_tracking', 'Not tracking', 'Add keywords to see how you appear on Google.', $keywordsUrl)
+                    + ['activation' => $mayManage && $rankEntitled ? ['available' => true] : null];
             }
 
             $read = $this->history->thirtyDayChanges($targetIds, $now, $this->config->rankStaleAfterDays());
@@ -81,6 +82,9 @@ final class HomeGoogleVisibility
             default => $this->result('stable', 'Stable', $detail, $keywordsUrl),
         };
     }
+
+    // Keyword suggestions are deliberately loaded by the existing Keywords page, not Home.
+    // Home uses the existing request entitlement snapshot; no paid provider or extra SEO setup reads.
 
     private function result(string $state, string $label, string $detail, ?string $url): array
     {

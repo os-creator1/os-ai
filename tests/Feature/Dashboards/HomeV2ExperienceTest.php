@@ -315,7 +315,8 @@ class HomeV2ExperienceTest extends TestCase
 
     public function test_the_all_clear_is_honest_only_when_nothing_needs_the_customer_and_every_source_read(): void
     {
-        [$customer] = $this->tenant(WorkspacePlanTier::Growth, 'Calm Venue', 'Calm Account');
+        // Core still has a true caught-up state; Growth without tracking now has an SEO activation move.
+        [$customer] = $this->tenant(WorkspacePlanTier::Core, 'Calm Venue', 'Calm Account');
         $this->authenticateAs($customer);
 
         $html = $this->home()->assertOk()->getContent();

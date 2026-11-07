@@ -107,6 +107,18 @@ final class HomeCommandCenter
             $primaryAttentionType = ($nbm['move']['kind'] ?? null) === NextBestMove::KIND_ATTENTION ? $nbm['move']['key'] : null;
         }
 
+        // Growth Home only: with nothing urgent and no better-supported opportunity, getting Google keyword visibility started comes first.
+        $google = $this->googleVisibility($business, $context, $user, $entitlements, $scoped);
+        $activation = ($journey !== null && ($journey['essentialIncomplete'] ?? false))
+            ? null // Essential booking/setup steps come before optional SEO measurement on a new Business.
+            : $this->seoActivation($primary, $nbm, $growth, $google);
+
+        if ($activation !== null) {
+            $primary = $activation;
+            $primaryUid = null;
+            $primaryAttentionType = null;
+        }
+
         $queue = [];
 
         if (is_array($growth)) {
@@ -222,7 +234,7 @@ final class HomeCommandCenter
             'handling' => $this->handling($bands, $growth),
             'activity' => $this->activity($bands),
             'currentWork' => $this->currentWork($growth),
-            'googleVisibility' => $this->googleVisibility($business, $context, $user, $entitlements, $scoped),
+            'googleVisibility' => $google,
             'completedWork' => $this->completedWork($bands),
             // The CURRENT number of customers waiting for a reply (the Conversations band's own actor-scoped figure, including zero);
             // null when that band is not available to this actor or could not be read.
@@ -645,6 +657,77 @@ final class HomeCommandCenter
         return array_slice(array_values(array_filter($this->handling([], $growth), fn (array $r): bool => $r['at'] === null)), 0, 3);
     }
 
+    /**
+     * The SEO-first activation move (Growth Home only). The selector stays the deterministic authority for urgent and operational
+     * problems; this only replaces a ROUTINE choice. It never applies when: an attention problem is primary (customer waiting, lost or
+     * broken connection, failing automation, website not live); the queue head is a well-supported SEO / website / local / lead-response
+     * opportunity or a verified Ads recommendation; tracking already exists; the actor cannot manage SEO; or the plan has no rank tracking.
+     * An unconnected Ads account is never read as "not advertising": no Ads signal is consulted at all.
+     *
+     * @param  array<string, mixed>|null  $primary
+     * @param  array<string, mixed>|null  $growth
+     * @param  array<string, mixed>|null  $google
+     * @return array<string, mixed>|null
+     */
+    private function seoActivation(?array $primary, mixed $nbm, ?array $growth, ?array $google): ?array
+    {
+        if ($google === null || ($google['state'] ?? null) !== 'not_tracking' || ! is_array($google['activation'] ?? null) || ($google['url'] ?? null) === null) {
+            return null;
+        }
+
+        if ($primary !== null) {
+            if ($primary['kind'] !== NextBestMove::KIND_OPPORTUNITY) {
+                return null;
+            }
+
+            $head = is_array($growth) ? ($growth['promoted'] ?? null) : null;
+            $uid = is_array($nbm) ? ($nbm['move']['subjectUid'] ?? null) : null;
+
+            foreach (is_array($growth) ? $growth['items'] : [] as $item) {
+                if ($uid !== null && $item['uid'] === $uid) {
+                    $head = $item;
+                }
+            }
+
+            $category = is_array($growth) && ($growth['head'] ?? null) !== null && ($growth['head']->uid ?? null) === $uid
+                ? \App\Library\Growth\GrowthRuleRegistry::find((string) $growth['head']->type)?->definition()->category
+                : null;
+            $strong = in_array($category, [\App\Enums\Growth\GrowthCategory::Seo, \App\Enums\Growth\GrowthCategory::Website, \App\Enums\Growth\GrowthCategory::LocalPresence, \App\Enums\Growth\GrowthCategory::LeadResponse], true)
+                && ($primary['confidence'] ?? null) !== 'Limited data';
+            $ads = is_array($head) && str_contains(strtolower((string) ($head['source_module'] ?? '')), 'ads');
+
+            if ($strong || $ads) {
+                return null;
+            }
+        }
+
+        $evidence = ['No Google keywords are being tracked for this business yet, so MotionGrove has no ranking data to report.'];
+        $evidence[] = 'The keyword page offers suggestions based on your saved business details when available.';
+
+        $evidence[] = 'Knowing which searches bring you up is the starting point for earning more booking enquiries from Google.';
+        $evidence[] = 'Next: review the searches, choose the ones that fit, and start tracking. You decide what is tracked.';
+
+        return [
+            'kind' => 'seo_setup',
+            'key' => 'seo_keyword_activation',
+            'headline' => 'Choose the Google searches you want to be found for',
+            'summary' => 'Tracking your key searches shows where you appear when local customers look for what you offer.',
+            'why' => [],
+            'evidence' => $evidence,
+            'impact' => null,
+            'confidence' => null,
+            'severity' => null,
+            'status' => 'ready',
+            'statusLabel' => 'Ready to act on',
+            'needsMoreInfo' => false,
+            'action' => ['label' => 'Choose keywords to track', 'url' => $google['url'], 'drawer' => null, 'drawerUrl' => null],
+            'detailUrl' => null,
+            'explanation' => null,
+            'metric' => null,
+            'aiAction' => null,
+        ];
+    }
+
     /** Stored-observation summary for Growth Home only; null (card omitted, nothing read) when this actor may not open SEO keywords. */
     private function googleVisibility(Business $business, CustomerContext $context, User $user, MenuEntitlements $entitlements, array $scoped): ?array
     {
@@ -654,7 +737,7 @@ final class HomeCommandCenter
 
         $url = $this->links->url($context, $user, $entitlements, 'customer.workspaces.businesses.seo.keywords.index', $scoped, ['view_seo'], 'seo_basic_visibility');
 
-        return $url === null ? null : $this->googleVisibility->summary($business, (int) $user->id, $url);
+        return $url === null ? null : $this->googleVisibility->summary($business, (int) $user->id, $url, null, \Illuminate\Support\Facades\Gate::forUser($user)->allows('manage_seo'), $entitlements->allows('seo_rank_tracking'));
     }
 
     private function handling(array $bands, ?array $growth): array
