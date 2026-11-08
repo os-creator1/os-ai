@@ -84,7 +84,7 @@ class SeoTitleFixApprovalTest extends TestCase
         $second = WebsiteRevision::find((int) $website->fresh()->published_revision_id);
         $this->assertSame(self::APPROVED, $second->snapshot['pages'][0]['seo']['seo_title']);
         $awaiting = $this->auditHtml($workspace, $business);
-        $this->assertStringContainsString('data-role="audit-fix-live"', $awaiting);
+        $this->assertStringContainsString('data-role="audit-fix-published-pending"', $awaiting);
         $this->assertStringNotContainsString('data-role="audit-resolved"', $awaiting);
 
         // A fresh completed audit is what verifies it.
