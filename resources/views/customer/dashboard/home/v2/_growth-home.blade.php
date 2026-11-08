@@ -102,6 +102,47 @@
         </section>
         @endif
 
+        @php $leads = $g['leads'] ?? null; @endphp
+        @if($leads !== null && ($leads['total'] > 0 || $leads['answered'] !== []))
+        <section class="hv2-section" aria-labelledby="gh-waiting-title" data-role="growth-waiting">
+            <h2 class="hv2-label" id="gh-waiting-title">Customers waiting for a reply</h2>
+            <div class="hv2-card">
+                @if($leads['total'] > 0)
+                    <p class="hv2-muted mb-50" data-role="waiting-count">
+                        {{ number_format($leads['total']) }} {{ $leads['total'] === 1 ? 'customer is' : 'customers are' }} waiting.
+                        @if($leads['total'] > count($leads['items'])) Showing the {{ count($leads['items']) }} who have waited longest. @endif
+                    </p>
+                    <ul class="hv2-done" data-role="waiting-items">
+                        @foreach($leads['items'] as $lead)
+                            <li data-role="waiting-item" data-uid="{{ $lead['uid'] }}">
+                                <strong>{{ $lead['name'] }}</strong>
+                                <span class="hv2-muted">· waiting <time datetime="{{ $lead['at']->toIso8601String() }}">{{ $lead['waiting'] }}</time></span>
+                                @if($lead['prompt'] !== null)
+                                    <button type="button" class="btn btn-sm btn-outline-secondary" data-role="prepare-reply" data-ask-prompt="{{ $lead['prompt'] }}">Prepare reply</button>
+                                @endif
+                                @if($leads['fullUrl'] !== null)
+                                    <a href="{{ $leads['fullUrl'] }}"@if($leads['drawerUrl'] !== null) data-home-drawer="{{ $leads['drawerUrl'] }}" data-drawer-title="Reply to customers"@endif data-role="reply-manually">Reply yourself</a>
+                                @endif
+                            </li>
+                        @endforeach
+                    </ul>
+                    <p class="hv2-muted mb-0">Preparing a reply drafts it for you to review; nothing is sent until you press Send.</p>
+                @endif
+                @if($leads['answered'] !== [])
+                    <ul class="hv2-done" data-role="answered-items">
+                        @foreach($leads['answered'] as $done)
+                            <li data-role="answered-item" data-status="{{ $done['status'] }}">
+                                {{ $done['name'] }}
+                                <span class="hv2-muted">· {{ $done['status'] === 'delivered' ? 'Reply delivered' : 'Reply submitted to your messaging provider' }} · <time datetime="{{ $done['at']->toIso8601String() }}">{{ $done['at']->diffForHumans() }}</time></span>
+                            </li>
+                        @endforeach
+                    </ul>
+                    <p class="hv2-muted mb-0">A reply is not a booking: MotionGrove does not know whether this customer booked.</p>
+                @endif
+            </div>
+        </section>
+        @endif
+
         <section class="hv2-section" aria-labelledby="gh-work-title" data-role="growth-activity">
             <h2 class="hv2-label" id="gh-work-title">MotionGrove at work</h2>
             <div class="hv2-card">

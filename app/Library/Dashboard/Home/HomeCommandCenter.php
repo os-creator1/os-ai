@@ -201,7 +201,10 @@ final class HomeCommandCenter
             $primary['aiAction'] = $this->assistantSuggestions->explainRecommendation($offering);
         }
 
+        $leadRecovery = $this->leadRecovery($business, $context, $user, $bands, $actions, $this->assistantSuggestions->draftReplies($offering) !== null ? $offering : null);
+
         $model = [
+            'leadRecovery' => $leadRecovery,
             'state' => $state,
             'greeting' => $this->greeting($business, $user),
             'briefing' => $briefing + ['unavailable' => in_array(DashboardSnapshot::BAND_ACTIVITY, $failed, true)],
@@ -307,6 +310,20 @@ final class HomeCommandCenter
 
         foreach ($band['items'] ?? [] as $item) {
             if ($item['key'] === 'awaiting_reply') {
+                return (int) preg_replace('/\D/', '', (string) $item['figure']);
+            }
+        }
+
+        return null;
+    }
+
+    /** The Conversations band's own count of conversations replied to in the selected period (null when the band is absent). */
+    private function repliedCount(array $bands): ?int
+    {
+        $band = $bands[DashboardSnapshot::BAND_CONVERSATIONS] ?? null;
+
+        foreach (is_array($band) ? ($band['items'] ?? []) : [] as $item) {
+            if ($item['key'] === 'replied') {
                 return (int) preg_replace('/\D/', '', (string) $item['figure']);
             }
         }
@@ -814,6 +831,64 @@ final class HomeCommandCenter
 
             return null;
         }
+    }
+
+    /**
+     * Growth Home — the customers genuinely waiting for a reply (the inbox's own predicate and Location rule), oldest first and bounded,
+     * with the true total, plus the replies that have since been recorded. Prepare-reply buttons only ask the assistant when CLICKED (the
+     * assistant tool then hands a reviewed draft to Follow-ups; nothing here sends or calls an AI). Null when this is not the Growth plan,
+     * the actor has no Follow-ups access, or the waiting figure could not be read.
+     *
+     * @param  array<string, mixed>  $bands
+     * @param  array<string, array<string, mixed>|null>  $actions
+     * @return array<string, mixed>|null
+     */
+    private function leadRecovery(Business $business, CustomerContext $context, User $user, array $bands, array $actions, ?AssistantContext $prepare): ?array
+    {
+        $followUps = $actions['follow-ups'] ?? null;
+        $total = $this->waitingCount($bands);
+
+        if ($context->frameWorkspace()?->tier !== \App\Enums\Entitlement\WorkspacePlanTier::Growth || $followUps === null || $total === null) {
+            return null;
+        }
+
+        $actor = (int) $user->id;
+        $rows = $total > 0 ? $this->conversations->awaitingReplyConversations($business, $actor, 5) : [];
+        // The recent-replies read only runs when it can matter: someone is still waiting, or the Conversations band already counted a
+        // reply in the selected period. A Business with neither pays no extra statement.
+        $answered = $total > 0 || ($this->repliedCount($bands) ?? 0) > 0 ? $this->conversations->recentAnsweredByReply($business, $actor, 3) : [];
+        $named = array_merge($rows, $answered);
+        $names = $named === [] ? [] : \App\Models\ChatBox::displayNamesFor($business, array_map(fn (array $r): object => (object) ['id' => $r['id'], 'to' => $r['to']], $named));
+
+        $items = array_map(function (array $r) use ($names, $prepare): array {
+            $name = (string) ($names[$r['id']] ?? $r['to']);
+            $waiting = $r['at']->diffForHumans(null, true);
+
+            // The customer sees the name; the ASSISTANT is given only the opaque, actor-and-Business-bound handle (never a name, number or
+            // message text), so two customers with the same name stay distinct and nothing personal reaches the provider.
+            $handle = $prepare === null ? null : \App\Library\Assistant\AssistantHandles::for($prepare, 'conversation', $r['uid']);
+
+            return [
+                'uid' => $r['uid'],
+                'name' => $name,
+                'at' => $r['at'],
+                'waiting' => $waiting,
+                'handle' => $handle,
+                'prompt' => $handle === null ? null : 'Prepare a reply for me to review to the waiting customer with handle ' . $handle . '. Read their latest message first, then draft the reply. Do not send it.',
+            ];
+        }, $rows);
+
+        return [
+            'total' => $total,
+            'items' => $items,
+            'answered' => array_map(fn (array $r): array => [
+                'name' => (string) ($names[$r['id']] ?? $r['to']),
+                'at' => $r['at'],
+                'status' => $r['status'],
+            ], $answered),
+            'drawerUrl' => $followUps['drawerUrl'] ?? null,
+            'fullUrl' => ($followUps['fullUrl'] ?? null) === null ? null : $followUps['fullUrl'] . (str_contains($followUps['fullUrl'], '?') ? '&' : '?') . 'filter=waiting',
+        ];
     }
 
     /** Stored-observation summary for Growth Home only; null (card omitted, nothing read) when this actor may not open SEO keywords. */
