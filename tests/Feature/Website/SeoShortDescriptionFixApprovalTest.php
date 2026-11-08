@@ -94,10 +94,14 @@ class SeoShortDescriptionFixApprovalTest extends TestCase
         $this->assertStringContainsString('data-role="audit-fix-drafted"', $drafted);
         $this->assertStringNotContainsString('data-role="audit-resolved"', $drafted);
 
+        // The real publish runs; only the background audit job is held back so "published, awaiting a fresh audit" can be observed.
+        \Illuminate\Support\Facades\Queue::fake([\App\Jobs\Seo\RunSeoAuditForRevision::class]);
         $this->post(route('customer.workspaces.businesses.website.publish', [$workspace->uid, $business->uid]))->assertRedirect();
         $second = WebsiteRevision::find((int) $website->fresh()->published_revision_id);
         $this->assertSame(self::APPROVED, $second->snapshot['pages'][0]['seo']['meta_description']);
-        $this->assertStringNotContainsString('data-role="audit-resolved"', $this->auditHtml($workspace, $business), 'Published is not yet verified.');
+        $awaiting = $this->auditHtml($workspace, $business);
+        $this->assertStringContainsString('data-role="audit-fix-published-pending"', $awaiting);
+        $this->assertStringNotContainsString('data-role="audit-resolved"', $awaiting, 'Published is not yet verified.');
 
         app(SeoAuditRunner::class)->runForRevision((int) $business->id, (int) $website->id, (int) $second->id);
         $verified = $this->auditHtml($workspace, $business);
