@@ -7,12 +7,16 @@ use App\Library\Assistant\AssistantActionRefused;
 use App\Library\Assistant\AssistantContext;
 use App\Library\Assistant\AssistantHandles;
 use App\Library\Assistant\Tools\DraftReplyTool;
-use App\Library\Crm\CrmLocationScope;
+use App\Enums\Workspace\LocationAccessScope;
+use App\Enums\Workspace\WorkspaceBusinessAccessScope;
+use App\Enums\Workspace\WorkspaceMembershipRole;
 use App\Library\Navigation\CustomerShellComposer;
 use App\Models\Business;
+use App\Models\BusinessLocation;
 use App\Models\Contacts;
 use App\Models\User;
 use App\Models\Workspace;
+use App\Repositories\Contracts\WorkspaceMembershipLocationRepository;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use Tests\Feature\Dashboards\Concerns\CreatesDashboardFixtures;
@@ -141,20 +145,32 @@ class GrowthHomeLeadRecoveryPrivacyTest extends TestCase
         app(DraftReplyTool::class)->prepare($mine, ['conversation_ref' => $theirHandle, 'message' => 'Hello there.']);
     }
 
-    public function test_a_conversation_in_a_location_the_actor_cannot_reach_cannot_be_prepared(): void
+    public function test_a_location_restricted_staff_member_cannot_resolve_or_prepare_a_reply_outside_their_locations(): void
     {
-        [$customer, $business, $workspace] = $this->tenant(WorkspacePlanTier::Growth, 'Site Handle Venue', 'Site Handle Account');
-        [, $uid] = $this->waitingCustomer($business, 'Jordan', 'Smith', 200);
-        $this->authenticateAs($customer);
-        $context = $this->context($customer->user, $workspace, $business);
-        $handle = AssistantHandles::for($context, 'conversation', $uid);
+        [$owner, $business, $workspace] = $this->tenant(WorkspacePlanTier::Growth, 'Site Handle Venue', 'Site Handle Account');
+        $first = BusinessLocation::query()->where('business_id', $business->id)->firstOrFail();
+        $second = BusinessLocation::create(['business_id' => $business->id, 'name' => 'Second site', 'service_mode' => 'storefront', 'country_code' => 'US']);
+        [$mineBox, $mineUid] = $this->waitingCustomer($business, 'Jordan', 'Smith', 200);
+        [$theirBox, $theirUid] = $this->waitingCustomer($business, 'Jordan', 'Smith', 300);
+        DB::table('chat_boxes')->where('id', $mineBox)->update(['location_id' => $first->id]);
+        DB::table('chat_boxes')->where('id', $theirBox)->update(['location_id' => $second->id]);
 
-        // The actor loses reach to every Location: the inbox's own restriction now excludes this conversation.
-        $this->mock(CrmLocationScope::class, fn ($m) => $m->shouldReceive('restrict')->andReturnUsing(function ($query, $b, $a, $column) {
-            $query->whereIn($column, [-1]);
-        }));
+        // A real restricted staff member (the HomeCommandCenterTest pattern): Business-wide access, but only the first Location.
+        $staff = $this->createCustomer();
+        $membership = $this->member($workspace, $staff->user, WorkspaceMembershipRole::Staff, WorkspaceBusinessAccessScope::All);
+        $membership->forceFill(['location_access_scope' => LocationAccessScope::Selected])->save();
+        app(WorkspaceMembershipLocationRepository::class)->assign($membership, $first);
+        $this->authenticateAs($staff->fresh());
 
+        $context = $this->context($staff->user, $workspace, $business);
+        $tool = app(DraftReplyTool::class);
+
+        // Their own Location's customer resolves...
+        $preview = $tool->prepare($context, ['conversation_ref' => AssistantHandles::for($context, 'conversation', $mineUid), 'message' => 'Thanks for getting in touch.']);
+        $this->assertSame($mineUid, $preview->resolved['conversation_uid']);
+
+        // ...the other Location's customer, with a perfectly valid handle for this actor, does not.
         $this->expectException(AssistantActionRefused::class);
-        app(DraftReplyTool::class)->prepare($context, ['conversation_ref' => $handle, 'message' => 'Hello there.']);
+        $tool->prepare($context, ['conversation_ref' => AssistantHandles::for($context, 'conversation', $theirUid), 'message' => 'Hello there.']);
     }
 }
