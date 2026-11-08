@@ -166,7 +166,7 @@ class SeoAuditController extends CustomerBaseController
      * Nothing is written here: the owner edits and saves in the editor (the same authorized, locked draft update), then publishes themselves.
      *
      * @param  array<int, \App\Library\Seo\SeoAuditFindingView>  $findings
-     * @return array<int, array{url: string, label: string, draftFixed: bool, live: bool, proposal: ?string, pageUid: string, pageTitle: string, draftToken: string}>  keyed by finding index
+     * @return array<int, array{url: string, label: string, draftFixed: bool, live: bool, proposal: ?string, currentDescription: string, replacesDescription: bool, pageUid: string, pageTitle: string, draftToken: string}>  keyed by finding index
      */
     private function draftFixes(Workspace $workspace, Business $business, string $workspaceUid, string $businessUid, array $findings): array
     {
@@ -213,12 +213,16 @@ class SeoAuditController extends CustomerBaseController
                 continue;
             }
 
-            // Only a blank field is provably fixed by a non-blank draft value; a "too short" description is never claimed fixed.
-            $fixed = $finding->ruleKey !== SeoAuditRuleRegistry::META_DESCRIPTION_SHORT && trim((string) $page->{$field}) !== '';
+            // A blank field is fixed by a non-blank draft value. A "too short" description counts as updated in the draft only once it
+            // reaches the audit's own recommended minimum; either way, only a fresh audit ever calls it resolved.
+            $isShort = $finding->ruleKey === SeoAuditRuleRegistry::META_DESCRIPTION_SHORT;
+            $minDescription = $this->config->auditMetaDescriptionMinRecommended();
+            $fixed = $isShort ? mb_strlen(trim((string) $page->{$field})) >= $minDescription : trim((string) $page->{$field}) !== '';
 
             // live = the current published version has the value; drafted = only the draft has it; open = neither. A value that is merely
             // saved or published is never described as improved rankings.
-            $live = $finding->ruleKey !== SeoAuditRuleRegistry::META_DESCRIPTION_SHORT && trim((string) ($published[$page->uid]['seo'][$field] ?? '')) !== '';
+            $publishedValue = trim((string) ($published[$page->uid]['seo'][$field] ?? ''));
+            $live = $isShort ? mb_strlen($publishedValue) >= $minDescription : $publishedValue !== '';
 
             // A blank title also gets a deterministic proposal the owner can edit and approve right here (nothing is generated or saved).
             $proposal = $finding->ruleKey === SeoAuditRuleRegistry::SEO_TITLE_BLANK && ! $fixed && ! $live
@@ -226,10 +230,13 @@ class SeoAuditController extends CustomerBaseController
                 : null;
 
             // A blank description gets an editable field and an optional, explicitly requested suggestion (existing read-only endpoint).
-            $descriptionForm = $finding->ruleKey === SeoAuditRuleRegistry::META_DESCRIPTION_BLANK && ! $fixed && ! $live;
+            // A too-short one gets the same form, pre-filled with the current text so it can be reviewed and replaced.
+            $descriptionForm = in_array($finding->ruleKey, [SeoAuditRuleRegistry::META_DESCRIPTION_BLANK, SeoAuditRuleRegistry::META_DESCRIPTION_SHORT], true) && ! $fixed && ! $live;
 
             $fixes[$i] = [
                 'descriptionForm' => $descriptionForm,
+                'currentDescription' => $isShort ? trim((string) $page->meta_description) : '',
+                'replacesDescription' => $isShort,
                 'suggestUrl' => $descriptionForm ? route('customer.workspaces.businesses.website.pages.suggestDescription', [$workspaceUid, $businessUid, $page->uid]) : null,
                 'proposal' => $proposal,
                 'pageUid' => $page->uid,
@@ -287,7 +294,7 @@ class SeoAuditController extends CustomerBaseController
             }
         }
 
-        $blank = [SeoAuditRuleRegistry::SEO_TITLE_BLANK, SeoAuditRuleRegistry::META_DESCRIPTION_BLANK];
+        $blank = [SeoAuditRuleRegistry::SEO_TITLE_BLANK, SeoAuditRuleRegistry::META_DESCRIPTION_BLANK, SeoAuditRuleRegistry::META_DESCRIPTION_SHORT];
         $findings = DB::table('seo_audit_findings')
             ->where('seo_audit_run_id', $prior->id)
             ->whereIn('rule_key', $blank)
@@ -301,13 +308,13 @@ class SeoAuditController extends CustomerBaseController
             $page = $pages[(string) $finding->page_uid] ?? null;
             $field = $finding->rule_key === SeoAuditRuleRegistry::SEO_TITLE_BLANK ? 'seo_title' : 'meta_description';
 
-            if ($page === null || trim((string) ($page['seo'][$field] ?? '')) === '') {
+            if ($page === null || ! $this->satisfiesRule($finding->rule_key, (string) ($page['seo'][$field] ?? ''))) {
                 continue;
             }
 
             $result[] = [
                 'title' => (string) ($page['title'] ?? 'A page'),
-                'what' => $field === 'seo_title' ? 'page title' : 'description',
+                'what' => $this->whatFor($finding->rule_key),
             ];
 
             if (count($result) >= 5) {
@@ -316,6 +323,25 @@ class SeoAuditController extends CustomerBaseController
         }
 
         return $result;
+    }
+
+    /** A blank title/description finding is satisfied by any non-blank value; a too-short description only once it reaches the audit's own minimum. */
+    private function satisfiesRule(string $ruleKey, string $value): bool
+    {
+        $value = trim($value);
+
+        return $ruleKey === SeoAuditRuleRegistry::META_DESCRIPTION_SHORT
+            ? mb_strlen($value) >= $this->config->auditMetaDescriptionMinRecommended()
+            : $value !== '';
+    }
+
+    private function whatFor(string $ruleKey): string
+    {
+        return match ($ruleKey) {
+            SeoAuditRuleRegistry::SEO_TITLE_BLANK => 'page title',
+            SeoAuditRuleRegistry::META_DESCRIPTION_SHORT => 'fuller description',
+            default => 'description',
+        };
     }
 
     /**
@@ -338,6 +364,7 @@ class SeoAuditController extends CustomerBaseController
     {
         return $this->applyDraftField($request, $workspaceUid, $businessUid, $pageUid, [
             'input' => 'meta_description', 'column' => 'meta_description', 'rule' => SeoAuditRuleRegistry::META_DESCRIPTION_BLANK,
+            'replaces' => SeoAuditRuleRegistry::META_DESCRIPTION_SHORT,
             'noun' => 'description', 'blank' => 'Enter a description to save.',
             'min' => \App\Library\Website\WebsiteMetaDescriptionSuggester::MIN, 'max' => \App\Library\Website\WebsiteMetaDescriptionSuggester::MAX,
         ]);
@@ -349,7 +376,7 @@ class SeoAuditController extends CustomerBaseController
      * Rejected when the audit evidence is gone or has moved on, the page is not this Business's, or the draft changed since the form
      * was shown (WebsitePage::draftToken(), the editor's own state fingerprint).
      *
-     * @param  array{input: string, column: string, rule: string, noun: string, blank: string, min: int, max: int}  $field
+     * @param  array{input: string, column: string, rule: string, noun: string, blank: string, min: int, max: int, replaces?: string}  $field
      */
     private function applyDraftField(\Illuminate\Http\Request $request, string $workspaceUid, string $businessUid, string $pageUid, array $field): RedirectResponse
     {
@@ -384,7 +411,9 @@ class SeoAuditController extends CustomerBaseController
         $auditPage = $this->reader->read($business);
         $run = $auditPage->latestRun;
         $reported = $run !== null && $run->status === \App\Enums\Seo\SeoAuditRunStatus::Completed && $run->uid === $data['audit_run']
-            && collect($auditPage->findings)->contains(fn ($f) => $f->pageUid === $pageUid && $f->ruleKey === $field['rule']);
+            && collect($auditPage->findings)->contains(fn ($f) => $f->pageUid === $pageUid && in_array($f->ruleKey, [$field['rule'], $field['replaces'] ?? $field['rule']], true));
+        // Which finding it is decides whether an existing value may be replaced: only a too-short one is a replacement the owner reviewed.
+        $replacing = isset($field['replaces']) && collect($auditPage->findings)->contains(fn ($f) => $f->pageUid === $pageUid && $f->ruleKey === $field['replaces']);
 
         if (! $reported) {
             return $refuse('That finding is no longer in your latest audit, so nothing was saved. Review the audit and try again.');
@@ -394,7 +423,7 @@ class SeoAuditController extends CustomerBaseController
         WebsitePage::query()->where('website_id', $website->id)->where('uid', $pageUid)->firstOrFail();
 
         try {
-            $outcome = app(\App\Library\Website\GuidedGeneration\WebsiteGenerationCoordinator::class)->runExclusive($website, function () use ($website, $pageUid, $value, $data, $field) {
+            $outcome = app(\App\Library\Website\GuidedGeneration\WebsiteGenerationCoordinator::class)->runExclusive($website, function () use ($website, $pageUid, $value, $data, $field, $replacing, $business) {
                 $locked = WebsitePage::query()->where('website_id', $website->id)->where('uid', $pageUid)->first();
 
                 if ($locked === null) {
@@ -403,8 +432,14 @@ class SeoAuditController extends CustomerBaseController
 
                 $existing = trim((string) $locked->{$field['column']});
 
-                if ($existing !== '') {
-                    return $existing === $value ? 'already' : 'has_value';
+                if ($existing === $value) {
+                    return 'already';
+                }
+
+                // A blank may only be filled; a too-short description may be replaced, but only if it is still short (the audit's own
+                // minimum) and the draft is exactly as shown (token below). Anything else is never overwritten.
+                if ($existing !== '' && (! $replacing || mb_strlen($existing) >= $this->config->auditMetaDescriptionMinRecommended())) {
+                    return 'has_value';
                 }
 
                 if ($locked->draftToken() !== $data['draft_token']) {
@@ -466,7 +501,7 @@ class SeoAuditController extends CustomerBaseController
             return [];
         }
 
-        $blank = [SeoAuditRuleRegistry::SEO_TITLE_BLANK, SeoAuditRuleRegistry::META_DESCRIPTION_BLANK];
+        $blank = [SeoAuditRuleRegistry::SEO_TITLE_BLANK, SeoAuditRuleRegistry::META_DESCRIPTION_BLANK, SeoAuditRuleRegistry::META_DESCRIPTION_SHORT];
         $rows = DB::table('seo_audit_findings')
             ->whereIn('seo_audit_run_id', [$previous->id, $latest->id])
             ->whereIn('rule_key', $blank)
@@ -503,13 +538,13 @@ class SeoAuditController extends CustomerBaseController
             $page = $pages[(string) $row->page_uid] ?? null;
             $field = $row->rule_key === SeoAuditRuleRegistry::SEO_TITLE_BLANK ? 'seo_title' : 'meta_description';
 
-            if (isset($now[$key]) || $page === null || trim((string) ($page['seo'][$field] ?? '')) === '') {
+            if (isset($now[$key]) || $page === null || ! $this->satisfiesRule($row->rule_key, (string) ($page['seo'][$field] ?? ''))) {
                 continue;
             }
 
             $resolved[] = [
                 'title' => (string) ($page['title'] ?? 'A page'),
-                'what' => $field === 'seo_title' ? 'page title' : 'description',
+                'what' => $this->whatFor($row->rule_key),
             ];
 
             if (count($resolved) >= 5) {
