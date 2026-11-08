@@ -3,7 +3,9 @@
 namespace Tests\Feature\Dashboards;
 
 use App\Enums\Entitlement\WorkspacePlanTier;
-use App\Library\Assistant\AssistantSuggestions;
+use App\Enums\Entitlement\PlatformFeature;
+use App\Enums\Entitlement\WorkspaceEntitlementOverrideState;
+use App\Library\Entitlement\EntitlementManager;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
@@ -99,13 +101,22 @@ class GrowthHomeLeadRecoveryTest extends TestCase
     {
         [$customer, $business] = $this->tenant(WorkspacePlanTier::Growth, 'Manual Venue', 'Manual Account');
         $this->conversationWith($business, [['incoming', $this->minutesAgo(90)]]);
+        // A real capability scenario: this Workspace is denied the assistant (AI COO) entitlement, so no reply can be prepared, while the
+        // inbox (Conversations) entitlement and the customer's permissions are untouched, so replying by hand remains possible.
+        app(EntitlementManager::class)->createOrChangeOverride(
+            $business->workspace,
+            PlatformFeature::AiCooBasic,
+            WorkspaceEntitlementOverrideState::Deny,
+            $this->platformAdminId(),
+            'Test: no assistant, inbox still available.',
+        );
         $this->authenticateAs($customer);
-        $this->partialMock(AssistantSuggestions::class, fn ($m) => $m->shouldReceive('draftReplies')->andReturn(null));
 
         $section = $this->section($this->html());
 
         $this->assertStringNotContainsString('data-role="prepare-reply"', $section);
-        $this->assertStringContainsString('data-role="reply-manually"', $section);
+        $this->assertStringContainsString('data-role="reply-manually"', $section, 'Replying by hand is still offered.');
+        $this->assertStringContainsString('data-role="waiting-item"', $section);
     }
 
     public function test_the_reply_form_posts_to_the_inboxs_own_endpoint_and_sends_nothing_until_pressed(): void
@@ -143,7 +154,9 @@ class GrowthHomeLeadRecoveryTest extends TestCase
         $this->assertStringContainsString('Reply submitted to your messaging provider', $section);
         $this->assertStringContainsString('Reply delivered', $section);
         $this->assertStringContainsString('A reply is not a booking', $section);
-        $this->assertDoesNotMatchRegularExpression('/booked|revenue|recovered|converted/i', strip_tags($section));
+        // The truthful uncertainty ("does not know whether this customer booked") is required; any POSITIVE claim is not.
+        $claimsOnly = str_replace('A reply is not a booking: MotionGrove does not know whether this customer booked.', '', strip_tags($section));
+        $this->assertDoesNotMatchRegularExpression('/booked|booking|revenue|recovered|converted|conversion|won back/i', $claimsOnly);
     }
 
     public function test_a_customer_who_writes_again_is_actionable_again_and_not_shown_as_answered(): void
