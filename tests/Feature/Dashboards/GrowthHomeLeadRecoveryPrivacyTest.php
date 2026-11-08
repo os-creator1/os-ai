@@ -53,11 +53,18 @@ class GrowthHomeLeadRecoveryPrivacyTest extends TestCase
     {
         $box = $this->conversationWith($business, [['incoming', $this->minutesAgo($minutesAgo)]]);
         $row = DB::table('chat_boxes')->where('id', $box)->first();
-        $group = $this->contactGroup($business);
-        Contacts::create([
-            'customer_id' => $group->customer_id, 'business_id' => $business->id, 'group_id' => $group->id,
-            'phone' => $row->to, 'first_name' => $first, 'last_name' => $last, 'status' => Contacts::STATUS_SUBSCRIBE,
+        // Names exist the way the application stores them (and ChatBox::displayNamesFor reads them): FIRST_NAME / LAST_NAME custom fields
+        // on the Contact's group (same pattern as ChatBoxSecurityTest::test_batched_display_names_match_get_full_name).
+        $group = \App\Models\ContactGroups::create(['customer_id' => $business->customer_id, 'business_id' => $business->id, 'name' => 'Names ' . uniqid()]);
+        $firstField = \App\Models\ContactGroupFields::create(['contact_group_id' => $group->id, 'label' => 'First name', 'type' => 'text', 'tag' => 'FIRST_NAME']);
+        $lastField = \App\Models\ContactGroupFields::create(['contact_group_id' => $group->id, 'label' => 'Last name', 'type' => 'text', 'tag' => 'LAST_NAME']);
+        $contact = Contacts::create([
+            'customer_id' => $business->customer_id, 'business_id' => $business->id, 'group_id' => $group->id,
+            'phone' => $row->to, 'status' => Contacts::STATUS_SUBSCRIBE,
         ]);
+        \App\Models\ContactsCustomField::create(['contact_id' => $contact->id, 'field_id' => $firstField->id, 'value' => $first]);
+        \App\Models\ContactsCustomField::create(['contact_id' => $contact->id, 'field_id' => $lastField->id, 'value' => $last]);
+        $this->assertSame($first . ' ' . $last, $contact->fresh()->getFullName(), 'Fixture precondition: the name resolves.');
 
         return [$box, (string) $row->uid, (string) $row->to];
     }
