@@ -156,6 +156,17 @@
                                                     <span class="text-caption text-muted" data-role="audit-fix-drafted">Updated in your draft. Publish to make it live.</span>
                                                 @endif
                                                 <a href="{{ $fix['url'] }}" data-role="audit-draft-fix-link">{{ $fix['label'] }}</a>
+                                                @if (($fix['proposal'] ?? null) !== null && ! empty($auditRunUid) && ($fix['draftToken'] ?? '') !== '')
+                                                    <form method="POST" action="{{ route('customer.workspaces.businesses.seo.audit.title.apply', [$workspaceUid, $businessUid, $fix['pageUid']]) }}" class="mt-50" data-role="audit-title-proposal">
+                                                        @csrf
+                                                        <input type="hidden" name="audit_run" value="{{ $auditRunUid }}">
+                                                        <input type="hidden" name="draft_token" value="{{ $fix['draftToken'] }}">
+                                                        <label class="text-caption d-block" for="title-{{ $fix['pageUid'] }}">Proposed title for "{{ $fix['pageTitle'] }}" (edit it if you like)</label>
+                                                        <input type="text" class="form-control form-control-sm mb-50" id="title-{{ $fix['pageUid'] }}" name="seo_title" maxlength="70" value="{{ $fix['proposal'] }}">
+                                                        <button type="submit" class="btn btn-sm btn-primary">Approve and save to draft</button>
+                                                        <span class="text-caption text-muted">Saves to your draft only. Publishing is a separate step.</span>
+                                                    </form>
+                                                @endif
                                             </div>
                                         @endif
                                     </td>

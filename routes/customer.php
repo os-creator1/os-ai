@@ -1381,6 +1381,7 @@
             // revision is published, and re-auditing one is idempotent.
             Route::get('/site-audit', 'Business\SeoAuditController@audit')->name('audit.index');
             Route::post('/site-audit/run', 'Business\SeoAuditController@rerun')->middleware('throttle:6,1')->name('audit.rerun');
+            Route::post('/site-audit/pages/{pageUid}/title', 'Business\SeoAuditController@applyTitle')->middleware('throttle:20,1')->name('audit.title.apply');
 
             // SEO Content Engine V1 — SEO -> Content: the Content Plan, Articles, Opportunities and the
             // article editor. Articles (list, editor, preview, publish flow) ride SeoBasicVisibility;
