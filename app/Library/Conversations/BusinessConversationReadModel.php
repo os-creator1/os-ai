@@ -307,6 +307,39 @@ final class BusinessConversationReadModel
     private const FAILED_SEND_STATUSES = ['failed', 'delivery_failed'];
 
     /**
+     * Growth Home — replies this actor's conversations have recently RECEIVED from the Business and that are still the latest word in
+     * their conversation (so each is genuinely answered right now; a customer who wrote again drops out). Only rows whose
+     * `send_status` is recorded appear, because only those can state what happened: 'sent' = submitted to the messaging provider,
+     * 'delivered' = the provider reported delivery. A failed or still-sending reply is not listed. Same Location rule as the
+     * inbox; one bounded statement.
+     *
+     * @return array<int, array{id: int, uid: string, to: string, status: string, at: CarbonImmutable}>
+     */
+    public function recentAnsweredByReply(Business $business, int $actorUserId, int $limit = 3, ?CarbonInterface $now = null): array
+    {
+        $now = CarbonImmutable::parse($now ?? CarbonImmutable::now());
+
+        $rows = DB::table('chat_box_messages as m')
+            ->join('chat_boxes as box', 'box.id', '=', 'm.box_id')
+            ->whereIn('m.box_id', $this->conversationIds($business, $now->subDays(7), $actorUserId))
+            ->where('m.direction', 'outgoing')
+            ->whereIn('m.send_status', ['sent', 'delivered'])
+            ->where('m.created_at', '>=', $now->subDays(7))
+            ->whereRaw('m.id = (select max(l.id) from chat_box_messages as l where l.box_id = m.box_id)')
+            ->orderByDesc('m.id')
+            ->limit(max(1, $limit))
+            ->get(['box.id as box_id', 'box.uid as box_uid', 'box.to as box_to', 'm.send_status as status', 'm.created_at as at']);
+
+        return $rows->map(fn ($r): array => [
+            'id' => (int) $r->box_id,
+            'uid' => (string) $r->box_uid,
+            'to' => (string) $r->box_to,
+            'status' => (string) $r->status,
+            'at' => CarbonImmutable::parse((string) $r->at),
+        ])->all();
+    }
+
+    /**
      * This Business's conversation ids, as a SUBQUERY rather than a join.
      *
      * Tenancy is identical either way — `chat_boxes.business_id = ?`, so a
