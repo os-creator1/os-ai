@@ -18,6 +18,9 @@
             <span data-role="location"><x-ds-icon name="map-pin" size="12" /> {{ $card['location_name'] }}</span>
         @endif
         <span data-role="age">{{ $card['age_label'] }}</span>
+        @if(! empty($card['work']))
+            <span class="gc-pill @if(in_array($card['work']['key'], ['verified', 'completed'], true)) is-ok @endif" data-role="work-stage" data-stage="{{ $card['work']['key'] }}" title="{{ $card['work']['note'] }}">{{ $card['work']['label'] }}</span>
+        @endif
         @if(! $isOpen)
             <span class="gc-pill @if($card['state'] === 'resolved') is-ok @endif" data-role="state">{{ $card['state_label'] }}@if($card['state'] === 'snoozed' && $card['snoozed_until']) until {{ $card['snoozed_until']->format('M j') }}@endif</span>
         @endif

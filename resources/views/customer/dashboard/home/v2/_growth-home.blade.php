@@ -182,6 +182,10 @@
             </div>
         </section>
 
+        @if(! empty($g['workUrl']))
+            <p class="hv2-muted mb-0" data-role="growth-work-link"><a href="{{ $g['workUrl'] }}">See all Growth work and its status</a></p>
+        @endif
+
         {{-- A failed automation read is still visible on Growth Home; never silently hide a failed proof of all-clear. --}}
         @if($dashboard->failed(\App\Library\Dashboard\DashboardSnapshot::BAND_AUTOMATIONS))
             @include('customer.dashboard.band-failed', ['band' => 'automations', 'title' => 'Automations'])

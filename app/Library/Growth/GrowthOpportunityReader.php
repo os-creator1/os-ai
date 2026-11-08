@@ -125,6 +125,45 @@ final class GrowthOpportunityReader
     }
 
     /**
+     * The latest action execution of each given Opportunity, keyed by Opportunity id, in two bounded statements however many are asked
+     * for (the work record never queries per row).
+     *
+     * @param  array<int, int>  $opportunityIds
+     * @return array<int, \App\Models\OpportunityActionExecution>
+     */
+    public function latestExecutions(array $opportunityIds): array
+    {
+        if ($opportunityIds === []) {
+            return [];
+        }
+
+        $latest = \Illuminate\Support\Facades\DB::table('opportunity_action_executions')
+            ->whereIn('opportunity_id', $opportunityIds)
+            ->groupBy('opportunity_id')
+            ->selectRaw('MAX(id) as id')
+            ->pluck('id')
+            ->all();
+
+        return \App\Models\OpportunityActionExecution::query()->whereIn('id', $latest)->get()->keyBy('opportunity_id')->all();
+    }
+
+    /**
+     * Growth work that has moved past "recommended": awaiting approval, in progress, completed, or ever executed — within the same
+     * Business, plan-entitlement and Location scope as every other Growth list (base()). Newest activity first.
+     */
+    public function workHistory(Business $business, GrowthViewer $viewer, int $perPage = 20): LengthAwarePaginator
+    {
+        return $this->base($business, $viewer)
+            ->where(function (Builder $q): void {
+                $q->whereIn('status', [OpportunityStatus::AwaitingApproval->value, OpportunityStatus::InProgress->value, OpportunityStatus::Completed->value])
+                    ->orWhereIn('id', fn ($sub) => $sub->select('opportunity_id')->from('opportunity_action_executions'));
+            })
+            ->orderByDesc('updated_at')
+            ->orderByDesc('id')
+            ->paginate($perPage);
+    }
+
+    /**
      * @param  array{state?: string, category?: string, module?: string, location?: string|int, q?: string}  $filters
      */
     public function paginate(Business $business, GrowthViewer $viewer, array $filters, int $perPage = 15): LengthAwarePaginator

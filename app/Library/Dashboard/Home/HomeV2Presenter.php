@@ -117,6 +117,7 @@ final class HomeV2Presenter
             'growthFailed' => $growthFailed,
             'google' => $home['googleVisibility'] ?? null,
             'leads' => $home['leadRecovery'] ?? null,
+            'workUrl' => $home['growthWorkUrl'] ?? null,
             'secondary' => $queue[0] ?? null,
             'more' => array_slice($queue, 1, 4),
             'moreUrl' => $home['queueUrl'] ?? null,

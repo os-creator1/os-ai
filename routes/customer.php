@@ -1451,6 +1451,7 @@
             Route::get('/advisor', 'Business\GrowthCenterController@advisor')->name('advisor');
             Route::post('/advisor', 'Business\GrowthCenterController@ask')->middleware('throttle:10,1')->name('advisor.ask');
             Route::get('/opportunities', 'Business\GrowthCenterController@opportunities')->name('opportunities.index');
+            Route::get('/work', 'Business\GrowthCenterController@work')->name('work');
             Route::get('/opportunities/{opportunityUid}', 'Business\GrowthCenterController@show')->name('opportunities.show');
             Route::get('/opportunities/{opportunityUid}/go', 'Business\GrowthCenterController@go')->name('opportunities.go');
             Route::post('/opportunities/{opportunityUid}/snooze', 'Business\GrowthCenterController@snooze')->middleware('throttle:30,1')->name('opportunities.snooze');

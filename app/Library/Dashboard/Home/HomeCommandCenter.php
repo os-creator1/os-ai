@@ -201,10 +201,16 @@ final class HomeCommandCenter
             $primary['aiAction'] = $this->assistantSuggestions->explainRecommendation($offering);
         }
 
+        // One link to the whole Growth work record (recommended → approved → executed → verified), for Growth customers who may open it.
+        $growthWorkUrl = $context->frameWorkspace()?->tier === \App\Enums\Entitlement\WorkspacePlanTier::Growth
+            ? $this->links->url($context, $user, $entitlements, 'customer.workspaces.businesses.growth.work', $scoped, ['business_advisor'], 'ai_coo_basic')
+            : null;
+
         $leadRecovery = $this->leadRecovery($business, $context, $user, $bands, $actions, $this->assistantSuggestions->draftReplies($offering) !== null ? $offering : null);
 
         $model = [
             'leadRecovery' => $leadRecovery,
+            'growthWorkUrl' => $growthWorkUrl,
             'state' => $state,
             'greeting' => $this->greeting($business, $user),
             'briefing' => $briefing + ['unavailable' => in_array(DashboardSnapshot::BAND_ACTIVITY, $failed, true)],
