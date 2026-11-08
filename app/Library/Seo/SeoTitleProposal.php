@@ -36,4 +36,41 @@ final class SeoTitleProposal
 
         return $candidate === '' ? null : $candidate;
     }
+
+    /**
+     * A shorter title that fits once the Business/site name is composed in (the length searchers actually see), cut at a word boundary.
+     * Null when even a single word does not fit, so the owner writes it themselves.
+     */
+    public static function shortened(string $source, string $siteName, int $recommendedMax): ?string
+    {
+        $max = min(self::EDITOR_MAX, max(20, $recommendedMax));
+        $words = preg_split('/\s+/u', trim($source), -1, PREG_SPLIT_NO_EMPTY) ?: [];
+
+        for ($count = count($words); $count >= 1; $count--) {
+            $candidate = implode(' ', array_slice($words, 0, $count));
+
+            if (mb_strlen(SeoMetadataRules::effectiveTitle($candidate, $candidate, $siteName)) <= $max) {
+                return $candidate;
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * A variant that is not already used by another page (compared with the audit's own normalisation), or null when none of the
+     * honest variants is free — the owner then writes a title that is specific to this page.
+     *
+     * @param  array<int, string>  $takenNormalised
+     */
+    public static function distinct(string $pageTitle, string $businessName, bool $isHome, int $recommendedMax, array $takenNormalised): ?string
+    {
+        foreach ([self::for($pageTitle, $businessName, $isHome, $recommendedMax), trim($pageTitle)] as $candidate) {
+            if ($candidate !== null && $candidate !== '' && ! in_array(SeoMetadataRules::normalize($candidate), $takenNormalised, true)) {
+                return $candidate;
+            }
+        }
+
+        return null;
+    }
 }

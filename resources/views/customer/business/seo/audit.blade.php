@@ -120,6 +120,10 @@
                     <span class="badge bg-light-info">{{ $page->latestRun->info_count }} suggestions</span>
                 </div>
 
+                @if (! empty($manualGuidance))
+                    <p class="text-caption text-muted" data-role="audit-manual-guidance">You can't edit this website's draft from here. To fix the page titles and descriptions listed below, ask someone with website editing access, or change them where your website is managed. Re-run the check afterwards.</p>
+                @endif
+
                 <div class="table-responsive">
                     <table class="table table-sm">
                         <thead>
@@ -155,14 +159,25 @@
                                                 @elseif ($fix['draftFixed'])
                                                     <span class="text-caption text-muted" data-role="audit-fix-drafted">Updated in your draft. Publish to make it live.</span>
                                                 @endif
+                                                @if (($fix['mode'] ?? 'fill') !== 'fill' && ($fix['currentValue'] ?? '') !== '')
+                                                    <div class="text-caption mb-25" data-role="audit-fix-context">
+                                                        Current {{ ($fix['field'] ?? '') === 'seo_title' ? 'page title' : 'description' }} for "{{ $fix['pageTitle'] }}": "{{ $fix['currentValue'] }}"
+                                                        @if (($fix['effectiveLength'] ?? null) !== null)
+                                                            <br>Searchers see "{{ $fix['effectiveTitle'] }}" ({{ $fix['effectiveLength'] }} characters as searchers see it, including your business name when it fits; recommended maximum {{ $fix['titleMax'] }}).
+                                                        @endif
+                                                        @if (! empty($fix['sharedWith']))
+                                                            <br>Also used by: {{ implode(', ', $fix['sharedWith']) }}.
+                                                        @endif
+                                                    </div>
+                                                @endif
                                                 <a href="{{ $fix['url'] }}" data-role="audit-draft-fix-link">{{ $fix['label'] }}</a>
-                                                @if (($fix['proposal'] ?? null) !== null && ! empty($auditRunUid) && ($fix['draftToken'] ?? '') !== '')
+                                                @if (($fix['titleForm'] ?? false) && ! empty($auditRunUid) && ($fix['draftToken'] ?? '') !== '')
                                                     <form method="POST" action="{{ route('customer.workspaces.businesses.seo.audit.title.apply', [$workspaceUid, $businessUid, $fix['pageUid']]) }}" class="mt-50" data-role="audit-title-proposal">
                                                         @csrf
                                                         <input type="hidden" name="audit_run" value="{{ $auditRunUid }}">
                                                         <input type="hidden" name="draft_token" value="{{ $fix['draftToken'] }}">
                                                         <label class="text-caption d-block" for="title-{{ $fix['pageUid'] }}">Proposed title for "{{ $fix['pageTitle'] }}" (edit it if you like)</label>
-                                                        <input type="text" class="form-control form-control-sm mb-50" id="title-{{ $fix['pageUid'] }}" name="seo_title" maxlength="70" value="{{ $fix['proposal'] }}">
+                                                        <input type="text" class="form-control form-control-sm mb-50" id="title-{{ $fix['pageUid'] }}" name="seo_title" maxlength="70" value="{{ $fix['proposal'] ?? '' }}">
                                                         <button type="submit" class="btn btn-sm btn-primary">Approve and save to draft</button>
                                                         <span class="text-caption text-muted">Saves to your draft only. Publishing is a separate step.</span>
                                                     </form>

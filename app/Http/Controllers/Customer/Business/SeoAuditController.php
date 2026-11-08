@@ -10,6 +10,7 @@ use App\Library\Entitlement\EntitlementManager;
 use App\Library\Seo\SeoAuditPageReader;
 use App\Library\Seo\SeoAuditRuleRegistry;
 use App\Library\Seo\SeoAuditRunner;
+use App\Library\Seo\SeoMetadataRules;
 use App\Library\Seo\SeoConfig;
 use App\Models\Business;
 use App\Models\Website;
@@ -60,12 +61,15 @@ class SeoAuditController extends CustomerBaseController
         $this->authorize('view_seo');
 
         $auditPage = $this->reader->read($business);
+        $draftFixes = $this->draftFixes($workspace, $business, $workspaceUid, $businessUid, $auditPage->findings);
 
         return view('customer.business.seo.audit', [
             'resolved' => $this->resolvedByFreshAudit($business, $auditPage),
+            // A metadata finding this actor cannot fix here (no Website editing, or no editable draft): say so instead of showing nothing.
+            'manualGuidance' => $draftFixes === [] && collect($auditPage->findings)->contains(fn ($f) => $f->pageUid !== null && isset(self::DRAFT_FIXABLE[$f->ruleKey])),
             'auditRunUid' => $auditPage->latestRun?->uid,
             'publishedPending' => $this->publishedPendingFreshAudit($business, $auditPage),
-            'draftFixes' => $this->draftFixes($workspace, $business, $workspaceUid, $businessUid, $auditPage->findings),
+            'draftFixes' => $draftFixes,
             'workspaceUid' => $workspaceUid,
             'businessUid' => $businessUid,
             'business' => $business,
@@ -155,8 +159,11 @@ class SeoAuditController extends CustomerBaseController
     /** Page-level findings the existing Website page editor can repair in the DRAFT. */
     private const DRAFT_FIXABLE = [
         SeoAuditRuleRegistry::SEO_TITLE_BLANK => 'seo_title',
+        SeoAuditRuleRegistry::SEO_TITLE_OVER_RECOMMENDED => 'seo_title',
+        SeoAuditRuleRegistry::DUPLICATE_SEO_TITLE => 'seo_title',
         SeoAuditRuleRegistry::META_DESCRIPTION_BLANK => 'meta_description',
         SeoAuditRuleRegistry::META_DESCRIPTION_SHORT => 'meta_description',
+        SeoAuditRuleRegistry::DUPLICATE_META_DESCRIPTION => 'meta_description',
     ];
 
     /**
@@ -184,14 +191,15 @@ class SeoAuditController extends CustomerBaseController
             return [];
         }
 
-        $draft = WebsitePage::query()
-            ->whereIn('website_id', Website::query()->where('business_id', $business->id)->select('id'))
-            ->whereIn('uid', array_unique($uids))
-            ->get()->keyBy('uid');
+        // Every draft page of this Business's Website (bounded by the page ceiling): the duplicate rules compare a page with the others.
+        $website = Website::query()->where('business_id', $business->id)->first(['id', 'name', 'published_revision_id']);
+        $allDraft = $website === null ? collect() : WebsitePage::query()->where('website_id', $website->id)->limit(200)->get()->keyBy('uid');
+        $draft = $allDraft;
+        $siteName = (string) ($website?->name ?? '');
 
-        // What the PUBLISHED revision now says for these pages: the only evidence that a fix is live. One read of the current published snapshot.
+        // What the PUBLISHED revision now says: the only evidence that a fix is live. One read of the current published snapshot.
         $published = [];
-        $revisionId = Website::query()->where('business_id', $business->id)->value('published_revision_id');
+        $revisionId = $website?->published_revision_id;
 
         if ($revisionId !== null) {
             $snapshot = DB::table('website_revisions')->where('id', $revisionId)->value('snapshot');
@@ -203,6 +211,8 @@ class SeoAuditController extends CustomerBaseController
             }
         }
 
+        $titleMax = $this->config->auditSeoTitleMaxRecommended();
+        $minDescription = $this->config->auditMetaDescriptionMinRecommended();
         $fixes = [];
 
         foreach ($findings as $i => $finding) {
@@ -213,30 +223,61 @@ class SeoAuditController extends CustomerBaseController
                 continue;
             }
 
-            // A blank field is fixed by a non-blank draft value. A "too short" description counts as updated in the draft only once it
-            // reaches the audit's own recommended minimum; either way, only a fresh audit ever calls it resolved.
-            $isShort = $finding->ruleKey === SeoAuditRuleRegistry::META_DESCRIPTION_SHORT;
-            $minDescription = $this->config->auditMetaDescriptionMinRecommended();
-            $fixed = $isShort ? mb_strlen(trim((string) $page->{$field})) >= $minDescription : trim((string) $page->{$field}) !== '';
+            $mode = SeoMetadataRules::mode($finding->ruleKey);
+            $isTitle = $field === 'seo_title';
+            $othersDraft = $allDraft->where('uid', '!=', $page->uid)->map(fn ($p) => (string) $p->{$field})->values()->all();
+            $othersLive = collect($published)->except($page->uid)->map(fn ($p) => (string) ($p['seo'][$field] ?? ''))->values()->all();
 
-            // live = the current published version has the value; drafted = only the draft has it; open = neither. A value that is merely
-            // saved or published is never described as improved rankings.
-            $publishedValue = trim((string) ($published[$page->uid]['seo'][$field] ?? ''));
-            $live = $isShort ? mb_strlen($publishedValue) >= $minDescription : $publishedValue !== '';
+            // drafted = the draft value satisfies the rule; live = the current published version does; either way only a fresh audit
+            // ever calls it resolved, and nothing is described as improved rankings.
+            $draftValue = trim((string) $page->{$field});
+            $fixed = SeoMetadataRules::satisfies($finding->ruleKey, $draftValue, (string) $page->title, $siteName, $othersDraft, $titleMax, $minDescription);
+            $liveValue = trim((string) ($published[$page->uid]['seo'][$field] ?? ''));
+            $live = SeoMetadataRules::satisfies($finding->ruleKey, $liveValue, (string) ($published[$page->uid]['title'] ?? $page->title), $siteName, $othersLive, $titleMax, $minDescription);
 
-            // A blank title also gets a deterministic proposal the owner can edit and approve right here (nothing is generated or saved).
-            $proposal = $finding->ruleKey === SeoAuditRuleRegistry::SEO_TITLE_BLANK && ! $fixed && ! $live
-                ? \App\Library\Seo\SeoTitleProposal::for((string) $page->title, (string) $business->name, (bool) $page->is_home, $this->config->auditSeoTitleMaxRecommended())
-                : null;
+            // A title gets an editable form pre-filled with a deterministic proposal (blank: built from the page; too long: a shortened
+            // form that fits once composed; duplicate: a distinct variant), never generated by a provider. Nothing is saved.
+            $showTitleForm = $isTitle && ! $fixed && ! $live;
+            $proposal = null;
 
-            // A blank description gets an editable field and an optional, explicitly requested suggestion (existing read-only endpoint).
-            // A too-short one gets the same form, pre-filled with the current text so it can be reviewed and replaced.
-            $descriptionForm = in_array($finding->ruleKey, [SeoAuditRuleRegistry::META_DESCRIPTION_BLANK, SeoAuditRuleRegistry::META_DESCRIPTION_SHORT], true) && ! $fixed && ! $live;
+            if ($showTitleForm) {
+                $taken = array_map(fn ($o) => SeoMetadataRules::normalize((string) $o), $othersDraft);
+                $proposal = match ($mode) {
+                    'fill' => \App\Library\Seo\SeoTitleProposal::for((string) $page->title, (string) $business->name, (bool) $page->is_home, $titleMax),
+                    'shorten' => \App\Library\Seo\SeoTitleProposal::shortened((string) $page->title !== '' ? (string) $page->title : $draftValue, $siteName, $titleMax),
+                    default => \App\Library\Seo\SeoTitleProposal::distinct((string) $page->title, (string) $business->name, (bool) $page->is_home, $titleMax, $taken),
+                } ?? $draftValue;
+            }
+
+            // A description gets an editable field and an optional, explicitly requested suggestion (existing read-only endpoint); a
+            // replacement form (too short / duplicate) is pre-filled with the current text so it can be reviewed and replaced.
+            $descriptionForm = ! $isTitle && ! $fixed && ! $live;
+            $replaces = $mode !== 'fill';
+
+            // Plain-language context: what was found, and for a duplicate, which OTHER pages share the value.
+            $sharing = $mode === 'unique'
+                ? $allDraft->filter(fn ($p) => $p->uid !== $page->uid && SeoMetadataRules::normalize((string) $p->{$field}) === SeoMetadataRules::normalize($draftValue) && $draftValue !== '')->map(fn ($p) => (string) $p->title)->values()->take(5)->all()
+                : [];
+            $effective = $isTitle ? SeoMetadataRules::effectiveTitle($draftValue, (string) $page->title, $siteName) : '';
 
             $fixes[$i] = [
+                'ruleKey' => $finding->ruleKey,
+                'mode' => $mode,
+                'field' => $field,
+                'currentValue' => $draftValue,
+                'effectiveTitle' => $effective,
+                'effectiveLength' => $effective === '' ? null : mb_strlen($effective),
+                'titleMax' => $titleMax,
+                'sharedWith' => $sharing,
+                'titleForm' => $showTitleForm,
                 'descriptionForm' => $descriptionForm,
-                'currentDescription' => $isShort ? trim((string) $page->meta_description) : '',
-                'replacesDescription' => $isShort,
+                'currentDescription' => $replaces && ! $isTitle ? $draftValue : '',
+                'replacesDescription' => $replaces && ! $isTitle,
+                'currentNote' => match ($mode) {
+                    'replace' => ', too short',
+                    'unique' => ', shared with another page',
+                    default => '',
+                },
                 'suggestUrl' => $descriptionForm ? route('customer.workspaces.businesses.website.pages.suggestDescription', [$workspaceUid, $businessUid, $page->uid]) : null,
                 'proposal' => $proposal,
                 'pageUid' => $page->uid,
@@ -244,7 +285,7 @@ class SeoAuditController extends CustomerBaseController
                 'draftToken' => $page->draftToken(),
                 'live' => $live,
                 'url' => route('customer.workspaces.businesses.website.pages.edit', [$workspaceUid, $businessUid, $page->uid]) . '#' . $field,
-                'label' => $field === 'seo_title' ? 'Set the page title in your draft' : 'Prepare fix',
+                'label' => $isTitle ? 'Set the page title in your draft' : 'Prepare fix',
                 'draftFixed' => $fixed,
             ];
         }
@@ -265,7 +306,7 @@ class SeoAuditController extends CustomerBaseController
             return [];
         }
 
-        $website = Website::query()->where('business_id', $business->id)->first(['id', 'published_revision_id']);
+        $website = Website::query()->where('business_id', $business->id)->first(['id', 'name', 'published_revision_id']);
 
         if ($website === null || $website->published_revision_id === null) {
             return [];
@@ -294,7 +335,7 @@ class SeoAuditController extends CustomerBaseController
             }
         }
 
-        $blank = [SeoAuditRuleRegistry::SEO_TITLE_BLANK, SeoAuditRuleRegistry::META_DESCRIPTION_BLANK, SeoAuditRuleRegistry::META_DESCRIPTION_SHORT];
+        $blank = array_keys(SeoMetadataRules::RULES);
         $findings = DB::table('seo_audit_findings')
             ->where('seo_audit_run_id', $prior->id)
             ->whereIn('rule_key', $blank)
@@ -306,9 +347,8 @@ class SeoAuditController extends CustomerBaseController
 
         foreach ($findings as $finding) {
             $page = $pages[(string) $finding->page_uid] ?? null;
-            $field = $finding->rule_key === SeoAuditRuleRegistry::SEO_TITLE_BLANK ? 'seo_title' : 'meta_description';
 
-            if ($page === null || ! $this->satisfiesRule($finding->rule_key, (string) ($page['seo'][$field] ?? ''))) {
+            if ($page === null || ! $this->publishedSatisfies($finding->rule_key, $pages, (string) $finding->page_uid, (string) ($website->name ?? ''))) {
                 continue;
             }
 
@@ -325,21 +365,37 @@ class SeoAuditController extends CustomerBaseController
         return $result;
     }
 
-    /** A blank title/description finding is satisfied by any non-blank value; a too-short description only once it reaches the audit's own minimum. */
-    private function satisfiesRule(string $ruleKey, string $value): bool
+    /** Whether the page in this published snapshot satisfies the rule — judged with the audit's own definitions, against the OTHER published pages. */
+    private function publishedSatisfies(string $ruleKey, array $pages, string $uid, string $siteName): bool
     {
-        $value = trim($value);
+        $field = SeoMetadataRules::field($ruleKey);
+        $page = $pages[$uid] ?? null;
 
-        return $ruleKey === SeoAuditRuleRegistry::META_DESCRIPTION_SHORT
-            ? mb_strlen($value) >= $this->config->auditMetaDescriptionMinRecommended()
-            : $value !== '';
+        if ($field === null || $page === null) {
+            return false;
+        }
+
+        $others = collect($pages)->except($uid)->map(fn ($p) => (string) ($p['seo'][$field] ?? ''))->values()->all();
+
+        return SeoMetadataRules::satisfies(
+            $ruleKey,
+            (string) ($page['seo'][$field] ?? ''),
+            (string) ($page['title'] ?? ''),
+            $siteName,
+            $others,
+            $this->config->auditSeoTitleMaxRecommended(),
+            $this->config->auditMetaDescriptionMinRecommended(),
+        );
     }
 
     private function whatFor(string $ruleKey): string
     {
         return match ($ruleKey) {
             SeoAuditRuleRegistry::SEO_TITLE_BLANK => 'page title',
+            SeoAuditRuleRegistry::SEO_TITLE_OVER_RECOMMENDED => 'shorter page title',
+            SeoAuditRuleRegistry::DUPLICATE_SEO_TITLE => 'page title of its own',
             SeoAuditRuleRegistry::META_DESCRIPTION_SHORT => 'fuller description',
+            SeoAuditRuleRegistry::DUPLICATE_META_DESCRIPTION => 'description of its own',
             default => 'description',
         };
     }
@@ -352,6 +408,7 @@ class SeoAuditController extends CustomerBaseController
     {
         return $this->applyDraftField($request, $workspaceUid, $businessUid, $pageUid, [
             'input' => 'seo_title', 'column' => 'seo_title', 'rule' => SeoAuditRuleRegistry::SEO_TITLE_BLANK,
+            'rules' => [SeoAuditRuleRegistry::SEO_TITLE_BLANK, SeoAuditRuleRegistry::SEO_TITLE_OVER_RECOMMENDED, SeoAuditRuleRegistry::DUPLICATE_SEO_TITLE],
             'noun' => 'title', 'blank' => 'Enter a page title to save.', 'min' => 1, 'max' => 70,
         ]);
     }
@@ -364,7 +421,7 @@ class SeoAuditController extends CustomerBaseController
     {
         return $this->applyDraftField($request, $workspaceUid, $businessUid, $pageUid, [
             'input' => 'meta_description', 'column' => 'meta_description', 'rule' => SeoAuditRuleRegistry::META_DESCRIPTION_BLANK,
-            'replaces' => SeoAuditRuleRegistry::META_DESCRIPTION_SHORT,
+            'rules' => [SeoAuditRuleRegistry::META_DESCRIPTION_BLANK, SeoAuditRuleRegistry::META_DESCRIPTION_SHORT, SeoAuditRuleRegistry::DUPLICATE_META_DESCRIPTION],
             'noun' => 'description', 'blank' => 'Enter a description to save.',
             'min' => \App\Library\Website\WebsiteMetaDescriptionSuggester::MIN, 'max' => \App\Library\Website\WebsiteMetaDescriptionSuggester::MAX,
         ]);
@@ -376,7 +433,7 @@ class SeoAuditController extends CustomerBaseController
      * Rejected when the audit evidence is gone or has moved on, the page is not this Business's, or the draft changed since the form
      * was shown (WebsitePage::draftToken(), the editor's own state fingerprint).
      *
-     * @param  array{input: string, column: string, rule: string, noun: string, blank: string, min: int, max: int, replaces?: string}  $field
+     * @param  array{input: string, column: string, rule: string, rules: array<int, string>, noun: string, blank: string, min: int, max: int}  $field
      */
     private function applyDraftField(\Illuminate\Http\Request $request, string $workspaceUid, string $businessUid, string $pageUid, array $field): RedirectResponse
     {
@@ -410,10 +467,14 @@ class SeoAuditController extends CustomerBaseController
         // Evidence: the latest COMPLETED audit must still report this blank for this page, and must be the audit the form was shown for.
         $auditPage = $this->reader->read($business);
         $run = $auditPage->latestRun;
-        $reported = $run !== null && $run->status === \App\Enums\Seo\SeoAuditRunStatus::Completed && $run->uid === $data['audit_run']
-            && collect($auditPage->findings)->contains(fn ($f) => $f->pageUid === $pageUid && in_array($f->ruleKey, [$field['rule'], $field['replaces'] ?? $field['rule']], true));
-        // Which finding it is decides whether an existing value may be replaced: only a too-short one is a replacement the owner reviewed.
-        $replacing = isset($field['replaces']) && collect($auditPage->findings)->contains(fn ($f) => $f->pageUid === $pageUid && $f->ruleKey === $field['replaces']);
+        // The finding that put this page here decides what kind of change is allowed (fill a blank, replace a short one, shorten a long
+        // composed title, or make a shared value unique).
+        $matched = $run === null || $run->status !== \App\Enums\Seo\SeoAuditRunStatus::Completed || $run->uid !== $data['audit_run']
+            ? null
+            : collect($auditPage->findings)->first(fn ($f) => $f->pageUid === $pageUid && in_array($f->ruleKey, $field['rules'], true));
+        $reported = $matched !== null;
+        $mode = $matched === null ? null : SeoMetadataRules::mode($matched->ruleKey);
+        $ruleKey = $matched?->ruleKey;
 
         if (! $reported) {
             return $refuse('That finding is no longer in your latest audit, so nothing was saved. Review the audit and try again.');
@@ -423,7 +484,7 @@ class SeoAuditController extends CustomerBaseController
         WebsitePage::query()->where('website_id', $website->id)->where('uid', $pageUid)->firstOrFail();
 
         try {
-            $outcome = app(\App\Library\Website\GuidedGeneration\WebsiteGenerationCoordinator::class)->runExclusive($website, function () use ($website, $pageUid, $value, $data, $field, $replacing, $business) {
+            $outcome = app(\App\Library\Website\GuidedGeneration\WebsiteGenerationCoordinator::class)->runExclusive($website, function () use ($website, $pageUid, $value, $data, $field, $mode, $ruleKey) {
                 $locked = WebsitePage::query()->where('website_id', $website->id)->where('uid', $pageUid)->first();
 
                 if ($locked === null) {
@@ -432,18 +493,40 @@ class SeoAuditController extends CustomerBaseController
 
                 $existing = trim((string) $locked->{$field['column']});
 
+                $titleMax = $this->config->auditSeoTitleMaxRecommended();
+                $descriptionMin = $this->config->auditMetaDescriptionMinRecommended();
+                $others = WebsitePage::query()->where('website_id', $website->id)->where('id', '!=', $locked->id)->limit(200)->pluck($field['column'])->map(fn ($v) => (string) $v)->all();
+
+                // The same text again is a no-op — but it only counts as "already there" if it actually solves the reported problem.
                 if ($existing === $value) {
-                    return 'already';
+                    return $mode === 'fill' || SeoMetadataRules::satisfies($ruleKey, $existing, (string) $locked->title, (string) $website->name, $others, $titleMax, $descriptionMin) ? 'already' : 'unchanged';
                 }
 
-                // A blank may only be filled; a too-short description may be replaced, but only if it is still short (the audit's own
-                // minimum) and the draft is exactly as shown (token below). Anything else is never overwritten.
-                if ($existing !== '' && (! $replacing || mb_strlen($existing) >= $this->config->auditMetaDescriptionMinRecommended())) {
+                // What may be changed: a blank may only be filled; every other kind of change may replace the value only while the draft
+                // STILL has the problem the audit reported (otherwise it is never overwritten).
+                $stillProblem = match ($mode) {
+                    'fill' => $existing === '',
+                    default => $existing !== '' && ! SeoMetadataRules::satisfies($ruleKey, $existing, (string) $locked->title, (string) $website->name, $others, $titleMax, $descriptionMin),
+                };
+
+                if (! $stillProblem) {
                     return 'has_value';
                 }
 
                 if ($locked->draftToken() !== $data['draft_token']) {
                     return 'stale';
+                }
+
+                if ($mode === 'shorten' && mb_strlen(SeoMetadataRules::effectiveTitle($value, (string) $locked->title, (string) $website->name)) > $titleMax) {
+                    return 'too_long';
+                }
+
+                if ($mode === 'unique' && ! SeoMetadataRules::satisfies($ruleKey, $value, (string) $locked->title, (string) $website->name, $others, $titleMax, $descriptionMin)) {
+                    return 'duplicate';
+                }
+
+                if ($mode === 'replace' && mb_strlen($value) < $descriptionMin) {
+                    return 'too_short';
                 }
 
                 app(\App\Library\Website\WebsiteDraftPageService::class)->updatePage($website, $locked, [
@@ -471,6 +554,10 @@ class SeoAuditController extends CustomerBaseController
             'already' => $back->with(['status' => 'success', 'message' => 'That ' . $noun . ' is already in your draft. Nothing changed. Publish your website to make it live.']),
             'has_value' => $refuse('This page already has a ' . $noun . ' in your draft, so nothing was overwritten.'),
             'stale' => $refuse('This page changed after the proposal was shown, so nothing was saved. Review it and try again.'),
+            'unchanged' => $refuse('That is the same as the current ' . $noun . ', which still has the problem the audit found. Change it, then approve. Nothing was saved.'),
+            'too_long' => $refuse('With your business name added, that title is still longer than the recommended ' . $this->config->auditSeoTitleMaxRecommended() . ' characters searchers see. Nothing was saved.'),
+            'duplicate' => $refuse('Another page already uses that ' . $noun . ', so nothing was saved. Write one that is specific to this page.'),
+            'too_short' => $refuse('That description is still shorter than the recommended ' . $this->config->auditMetaDescriptionMinRecommended() . ' characters. Nothing was saved.'),
             default => $refuse('That page no longer exists, so nothing was saved.'),
         };
     }
@@ -501,7 +588,7 @@ class SeoAuditController extends CustomerBaseController
             return [];
         }
 
-        $blank = [SeoAuditRuleRegistry::SEO_TITLE_BLANK, SeoAuditRuleRegistry::META_DESCRIPTION_BLANK, SeoAuditRuleRegistry::META_DESCRIPTION_SHORT];
+        $blank = array_keys(SeoMetadataRules::RULES);
         $rows = DB::table('seo_audit_findings')
             ->whereIn('seo_audit_run_id', [$previous->id, $latest->id])
             ->whereIn('rule_key', $blank)
@@ -524,6 +611,7 @@ class SeoAuditController extends CustomerBaseController
             ->where('id', $latest->website_revision_id)
             ->value('snapshot');
         $snapshot = json_decode((string) $raw, true);
+        $siteName = (string) ($snapshot['website']['name'] ?? '');
         $pages = [];
 
         foreach (($snapshot['pages'] ?? []) as $snapPage) {
@@ -536,9 +624,8 @@ class SeoAuditController extends CustomerBaseController
 
         foreach ($before as $key => $row) {
             $page = $pages[(string) $row->page_uid] ?? null;
-            $field = $row->rule_key === SeoAuditRuleRegistry::SEO_TITLE_BLANK ? 'seo_title' : 'meta_description';
 
-            if (isset($now[$key]) || $page === null || ! $this->satisfiesRule($row->rule_key, (string) ($page['seo'][$field] ?? ''))) {
+            if (isset($now[$key]) || $page === null || ! $this->publishedSatisfies($row->rule_key, $pages, (string) $row->page_uid, $siteName)) {
                 continue;
             }
 
