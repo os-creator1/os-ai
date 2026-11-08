@@ -139,7 +139,14 @@ class GrowthCenterController extends CustomerBaseController
             ];
         })->filter(fn (array $r): bool => $r['stage'] !== null)->values()->all();
 
+        // The records that are not Opportunity executions (booking setup, customer replies, website/SEO activity), each shown only if this
+        // actor may open its module.
+        $composer = app(\App\Library\Navigation\CustomerShellComposer::class);
+        $customer = $composer->currentContext(Auth::user());
+        $connected = app(\App\Library\Growth\GrowthWorkConnections::class)->build($business, Auth::user(), $customer, $composer->currentMenuEntitlements($customer), [$workspaceUid, $businessUid]);
+
         return view('customer.business.growth.work', $this->shared($workspace, $business, $viewer, 'work') + [
+            'connected' => $connected,
             'rows' => $rows,
             'paginator' => $page,
         ]);

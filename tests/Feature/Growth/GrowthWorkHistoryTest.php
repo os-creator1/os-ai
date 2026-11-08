@@ -2,9 +2,13 @@
 
 namespace Tests\Feature\Growth;
 
+use App\Enums\Workspace\LocationAccessScope;
+use App\Enums\Workspace\WorkspaceBusinessAccessScope;
+use App\Enums\Workspace\WorkspaceMembershipRole;
 use App\Models\Customer;
 use App\Models\Opportunity;
 use App\Models\OpportunityActionExecution;
+use App\Repositories\Contracts\WorkspaceMembershipLocationRepository;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use Tests\Feature\Growth\Concerns\CreatesGrowthFixtures;
@@ -175,5 +179,102 @@ class GrowthWorkHistoryTest extends TestCase
         $this->work();
 
         $this->assertSame($before, [DB::table('opportunities')->count(), DB::table('opportunity_action_executions')->count(), DB::table('opportunity_transitions')->count(), $opportunity->fresh()->status->value]);
+    }
+
+    // ------------------------------------------------------------------ Connected records (replies, booking, SEO)
+
+    private function workAs(array $permissions): string
+    {
+        $this->authenticateAs($this->owner, $permissions);
+
+        return $this->get($this->growth('work'))->assertOk()->getContent();
+    }
+
+    public function test_customer_replies_are_reported_from_recorded_send_states_and_never_as_a_booking(): void
+    {
+        $this->conversation([['incoming', 10], ['outgoing', 9, 'sent']]);
+        $this->conversation([['incoming', 12], ['outgoing', 11, 'delivered']]);
+        $this->conversation([['incoming', 8], ['outgoing', 7, 'failed']]); // a failed reply is not an answer: still waiting
+        $this->conversation([['incoming', 5]]);
+
+        $html = $this->workAs(['business_advisor', 'chat_box']);
+
+        $this->assertStringContainsString('2 customers are waiting for a reply.', $html);
+        $this->assertSame(2, substr_count($html, 'data-role="reply-row"'));
+        $this->assertStringContainsString('Reply submitted to your messaging provider', $html);
+        $this->assertStringContainsString('Reply delivered', $html);
+        $text = str_replace('A reply is not a booking: MotionGrove does not know whether a customer booked.', '', strip_tags($html));
+        $this->assertDoesNotMatchRegularExpression('/booked|revenue|recovered|converted/i', $text);
+    }
+
+    public function test_a_location_restricted_staff_member_sees_only_their_locations_replies_and_another_business_never_counts(): void
+    {
+        $second = $this->secondLocation('Second site');
+        $this->conversation([['incoming', 5]], $this->primaryLocation->id);
+        $this->conversation([['incoming', 6]], $second->id);
+
+        [, $otherBusiness] = $this->crmTenant('Other Co', 'Other WS');
+        DB::table('chat_boxes')->insert([
+            'uid' => (string) \Illuminate\Support\Str::uuid(), 'user_id' => $otherBusiness->customer_id, 'business_id' => $otherBusiness->id,
+            'from' => '15559990000', 'to' => '15559990001', 'notification' => 0, 'created_at' => now()->subDays(2), 'updated_at' => now(),
+        ]);
+        $boxId = (int) DB::table('chat_boxes')->where('business_id', $otherBusiness->id)->value('id');
+        DB::table('chat_box_messages')->insert(['box_id' => $boxId, 'message' => 'x', 'sms_type' => 'sms', 'direction' => 'incoming', 'created_at' => now()->subHours(9), 'updated_at' => now()->subHours(9)]);
+
+        $this->assertStringContainsString('2 customers are waiting for a reply.', $this->workAs(['business_advisor', 'chat_box']), 'Owner: this Business only, both Locations.');
+
+        $staff = $this->createCustomer();
+        $membership = $this->member($this->workspace, $staff->user, WorkspaceMembershipRole::Staff, WorkspaceBusinessAccessScope::All);
+        $membership->forceFill(['location_access_scope' => LocationAccessScope::Selected])->save();
+        app(WorkspaceMembershipLocationRepository::class)->assign($membership, $this->primaryLocation);
+        $this->authenticateAs($staff, ['business_advisor', 'chat_box']);
+
+        $html = $this->get($this->growth('work'))->assertOk()->getContent();
+        $this->assertStringContainsString('1 customer is waiting for a reply.', $html, 'Only the staff member\'s Location.');
+    }
+
+    public function test_a_booking_type_that_cannot_take_bookings_is_shown_with_a_fix_link_and_the_recheck_reads_live_state(): void
+    {
+        $typeId = $this->bookingType();
+        $typeUid = (string) DB::table('booking_types')->where('id', $typeId)->value('uid');
+
+        $first = $this->workAs(['business_advisor']);
+        $this->assertStringContainsString('data-role="work-booking"', $first);
+        $this->assertStringContainsString('data-state="needs_setup"', $first);
+        $this->assertSame(1, preg_match('#data-role="booking-problem">(.*?)<a#s', $first, $before), 'The blocking reason is shown.');
+        $this->assertStringContainsString('/booking-types/' . $typeUid, html_entity_decode($first), 'A fix link opens exactly that booking type.');
+
+        // After the correction, simply loading the page again re-reads readiness: the same blocker is no longer reported.
+        $this->assignStaff($typeId, null, 10);
+        $second = $this->workAs(['business_advisor']);
+        $stillBlocked = preg_match('#data-role="booking-problem">(.*?)<a#s', $second, $after) === 1 && trim(strip_tags($after[1])) === trim(strip_tags($before[1]));
+        $this->assertFalse($stillBlocked, 'The recheck reflects the fix.');
+        $this->assertStringContainsString('Ready does not mean customers have booked', $second);
+    }
+
+    public function test_website_and_seo_activity_is_recorded_activity_with_a_link_to_the_audit(): void
+    {
+        DB::table('seo_audit_runs')->insert([
+            'uid' => (string) \Illuminate\Support\Str::uuid(), 'business_id' => $this->business->id, 'website_id' => 1, 'website_revision_id' => 1,
+            'rule_set_version' => 1, 'status' => 'completed', 'critical_count' => 0, 'warning_count' => 2, 'info_count' => 0, 'created_at' => now()->subHours(3),
+        ]);
+
+        $html = $this->workAs(['business_advisor', 'view_seo']);
+
+        $this->assertStringContainsString('data-role="work-seo"', $html);
+        $this->assertStringContainsString('Website SEO audit completed: 2 issues found', $html);
+        $this->assertStringContainsString('Recorded', $html);
+        $this->assertStringContainsString('data-role="seo-audit-link"', $html);
+        $this->assertDoesNotMatchRegularExpression('/ranking(s)? (improved|increase)|more traffic/i', strip_tags($html));
+    }
+
+    public function test_sections_a_user_may_not_open_are_not_shown(): void
+    {
+        $this->conversation([['incoming', 5]]);
+
+        $html = $this->workAs(['business_advisor']); // no inbox and no SEO permission
+
+        $this->assertStringNotContainsString('data-role="work-replies"', $html);
+        $this->assertStringNotContainsString('data-role="work-seo"', $html);
     }
 }
