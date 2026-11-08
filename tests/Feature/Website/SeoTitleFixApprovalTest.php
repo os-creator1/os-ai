@@ -66,7 +66,7 @@ class SeoTitleFixApprovalTest extends TestCase
         // The finding shows the page and an editable proposal; showing it changes nothing.
         $html = $this->auditHtml($workspace, $business);
         $this->assertStringContainsString('data-role="audit-title-proposal"', $html);
-        $this->assertStringContainsString('Proposed title for &quot;Photo Booth Rentals&quot;', $html);
+        $this->assertStringContainsString('Proposed title for "Photo Booth Rentals"', $html);
         $this->assertNull($page->fresh()->seo_title, 'No mutation before approval.');
 
         // Explicit approval of the (edited) text saves exactly that text to the draft — and nothing goes live.
