@@ -201,7 +201,7 @@ final class HomeCommandCenter
             $primary['aiAction'] = $this->assistantSuggestions->explainRecommendation($offering);
         }
 
-        $leadRecovery = $this->leadRecovery($business, $context, $user, $bands, $actions, $this->assistantSuggestions->draftReplies($offering) !== null);
+        $leadRecovery = $this->leadRecovery($business, $context, $user, $bands, $actions, $this->assistantSuggestions->draftReplies($offering) !== null ? $offering : null);
 
         $model = [
             'leadRecovery' => $leadRecovery,
@@ -310,6 +310,20 @@ final class HomeCommandCenter
 
         foreach ($band['items'] ?? [] as $item) {
             if ($item['key'] === 'awaiting_reply') {
+                return (int) preg_replace('/\D/', '', (string) $item['figure']);
+            }
+        }
+
+        return null;
+    }
+
+    /** The Conversations band's own count of conversations replied to in the selected period (null when the band is absent). */
+    private function repliedCount(array $bands): ?int
+    {
+        $band = $bands[DashboardSnapshot::BAND_CONVERSATIONS] ?? null;
+
+        foreach (is_array($band) ? ($band['items'] ?? []) : [] as $item) {
+            if ($item['key'] === 'replied') {
                 return (int) preg_replace('/\D/', '', (string) $item['figure']);
             }
         }
@@ -829,7 +843,7 @@ final class HomeCommandCenter
      * @param  array<string, array<string, mixed>|null>  $actions
      * @return array<string, mixed>|null
      */
-    private function leadRecovery(Business $business, CustomerContext $context, User $user, array $bands, array $actions, bool $canPrepare): ?array
+    private function leadRecovery(Business $business, CustomerContext $context, User $user, array $bands, array $actions, ?AssistantContext $prepare): ?array
     {
         $followUps = $actions['follow-ups'] ?? null;
         $total = $this->waitingCount($bands);
@@ -840,20 +854,27 @@ final class HomeCommandCenter
 
         $actor = (int) $user->id;
         $rows = $total > 0 ? $this->conversations->awaitingReplyConversations($business, $actor, 5) : [];
-        $answered = $this->conversations->recentAnsweredByReply($business, $actor, 3);
+        // The recent-replies read only runs when it can matter: someone is still waiting, or the Conversations band already counted a
+        // reply in the selected period. A Business with neither pays no extra statement.
+        $answered = $total > 0 || ($this->repliedCount($bands) ?? 0) > 0 ? $this->conversations->recentAnsweredByReply($business, $actor, 3) : [];
         $named = array_merge($rows, $answered);
         $names = $named === [] ? [] : \App\Models\ChatBox::displayNamesFor($business, array_map(fn (array $r): object => (object) ['id' => $r['id'], 'to' => $r['to']], $named));
 
-        $items = array_map(function (array $r) use ($names, $canPrepare): array {
+        $items = array_map(function (array $r) use ($names, $prepare): array {
             $name = (string) ($names[$r['id']] ?? $r['to']);
             $waiting = $r['at']->diffForHumans(null, true);
+
+            // The customer sees the name; the ASSISTANT is given only the opaque, actor-and-Business-bound handle (never a name, number or
+            // message text), so two customers with the same name stay distinct and nothing personal reaches the provider.
+            $handle = $prepare === null ? null : \App\Library\Assistant\AssistantHandles::for($prepare, 'conversation', $r['uid']);
 
             return [
                 'uid' => $r['uid'],
                 'name' => $name,
                 'at' => $r['at'],
                 'waiting' => $waiting,
-                'prompt' => $canPrepare ? 'Help me reply to ' . $name . ', who has been waiting ' . $waiting . '.' : null,
+                'handle' => $handle,
+                'prompt' => $handle === null ? null : 'Prepare a reply for me to review to the waiting customer with handle ' . $handle . '. Read their latest message first, then draft the reply. Do not send it.',
             ];
         }, $rows);
 

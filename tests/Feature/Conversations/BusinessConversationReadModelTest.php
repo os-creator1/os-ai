@@ -58,6 +58,8 @@ class BusinessConversationReadModelTest extends TestCase
         // same predicate and the inbox's Location rule, for the follow-up drawer.
         // The final Home added awaitingReplyBoxQuery(): the ids behind the same predicate as a sub-select, for the inbox's "waiting"
         // filter, so the list a card opens is exactly the set it counted.
+        // Growth Home's lead recovery added recentAnsweredByReply(): the recent replies that are still the latest word in their conversation
+        // and whose send state is recorded, with the same Location rule, so Home can show what an answered customer's reply actually did.
         $this->assertSame([
             'awaitingReplyBoxQuery',
             'awaitingReplyConversations',
@@ -65,6 +67,7 @@ class BusinessConversationReadModelTest extends TestCase
             'hasAnyConversation',
             'incomingCount',
             'periodCounts',
+            'recentAnsweredByReply',
             'repliedCount',
             'startedCount',
             'startedCountsForBusinesses',
