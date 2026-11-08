@@ -82,7 +82,7 @@ class SeoDescriptionFixApprovalTest extends TestCase
 
         $this->assertStringContainsString('data-role="audit-description-form"', $html);
         $this->assertStringContainsString('data-role="audit-suggest-description"', $html);
-        $this->assertStringContainsString('Meta description for &quot;Photo Booth Rentals&quot;', $html);
+        $this->assertStringContainsString('Meta description for "Photo Booth Rentals"', $html);
         $this->assertNull($page->fresh()->meta_description, 'No mutation on load.');
     }
 
@@ -105,12 +105,13 @@ class SeoDescriptionFixApprovalTest extends TestCase
         $this->assertStringContainsString('data-role="audit-fix-drafted"', $drafted);
         $this->assertStringNotContainsString('data-role="audit-fix-live"', $drafted);
 
-        // Published through the real action: live, awaiting verification.
+        // Publish queues an SEO audit, so fake only that background job to prove the pending-verification state first.
+        \Illuminate\Support\Facades\Queue::fake([\App\Jobs\Seo\RunSeoAuditForRevision::class]);
         $this->post(route('customer.workspaces.businesses.website.publish', [$workspace->uid, $business->uid]))->assertRedirect();
         $second = WebsiteRevision::find((int) $website->fresh()->published_revision_id);
         $this->assertSame(self::APPROVED, $second->snapshot['pages'][0]['seo']['meta_description']);
         $awaiting = $this->auditHtml($workspace, $business);
-        $this->assertStringContainsString('data-role="audit-fix-live"', $awaiting);
+        $this->assertStringContainsString('data-role="audit-fix-published-pending"', $awaiting);
         $this->assertStringNotContainsString('data-role="audit-resolved"', $awaiting);
 
         // Only a fresh completed audit verifies it.
