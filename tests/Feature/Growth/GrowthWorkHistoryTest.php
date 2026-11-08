@@ -183,6 +183,11 @@ class GrowthWorkHistoryTest extends TestCase
 
     // ------------------------------------------------------------------ Connected records (replies, booking, SEO)
 
+    private function section(string $html, string $role): string
+    {
+        return preg_match('#<section[^>]*data-role="' . $role . '".*?</section>#s', $html, $m) === 1 ? $m[0] : '';
+    }
+
     private function workAs(array $permissions): string
     {
         $this->authenticateAs($this->owner, $permissions);
@@ -203,8 +208,11 @@ class GrowthWorkHistoryTest extends TestCase
         $this->assertSame(2, substr_count($html, 'data-role="reply-row"'));
         $this->assertStringContainsString('Reply submitted to your messaging provider', $html);
         $this->assertStringContainsString('Reply delivered', $html);
-        $text = str_replace('A reply is not a booking: MotionGrove does not know whether a customer booked.', '', strip_tags($html));
-        $this->assertDoesNotMatchRegularExpression('/booked|revenue|recovered|converted/i', $text);
+        // Scoped to the Customer replies section; the truthful negative disclaimer is required, a positive claim is not allowed.
+        $section = $this->section($html, 'work-replies');
+        $this->assertStringContainsString('A reply is not a booking', $section);
+        $claims = str_replace('A reply is not a booking: MotionGrove does not know whether a customer booked.', '', strip_tags($section));
+        $this->assertDoesNotMatchRegularExpression('/booked|booking|revenue|recovered|converted|conversion/i', $claims);
     }
 
     public function test_a_location_restricted_staff_member_sees_only_their_locations_replies_and_another_business_never_counts(): void
@@ -250,6 +258,41 @@ class GrowthWorkHistoryTest extends TestCase
         $stillBlocked = preg_match('#data-role="booking-problem">(.*?)<a#s', $second, $after) === 1 && trim(strip_tags($after[1])) === trim(strip_tags($before[1]));
         $this->assertFalse($stillBlocked, 'The recheck reflects the fix.');
         $this->assertStringContainsString('Ready does not mean customers have booked', $second);
+
+        // Readiness is never presented as a booking: apart from that disclaimer the section makes no booking, revenue or conversion claim.
+        $claims = str_replace('Ready does not mean customers have booked.', '', strip_tags($this->section($second, 'work-booking')));
+        $this->assertDoesNotMatchRegularExpression('/booked|revenue|recovered|converted|conversion|customers have booked/i', $claims);
+    }
+
+    public function test_a_staff_member_limited_to_another_location_does_not_see_this_locations_booking_blockers(): void
+    {
+        $this->bookingType(); // blocked, at the primary Location
+        $other = $this->secondLocation('Second site');
+
+        $staff = $this->createCustomer();
+        $membership = $this->member($this->workspace, $staff->user, WorkspaceMembershipRole::Staff, WorkspaceBusinessAccessScope::All);
+        $membership->forceFill(['location_access_scope' => LocationAccessScope::Selected])->save();
+        app(WorkspaceMembershipLocationRepository::class)->assign($membership, $other);
+        $this->authenticateAs($staff, ['business_advisor']);
+
+        $html = $this->get($this->growth('work'))->assertOk()->getContent();
+
+        $this->assertStringNotContainsString('Photo booth hire', $html, 'Another Location\'s booking type is never shown.');
+        $this->assertStringNotContainsString('data-role="booking-problem"', $html);
+    }
+
+    public function test_without_the_ai_coo_entitlement_the_work_page_does_not_exist_for_the_workspace(): void
+    {
+        app(\App\Library\Entitlement\EntitlementManager::class)->createOrChangeOverride(
+            $this->workspace,
+            \App\Enums\Entitlement\PlatformFeature::AiCooBasic,
+            \App\Enums\Entitlement\WorkspaceEntitlementOverrideState::Deny,
+            $this->platformAdminId(),
+            'Test: entitlement boundary.',
+        );
+        $this->authenticateAs($this->owner, ['business_advisor', 'chat_box', 'view_seo']);
+
+        $this->get($this->growth('work'))->assertNotFound();
     }
 
     public function test_website_and_seo_activity_is_recorded_activity_with_a_link_to_the_audit(): void

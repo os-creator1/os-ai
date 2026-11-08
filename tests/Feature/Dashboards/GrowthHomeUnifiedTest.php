@@ -96,4 +96,24 @@ class GrowthHomeUnifiedTest extends TestCase
         }
         $this->assertStringContainsString('data-home-layout="setup"', $html);
     }
+
+    public function test_growth_home_links_to_the_work_history_and_core_home_does_not(): void
+    {
+        [$customer, $business, $workspace] = $this->tenant(WorkspacePlanTier::Growth, 'Work Link Venue', 'Work Link Account');
+        $this->authenticateAs($customer);
+        $html = $this->home()->assertOk()->getContent();
+
+        $url = route('customer.workspaces.businesses.growth.work', [$workspace->uid, $business->uid]);
+        $this->assertStringContainsString('data-role="growth-work-link"', $html);
+        $this->assertStringContainsString('href="' . $url . '"', $html);
+        $this->get($url)->assertOk();
+
+        [$core] = $this->tenant(WorkspacePlanTier::Core, 'Core Work Venue', 'Core Work Account');
+        $this->authenticateAs($core);
+        $this->assertStringNotContainsString('data-role="growth-work-link"', $this->home()->assertOk()->getContent());
+
+        // A user without the advisor capability gets no link at all.
+        $this->authenticateAs($customer, ['view_reports']);
+        $this->assertStringNotContainsString('data-role="growth-work-link"', $this->home()->assertOk()->getContent());
+    }
 }
