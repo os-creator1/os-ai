@@ -64,6 +64,8 @@ class RecentWorkAutomationOutcomesTest extends TestCase
 
     public function test_only_succeeded_sends_are_counted_grouped_per_automation_and_day(): void
     {
+        // Keep the 2–4 hour fixture window inside one Business-local day, regardless of when CI runs.
+        $this->freezeClock();
         [, $business] = $this->tenant(WorkspacePlanTier::Growth, 'Follow Venue', 'Follow Account');
         $auto = $this->sender($business);
         foreach ([2, 3, 4] as $h) {
