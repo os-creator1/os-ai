@@ -35,6 +35,11 @@ class GrowthHomeLeadRecoveryPrivacyTest extends TestCase
         config(['opportunity.enabled' => true]);
     }
 
+    private function minutesAgo(int $minutes): string
+    {
+        return \Carbon\CarbonImmutable::now()->subMinutes($minutes)->setTimezone((string) config('app.timezone', 'UTC'))->format('Y-m-d H:i:s');
+    }
+
     private function context(User $user, Workspace $workspace, Business $business): AssistantContext
     {
         $composer = app(CustomerShellComposer::class);
