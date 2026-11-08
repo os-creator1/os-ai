@@ -167,6 +167,19 @@
                                                         <span class="text-caption text-muted">Saves to your draft only. Publishing is a separate step.</span>
                                                     </form>
                                                 @endif
+                                                @if (($fix['descriptionForm'] ?? false) && ! empty($auditRunUid) && ($fix['draftToken'] ?? '') !== '')
+                                                    <form method="POST" action="{{ route('customer.workspaces.businesses.seo.audit.description.apply', [$workspaceUid, $businessUid, $fix['pageUid']]) }}" class="mt-50" data-role="audit-description-form">
+                                                        @csrf
+                                                        <input type="hidden" name="audit_run" value="{{ $auditRunUid }}">
+                                                        <input type="hidden" name="draft_token" value="{{ $fix['draftToken'] }}">
+                                                        <label class="text-caption d-block" for="desc-{{ $fix['pageUid'] }}">Meta description for "{{ $fix['pageTitle'] }}" (70-160 characters)</label>
+                                                        <textarea class="form-control form-control-sm mb-50" rows="3" id="desc-{{ $fix['pageUid'] }}" name="meta_description" minlength="70" maxlength="160"></textarea>
+                                                        <button type="button" class="btn btn-sm btn-outline-secondary" data-role="audit-suggest-description" data-url="{{ $fix['suggestUrl'] }}" data-target="desc-{{ $fix['pageUid'] }}">Suggest with AI (optional)</button>
+                                                        <button type="submit" class="btn btn-sm btn-primary">Approve and save to draft</button>
+                                                        <span class="text-caption text-muted">Nothing is written until you approve. Saves to your draft only; publishing is a separate step.</span>
+                                                        <span class="text-caption text-danger d-block" data-role="audit-suggest-error" hidden role="alert"></span>
+                                                    </form>
+                                                @endif
                                             </div>
                                         @endif
                                     </td>
@@ -199,4 +212,21 @@
             </div>
         </div>
     @endif
+<script>
+// Optional suggestion: runs only on an explicit click, through the existing read-only Website endpoint. It fills the field for review; nothing is saved.
+document.querySelectorAll('[data-role="audit-suggest-description"]').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+        var form = btn.closest('form'), err = form.querySelector('[data-role="audit-suggest-error"]'), field = document.getElementById(btn.dataset.target);
+        btn.disabled = true; err.hidden = true;
+        fetch(btn.dataset.url, { method: 'POST', headers: { 'X-CSRF-TOKEN': form.querySelector('input[name="_token"]').value, 'Accept': 'application/json' } })
+            .then(function (r) { return r.json().catch(function () { return {}; }); })
+            .then(function (d) {
+                if (d && d.ok && d.description) { field.value = d.description; }
+                else { err.textContent = (d && d.message) || 'A suggestion is not available right now. You can write the description yourself.'; err.hidden = false; }
+            })
+            .catch(function () { err.textContent = 'A suggestion is not available right now. You can write the description yourself.'; err.hidden = false; })
+            .then(function () { btn.disabled = false; });
+    });
+});
+</script>
 @endsection

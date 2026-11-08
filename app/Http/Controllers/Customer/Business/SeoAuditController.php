@@ -225,7 +225,12 @@ class SeoAuditController extends CustomerBaseController
                 ? \App\Library\Seo\SeoTitleProposal::for((string) $page->title, (string) $business->name, (bool) $page->is_home, $this->config->auditSeoTitleMaxRecommended())
                 : null;
 
+            // A blank description gets an editable field and an optional, explicitly requested suggestion (existing read-only endpoint).
+            $descriptionForm = $finding->ruleKey === SeoAuditRuleRegistry::META_DESCRIPTION_BLANK && ! $fixed && ! $live;
+
             $fixes[$i] = [
+                'descriptionForm' => $descriptionForm,
+                'suggestUrl' => $descriptionForm ? route('customer.workspaces.businesses.website.pages.suggestDescription', [$workspaceUid, $businessUid, $page->uid]) : null,
                 'proposal' => $proposal,
                 'pageUid' => $page->uid,
                 'pageTitle' => (string) $page->title,
@@ -315,11 +320,38 @@ class SeoAuditController extends CustomerBaseController
 
     /**
      * The customer's explicit approval of a proposed SEO title for ONE page whose blank title the latest completed audit reported.
-     * It saves exactly the approved text to that page's Website DRAFT through the canonical draft-page service, under the Website lock,
-     * and nothing else: it never publishes, never overwrites an existing title, and is a no-op when repeated. Rejected when the audit
-     * evidence is gone or has moved on, the page is not this Business's, or the draft changed since the proposal was shown.
+     * See applyDraftField(): saves only to the Website DRAFT, never publishes, never overwrites, idempotent, refused when stale.
      */
     public function applyTitle(\Illuminate\Http\Request $request, string $workspaceUid, string $businessUid, string $pageUid): RedirectResponse
+    {
+        return $this->applyDraftField($request, $workspaceUid, $businessUid, $pageUid, [
+            'input' => 'seo_title', 'column' => 'seo_title', 'rule' => SeoAuditRuleRegistry::SEO_TITLE_BLANK,
+            'noun' => 'title', 'blank' => 'Enter a page title to save.', 'min' => 1, 'max' => 70,
+        ]);
+    }
+
+    /**
+     * The same approval for a blank META DESCRIPTION (70-160 characters, the editor's and the suggester's own limits). The text may come
+     * from the existing read-only "Suggest description" endpoint (an explicit click, never on page load) or be typed by hand.
+     */
+    public function applyDescription(\Illuminate\Http\Request $request, string $workspaceUid, string $businessUid, string $pageUid): RedirectResponse
+    {
+        return $this->applyDraftField($request, $workspaceUid, $businessUid, $pageUid, [
+            'input' => 'meta_description', 'column' => 'meta_description', 'rule' => SeoAuditRuleRegistry::META_DESCRIPTION_BLANK,
+            'noun' => 'description', 'blank' => 'Enter a description to save.',
+            'min' => \App\Library\Website\WebsiteMetaDescriptionSuggester::MIN, 'max' => \App\Library\Website\WebsiteMetaDescriptionSuggester::MAX,
+        ]);
+    }
+
+    /**
+     * Shared by both approvals. Saves exactly the approved text to that page's Website DRAFT through the canonical draft-page service,
+     * under the Website lock, and nothing else: it never publishes, never overwrites an existing value, and is a no-op when repeated.
+     * Rejected when the audit evidence is gone or has moved on, the page is not this Business's, or the draft changed since the form
+     * was shown (WebsitePage::draftToken(), the editor's own state fingerprint).
+     *
+     * @param  array{input: string, column: string, rule: string, noun: string, blank: string, min: int, max: int}  $field
+     */
+    private function applyDraftField(\Illuminate\Http\Request $request, string $workspaceUid, string $businessUid, string $pageUid, array $field): RedirectResponse
     {
         [$workspace, $business] = $this->resolveAuditTenancy($workspaceUid, $businessUid);
 
@@ -334,39 +366,45 @@ class SeoAuditController extends CustomerBaseController
         }
 
         $data = $request->validate([
-            'seo_title' => ['required', 'string', 'max:70'],
+            $field['input'] => ['required', 'string', 'max:5000'],
             'audit_run' => ['required', 'string'],
             'draft_token' => ['required', 'string'],
         ]);
-        $title = trim($data['seo_title']);
+        $value = trim($data[$field['input']]);
 
-        if ($title === '') {
-            return $refuse('Enter a page title to save.');
+        if ($value === '') {
+            return $refuse($field['blank']);
         }
 
-        // Evidence: the latest COMPLETED audit must still report a blank title for this page, and must be the audit the proposal was shown for.
+        if (mb_strlen($value) < $field['min'] || mb_strlen($value) > $field['max']) {
+            return $refuse('The ' . $field['noun'] . ' must be between ' . $field['min'] . ' and ' . $field['max'] . ' characters. Nothing was saved.');
+        }
+
+        // Evidence: the latest COMPLETED audit must still report this blank for this page, and must be the audit the form was shown for.
         $auditPage = $this->reader->read($business);
         $run = $auditPage->latestRun;
         $reported = $run !== null && $run->status === \App\Enums\Seo\SeoAuditRunStatus::Completed && $run->uid === $data['audit_run']
-            && collect($auditPage->findings)->contains(fn ($f) => $f->pageUid === $pageUid && $f->ruleKey === SeoAuditRuleRegistry::SEO_TITLE_BLANK);
+            && collect($auditPage->findings)->contains(fn ($f) => $f->pageUid === $pageUid && $f->ruleKey === $field['rule']);
 
         if (! $reported) {
             return $refuse('That finding is no longer in your latest audit, so nothing was saved. Review the audit and try again.');
         }
 
         $website = Website::query()->where('business_id', $business->id)->firstOrFail();
-        $page = WebsitePage::query()->where('website_id', $website->id)->where('uid', $pageUid)->firstOrFail();
+        WebsitePage::query()->where('website_id', $website->id)->where('uid', $pageUid)->firstOrFail();
 
         try {
-            $outcome = app(\App\Library\Website\GuidedGeneration\WebsiteGenerationCoordinator::class)->runExclusive($website, function () use ($website, $pageUid, $title, $data) {
+            $outcome = app(\App\Library\Website\GuidedGeneration\WebsiteGenerationCoordinator::class)->runExclusive($website, function () use ($website, $pageUid, $value, $data, $field) {
                 $locked = WebsitePage::query()->where('website_id', $website->id)->where('uid', $pageUid)->first();
 
                 if ($locked === null) {
                     return 'gone';
                 }
 
-                if (trim((string) $locked->seo_title) !== '') {
-                    return trim((string) $locked->seo_title) === $title ? 'already' : 'has_title';
+                $existing = trim((string) $locked->{$field['column']});
+
+                if ($existing !== '') {
+                    return $existing === $value ? 'already' : 'has_value';
                 }
 
                 if ($locked->draftToken() !== $data['draft_token']) {
@@ -378,10 +416,11 @@ class SeoAuditController extends CustomerBaseController
                     'slug' => $locked->slug,
                     'is_home' => (bool) $locked->is_home,
                     'sections' => $locked->sections ?? [],
-                    'seo_title' => $title,
+                    'seo_title' => $locked->seo_title,
                     'meta_description' => $locked->meta_description,
                     'noindex' => (bool) $locked->noindex,
                     'noindex_explicit' => (bool) $locked->noindex_explicit,
+                    $field['column'] => $value,
                 ]);
 
                 return 'saved';
@@ -390,10 +429,12 @@ class SeoAuditController extends CustomerBaseController
             return $refuse($e->getMessage());
         }
 
+        $noun = $field['noun'];
+
         return match ($outcome) {
-            'saved' => $back->with(['status' => 'success', 'message' => 'Title saved to your draft. It is not live until you publish your website.']),
-            'already' => $back->with(['status' => 'success', 'message' => 'That title is already in your draft. Nothing changed. Publish your website to make it live.']),
-            'has_title' => $refuse('This page already has a title in your draft, so nothing was overwritten.'),
+            'saved' => $back->with(['status' => 'success', 'message' => ucfirst($noun) . ' saved to your draft. It is not live until you publish your website.']),
+            'already' => $back->with(['status' => 'success', 'message' => 'That ' . $noun . ' is already in your draft. Nothing changed. Publish your website to make it live.']),
+            'has_value' => $refuse('This page already has a ' . $noun . ' in your draft, so nothing was overwritten.'),
             'stale' => $refuse('This page changed after the proposal was shown, so nothing was saved. Review it and try again.'),
             default => $refuse('That page no longer exists, so nothing was saved.'),
         };
