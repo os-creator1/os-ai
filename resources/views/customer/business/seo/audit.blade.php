@@ -120,6 +120,10 @@
                     <span class="badge bg-light-info">{{ $page->latestRun->info_count }} suggestions</span>
                 </div>
 
+                @if (! empty($manualGuidance))
+                    <p class="text-caption text-muted" data-role="audit-manual-guidance">You can't edit this website's draft from here. To fix the page titles and descriptions listed below, ask someone with website editing access, or change them where your website is managed. Re-run the check afterwards.</p>
+                @endif
+
                 <div class="table-responsive">
                     <table class="table table-sm">
                         <thead>
@@ -155,14 +159,26 @@
                                                 @elseif ($fix['draftFixed'])
                                                     <span class="text-caption text-muted" data-role="audit-fix-drafted">Updated in your draft. Publish to make it live.</span>
                                                 @endif
+                                                @if (($fix['mode'] ?? 'fill') !== 'fill' && ($fix['currentValue'] ?? '') !== '')
+                                                    <div class="text-caption mb-25" data-role="audit-fix-context">
+                                                        Current {{ ($fix['field'] ?? '') === 'seo_title' ? 'page title' : 'description' }} for "{{ $fix['pageTitle'] }}": "{{ $fix['currentValue'] }}"
+                                                        @if (($fix['effectiveLength'] ?? null) !== null)
+                                                            <br>Searchers see "{{ $fix['effectiveTitle'] }}" ({{ $fix['effectiveLength'] }} characters as searchers see it, including your business name when it fits; recommended maximum {{ $fix['titleMax'] }}).
+                                                        @endif
+                                                        @if (! empty($fix['sharedWith']))
+                                                            <br>Also used by: {{ implode(', ', $fix['sharedWith']) }}.
+                                                        @endif
+                                                    </div>
+                                                @endif
                                                 <a href="{{ $fix['url'] }}" data-role="audit-draft-fix-link">{{ $fix['label'] }}</a>
-                                                @if (($fix['proposal'] ?? null) !== null && ! empty($auditRunUid) && ($fix['draftToken'] ?? '') !== '')
+                                                @if (($fix['titleForm'] ?? false) && ! empty($auditRunUid) && ($fix['draftToken'] ?? '') !== '')
                                                     <form method="POST" action="{{ route('customer.workspaces.businesses.seo.audit.title.apply', [$workspaceUid, $businessUid, $fix['pageUid']]) }}" class="mt-50" data-role="audit-title-proposal">
                                                         @csrf
                                                         <input type="hidden" name="audit_run" value="{{ $auditRunUid }}">
                                                         <input type="hidden" name="draft_token" value="{{ $fix['draftToken'] }}">
-                                                        <label class="text-caption d-block" for="title-{{ $fix['pageUid'] }}">Proposed title for "{{ $fix['pageTitle'] }}" (edit it if you like)</label>
-                                                        <input type="text" class="form-control form-control-sm mb-50" id="title-{{ $fix['pageUid'] }}" name="seo_title" maxlength="70" value="{{ $fix['proposal'] }}">
+                                                        <input type="hidden" name="rule" value="{{ $fix['ruleKey'] }}">
+                                                        <label class="text-caption d-block" for="title-{{ $fix['pageUid'] }}-{{ $fix['ruleKey'] }}">Proposed title for "{{ $fix['pageTitle'] }}" (edit it if you like)</label>
+                                                        <input type="text" class="form-control form-control-sm mb-50" id="title-{{ $fix['pageUid'] }}-{{ $fix['ruleKey'] }}" name="seo_title" maxlength="70" value="{{ $fix['proposal'] ?? '' }}">
                                                         <button type="submit" class="btn btn-sm btn-primary">Approve and save to draft</button>
                                                         <span class="text-caption text-muted">Saves to your draft only. Publishing is a separate step.</span>
                                                     </form>
@@ -172,12 +188,13 @@
                                                         @csrf
                                                         <input type="hidden" name="audit_run" value="{{ $auditRunUid }}">
                                                         <input type="hidden" name="draft_token" value="{{ $fix['draftToken'] }}">
-                                                        <label class="text-caption d-block" for="desc-{{ $fix['pageUid'] }}">Meta description for "{{ $fix['pageTitle'] }}" (70-160 characters)</label>
+                                                        <input type="hidden" name="rule" value="{{ $fix['ruleKey'] }}">
+                                                        <label class="text-caption d-block" for="desc-{{ $fix['pageUid'] }}-{{ $fix['ruleKey'] }}">Meta description for "{{ $fix['pageTitle'] }}" (70-160 characters)</label>
                                                         @if (! empty($fix['replacesDescription']))
-                                                            <p class="text-caption mb-25" data-role="audit-current-description"><strong>Current description ({{ mb_strlen($fix['currentDescription']) }} characters, too short):</strong> {{ $fix['currentDescription'] }}</p>
+                                                            <p class="text-caption mb-25" data-role="audit-current-description"><strong>Current description ({{ mb_strlen($fix['currentDescription']) }} characters{{ $fix['currentNote'] ?? '' }}):</strong> {{ $fix['currentDescription'] }}</p>
                                                         @endif
-                                                        <textarea class="form-control form-control-sm mb-50" rows="3" id="desc-{{ $fix['pageUid'] }}" name="meta_description" minlength="70" maxlength="160">{{ $fix['currentDescription'] ?? '' }}</textarea>
-                                                        <button type="button" class="btn btn-sm btn-outline-secondary" data-role="audit-suggest-description" data-url="{{ $fix['suggestUrl'] }}" data-target="desc-{{ $fix['pageUid'] }}">Suggest with AI (optional)</button>
+                                                        <textarea class="form-control form-control-sm mb-50" rows="3" id="desc-{{ $fix['pageUid'] }}-{{ $fix['ruleKey'] }}" name="meta_description" minlength="70" maxlength="160">{{ $fix['currentDescription'] ?? '' }}</textarea>
+                                                        <button type="button" class="btn btn-sm btn-outline-secondary" data-role="audit-suggest-description" data-url="{{ $fix['suggestUrl'] }}" data-target="desc-{{ $fix['pageUid'] }}-{{ $fix['ruleKey'] }}">Suggest with AI (optional)</button>
                                                         <button type="submit" class="btn btn-sm btn-primary">Approve and save to draft</button>
                                                         <span class="text-caption text-muted">Nothing is written until you approve. Saves to your draft only; publishing is a separate step.</span>
                                                         <span class="text-caption text-danger d-block" data-role="audit-suggest-error" hidden role="alert"></span>
