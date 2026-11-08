@@ -79,7 +79,8 @@ class SeoTitleFixApprovalTest extends TestCase
         $this->assertStringNotContainsString('data-role="audit-fix-live"', $drafted);
         $this->assertStringNotContainsString('data-role="audit-title-proposal"', $drafted);
 
-        // The owner publishes through the real action: live, but not yet verified.
+        // The publish queues a background audit; control only that job so the pending state can be asserted before explicitly auditing.
+        \Illuminate\Support\Facades\Queue::fake([\App\Jobs\Seo\RunSeoAuditForRevision::class]);
         $this->post(route('customer.workspaces.businesses.website.publish', [$workspace->uid, $business->uid]))->assertRedirect();
         $second = WebsiteRevision::find((int) $website->fresh()->published_revision_id);
         $this->assertSame(self::APPROVED, $second->snapshot['pages'][0]['seo']['seo_title']);
