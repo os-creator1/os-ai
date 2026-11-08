@@ -176,8 +176,9 @@
                                                         @csrf
                                                         <input type="hidden" name="audit_run" value="{{ $auditRunUid }}">
                                                         <input type="hidden" name="draft_token" value="{{ $fix['draftToken'] }}">
-                                                        <label class="text-caption d-block" for="title-{{ $fix['pageUid'] }}">Proposed title for "{{ $fix['pageTitle'] }}" (edit it if you like)</label>
-                                                        <input type="text" class="form-control form-control-sm mb-50" id="title-{{ $fix['pageUid'] }}" name="seo_title" maxlength="70" value="{{ $fix['proposal'] ?? '' }}">
+                                                        <input type="hidden" name="rule" value="{{ $fix['ruleKey'] }}">
+                                                        <label class="text-caption d-block" for="title-{{ $fix['pageUid'] }}-{{ $fix['ruleKey'] }}">Proposed title for "{{ $fix['pageTitle'] }}" (edit it if you like)</label>
+                                                        <input type="text" class="form-control form-control-sm mb-50" id="title-{{ $fix['pageUid'] }}-{{ $fix['ruleKey'] }}" name="seo_title" maxlength="70" value="{{ $fix['proposal'] ?? '' }}">
                                                         <button type="submit" class="btn btn-sm btn-primary">Approve and save to draft</button>
                                                         <span class="text-caption text-muted">Saves to your draft only. Publishing is a separate step.</span>
                                                     </form>
@@ -187,12 +188,13 @@
                                                         @csrf
                                                         <input type="hidden" name="audit_run" value="{{ $auditRunUid }}">
                                                         <input type="hidden" name="draft_token" value="{{ $fix['draftToken'] }}">
-                                                        <label class="text-caption d-block" for="desc-{{ $fix['pageUid'] }}">Meta description for "{{ $fix['pageTitle'] }}" (70-160 characters)</label>
+                                                        <input type="hidden" name="rule" value="{{ $fix['ruleKey'] }}">
+                                                        <label class="text-caption d-block" for="desc-{{ $fix['pageUid'] }}-{{ $fix['ruleKey'] }}">Meta description for "{{ $fix['pageTitle'] }}" (70-160 characters)</label>
                                                         @if (! empty($fix['replacesDescription']))
-                                                            <p class="text-caption mb-25" data-role="audit-current-description"><strong>Current description ({{ mb_strlen($fix['currentDescription']) }} characters, too short):</strong> {{ $fix['currentDescription'] }}</p>
+                                                            <p class="text-caption mb-25" data-role="audit-current-description"><strong>Current description ({{ mb_strlen($fix['currentDescription']) }} characters{{ $fix['currentNote'] ?? '' }}):</strong> {{ $fix['currentDescription'] }}</p>
                                                         @endif
-                                                        <textarea class="form-control form-control-sm mb-50" rows="3" id="desc-{{ $fix['pageUid'] }}" name="meta_description" minlength="70" maxlength="160">{{ $fix['currentDescription'] ?? '' }}</textarea>
-                                                        <button type="button" class="btn btn-sm btn-outline-secondary" data-role="audit-suggest-description" data-url="{{ $fix['suggestUrl'] }}" data-target="desc-{{ $fix['pageUid'] }}">Suggest with AI (optional)</button>
+                                                        <textarea class="form-control form-control-sm mb-50" rows="3" id="desc-{{ $fix['pageUid'] }}-{{ $fix['ruleKey'] }}" name="meta_description" minlength="70" maxlength="160">{{ $fix['currentDescription'] ?? '' }}</textarea>
+                                                        <button type="button" class="btn btn-sm btn-outline-secondary" data-role="audit-suggest-description" data-url="{{ $fix['suggestUrl'] }}" data-target="desc-{{ $fix['pageUid'] }}-{{ $fix['ruleKey'] }}">Suggest with AI (optional)</button>
                                                         <button type="submit" class="btn btn-sm btn-primary">Approve and save to draft</button>
                                                         <span class="text-caption text-muted">Nothing is written until you approve. Saves to your draft only; publishing is a separate step.</span>
                                                         <span class="text-caption text-danger d-block" data-role="audit-suggest-error" hidden role="alert"></span>

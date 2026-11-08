@@ -257,4 +257,75 @@ class SeoMetadataOptimizationTest extends TestCase
 
         $this->assertSame(self::LONG_TITLE, $home->fresh()->seo_title);
     }
+
+    // ------------------------------------------------------------------ Overlapping findings on one field
+
+    public function test_a_title_that_is_both_too_long_and_a_duplicate_is_corrected_under_the_exact_rule_that_was_submitted(): void
+    {
+        [, $business, $workspace, , $home, $about] = $this->site(['seo_title' => self::LONG_TITLE], ['seo_title' => self::LONG_TITLE]);
+
+        $html = $this->auditHtml($workspace, $business);
+        foreach (['seo_title_over_recommended', 'duplicate_seo_title'] as $rule) {
+            $this->assertStringContainsString('id="title-' . $home->uid . '-' . $rule . '"', $html, 'Each form has its own input id.');
+            $this->assertStringContainsString('name="rule" value="' . $rule . '"', $html);
+        }
+
+        // Unique, but 68 characters: valid under the DUPLICATE rule, and would be refused under the LONG rule. It is judged as submitted.
+        $uniqueButLong = self::LONG_TITLE . ' Now';
+        $this->approveTitle($workspace, $business, $home, $uniqueButLong, ['rule' => 'seo_title_over_recommended'])->assertSessionHas('status', 'error');
+        $this->assertSame(self::LONG_TITLE, $home->fresh()->seo_title, 'Judged under the long-title rule, so refused.');
+
+        $this->approveTitle($workspace, $business, $home, $uniqueButLong, ['rule' => 'duplicate_seo_title'])->assertSessionHas('status', 'success');
+        $this->assertSame($uniqueButLong, $home->fresh()->seo_title);
+        $this->assertSame(self::LONG_TITLE, $about->fresh()->seo_title, 'The other page is never changed.');
+
+        // The duplicate is fixed in the draft; the long-title problem is NOT: its form is still offered and nothing claims otherwise.
+        $after = $this->auditHtml($workspace, $business);
+        $this->assertStringContainsString('name="rule" value="seo_title_over_recommended"', $after);
+        $this->assertStringNotContainsString('data-role="audit-resolved"', $after);
+    }
+
+    public function test_a_description_that_is_both_too_short_and_a_duplicate_keeps_each_rules_own_validation(): void
+    {
+        $short = 'Photo booths for hire.';
+        [, $business, $workspace, , $home, $about] = $this->site(['meta_description' => $short], ['meta_description' => $short]);
+
+        $html = $this->auditHtml($workspace, $business);
+        foreach (['meta_description_short', 'duplicate_meta_description'] as $rule) {
+            $this->assertStringContainsString('id="desc-' . $home->uid . '-' . $rule . '"', $html);
+        }
+        $this->assertStringContainsString('characters, too short)', $html);
+        $this->assertStringContainsString('characters, shared with another page)', $html);
+
+        // Under the duplicate rule a unique, long-enough description is accepted; a still-too-short one is refused under either rule.
+        $this->approveDescription($workspace, $business, $home, self::DESC_ONE, ['rule' => 'duplicate_meta_description'])->assertSessionHas('status', 'success');
+        $this->assertSame(self::DESC_ONE, $home->fresh()->meta_description);
+        $this->assertSame($short, $about->fresh()->meta_description);
+        $this->approveDescription($workspace, $business, $about, 'Still too short.', ['rule' => 'meta_description_short'])->assertSessionHas('status', 'error');
+        $this->assertSame($short, $about->fresh()->meta_description);
+
+        // Under the short rule alone, a long-enough value is accepted even if another page already uses it (that is the duplicate rule's job).
+        $this->approveDescription($workspace, $business, $about, self::DESC_ONE, ['rule' => 'meta_description_short'])->assertSessionHas('status', 'success');
+        $this->assertSame(self::DESC_ONE, $about->fresh()->meta_description);
+        $this->assertStringContainsString('name="rule" value="duplicate_meta_description"', $this->auditHtml($workspace, $business), 'The duplicate is still outstanding and visible.');
+    }
+
+    public function test_an_ambiguous_missing_invalid_or_unreported_rule_never_updates_a_draft(): void
+    {
+        [, $business, $workspace, , $home] = $this->site(['seo_title' => self::LONG_TITLE], ['seo_title' => self::LONG_TITLE]);
+
+        // Two findings for this field and no rule: refused, never silently resolved to "the first".
+        $this->approveTitle($workspace, $business, $home, self::SHORT_TITLE)->assertSessionHas('status', 'error');
+        // A rule that is not one of this endpoint's, or that is invalid.
+        $this->approveTitle($workspace, $business, $home, self::SHORT_TITLE, ['rule' => 'meta_description_short'])->assertSessionHasErrors('rule');
+        $this->approveTitle($workspace, $business, $home, self::SHORT_TITLE, ['rule' => 'not_a_rule'])->assertSessionHasErrors('rule');
+        // A valid rule that the latest audit does NOT report for this page.
+        $this->approveTitle($workspace, $business, $home, self::SHORT_TITLE, ['rule' => 'seo_title_blank'])->assertSessionHas('status', 'error');
+        $this->assertSame(self::LONG_TITLE, $home->fresh()->seo_title);
+
+        // A single-finding page still accepts a request without a rule (older form), and an explicit correct rule too.
+        [, $business2, $workspace2, , $home2] = $this->site(['seo_title' => self::LONG_TITLE]);
+        $this->approveTitle($workspace2, $business2, $home2, self::SHORT_TITLE)->assertSessionHas('status', 'success');
+        $this->assertSame(self::SHORT_TITLE, $home2->fresh()->seo_title);
+    }
 }

@@ -453,6 +453,8 @@ class SeoAuditController extends CustomerBaseController
             $field['input'] => ['required', 'string', 'max:5000'],
             'audit_run' => ['required', 'string'],
             'draft_token' => ['required', 'string'],
+            // The exact finding this form was shown for. A rule this endpoint does not apply is refused outright.
+            'rule' => ['nullable', 'string', 'in:' . implode(',', $field['rules'])],
         ]);
         $value = trim($data[$field['input']]);
 
@@ -469,9 +471,19 @@ class SeoAuditController extends CustomerBaseController
         $run = $auditPage->latestRun;
         // The finding that put this page here decides what kind of change is allowed (fill a blank, replace a short one, shorten a long
         // composed title, or make a shared value unique).
-        $matched = $run === null || $run->status !== \App\Enums\Seo\SeoAuditRunStatus::Completed || $run->uid !== $data['audit_run']
-            ? null
-            : collect($auditPage->findings)->first(fn ($f) => $f->pageUid === $pageUid && in_array($f->ruleKey, $field['rules'], true));
+        $forPage = $run === null || $run->status !== \App\Enums\Seo\SeoAuditRunStatus::Completed || $run->uid !== $data['audit_run']
+            ? collect()
+            : collect($auditPage->findings)->filter(fn ($f) => $f->pageUid === $pageUid && in_array($f->ruleKey, $field['rules'], true))->values();
+
+        // Exactly the submitted finding must be in the latest completed audit — never a different finding that happens to concern the same
+        // field. A request without a rule (older form) is only accepted when there is no ambiguity: one matching finding for the page.
+        $rule = $data['rule'] ?? null;
+
+        if ($rule === null && $forPage->count() > 1) {
+            return $refuse('This page has more than one finding for this field, so nothing was saved. Use the form next to the finding you want to fix.');
+        }
+
+        $matched = $rule === null ? $forPage->first() : $forPage->first(fn ($f) => $f->ruleKey === $rule);
         $reported = $matched !== null;
         $mode = $matched === null ? null : SeoMetadataRules::mode($matched->ruleKey);
         $ruleKey = $matched?->ruleKey;
