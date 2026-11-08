@@ -156,7 +156,7 @@
                                                     <span class="text-caption text-muted" data-role="audit-fix-drafted">Updated in your draft. Publish to make it live.</span>
                                                 @endif
                                                 <a href="{{ $fix['url'] }}" data-role="audit-draft-fix-link">{{ $fix['label'] }}</a>
-                                                @if (($fix['proposal'] ?? null) !== null && ! empty($auditRunUid) && $fix['draftToken'] !== null)
+                                                @if (($fix['proposal'] ?? null) !== null && ! empty($auditRunUid) && ($fix['draftToken'] ?? '') !== '')
                                                     <form method="POST" action="{{ route('customer.workspaces.businesses.seo.audit.title.apply', [$workspaceUid, $businessUid, $fix['pageUid']]) }}" class="mt-50" data-role="audit-title-proposal">
                                                         @csrf
                                                         <input type="hidden" name="audit_run" value="{{ $auditRunUid }}">

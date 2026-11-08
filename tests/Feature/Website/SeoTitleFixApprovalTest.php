@@ -30,7 +30,8 @@ class SeoTitleFixApprovalTest extends TestCase
         app(EntitlementManager::class)->changePlan($workspace, WorkspacePlanTier::Growth, $this->platformAdminId(), 'Title fix test.');
         $website = $this->createWebsite($business);
         $page = $this->homePage($website, array_merge(['title' => 'Photo Booth Rentals'], $pageOverrides));
-        $this->authenticateAsCustomer($customer);
+        // Publishing needs `website`; the SEO audit page needs `view_seo`. The authorized customer has both.
+        $this->authenticateAsCustomer($customer, ['website', 'view_seo']);
         $this->post(route('customer.workspaces.businesses.website.publish', [$workspace->uid, $business->uid]))->assertRedirect();
         $website = $website->fresh();
         app(SeoAuditRunner::class)->runForRevision((int) $business->id, (int) $website->id, (int) $website->published_revision_id);
@@ -53,7 +54,7 @@ class SeoTitleFixApprovalTest extends TestCase
         return $this->post(route('customer.workspaces.businesses.seo.audit.title.apply', [$workspace->uid, $business->uid, $page->uid]), array_merge([
             'seo_title' => self::APPROVED,
             'audit_run' => $this->runUid($business),
-            'draft_token' => (string) $page->fresh()->updated_at->getTimestamp(),
+            'draft_token' => $page->fresh()->draftToken(),
         ], $data));
     }
 
@@ -112,11 +113,28 @@ class SeoTitleFixApprovalTest extends TestCase
     {
         [, $business, $workspace, , $page] = $this->publishedWithBlankTitle();
 
-        $this->approve($workspace, $business, $page, ['draft_token' => (string) ($page->fresh()->updated_at->getTimestamp() - 90)])->assertSessionHas('status', 'error');
+        $this->approve($workspace, $business, $page, ['draft_token' => str_repeat('0', 64)])->assertSessionHas('status', 'error');
         $this->approve($workspace, $business, $page, ['audit_run' => '00000000-0000-0000-0000-000000000000'])->assertSessionHas('status', 'error');
         $this->approve($workspace, $business, $page, ['seo_title' => '   '])->assertSessionHasErrors();
 
         $this->assertNull($page->fresh()->seo_title);
+    }
+
+    public function test_a_same_second_edit_after_the_proposal_was_shown_cannot_be_overwritten(): void
+    {
+        [, $business, $workspace, , $page] = $this->publishedWithBlankTitle();
+        $token = $page->fresh()->draftToken(); // what the form carried when it was shown
+        $before = $page->fresh()->updated_at->getTimestamp();
+
+        // Another edit lands in the very same second: only a state fingerprint can tell (updated_at is deliberately left untouched).
+        \Illuminate\Support\Facades\DB::table('website_pages')->where('id', $page->id)->update(['meta_description' => 'Written by someone else a moment ago.']);
+        $this->assertSame($before, $page->fresh()->updated_at->getTimestamp());
+        $this->assertNotSame($token, $page->fresh()->draftToken());
+
+        $this->approve($workspace, $business, $page, ['draft_token' => $token])->assertSessionHas('status', 'error');
+
+        $this->assertNull($page->fresh()->seo_title, 'The stale approval saved nothing.');
+        $this->assertSame('Written by someone else a moment ago.', $page->fresh()->meta_description, 'The newer edit survived.');
     }
 
     public function test_an_existing_title_is_never_overwritten_and_a_repeat_is_a_no_op(): void
@@ -138,7 +156,7 @@ class SeoTitleFixApprovalTest extends TestCase
     {
         [$customer, $business, $workspace, , $page] = $this->publishedWithBlankTitle();
         $url = route('customer.workspaces.businesses.seo.audit.title.apply', [$workspace->uid, $business->uid, $page->uid]);
-        $payload = ['seo_title' => 'Hijack', 'audit_run' => $this->runUid($business), 'draft_token' => (string) $page->updated_at->getTimestamp()];
+        $payload = ['seo_title' => 'Hijack', 'audit_run' => $this->runUid($business), 'draft_token' => $page->draftToken()];
 
         $this->authenticateAsCustomer($customer, ['view_seo']);
         $this->assertContains($this->post($url, $payload)->getStatusCode(), [401, 403], 'No website permission: refused.');

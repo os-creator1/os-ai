@@ -166,7 +166,7 @@ class SeoAuditController extends CustomerBaseController
      * Nothing is written here: the owner edits and saves in the editor (the same authorized, locked draft update), then publishes themselves.
      *
      * @param  array<int, \App\Library\Seo\SeoAuditFindingView>  $findings
-     * @return array<int, array{url: string, label: string, draftFixed: bool, live: bool, proposal: ?string, pageUid: string, pageTitle: string, draftToken: ?int}>  keyed by finding index
+     * @return array<int, array{url: string, label: string, draftFixed: bool, live: bool, proposal: ?string, pageUid: string, pageTitle: string, draftToken: string}>  keyed by finding index
      */
     private function draftFixes(Workspace $workspace, Business $business, string $workspaceUid, string $businessUid, array $findings): array
     {
@@ -229,7 +229,7 @@ class SeoAuditController extends CustomerBaseController
                 'proposal' => $proposal,
                 'pageUid' => $page->uid,
                 'pageTitle' => (string) $page->title,
-                'draftToken' => $page->updated_at?->getTimestamp(),
+                'draftToken' => $page->draftToken(),
                 'live' => $live,
                 'url' => route('customer.workspaces.businesses.website.pages.edit', [$workspaceUid, $businessUid, $page->uid]) . '#' . $field,
                 'label' => $field === 'seo_title' ? 'Set the page title in your draft' : 'Prepare fix',
@@ -369,7 +369,7 @@ class SeoAuditController extends CustomerBaseController
                     return trim((string) $locked->seo_title) === $title ? 'already' : 'has_title';
                 }
 
-                if ((string) $locked->updated_at?->getTimestamp() !== $data['draft_token']) {
+                if ($locked->draftToken() !== $data['draft_token']) {
                     return 'stale';
                 }
 
