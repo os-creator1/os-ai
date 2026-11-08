@@ -173,7 +173,10 @@
                                                         <input type="hidden" name="audit_run" value="{{ $auditRunUid }}">
                                                         <input type="hidden" name="draft_token" value="{{ $fix['draftToken'] }}">
                                                         <label class="text-caption d-block" for="desc-{{ $fix['pageUid'] }}">Meta description for "{{ $fix['pageTitle'] }}" (70-160 characters)</label>
-                                                        <textarea class="form-control form-control-sm mb-50" rows="3" id="desc-{{ $fix['pageUid'] }}" name="meta_description" minlength="70" maxlength="160"></textarea>
+                                                        @if (! empty($fix['replacesDescription']))
+                                                            <p class="text-caption mb-25" data-role="audit-current-description"><strong>Current description ({{ mb_strlen($fix['currentDescription']) }} characters, too short):</strong> {{ $fix['currentDescription'] }}</p>
+                                                        @endif
+                                                        <textarea class="form-control form-control-sm mb-50" rows="3" id="desc-{{ $fix['pageUid'] }}" name="meta_description" minlength="70" maxlength="160">{{ $fix['currentDescription'] ?? '' }}</textarea>
                                                         <button type="button" class="btn btn-sm btn-outline-secondary" data-role="audit-suggest-description" data-url="{{ $fix['suggestUrl'] }}" data-target="desc-{{ $fix['pageUid'] }}">Suggest with AI (optional)</button>
                                                         <button type="submit" class="btn btn-sm btn-primary">Approve and save to draft</button>
                                                         <span class="text-caption text-muted">Nothing is written until you approve. Saves to your draft only; publishing is a separate step.</span>
