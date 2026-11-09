@@ -221,6 +221,20 @@ class GoogleOnboardingEntryTest extends TestCase
         $this->assertNotNull($customer);
     }
 
+    public function test_diagnostic_does_not_create_onboarding_for_a_customer_who_has_not_started(): void
+    {
+        $this->ensureRequiredAppConfigRowsExist();
+        $customer = $this->createCustomer();
+
+        $this->assertSame(0, CustomerOnboarding::query()->where('customer_id', $customer->user_id)->count());
+
+        $this->artisan('gbp:diagnose-onboarding', ['customer' => (string) $customer->user_id])
+            ->expectsOutputToContain('onboarding_not_started')
+            ->assertExitCode(0);
+
+        $this->assertSame(0, CustomerOnboarding::query()->where('customer_id', $customer->user_id)->count());
+    }
+
     public function test_the_diagnostic_names_the_cause_and_never_prints_a_secret(): void
     {
         [$customer] = $this->signupCustomer([], WorkspacePlanTier::Growth, self::MANAGE);
