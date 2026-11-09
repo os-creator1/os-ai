@@ -143,6 +143,19 @@ final class V1SignupDraft
         return ['provider' => (string) $account['provider'], 'provider_id' => (string) $account['provider_id'], 'avatar' => $account['avatar'] ?? null];
     }
 
+    /**
+     * The ONE definition of a complete signup account. Manual: a valid account AND the password that was chosen. Google: a valid account AND
+     * a provider-verified identity the SERVER put in the draft (never request input). Every step guard uses this, so no step can disagree.
+     */
+    public function hasCompleteAccount(): bool
+    {
+        if ($this->account() === null) {
+            return false;
+        }
+
+        return $this->providerIdentity() !== null || $this->password() !== null;
+    }
+
     /** Drop the account step's answer (e.g. to switch from Google to a manual email and password). The plan and business facts stay. */
     public function forgetAccount(): void
     {

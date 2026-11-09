@@ -384,6 +384,13 @@ class V1SignupController extends Controller
 
         $identity = $draft->providerIdentity();
 
+        // A private offer bound to an email only ever proceeds with THAT address, whichever way the account is proved.
+        if ($identity !== null && ! $this->offerAllowsEmail($draft, (string) $account['email'])) {
+            $draft->forgetAccount();
+
+            return redirect()->route('register.account')->withErrors(['email' => __('This offer is for a different email address. Use the email the offer was sent to.')]);
+        }
+
         // A Google-verified account has no password to choose; a manual one must still have the password it was given.
         if ($identity === null && $password === null) {
             return redirect()->route('register.account')
@@ -782,6 +789,18 @@ class V1SignupController extends Controller
         return $offer;
     }
 
+    /** Whether the draft's private offer (if any) accepts this address: an email-bound offer needs exactly that address. */
+    private function offerAllowsEmail(V1SignupDraft $draft, string $email): bool
+    {
+        $offer = $this->draftOffer($draft);
+
+        if ($offer === null || $offer->customer_email === null) {
+            return true;
+        }
+
+        return hash_equals((string) $offer->customer_email, \App\Library\PlatformBilling\Offers\EmailIdentity::normalize($email));
+    }
+
     private function requirePlan(V1SignupDraft $draft): ?RedirectResponse
     {
         $tier = $draft->tier();
@@ -802,9 +821,7 @@ class V1SignupController extends Controller
 
     private function requireAccount(V1SignupDraft $draft): ?RedirectResponse
     {
-        return $draft->account() === null || $draft->password() === null
-            ? redirect()->route('register.account')
-            : null;
+        return $draft->hasCompleteAccount() ? null : redirect()->route('register.account');
     }
 
     private function requireBusiness(V1SignupDraft $draft): ?RedirectResponse
@@ -815,7 +832,7 @@ class V1SignupController extends Controller
     /** Where a returning visitor with a pinned plan should pick up. */
     private function furthestStepUrl(V1SignupDraft $draft): string
     {
-        if ($draft->account() === null || $draft->password() === null) {
+        if (! $draft->hasCompleteAccount()) {
             return route('register.account');
         }
 

@@ -438,6 +438,20 @@
             }
 
             $draft = new \App\Library\PlatformBilling\V1SignupDraft(request()->session());
+
+            // An email-bound private offer proceeds only with the address it was issued to: a different Google email is refused here,
+            // before it can become the account (the plan and offer stay pinned so the customer can use the right email).
+            $offerToken = $draft->offerToken();
+            $offer = $offerToken === null ? null : app(\App\Library\PlatformBilling\Offers\PrivateOfferRedemptionManager::class)->findByToken($offerToken);
+
+            if ($offer !== null && $offer->customer_email !== null
+                && ! hash_equals((string) $offer->customer_email, \App\Library\PlatformBilling\Offers\EmailIdentity::normalize((string) $identity['email']))) {
+                return redirect()->route('register.account')->with([
+                    'status'  => 'error',
+                    'message' => __('This offer is for a different email address. Use the email the offer was sent to.'),
+                ]);
+            }
+
             $draft->setProviderAccount($identity);
             request()->session()->regenerate();   // keeps the draft, rotates the session id
 

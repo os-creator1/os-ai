@@ -56,7 +56,7 @@ class GoogleSignupLoginTest extends TestCase
         Socialite::shouldReceive('driver')->with('google')->andReturn($provider);
     }
 
-    private function callback()
+    private function oauthReturn()
     {
         return $this->get(route('social.callback', 'google'));
     }
@@ -104,7 +104,7 @@ class GoogleSignupLoginTest extends TestCase
         $this->get(route('register.google'))->assertRedirect('https://accounts.google.test/o/oauth2/auth');
 
         // Google authenticates: the identity is carried in the session draft. NOTHING durable exists yet.
-        $this->callback()->assertRedirect(route('register.business'));
+        $this->oauthReturn()->assertRedirect(route('register.business'));
         $this->assertSame(0, User::query()->where('is_customer', true)->count(), 'No abandoned User before checkout.');
         $this->assertSame(0, Workspace::query()->count());
         $this->assertSame('growth', session('v1_signup_draft.tier'), 'The chosen plan survived the OAuth redirect.');
@@ -140,7 +140,7 @@ class GoogleSignupLoginTest extends TestCase
         $this->sellableTier(WorkspacePlanTier::Growth);
         $this->fakeGoogle($this->googleUser());
         $this->post(route('register.plan.select'), ['tier' => 'growth']);
-        $this->callback();
+        $this->oauthReturn();
         $this->post(route('register.business.store'), ['business_name' => 'Okafor Photo Booths', 'industry' => 'photo_booth_service', 'country_code' => 'US', 'timezone' => 'UTC']);
         $this->post(route('register.payment.start'));
         $user = User::query()->where('is_customer', true)->sole();
@@ -156,7 +156,7 @@ class GoogleSignupLoginTest extends TestCase
         $this->sellableTier(WorkspacePlanTier::Growth);
         $this->fakeGoogle($this->googleUser());
 
-        $this->callback()->assertRedirect(route('register.plan'));
+        $this->oauthReturn()->assertRedirect(route('register.plan'));
 
         $this->assertSame(0, User::query()->where('is_customer', true)->count());
         $this->assertGuest();
@@ -170,7 +170,7 @@ class GoogleSignupLoginTest extends TestCase
         $this->sellableTier(WorkspacePlanTier::Growth);
         $this->fakeGoogle($this->googleUser());
         $this->post(route('register.plan.select'), ['tier' => 'growth']);
-        $this->callback();
+        $this->oauthReturn();
 
         $this->get(route('register.account', ['manual' => 1]))->assertOk()->assertSee('name="password"', false);
         $this->assertNull(session('v1_signup_draft.account'));
@@ -182,7 +182,7 @@ class GoogleSignupLoginTest extends TestCase
         $this->sellableTier(WorkspacePlanTier::Growth);
         $this->fakeGoogle($this->googleUser());
         $this->post(route('register.plan.select'), ['tier' => 'growth']);
-        $this->callback();
+        $this->oauthReturn();
 
         // The customer wanders off and comes back to the signup entry: it resumes at the furthest step, not from scratch.
         $this->get(route('register'))->assertRedirect(route('register.business'));
@@ -194,27 +194,27 @@ class GoogleSignupLoginTest extends TestCase
     public function test_an_unverified_google_email_is_refused_everywhere(): void
     {
         $this->fakeGoogle($this->googleUser(verified: false));
-        $this->callback()->assertRedirect(route('login'));
+        $this->oauthReturn()->assertRedirect(route('login'));
         $this->assertGuest();
         $this->assertNull(session('v1_signup_draft'));
 
         $this->sellableTier(WorkspacePlanTier::Growth);
         $this->post(route('register.plan.select'), ['tier' => 'growth']);
         session(['social_intent' => 'signup']);
-        $this->callback()->assertRedirect(route('register.account'));
+        $this->oauthReturn()->assertRedirect(route('register.account'));
         $this->assertNull(session('v1_signup_draft.account'), 'An unverified identity never becomes the signup account.');
     }
 
     public function test_an_invalid_or_expired_oauth_state_and_a_cancelled_consent_create_nothing(): void
     {
         $this->fakeGoogle(new InvalidStateException());
-        $this->callback()->assertRedirect(route('login'));
+        $this->oauthReturn()->assertRedirect(route('login'));
         $this->assertGuest();
 
         $this->sellableTier(WorkspacePlanTier::Growth);
         $this->post(route('register.plan.select'), ['tier' => 'growth']);
         session(['social_intent' => 'signup']);
-        $this->callback()->assertRedirect(route('register.account'));
+        $this->oauthReturn()->assertRedirect(route('register.account'));
         $this->assertNull(session('v1_signup_draft.account'));
         $this->assertSame(0, User::query()->where('is_customer', true)->count());
     }
@@ -224,7 +224,7 @@ class GoogleSignupLoginTest extends TestCase
         config(['account.can_register' => false]);
         $this->fakeGoogle($this->googleUser());
 
-        $this->callback()->assertRedirect(route('login'));
+        $this->oauthReturn()->assertRedirect(route('login'));
 
         $this->assertNull(session('v1_signup_draft'));
         $this->assertSame(0, User::query()->where('is_customer', true)->count());
@@ -251,7 +251,7 @@ class GoogleSignupLoginTest extends TestCase
         $this->fakeGoogle($this->googleUser());
 
         // This account never finished signup (no Workspace/plan): it resumes the legitimate plan process, not a second account.
-        $this->callback()->assertRedirect(route('signup.plan'));
+        $this->oauthReturn()->assertRedirect(route('signup.plan'));
 
         $this->assertAuthenticatedAs($user);
         $this->assertSame(1, User::query()->where('email', 'sam@gmail.example')->count());
@@ -261,7 +261,7 @@ class GoogleSignupLoginTest extends TestCase
     {
         $plain = $this->existingUser();
         $this->fakeGoogle($this->googleUser());
-        $this->callback()->assertRedirect(route('signup.plan'));
+        $this->oauthReturn()->assertRedirect(route('signup.plan'));
         $this->assertSame(self::GOOGLE_ID, $plain->fresh()->provider_id, 'Verified, unlinked, no 2FA: linked.');
         auth()->logout();
         $plain->delete();
@@ -275,7 +275,7 @@ class GoogleSignupLoginTest extends TestCase
             $victim = $this->existingUser($attributes, $verified);
             $this->fakeGoogle($this->googleUser());
 
-            $this->callback()->assertRedirect(route('login'));
+            $this->oauthReturn()->assertRedirect(route('login'));
 
             $this->assertGuest($label);
             $this->assertNotSame(self::GOOGLE_ID, $victim->fresh()->provider_id, $label);
@@ -287,13 +287,13 @@ class GoogleSignupLoginTest extends TestCase
     {
         $disabled = $this->existingUser(['provider' => 'google', 'provider_id' => self::GOOGLE_ID, 'status' => false]);
         $this->fakeGoogle($this->googleUser());
-        $this->callback()->assertRedirect(route('login'));
+        $this->oauthReturn()->assertRedirect(route('login'));
         $this->assertGuest();
         $disabled->delete();
 
         $admin = $this->existingUser(['provider' => 'google', 'provider_id' => self::GOOGLE_ID, 'is_admin' => true]);
         $this->fakeGoogle($this->googleUser());
-        $this->callback()->assertRedirect(route('login'));
+        $this->oauthReturn()->assertRedirect(route('login'));
         $this->assertGuest();
         $this->assertTrue((bool) $admin->fresh()->is_admin);
     }
@@ -305,7 +305,7 @@ class GoogleSignupLoginTest extends TestCase
         $this->sellableTier(WorkspacePlanTier::Growth);
         $this->fakeGoogle($this->googleUser());
         $this->post(route('register.plan.select'), ['tier' => 'growth']);
-        $this->callback();
+        $this->oauthReturn();
         $this->post(route('register.business.store'), ['business_name' => 'Okafor Photo Booths', 'industry' => 'photo_booth_service', 'country_code' => 'US', 'timezone' => 'UTC']);
 
         $this->existingUser(); // someone registers the same address in the meantime
@@ -323,7 +323,7 @@ class GoogleSignupLoginTest extends TestCase
         $this->sellableTier(WorkspacePlanTier::Growth);
         $this->fakeGoogle($this->googleUser());
         $this->post(route('register.plan.select'), ['tier' => 'growth']);
-        $this->callback();
+        $this->oauthReturn();
         $this->post(route('register.business.store'), ['business_name' => 'Okafor Photo Booths', 'industry' => 'photo_booth_service', 'country_code' => 'US', 'timezone' => 'UTC']);
         $this->post(route('register.payment.start'));
 
@@ -352,5 +352,52 @@ class GoogleSignupLoginTest extends TestCase
         $user = User::query()->where('email', 'pat@example.test')->sole();
         $this->assertNull($user->provider);
         $this->assertTrue(Hash::check('correct-horse-battery', (string) $user->password));
+    }
+
+    // ------------------------------------------------------------------ No redirect loop (Google has no password)
+
+    public function test_a_google_customer_moves_forward_through_every_step_without_bouncing_back_to_the_account_step(): void
+    {
+        $this->sellableTier(WorkspacePlanTier::Growth);
+        $this->fakeGoogle($this->googleUser());
+        $this->post(route('register.plan.select'), ['tier' => 'growth']);
+        $this->oauthReturn()->assertRedirect(route('register.business'));
+
+        // The Business step renders (it used to redirect to the account step, which redirected straight back).
+        $this->get(route('register.business'))->assertOk();
+        // The payment step is not reachable yet, and it sends the customer FORWARD to the Business step, not to the account step.
+        $this->get(route('register.payment'))->assertRedirect(route('register.business'));
+        // The signup entry resumes at the furthest completed step.
+        $this->get(route('register'))->assertRedirect(route('register.business'));
+
+        $this->post(route('register.business.store'), ['business_name' => 'Okafor Photo Booths', 'industry' => 'photo_booth_service', 'country_code' => 'US', 'timezone' => 'UTC'])
+            ->assertRedirect(route('register.payment'));
+        $this->get(route('register.payment'))->assertOk();
+        $this->get(route('register'))->assertRedirect(route('register.payment'));
+        $this->get(route('register.account'))->assertRedirect(route('register.business'));
+    }
+
+    public function test_a_manual_account_without_its_password_still_goes_back_to_the_account_step(): void
+    {
+        $this->sellableTier(WorkspacePlanTier::Growth);
+        // A draft whose account has neither a chosen password nor a provider identity is not a complete account.
+        $this->withSession(['v1_signup_draft' => ['tier' => 'growth', 'account' => ['first_name' => 'Pat', 'last_name' => null, 'email' => 'pat@example.test']]]);
+
+        $this->get(route('register.business'))->assertRedirect(route('register.account'));
+        $this->get(route('register'))->assertRedirect(route('register.account'));
+    }
+
+    public function test_a_provider_identity_can_only_be_set_by_the_server_never_by_the_account_form(): void
+    {
+        $this->sellableTier(WorkspacePlanTier::Growth);
+        $this->post(route('register.plan.select'), ['tier' => 'growth']);
+
+        // Posting provider fields with the manual form does not make a Google account; the password rule still applies.
+        $this->post(route('register.account.store'), [
+            'first_name' => 'Eve', 'email' => 'eve@example.test', 'provider' => 'google', 'provider_id' => 'forged',
+        ])->assertSessionHasErrors('password');
+
+        $this->assertNull(session('v1_signup_draft.account'));
+        $this->get(route('register.business'))->assertRedirect(route('register.account'));
     }
 }
