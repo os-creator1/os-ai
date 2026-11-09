@@ -176,7 +176,7 @@ jobs:
         run: >-
           php artisan test
           tests/Feature/Business/GoogleQuickOnboardingTest.php
-          tests/Feature/Business/BusinessOnboardingExistingBehaviorPreservedTest.php
+          tests/Feature/DesignSystem/BusinessOnboardingExistingBehaviorPreservedTest.php
           tests/Feature/GoogleBusinessProfile/GoogleBusinessProfileOAuthTest.php
           tests/Feature/GoogleBusinessProfile/GoogleBusinessProfileReadOnlyTest.php
           tests/Feature/GoogleBusinessProfile/GoogleBusinessProfileConnectionStateTest.php
