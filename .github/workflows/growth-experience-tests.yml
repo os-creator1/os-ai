@@ -19,6 +19,10 @@ on:
       - 'app/Library/PlatformBilling/V1SignupDraft.php'
       - 'app/Repositories/Eloquent/EloquentAccountRepository.php'
       - 'resources/views/auth/**'
+      - 'resources/views/layouts/authCover.blade.php'
+      - 'resources/scss/base/pages/authentication.scss'
+      - 'public/css/base/pages/authentication.css'
+      - 'tests/Feature/Branding/BrandingComponentRenderTest.php'
       - 'routes/auth.php'
       - 'tests/Feature/Auth/GoogleSignupLoginTest.php'
       - 'tests/Feature/Auth/GoogleSignupPrivateOfferTest.php'
@@ -136,6 +140,10 @@ jobs:
           tests/Feature/PlatformBilling/PrivateOfferBillingChangeTest.php
           tests/Feature/PlatformBilling/PrivateOffersFeatureFlagTest.php
           tests/Feature/Auth/GoogleSignupPrivateOfferTest.php
+      - name: Auth logo and branding regression
+        id: authbranding
+        continue-on-error: true
+        run: php artisan test tests/Feature/Branding/BrandingComponentRenderTest.php
       - name: Fail if any acceptance group failed
         if: always()
         env:
@@ -144,6 +152,7 @@ jobs:
           HOME: ${{ steps.home.outcome }}
           ASSISTANT: ${{ steps.assistant.outcome }}
           OFFERS: ${{ steps.offers.outcome }}
+          AUTH_BRANDING: ${{ steps.authbranding.outcome }}
         run: |
           echo "Blade=$BLADE Onboarding=$ONBOARDING Home=$HOME Assistant=$ASSISTANT Offers=$OFFERS"
           test "$BLADE" = success
@@ -151,3 +160,4 @@ jobs:
           test "$HOME" = success
           test "$ASSISTANT" = success
           test "$OFFERS" = success
+          test "$AUTH_BRANDING" = success
