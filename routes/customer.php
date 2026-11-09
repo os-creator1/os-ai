@@ -777,6 +777,17 @@
     */
 
     Route::prefix('onboarding')->name('onboarding.')->middleware('business.onboarding.enabled')->group(function () {
+        // Google Business Profile quick start. Registered BEFORE the greedy {step?} route.
+        Route::prefix('google')->name('google.')->group(function () {
+            Route::get('/', 'GoogleOnboardingController@show')->middleware('throttle:20,1')->name('show');
+            Route::post('/connect', 'GoogleOnboardingController@connect')->middleware('throttle:10,1')->name('connect');
+            Route::post('/select', 'GoogleOnboardingController@select')->middleware('throttle:20,1')->name('select');
+            Route::get('/review', 'GoogleOnboardingController@review')->name('review');
+            Route::post('/confirm', 'GoogleOnboardingController@confirm')->middleware('throttle:20,1')->name('confirm');
+            Route::post('/link', 'GoogleOnboardingController@link')->middleware('throttle:10,1')->name('link');
+            Route::post('/reset', 'GoogleOnboardingController@reset')->name('reset');
+        });
+
         Route::get('/{step?}', 'BusinessOnboardingController@show')->name('show');
         Route::post('/business', 'BusinessOnboardingController@storeBusiness')->name('business.store');
         Route::post('/location', 'BusinessOnboardingController@storeLocation')->name('location.store');
@@ -1381,6 +1392,8 @@
             // revision is published, and re-auditing one is idempotent.
             Route::get('/site-audit', 'Business\SeoAuditController@audit')->name('audit.index');
             Route::post('/site-audit/run', 'Business\SeoAuditController@rerun')->middleware('throttle:6,1')->name('audit.rerun');
+            Route::post('/site-audit/pages/{pageUid}/title', 'Business\SeoAuditController@applyTitle')->middleware('throttle:20,1')->name('audit.title.apply');
+            Route::post('/site-audit/pages/{pageUid}/description', 'Business\SeoAuditController@applyDescription')->middleware('throttle:20,1')->name('audit.description.apply');
 
             // SEO Content Engine V1 — SEO -> Content: the Content Plan, Articles, Opportunities and the
             // article editor. Articles (list, editor, preview, publish flow) ride SeoBasicVisibility;
@@ -1449,6 +1462,7 @@
             Route::get('/advisor', 'Business\GrowthCenterController@advisor')->name('advisor');
             Route::post('/advisor', 'Business\GrowthCenterController@ask')->middleware('throttle:10,1')->name('advisor.ask');
             Route::get('/opportunities', 'Business\GrowthCenterController@opportunities')->name('opportunities.index');
+            Route::get('/work', 'Business\GrowthCenterController@work')->name('work');
             Route::get('/opportunities/{opportunityUid}', 'Business\GrowthCenterController@show')->name('opportunities.show');
             Route::get('/opportunities/{opportunityUid}/go', 'Business\GrowthCenterController@go')->name('opportunities.go');
             Route::post('/opportunities/{opportunityUid}/snooze', 'Business\GrowthCenterController@snooze')->middleware('throttle:30,1')->name('opportunities.snooze');
@@ -2240,6 +2254,7 @@
             Route::post('/pages/allow-indexing', 'Business\WebsiteController@allowIndexing')->name('pages.allowIndexing');
             Route::get('/pages/{pageUid}/edit', 'Business\WebsiteController@editPage')->name('pages.edit');
             Route::put('/pages/{pageUid}', 'Business\WebsiteController@updatePage')->name('pages.update');
+            Route::post('/pages/{pageUid}/suggest-description', 'Business\WebsiteController@suggestDescription')->middleware('throttle:10,1')->name('pages.suggestDescription');
             Route::delete('/pages/{pageUid}', 'Business\WebsiteController@destroyPage')->name('pages.destroy');
 
             Route::get('/preview/{pageUid?}', 'Business\WebsiteController@preview')->name('preview');
@@ -2367,10 +2382,12 @@
             // toll-free, whose own carrier verification always requires an
             // already-owned number.
             Route::post('/registration/start-local-verification', 'Business\TextMessagingController@startLocalVerification')->name('registration.start-local-verification');
+            Route::post('/registration/leave-local-setup', 'Business\TextMessagingController@leaveLocalSetup')->name('registration.leave-local-setup');
 
             // STATE 2 — number acquired, messaging registration required.
             Route::post('/registration', 'Business\TextMessagingController@updateRegistration')->name('registration.update');
             Route::post('/registration/submit', 'Business\TextMessagingController@submitRegistration')->name('registration.submit');
+            Route::post('/registration/refresh', 'Business\TextMessagingController@refreshRegistrationProgress')->middleware('throttle:10,1')->name('registration.refresh');
 
             // STATE 3 — Delivery & usage (relocated out of Business Results,
             // see AnalyticsController's own overview: operational messaging

@@ -49,6 +49,9 @@
 
     Route::get('lang/{locale}', [LanguageController::class, 'swap']);
     Route::any('languages', [LanguageController::class, 'languages'])->name('languages');
+    // GET renders the notify form LIVE, inside a real session, because the `artisan down --render` page is
+    // prerendered outside any visitor session and so cannot carry a valid CSRF token.
+    Route::get('maintenance/notify', [MaintenanceNotifyController::class, 'show'])->name('maintenance.notify.form');
     Route::post('maintenance/notify', [MaintenanceNotifyController::class, 'store'])->name('maintenance.notify');
 
     Route::post('/pusher/auth', [PusherController::class, 'pusherAuth'])

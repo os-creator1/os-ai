@@ -54,6 +54,7 @@ class MessagingProvisioningIncidentController extends AdminBaseController
             TelnyxProvisioningAdapter::INCIDENT_BRAND_UNKNOWN,
             TelnyxProvisioningAdapter::INCIDENT_CAMPAIGN_UNKNOWN,
             TelnyxProvisioningAdapter::INCIDENT_FUNDING_AMBIGUOUS,
+            TelnyxProvisioningAdapter::INCIDENT_TOLLFREE_UNKNOWN,
         ];
         $stage = BusinessMessagingProvisioningIncident::query()->whereKey($incident)->value('stage');
 
@@ -75,6 +76,7 @@ class MessagingProvisioningIncidentController extends AdminBaseController
                 $request->input('provider_brand_id'),
                 $request->input('provider_campaign_id'),
                 $request->validated('resolution_note'),
+                $request->input('provider_registration_id'),
             );
         } else {
             $resolved = $this->incidents->resolve(

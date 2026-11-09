@@ -17,6 +17,7 @@ use App\Http\Controllers\Customer\CustomerBaseController;
 use App\Http\Requests\GoogleBusinessProfile\GoogleBusinessProfileBindRequest;
 use App\Http\Requests\GoogleBusinessProfile\GoogleBusinessProfileUnbindRequest;
 use App\Library\Entitlement\EntitlementManager;
+use App\Library\Business\GoogleOnboardingBridge;
 use App\Library\GoogleBusinessProfile\GoogleBusinessProfileBindingManager;
 use App\Library\GoogleBusinessProfile\GoogleBusinessProfileCandidateTokenSigner;
 use App\Library\GoogleBusinessProfile\GoogleBusinessProfileComparator;
@@ -27,6 +28,7 @@ use App\Library\GoogleBusinessProfile\GoogleBusinessProfileOverviewPresenter;
 use App\Library\GoogleBusinessProfile\GoogleBusinessProfileReadMask;
 use App\Library\GoogleBusinessProfile\GoogleOAuthStateSigner;
 use App\Library\Workspace\BusinessRouteAccess;
+use App\Library\Workspace\WorkspaceManagementAuthority;
 use App\Library\Workspace\WorkspaceManager;
 use App\Models\Business;
 use App\Models\BusinessGoogleConnection;
@@ -37,6 +39,7 @@ use App\Repositories\Contracts\BusinessGoogleLocationRepository;
 use App\Repositories\Contracts\BusinessGoogleOperationRepository;
 use App\Repositories\Contracts\WorkspaceRepository;
 use Illuminate\Contracts\Foundation\Application;
+use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Contracts\View\Factory;
 use Illuminate\Contracts\View\View;
 use Illuminate\Http\RedirectResponse;
@@ -186,8 +189,7 @@ class GoogleBusinessProfileController extends CustomerBaseController
      */
     public function connect(string $workspaceUid, string $businessUid): RedirectResponse
     {
-        $this->authorize('manage_google_business_profile');
-        [, $business] = $this->resolveEntitledBusiness($workspaceUid, $businessUid);
+        [, $business] = $this->managed($this->resolveEntitledBusiness($workspaceUid, $businessUid));
 
         if ($demo = $this->demoGuard($workspaceUid, $businessUid)) {
             return $demo;
@@ -299,8 +301,18 @@ class GoogleBusinessProfileController extends CustomerBaseController
             abort(404);
         }
 
+        // The ONE narrow exception to "active Business only": a Draft Business
+        // that is attached to the CALLER'S OWN unfinished onboarding (the Google
+        // quick start). Any other non-active Business is still a 404, and the
+        // entitlement, permission, actor and nonce checks below still all apply.
+        $onboardingBridge = false;
+
         if ($business->status !== BusinessStatus::Active) {
-            abort(404);
+            if (! app(GoogleOnboardingBridge::class)->authorizesCallback($business, Auth::user())) {
+                abort(404);
+            }
+
+            $onboardingBridge = true;
         }
 
         try {
@@ -321,7 +333,13 @@ class GoogleBusinessProfileController extends CustomerBaseController
         // Deliberately 404 rather than the usual 401: this route has no
         // tenant parameters, so a permission-shaped response would itself
         // disclose that the signed Business exists and is reachable.
-        if (Gate::denies('manage_google_business_profile')) {
+        // A Draft onboarding Business is authorized by the onboarding bridge's owner-or-permission rule; every
+        // Active Business keeps the plain permission gate.
+        $mayManage = $onboardingBridge
+            ? app(GoogleOnboardingBridge::class)->mayManageGoogle(Auth::user(), app(\App\Repositories\Contracts\CustomerOnboardingRepository::class)->findByCustomerId((int) Auth::id()))
+            : app(WorkspaceManagementAuthority::class)->allows(Auth::user(), $workspace, 'manage_google_business_profile');
+
+        if (! $mayManage) {
             abort(404);
         }
 
@@ -340,8 +358,14 @@ class GoogleBusinessProfileController extends CustomerBaseController
         $workspaceUid = (string) $workspace->uid;
         $businessUid = (string) $business->uid;
 
+        // Onboarding failures return to onboarding, where the manual path is
+        // always available; every other failure keeps its existing destination.
+        $fail = fn (string $message, ?string $title = null): RedirectResponse => $onboardingBridge
+            ? $this->redirectToOnboardingWithError($message, $title)
+            : $this->redirectWithError($workspaceUid, $businessUid, $message, $title);
+
         if ($request->query('error') !== null || $request->query('code') === null) {
-            return $this->redirectWithError($workspaceUid, $businessUid, 'Google did not complete the connection.');
+            return $fail('Google did not complete the connection. You can try again or set up your business manually.');
         }
 
         // 7 — only now.
@@ -357,11 +381,15 @@ class GoogleBusinessProfileController extends CustomerBaseController
                 'business_uid' => $businessUid,
             ]);
 
-            return $this->redirectWithError($workspaceUid, $businessUid, $exception->customerMessage(), self::CONNECTION_UNAVAILABLE_TITLE);
+            return $fail($exception->customerMessage(), self::CONNECTION_UNAVAILABLE_TITLE);
         } catch (GoogleBusinessProfileConcurrencyException $exception) {
-            return $this->redirectWithError($workspaceUid, $businessUid, $exception->userMessage());
+            return $fail($exception->userMessage());
         } catch (GoogleBusinessProfileProviderException $exception) {
-            return $this->redirectWithError($workspaceUid, $businessUid, $exception->userMessage());
+            return $fail($exception->userMessage());
+        }
+
+        if ($onboardingBridge) {
+            return redirect()->route('customer.onboarding.google.show');
         }
 
         // 8 — canonical UIDs, resolved server-side.
@@ -381,8 +409,7 @@ class GoogleBusinessProfileController extends CustomerBaseController
      */
     public function candidates(string $workspaceUid, string $businessUid): View|Factory|Application|RedirectResponse
     {
-        $this->authorize('manage_google_business_profile');
-        [, $business] = $this->resolveEntitledBusiness($workspaceUid, $businessUid);
+        [, $business] = $this->managed($this->resolveEntitledBusiness($workspaceUid, $businessUid));
 
         $connection = $this->connectionRepository->findForBusiness($business, GoogleConnectionProduct::BusinessProfile);
 
@@ -436,8 +463,7 @@ class GoogleBusinessProfileController extends CustomerBaseController
      */
     public function bind(GoogleBusinessProfileBindRequest $request, string $workspaceUid, string $businessUid): RedirectResponse
     {
-        $this->authorize('manage_google_business_profile');
-        [, $business] = $this->resolveEntitledBusiness($workspaceUid, $businessUid);
+        [, $business] = $this->managed($this->resolveEntitledBusiness($workspaceUid, $businessUid));
 
         if ($demo = $this->demoGuard($workspaceUid, $businessUid)) {
             return $demo;
@@ -499,8 +525,7 @@ class GoogleBusinessProfileController extends CustomerBaseController
      */
     public function unbind(GoogleBusinessProfileUnbindRequest $request, string $workspaceUid, string $businessUid): RedirectResponse
     {
-        $this->authorize('manage_google_business_profile');
-        [, $business] = $this->resolveAccessibleBusiness($workspaceUid, $businessUid);
+        [, $business] = $this->managed($this->resolveAccessibleBusiness($workspaceUid, $businessUid));
 
         if ($demo = $this->demoGuard($workspaceUid, $businessUid)) {
             return $demo;
@@ -524,8 +549,7 @@ class GoogleBusinessProfileController extends CustomerBaseController
      */
     public function disconnect(string $workspaceUid, string $businessUid): RedirectResponse
     {
-        $this->authorize('manage_google_business_profile');
-        [, $business] = $this->resolveAccessibleBusiness($workspaceUid, $businessUid);
+        [, $business] = $this->managed($this->resolveAccessibleBusiness($workspaceUid, $businessUid));
 
         if ($demo = $this->demoGuard($workspaceUid, $businessUid)) {
             return $demo;
@@ -560,8 +584,7 @@ class GoogleBusinessProfileController extends CustomerBaseController
      */
     public function refresh(string $workspaceUid, string $businessUid): View|Factory|Application|RedirectResponse
     {
-        $this->authorize('manage_google_business_profile');
-        [, $business] = $this->resolveEntitledBusiness($workspaceUid, $businessUid);
+        [, $business] = $this->managed($this->resolveEntitledBusiness($workspaceUid, $businessUid));
 
         if ($demo = $this->demoGuard($workspaceUid, $businessUid)) {
             return $demo;
@@ -751,7 +774,7 @@ class GoogleBusinessProfileController extends CustomerBaseController
      */
     private function resolveEntitledBusiness(string $workspaceUid, string $businessUid): array
     {
-        return $this->resolveEntitledBusinessTenancy($workspaceUid, $businessUid, PlatformFeature::GoogleBusinessProfileModule->value);
+        return $this->shareManageability($this->resolveEntitledBusinessTenancy($workspaceUid, $businessUid, PlatformFeature::GoogleBusinessProfileModule->value));
     }
 
     /**
@@ -762,7 +785,38 @@ class GoogleBusinessProfileController extends CustomerBaseController
      */
     private function resolveAccessibleBusiness(string $workspaceUid, string $businessUid): array
     {
-        return $this->resolveBusinessTenancy($workspaceUid, $businessUid, requireActive: true);
+        return $this->shareManageability($this->resolveBusinessTenancy($workspaceUid, $businessUid, requireActive: true));
+    }
+
+    /**
+     * Whether the actor may MANAGE this Workspace's Google connection: the Workspace owner, or an actor holding the
+     * explicit manage_google_business_profile permission (default false) — the same WorkspaceManagementAuthority rule
+     * Google Ads and Meta Ads use. A View-As session never counts as owner. Runs only after the full tenancy chain
+     * (and, where applicable, entitlement) has already accepted the Workspace and Business.
+     *
+     * @param  array{0: Workspace, 1: Business}  $resolved
+     * @return array{0: Workspace, 1: Business}
+     */
+    private function shareManageability(array $resolved): array
+    {
+        view()->share('canManageGoogle', app(WorkspaceManagementAuthority::class)->mayManage($resolved[0], 'manage_google_business_profile'));
+
+        return $resolved;
+    }
+
+    /**
+     * @param  array{0: Workspace, 1: Business}  $resolved
+     * @return array{0: Workspace, 1: Business}
+     *
+     * @throws AuthorizationException
+     */
+    private function managed(array $resolved): array
+    {
+        if (! app(WorkspaceManagementAuthority::class)->mayManage($resolved[0], 'manage_google_business_profile')) {
+            throw new AuthorizationException();
+        }
+
+        return $resolved;
     }
 
     /**
@@ -819,6 +873,13 @@ class GoogleBusinessProfileController extends CustomerBaseController
         return redirect()
             ->route('customer.workspaces.businesses.gbp.index', [$workspaceUid, $businessUid])
             ->with(array_filter(['status' => 'error', 'message' => $message, 'message_title' => $title], fn ($value) => $value !== null));
+    }
+
+    private function redirectToOnboardingWithError(string $message, ?string $title = null): RedirectResponse
+    {
+        return redirect()
+            ->route('customer.onboarding.show')
+            ->withErrors(['onboarding' => $title === null ? $message : $title . ' — ' . $message]);
     }
 
     private function demoGuard(string $workspaceUid, string $businessUid): ?RedirectResponse

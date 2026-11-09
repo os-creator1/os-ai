@@ -27,6 +27,9 @@ final readonly class AiCompletionResult
         public int $cachedInputTokens,
         public int $outputTokens,
         public ?string $finishReason,
+        public ?string $errorClass = null,
+        public ?int $httpStatus = null,
+        public ?string $errorCode = null,
     ) {
     }
 
@@ -47,8 +50,11 @@ final readonly class AiCompletionResult
         int $outputTokens = 0,
         int $cachedInputTokens = 0,
         ?string $finishReason = null,
+        ?string $errorClass = null,
+        ?int $httpStatus = null,
+        ?string $errorCode = null,
     ): self {
-        return new self(false, null, $providerModel, $inputTokens, $cachedInputTokens, $outputTokens, $finishReason);
+        return new self(false, null, $providerModel, $inputTokens, $cachedInputTokens, $outputTokens, $finishReason, $errorClass, $httpStatus, $errorCode);
     }
 
     /**

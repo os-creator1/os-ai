@@ -58,6 +58,7 @@ final class BusinessAdvisorOpportunityProducer implements OpportunityProducer
 
     public function __construct(
         private readonly InitialBusinessSnapshotBuilder $snapshotBuilder,
+        private readonly OpportunityPlanEligibility $eligibility,
     ) {
     }
 
@@ -80,8 +81,16 @@ final class BusinessAdvisorOpportunityProducer implements OpportunityProducer
     {
         $retrievedAt = CarbonImmutable::now();
         $facts = $this->snapshotBuilder->opportunityFacts($business);
+        // Plan entitlement gate: a type the Business's plan does not include is
+        // never generated, so a stale current row is retired by the manager's
+        // normal "not re-confirmed" path rather than deleted.
+        $ineligible = $this->eligibility->ineligibleTypes($business);
 
         foreach (OpportunityTypeRegistry::forWorker($this->workerKey()->value) as $type => $typeDefinition) {
+            if (in_array($type, $ineligible, true)) {
+                continue;
+            }
+
             $factKey = $typeDefinition['required_evidence_fact_keys'][0];
 
             if (! ($facts[$factKey] ?? false)) {

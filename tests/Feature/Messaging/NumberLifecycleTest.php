@@ -104,7 +104,8 @@ class NumberLifecycleTest extends TestCase
     private function activeNumberDueOn(Business $business, Carbon $nextRenewalAt): BusinessMessagingNumber
     {
         $number = $this->attachNumber($this->attachIdentity($business), $this->uniqueNumber());
-        DB::table('business_messaging_numbers')->where('id', $number->id)->update(['next_renewal_at' => $nextRenewalAt]);
+        // The renewal charges this number's own recorded carrier cost (1.00/month here).
+        DB::table('business_messaging_numbers')->where('id', $number->id)->update(['next_renewal_at' => $nextRenewalAt, 'monthly_cost_micro' => 1_000_000, 'cost_currency' => 'USD']);
 
         return $number->fresh();
     }

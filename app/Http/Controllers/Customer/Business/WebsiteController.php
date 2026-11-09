@@ -411,11 +411,12 @@ class WebsiteController extends CustomerBaseController
     public function editPage(string $workspaceUid, string $businessUid, string $pageUid): View|Factory|Application
     {
         $this->authorize('website');
-        [, $business] = $this->resolveEntitledBusiness($workspaceUid, $businessUid);
+        [$workspace, $business] = $this->resolveEntitledBusiness($workspaceUid, $businessUid);
         $website = $this->resolveWebsite($business);
         $page = $this->resolvePage($website, $pageUid);
 
         return view('customer.business.website.page-form', [
+            'canSuggestDescription' => config('app.stage') !== 'demo' && $this->entitlementManager->decide($workspace, $business, PlatformFeature::SeoModule->value, (int) Auth::id())->allowed,
             'workspaceUid' => $workspaceUid,
             'businessUid' => $businessUid,
             'website' => $website,
@@ -424,6 +425,24 @@ class WebsiteController extends CustomerBaseController
             'forms' => $website->forms()->get(),
             'formsModule' => app(\App\Library\Website\Forms\WebsiteFormsModuleReferences::class)->options($business, (int) Auth::id()),
         ]);
+    }
+
+    /**
+     * Owner-requested ONLY (never on page load): one reviewable meta-description suggestion for this draft page. Same authorization chain as
+     * editing the page, plus the SEO module. It writes nothing; the owner saves through updatePage() and publishes separately.
+     */
+    public function suggestDescription(string $workspaceUid, string $businessUid, string $pageUid): \Illuminate\Http\JsonResponse
+    {
+        $this->authorize('website');
+        [$workspace, $business] = $this->resolveEntitledBusiness($workspaceUid, $businessUid);
+        abort_unless($this->entitlementManager->decide($workspace, $business, PlatformFeature::SeoModule->value, (int) Auth::id())->allowed, 404);
+        abort_if(config('app.stage') === 'demo', 403);
+        $website = $this->resolveWebsite($business);
+        $page = $this->resolvePage($website, $pageUid);
+
+        $result = app(\App\Library\Website\WebsiteMetaDescriptionSuggester::class)->suggest($business, $page, (int) Auth::id());
+
+        return response()->json($result, $result['ok'] ? 200 : ($result['budget'] ? 429 : 422));
     }
 
     public function updatePage(Request $request, string $workspaceUid, string $businessUid, string $pageUid): RedirectResponse
@@ -443,12 +462,27 @@ class WebsiteController extends CustomerBaseController
         // generation/rebuild that deletes-and-recreates every page can
         // never interleave with this update.
         try {
-            $this->generationCoordinator->runExclusive($website, function () use ($website, $pageUid, $attributes) {
+            $stale = $this->generationCoordinator->runExclusive($website, function () use ($website, $pageUid, $attributes, $request) {
                 $locked = $this->resolvePage($website, $pageUid);
+
+                // Never silently overwrite newer work: a form that carries a draft token is saved only if the page is unchanged since it was opened.
+                if ($request->filled('draft_token') && (string) $request->input('draft_token') !== $locked->draftToken()) {
+                    return true;
+                }
+
                 $this->draftPages->updatePage($website, $locked, $attributes);
+
+                return false;
             });
         } catch (GenerationInProgressException $e) {
             return redirect()->back()->with(['status' => 'error', 'message' => $e->getMessage()]);
+        }
+
+        if ($stale) {
+            return redirect()->route('customer.workspaces.businesses.website.pages.edit', [$workspaceUid, $businessUid, $page->uid])->with([
+                'status' => 'error',
+                'message' => 'This page changed since you opened it, so nothing was saved. Review the current page and apply your change again.',
+            ]);
         }
 
         return redirect()->route('customer.workspaces.businesses.website.pages.edit', [$workspaceUid, $businessUid, $page->uid])->with([

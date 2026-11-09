@@ -112,6 +112,12 @@
             // recordReleaseDecision()'s own explicit, audited, admin-only
             // action, which itself never confirms a real carrier release.
             $schedule->command('messaging:sweep-number-renewals')->daily()->withoutOverlapping();
+            // Zero-markup message billing: compare billed message charges with
+            // Telnyx's final per-message record and settle each to retail base x
+            // billable parts + the actual carrier surcharge. Idempotent, bounded
+            // retries; oversized or unreadable cases become visible incidents
+            // (the command exits non-zero) rather than being guessed.
+            $schedule->command('messaging:reconcile-costs --days=7 --apply --recheck-days=3')->hourlyAt(17)->withoutOverlapping();
             // Implementation Contract 15 §12.F — an implementation-time
             // cadence decision (not pinned by any authoritative document):
             // frequent enough that a webhook-missed change still converges
@@ -293,6 +299,9 @@
             $schedule->job(new \App\Jobs\Seo\ProcessSeoRankChecks())->everyFiveMinutes()->withoutOverlapping();
             $schedule->job(new \App\Jobs\Seo\PruneSeoRankObservations())->dailyAt('03:40');
             $schedule->command('seo:rank-sync-locations')->weeklyOn(1, '04:20')->withoutOverlapping();
+            // Self-heal: a country with no cached cities (first deploy, a failed sync, a newly supported
+            // country) is loaded within a day. A no-op with no provider call once every country is cached.
+            $schedule->command('seo:rank-sync-locations --if-missing')->dailyAt('04:40')->withoutOverlapping();
 
             // SEO Content Engine V1 — owner-scheduled articles go live at their time. publishDue()
             // re-checks every article first (an article that no longer passes goes back to Draft), so

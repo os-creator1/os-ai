@@ -35,7 +35,7 @@
                                     <td style="min-width: 260px;">
                                         <form method="POST" action="{{ route('admin.messaging-provisioning-incidents.resolve', $incident->id) }}">
                                             @csrf
-                                            @if (in_array($incident->stage, [\App\Library\Messaging\TelnyxProvisioningAdapter::INCIDENT_BRAND_UNKNOWN, \App\Library\Messaging\TelnyxProvisioningAdapter::INCIDENT_CAMPAIGN_UNKNOWN, \App\Library\Messaging\TelnyxProvisioningAdapter::INCIDENT_FUNDING_AMBIGUOUS], true))
+                                            @if (in_array($incident->stage, [\App\Library\Messaging\TelnyxProvisioningAdapter::INCIDENT_BRAND_UNKNOWN, \App\Library\Messaging\TelnyxProvisioningAdapter::INCIDENT_CAMPAIGN_UNKNOWN, \App\Library\Messaging\TelnyxProvisioningAdapter::INCIDENT_FUNDING_AMBIGUOUS, \App\Library\Messaging\TelnyxProvisioningAdapter::INCIDENT_TOLLFREE_UNKNOWN], true))
                                                 <select name="provider_resolution" class="form-select form-select-sm mb-1" required>
                                                     <option value="">How was the provider outcome verified?</option>
                                                     <option value="verified_provider_id">It exists at the provider — I will enter its ID</option>
@@ -45,6 +45,7 @@
                                                 </select>
                                                 <input type="text" name="provider_brand_id" class="form-control form-control-sm mb-1" placeholder="Verified brand ID" maxlength="191">
                                                 <input type="text" name="provider_campaign_id" class="form-control form-control-sm mb-1" placeholder="Verified campaign ID" maxlength="191">
+                                                <input type="text" name="provider_registration_id" class="form-control form-control-sm mb-1" placeholder="Verified toll-free verification ID" maxlength="191">
                                             @endif
                                             <input type="text" name="resolution_note" class="form-control form-control-sm transition-fast mb-1" placeholder="What was reconciled, and how" required maxlength="5000">
                                             <div class="form-check mb-1">

@@ -11,6 +11,7 @@ use App\Library\Entitlement\EntitlementManager;
 use App\Models\AiUsagePeriod;
 use Illuminate\Contracts\Cache\LockTimeoutException;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Log;
 
 /**
  * Contract §10.1 — `AiGateway::complete(AiRequest): AiResult` is the
@@ -36,6 +37,62 @@ final class AiGateway
     }
 
     public function complete(AiRequest $request): AiResult
+    {
+        $failure = null;
+        $result = $this->run($request, $failure);
+
+        $this->logOutcome($request, $result, $failure);
+
+        return $result;
+    }
+
+    /**
+     * Diagnostics only (searchable in Forge Site Log): motiongrove.ai.completed / .refused / .provider_failed. Fields are an
+     * allow-list of ids, enums, counts and the provider's short error identifiers. It never carries prompts, customer text,
+     * the response, keys, headers or an exception message. Logging can never change or break the call.
+     */
+    private function logOutcome(AiRequest $request, AiResult $result, ?AiCompletionResult $failure): void
+    {
+        try {
+            $entry = $result->ledgerEntry;
+            $context = [
+                'category' => $request->category->value,
+                'scope' => $request->scope->value,
+                'workspace_id' => $request->workspace?->id,
+                'business_id' => $request->business?->id,
+                'ledger_entry_id' => $entry?->id,
+                'ledger_uid' => $entry?->uid,
+            ];
+
+            if ($result->ok) {
+                Log::info('motiongrove.ai.completed', $context + [
+                    'status' => $entry->status->value,
+                    'provider_model' => $entry->provider_model,
+                    'input_tokens' => $entry->input_tokens,
+                    'cached_input_tokens' => $entry->cached_input_tokens,
+                    'output_tokens' => $entry->output_tokens,
+                    'cost_microusd' => $entry->actual_cost_microusd,
+                ]);
+            } elseif ($result->refusalReason !== null) {
+                Log::warning('motiongrove.ai.refused', $context + ['refusal' => $result->refusalReason->value]);
+            } else {
+                Log::error('motiongrove.ai.provider_failed', $context + [
+                    'status' => $entry?->status?->value,
+                    'exception_class' => $failure?->errorClass,
+                    'http_status' => $failure?->httpStatus,
+                    'provider_error_code' => $failure?->errorCode,
+                    'provider_model' => $entry?->provider_model,
+                    'input_tokens' => $entry?->input_tokens,
+                    'output_tokens' => $entry?->output_tokens,
+                    'cost_microusd' => $entry?->actual_cost_microusd,
+                ]);
+            }
+        } catch (\Throwable) {
+            // Diagnostics must never affect the customer's request.
+        }
+    }
+
+    private function run(AiRequest $request, ?AiCompletionResult &$failure): AiResult
     {
         $isPlatform = $request->scope === AiScope::Platform;
 
@@ -223,6 +280,8 @@ final class AiGateway
         $completionResult = $this->completionClient->complete($completionRequest);
 
         if (! $completionResult->success) {
+            $failure = $completionResult;
+
             // Correction 3 — usage the provider reported before failing was
             // really billed, so it is committed exactly once and only the
             // remainder of the reservation is released. A failure that

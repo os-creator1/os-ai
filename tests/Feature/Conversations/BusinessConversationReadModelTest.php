@@ -58,6 +58,8 @@ class BusinessConversationReadModelTest extends TestCase
         // same predicate and the inbox's Location rule, for the follow-up drawer.
         // The final Home added awaitingReplyBoxQuery(): the ids behind the same predicate as a sub-select, for the inbox's "waiting"
         // filter, so the list a card opens is exactly the set it counted.
+        // Growth Home's lead recovery added recentAnsweredByReply(): the recent replies that are still the latest word in their conversation
+        // and whose send state is recorded, with the same Location rule, so Home can show what an answered customer's reply actually did.
         $this->assertSame([
             'awaitingReplyBoxQuery',
             'awaitingReplyConversations',
@@ -65,6 +67,7 @@ class BusinessConversationReadModelTest extends TestCase
             'hasAnyConversation',
             'incomingCount',
             'periodCounts',
+            'recentAnsweredByReply',
             'repliedCount',
             'startedCount',
             'startedCountsForBusinesses',
@@ -297,6 +300,58 @@ class BusinessConversationReadModelTest extends TestCase
         $this->assertSame(1, $model->awaitingReplyCount($rival));
     }
 
+    public function test_an_explicitly_failed_reply_is_not_an_answer_but_unrecorded_delivery_still_is(): void
+    {
+        [$business, $rival] = $this->twoBusinessesOfOneCustomer();
+        $model = new BusinessConversationReadModel();
+        $now = CarbonImmutable::now();
+        $ago = fn (int $minutes) => $now->subMinutes($minutes);
+
+        // Waiting: the only reply FAILED to send, so the customer was never answered.
+        $this->thread($business, [['incoming', $ago(60)], ['outgoing', $ago(50), 'failed']]);
+        // Waiting: the provider reported the reply undelivered.
+        $this->thread($business, [['incoming', $ago(60)], ['outgoing', $ago(50), 'delivery_failed']]);
+        // Answered: a failed attempt, then a verified successful retry.
+        $this->thread($business, [['incoming', $ago(90)], ['outgoing', $ago(80), 'failed'], ['outgoing', $ago(70), 'sent']]);
+        // Answered: delivered, and sent.
+        $this->thread($business, [['incoming', $ago(90)], ['outgoing', $ago(80), 'delivered']]);
+        // Answered: legacy / quick-send / automation rows record no delivery state — treated exactly as before, never as failed.
+        $this->thread($business, [['incoming', $ago(90)], ['outgoing', $ago(80), null]]);
+        // Still being sent: not a recorded failure, so not reinterpreted.
+        $this->thread($business, [['incoming', $ago(90)], ['outgoing', $ago(80), 'sending']]);
+        // Several inbound messages, then one failed reply: waiting.
+        $this->thread($business, [['incoming', $ago(120)], ['incoming', $ago(110)], ['outgoing', $ago(100), 'failed']]);
+        // Failed reply, then the customer writes again: waiting, judged by the newer inbound.
+        $this->thread($business, [['incoming', $ago(120)], ['outgoing', $ago(110), 'failed'], ['incoming', $ago(40)]]);
+        // Another Business is never counted.
+        $this->thread($rival, [['incoming', $ago(60)], ['outgoing', $ago(50), 'failed']]);
+
+        $this->assertSame(4, $model->awaitingReplyCount($business));
+        $this->assertSame(1, $model->awaitingReplyCount($rival));
+    }
+
+    public function test_the_count_the_inbox_list_and_home_use_one_definition(): void
+    {
+        [$business] = $this->twoBusinessesOfOneCustomer();
+        $model = new BusinessConversationReadModel();
+        $now = CarbonImmutable::now();
+        $ago = fn (int $minutes) => $now->subMinutes($minutes);
+        $actor = (int) \App\Models\Customer::query()->whereKey($business->customer_id)->value('user_id');
+
+        $this->thread($business, [['incoming', $ago(300)], ['outgoing', $ago(290), 'failed']]);
+        $this->thread($business, [['incoming', $ago(60)], ['outgoing', $ago(50), 'sent']]);
+        $this->thread($business, [['incoming', $ago(45)]]);
+
+        $count = $model->awaitingReplyCount($business, null, $actor);
+        $list = $model->awaitingReplyConversations($business, $actor, 10);
+        $box = $model->awaitingReplyBoxQuery($business, $actor)->count();
+
+        $this->assertSame(2, $count);
+        $this->assertCount($count, $list);
+        $this->assertSame($count, $box);
+        $this->assertSame($ago(300)->getTimestamp(), $list[0]['at']->getTimestamp(), 'Oldest first: the customer whose reply failed is still waiting since their message.');
+    }
+
     public function test_each_h4_figure_is_a_single_statement(): void
     {
         [$business] = $this->twoBusinessesOfOneCustomer();
@@ -329,7 +384,7 @@ class BusinessConversationReadModelTest extends TestCase
      * One conversation carrying an exact sequence of messages, in the order
      * given — which is also the order their ids take, as in production.
      *
-     * @param  array<int, array{0: ?string, 1: CarbonImmutable}>  $messages
+     * @param  array<int, array{0: ?string, 1: CarbonImmutable, 2?: ?string}>  $messages  an optional third element is the recorded send_status
      */
     private function thread(Business $business, array $messages, ?CarbonImmutable $touchedAt = null): void
     {
@@ -348,8 +403,10 @@ class BusinessConversationReadModelTest extends TestCase
             'updated_at' => ($touchedAt ?? $last)->format('Y-m-d H:i:s'),
         ]);
 
-        foreach ($messages as [$direction, $at]) {
+        foreach ($messages as $message) {
+            [$direction, $at] = $message;
             DB::table('chat_box_messages')->insert([
+                'send_status' => $message[2] ?? null,
                 'box_id' => $boxId,
                 'message' => 'Fixture message',
                 'sms_type' => 'sms',

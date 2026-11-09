@@ -18,6 +18,7 @@ final readonly class NumberSearchCriteria
         public string $countryCode,
         public PhoneNumberType $numberType,
         public ?string $areaCode = null,
+        public ?string $tollFreePrefix = null,
     ) {
     }
 }

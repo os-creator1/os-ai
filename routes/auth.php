@@ -28,6 +28,7 @@
                 Route::post('register/plan', 'V1SignupController@selectPlan')->name('register.plan.select');
                 Route::get('register/account', 'V1SignupController@accountStep')->name('register.account');
                 Route::post('register/account', 'V1SignupController@storeAccount')->middleware('throttle:10,1')->name('register.account.store');
+                Route::get('register/google', 'V1SignupController@googleRedirect')->middleware('throttle:20,1')->name('register.google');
                 Route::get('register/business', 'V1SignupController@businessStep')->name('register.business');
                 Route::post('register/business', 'V1SignupController@storeBusiness')->name('register.business.store');
                 Route::get('register/payment', 'V1SignupController@paymentStep')->name('register.payment');
@@ -109,13 +110,16 @@
             Route::get('offers/{token}', 'PrivateOfferController@show')->where('token', $offerToken)->middleware(['private.offers', 'throttle:60,1'])->name('offers.show');
             Route::get('offers/{token}/signup', 'PrivateOfferController@signup')->where('token', $offerToken)->middleware(['private.offers', 'guest', 'throttle:20,1'])->name('offers.signup');
             Route::post('offers/{token}/accept', 'PrivateOfferController@accept')->where('token', $offerToken)->middleware(['private.offers', 'auth', 'throttle:10,1'])->name('offers.accept');
+            // Wrong account: sign out and come back to THIS offer. A POST (CSRF-protected), never a GET.
+            Route::post('offers/{token}/switch-account', 'PrivateOfferController@switchAccount')->where('token', $offerToken)->middleware(['private.offers', 'auth', 'throttle:10,1'])->name('offers.switch-account');
             Route::get('offers/return/{redemption}', 'PrivateOfferController@checkoutReturn')->whereUuid('redemption')->middleware('auth')->name('offers.return');
             Route::get('offers/cancelled/{redemption}', 'PrivateOfferController@checkoutCancelled')->whereUuid('redemption')->middleware('auth')->name('offers.cancelled');
 
             // Authentication Routes...
             Route::get('login', 'LoginController@showLoginForm')->name('login');
             Route::post('login', 'LoginController@login')->middleware('throttle:10,1');
-            Route::any('logout', 'LoginController@logout')->name('logout');
+            // POST only (CSRF-protected): a GET must never perform a state-changing logout.
+            Route::post('logout', 'LoginController@logout')->name('logout');
 
             Route::get('login/{provider}', 'LoginController@redirectToProvider')->name('social.login');
             Route::get('login/{provider}/callback', 'LoginController@handleProviderCallback')->name('social.callback');

@@ -21,6 +21,8 @@ use Tests\TestCase;
  */
 class TextMessagingRegistrationDefaultsTest extends TestCase
 {
+    use \Tests\Support\CompletesTenDlcStages;
+
     use RefreshDatabase;
     use CreatesCustomerContextFixtures;
     use CreatesMessagingFixtures;
@@ -63,7 +65,8 @@ class TextMessagingRegistrationDefaultsTest extends TestCase
             'sample_message_1' => 'Sunset Photo Booths: thanks for your inquiry, your quote is on its way. Reply STOP to opt out.',
             'sample_message_2' => 'Sunset Photo Booths: reminder that your event is this weekend. Reply STOP to opt out.',
             'privacy_policy_url' => 'https://sunsetbooths.example/privacy',
-            'terms_url' => 'https://sunsetbooths.example/sms-terms',
+            'terms_url' => 'https://sunsetbooths.example/sms-terms', 'support_contact' => 'help@fixture.example', 'support_contact_confirmed' => '1', 'support_contact_confirmed_for' => 'help@fixture.example', 'support_contact_confirmed_at' => '2026-01-01 00:00:00',
+            'contact_first_name' => 'Pat', 'contact_last_name' => 'Owner', 'message_volume' => '1,000', 'opt_in_image_url' => 'https://example.com/opt-in.png', 'brand_vertical' => 'ENTERTAINMENT',
             'consent_confirmations' => array_keys(RegistrationTemplateCatalog::CONSENT_ITEMS),
         ], $overrides);
     }
@@ -119,7 +122,9 @@ class TextMessagingRegistrationDefaultsTest extends TestCase
         $this->assertSame('customer_care', RegistrationTemplateCatalog::useCaseForChoice('care'));
         $this->assertSame('marketing', RegistrationTemplateCatalog::useCaseForChoice('marketing'));
         $this->assertSame('mixed', RegistrationTemplateCatalog::useCaseForChoice('both'));
-        $this->assertCount(3, RegistrationTemplateCatalog::CHOICES);
+        // Low Volume Mixed is its own choice, never an alias of ordinary Mixed.
+        $this->assertSame('low_volume_mixed', RegistrationTemplateCatalog::useCaseForChoice('low_volume'));
+        $this->assertCount(4, RegistrationTemplateCatalog::CHOICES);
 
         $marketing = RegistrationTemplateCatalog::forUseCase('photo_booth_service', 'marketing', 'Sunset Photo Booths', null);
         $care = RegistrationTemplateCatalog::forUseCase('photo_booth_service', 'customer_care', 'Sunset Photo Booths', null);
@@ -167,11 +172,17 @@ class TextMessagingRegistrationDefaultsTest extends TestCase
             'consent_confirmations' => ['stop_help'],
             'sample_message_1' => 'Sunset Photo Booths: 20% off all packages this month! Reply STOP to opt out.',
             'privacy_policy_url' => 'https://sunsetbooths.example/terms',
-            'terms_url' => 'https://sunsetbooths.example/terms',
+            'terms_url' => 'https://sunsetbooths.example/terms', 'support_contact' => 'help@fixture.example', 'support_contact_confirmed' => '1', 'support_contact_confirmed_for' => 'help@fixture.example', 'support_contact_confirmed_at' => '2026-01-01 00:00:00',
+            'contact_first_name' => 'Pat', 'contact_last_name' => 'Owner', 'message_volume' => '1,000', 'opt_in_image_url' => 'https://example.com/opt-in.png', 'brand_vertical' => 'ENTERTAINMENT',
             'campaign_description' => 'Sunset Photo Booths sends [describe your messages] to customers.',
         ]));
 
-        $this->post($submit)->assertSessionHas('status', 'error');
+        $blocked = $this->post($submit);
+        $blocked->assertSessionHas('status', 'error')->assertSessionHas('registration_blocked', true);
+        $this->assertStringEndsWith('#pm-submit', (string) $blocked->headers->get('Location'));
+        $this->assertStringContainsString('Nothing was sent to the carrier and nothing was charged', (string) session('message'));
+        $this->assertSame([], $fake->submittedRegistrations, 'a failed local validation never reaches the carrier');
+        $this->assertSame([], $fake->provisionedOrders);
 
         $registration = BusinessMessagingRegistration::where('business_id', $business->id)->first();
         $this->assertSame(MessagingRegistrationStatus::NotStarted, $registration->status);
@@ -183,6 +194,10 @@ class TextMessagingRegistrationDefaultsTest extends TestCase
         $this->assertStringContainsString('reads as a promotion', $page);
         $this->assertStringContainsString('separate pages', $page);
         $this->assertStringContainsString('placeholder text', $page);
+        // The exact failures are shown, each with a link to its section, and the draft/submit split is explained.
+        $this->assertStringContainsString('data-role="submission-issues"', $page);
+        $this->assertStringContainsString('href="#pm-sec-consent"', $page);
+        $this->assertStringContainsString('last saved draft', $page);
     }
 
     public function test_a_complete_registration_submits_once_and_a_repeat_submit_is_refused(): void
@@ -196,7 +211,18 @@ class TextMessagingRegistrationDefaultsTest extends TestCase
         $this->post($this->updateUrl($workspace, $business), $this->payload());
         $this->post($submit)->assertSessionHas('status', 'success');
 
+        // Stage 1 only creates the brand; the campaign waits for verification and authorization.
         $registration = BusinessMessagingRegistration::where('business_id', $business->id)->first();
+        $this->assertSame(MessagingRegistrationStatus::NotStarted, $registration->status);
+        $this->assertNotNull($registration->provider_brand_id);
+        $this->assertNull($registration->provider_campaign_id);
+        $this->post(str_replace('/registration/submit', '/registration/refresh', $submit));
+        $this->assertSame('verified', $registration->fresh()->brand_status);
+        $this->post($submit)->assertSessionHas('status', 'error'); // not authorized
+        $this->assertNull($registration->fresh()->provider_campaign_id);
+        $this->post($submit, ['authorize_campaign' => '1'])->assertSessionHas('status', 'success');
+
+        $registration = $registration->fresh();
         $this->assertSame(MessagingRegistrationStatus::Pending, $registration->status);
         $brandId = $registration->provider_brand_id;
 
@@ -205,16 +231,85 @@ class TextMessagingRegistrationDefaultsTest extends TestCase
         $this->assertSame(MessagingRegistrationStatus::Pending, $registration->fresh()->status);
     }
 
+    public function test_saving_a_draft_never_contacts_the_carrier_and_submit_uses_the_saved_dba_branded_draft(): void
+    {
+        $fake = new FakeProvisioningAdapter();
+        $this->app->instance(MessagingProvisioningAdapter::class, $fake);
+        config(['messaging.managed_messaging_enabled' => true, 'messaging.managed_messaging_provisioning_enabled' => true, 'services.telnyx.api_key' => 'fixture_key']);
+        [$business, $workspace] = $this->registrationState();
+        $submit = route('customer.workspaces.businesses.text-messaging.registration.submit', [$workspace->uid, $business->uid]);
+
+        // Legal entity differs from the customer-facing name already on file for the Business.
+        $this->post($this->updateUrl($workspace, $business), $this->payload(['legal_business_name' => 'Spartan Security Force, LLC']))
+            ->assertSessionHas('status', 'success');
+        $this->assertSame([], $fake->submittedRegistrations, 'saving a draft never submits to the carrier');
+
+        $this->post($submit)->assertSessionHas('status', 'success');
+        $this->assertNotEmpty($fake->submittedRegistrations);
+    }
+
+    public function test_changing_between_service_only_types_keeps_common_consent_ticks_but_marketing_clears_them(): void
+    {
+        [$business, $workspace] = $this->registrationState();
+        $this->post($this->updateUrl($workspace, $business), $this->payload());
+
+        $this->post($this->updateUrl($workspace, $business), $this->payload(['use_case' => 'appointment_reminders']))
+            ->assertSessionHas('status', 'success');
+        $this->assertCount(count(RegistrationTemplateCatalog::CONSENT_ITEMS), BusinessMessagingRegistration::where('business_id', $business->id)->first()->consent_confirmations);
+
+        $this->post($this->updateUrl($workspace, $business), $this->payload(['use_case' => 'marketing']));
+        $this->assertSame([], BusinessMessagingRegistration::where('business_id', $business->id)->first()->consent_confirmations);
+        $this->assertStringContainsString('consent checklist was cleared', (string) session('message'));
+    }
+
+    public function test_save_draft_refuses_toll_free_text_over_500_characters_with_field_errors_and_keeps_the_saved_draft(): void
+    {
+        [$customer, $business, $workspace] = $this->tenant(WorkspacePlanTier::Growth, 'Sunset Photo Booths');
+        $identity = $this->attachIdentity($business);
+        $number = $this->attachNumber($identity, '+18885550142');
+        // A genuine toll-free number, owned by this Business through its messaging identity.
+        \App\Models\BusinessMessagingNumber::query()->whereKey($number->id)->update(['number_type' => 'toll_free']);
+        $this->assertSame(\App\Enums\Messaging\PhoneNumberType::TollFree, \App\Models\BusinessMessagingNumber::query()
+            ->where('business_messaging_identity_id', $identity->id)->value('number_type'));
+        $this->authenticateAs($customer);
+
+        // Exactly 500 characters is accepted and saved as written.
+        $at500 = str_repeat('a', 500);
+        $this->post($this->updateUrl($workspace, $business), $this->payload(['campaign_description' => $at500, 'opt_in_method' => str_repeat('b', 500)]))
+            ->assertSessionDoesntHaveErrors();
+        $saved = BusinessMessagingRegistration::where('business_id', $business->id)->first();
+        $this->assertSame($at500, $saved->campaign_description);
+        $this->assertSame(str_repeat('b', 500), $saved->opt_in_method);
+
+        // 501 characters: field-specific errors, and the saved draft is untouched.
+        $this->post($this->updateUrl($workspace, $business), $this->payload([
+            'campaign_description' => str_repeat('c', 501),
+            'opt_in_method' => str_repeat('d', 501),
+        ]))->assertSessionHasErrors(['campaign_description', 'opt_in_method']);
+
+        // Either field alone is enough to be refused, and only that field is reported.
+        $this->post($this->updateUrl($workspace, $business), $this->payload(['campaign_description' => str_repeat('e', 501), 'opt_in_method' => str_repeat('b', 500)]))
+            ->assertSessionHasErrors('campaign_description')->assertSessionDoesntHaveErrors('opt_in_method');
+        $this->post($this->updateUrl($workspace, $business), $this->payload(['campaign_description' => $at500, 'opt_in_method' => str_repeat('f', 501)]))
+            ->assertSessionHasErrors('opt_in_method')->assertSessionDoesntHaveErrors('campaign_description');
+
+        $after = BusinessMessagingRegistration::where('business_id', $business->id)->first();
+        $this->assertSame($at500, $after->campaign_description);
+        $this->assertSame(str_repeat('b', 500), $after->opt_in_method);
+    }
+
     public function test_a_valid_submission_for_a_business_without_a_wallet_shows_a_page_error_and_sends_nothing(): void
     {
         config(['messaging.managed_messaging_enabled' => true, 'messaging.managed_messaging_provisioning_enabled' => true, 'services.telnyx.api_key' => 'fixture_key']);
         \Illuminate\Support\Facades\Http::fake();
+        \App\Models\Currency::query()->firstOrCreate(['code' => 'USD'], ['name' => 'US Dollar', 'format' => '$', 'status' => true]);
         [$business, $workspace] = $this->registrationState();
         \Illuminate\Support\Facades\DB::table('business_usage_wallets')->where('business_id', $business->id)->delete();
         $submit = route('customer.workspaces.businesses.text-messaging.registration.submit', [$workspace->uid, $business->uid]);
 
         $this->post($this->updateUrl($workspace, $business), $this->payload());
-        $this->post($submit)->assertSessionHas('status', 'error')->assertSessionMissing('errors');
+        $this->post($submit)->assertSessionHas('status', 'error')->assertSessionMissing('errors')
+            ->assertSessionHas('message', fn (string $m): bool => str_contains($m, 'pricing') && ! str_contains($m, 'enough funds'));
 
         \Illuminate\Support\Facades\Http::assertNothingSent();
         $this->assertSame(MessagingRegistrationStatus::NotStarted, BusinessMessagingRegistration::where('business_id', $business->id)->first()->status);
@@ -263,5 +358,16 @@ class TextMessagingRegistrationDefaultsTest extends TestCase
 
                 return true;
             });
+    }
+
+    public function test_local_campaigns_keep_their_separate_2000_character_limit(): void
+    {
+        [$business, $workspace] = $this->registrationState();
+        \App\Models\BusinessMessagingNumber::query()->update(['number_type' => 'local']);
+
+        $this->post($this->updateUrl($workspace, $business), $this->payload(['campaign_description' => str_repeat('a', 1500)]))
+            ->assertSessionDoesntHaveErrors('campaign_description');
+        $this->post($this->updateUrl($workspace, $business), $this->payload(['campaign_description' => str_repeat('a', 2001)]))
+            ->assertSessionHasErrors('campaign_description');
     }
 }

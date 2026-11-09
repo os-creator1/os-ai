@@ -75,6 +75,22 @@
                 @endif
             </div>
 
+            @if (! empty($publishedPending))
+                <div class="mb-1" data-role="audit-fix-published-pending">
+                    @foreach ($publishedPending as $item)
+                        <p class="text-caption mb-25">Published, awaiting a fresh audit: {{ $item['title'] }} now has a {{ $item['what'] }} in the current published revision. The finding is not yet verified resolved.</p>
+                    @endforeach
+                </div>
+            @endif
+
+            @if (! empty($resolved))
+                <div class="mb-1" data-role="audit-resolved">
+                    @foreach ($resolved as $item)
+                        <p class="text-caption mb-25">Verified resolved by a fresh audit: {{ $item['title'] }} now has a {{ $item['what'] }}.</p>
+                    @endforeach
+                </div>
+            @endif
+
             @if ($state === SeoAuditPage::STATE_NO_WEBSITE)
                 <p class="mb-0" data-role="audit-message">You have no published website yet. Publish your website and we will check it automatically.</p>
             @elseif ($state === SeoAuditPage::STATE_NOT_CHECKED)
@@ -104,6 +120,10 @@
                     <span class="badge bg-light-info">{{ $page->latestRun->info_count }} suggestions</span>
                 </div>
 
+                @if (! empty($manualGuidance))
+                    <p class="text-caption text-muted" data-role="audit-manual-guidance">You can't edit this website's draft from here. To fix the page titles and descriptions listed below, ask someone with website editing access, or change them where your website is managed. Re-run the check afterwards.</p>
+                @endif
+
                 <div class="table-responsive">
                     <table class="table table-sm">
                         <thead>
@@ -129,7 +149,60 @@
                                         </span>
                                         <div>{{ $finding->title }}</div>
                                     </td>
-                                    <td>{{ $finding->description }}</td>
+                                    <td>
+                                        {{ $finding->description }}
+                                        @if (isset($draftFixes[$loop->index]))
+                                            @php $fix = $draftFixes[$loop->index]; @endphp
+                                            <div class="mt-50" data-role="audit-draft-fix">
+                                                @if ($fix['live'])
+                                                    <span class="text-caption text-muted" data-role="audit-fix-live">Published: your live website now has this. Run the audit again to confirm the finding is resolved.</span>
+                                                @elseif ($fix['draftFixed'])
+                                                    <span class="text-caption text-muted" data-role="audit-fix-drafted">Updated in your draft. Publish to make it live.</span>
+                                                @endif
+                                                @if (($fix['mode'] ?? 'fill') !== 'fill' && ($fix['currentValue'] ?? '') !== '')
+                                                    <div class="text-caption mb-25" data-role="audit-fix-context">
+                                                        Current {{ ($fix['field'] ?? '') === 'seo_title' ? 'page title' : 'description' }} for "{{ $fix['pageTitle'] }}": "{{ $fix['currentValue'] }}"
+                                                        @if (($fix['effectiveLength'] ?? null) !== null)
+                                                            <br>Searchers see "{{ $fix['effectiveTitle'] }}" ({{ $fix['effectiveLength'] }} characters as searchers see it, including your business name when it fits; recommended maximum {{ $fix['titleMax'] }}).
+                                                        @endif
+                                                        @if (! empty($fix['sharedWith']))
+                                                            <br>Also used by: {{ implode(', ', $fix['sharedWith']) }}.
+                                                        @endif
+                                                    </div>
+                                                @endif
+                                                <a href="{{ $fix['url'] }}" data-role="audit-draft-fix-link">{{ $fix['label'] }}</a>
+                                                @if (($fix['titleForm'] ?? false) && ! empty($auditRunUid) && ($fix['draftToken'] ?? '') !== '')
+                                                    <form method="POST" action="{{ route('customer.workspaces.businesses.seo.audit.title.apply', [$workspaceUid, $businessUid, $fix['pageUid']]) }}" class="mt-50" data-role="audit-title-proposal">
+                                                        @csrf
+                                                        <input type="hidden" name="audit_run" value="{{ $auditRunUid }}">
+                                                        <input type="hidden" name="draft_token" value="{{ $fix['draftToken'] }}">
+                                                        <input type="hidden" name="rule" value="{{ $fix['ruleKey'] }}">
+                                                        <label class="text-caption d-block" for="title-{{ $fix['pageUid'] }}-{{ $fix['ruleKey'] }}">Proposed title for "{{ $fix['pageTitle'] }}" (edit it if you like)</label>
+                                                        <input type="text" class="form-control form-control-sm mb-50" id="title-{{ $fix['pageUid'] }}-{{ $fix['ruleKey'] }}" name="seo_title" maxlength="70" value="{{ $fix['proposal'] ?? '' }}">
+                                                        <button type="submit" class="btn btn-sm btn-primary">Approve and save to draft</button>
+                                                        <span class="text-caption text-muted">Saves to your draft only. Publishing is a separate step.</span>
+                                                    </form>
+                                                @endif
+                                                @if (($fix['descriptionForm'] ?? false) && ! empty($auditRunUid) && ($fix['draftToken'] ?? '') !== '')
+                                                    <form method="POST" action="{{ route('customer.workspaces.businesses.seo.audit.description.apply', [$workspaceUid, $businessUid, $fix['pageUid']]) }}" class="mt-50" data-role="audit-description-form">
+                                                        @csrf
+                                                        <input type="hidden" name="audit_run" value="{{ $auditRunUid }}">
+                                                        <input type="hidden" name="draft_token" value="{{ $fix['draftToken'] }}">
+                                                        <input type="hidden" name="rule" value="{{ $fix['ruleKey'] }}">
+                                                        <label class="text-caption d-block" for="desc-{{ $fix['pageUid'] }}-{{ $fix['ruleKey'] }}">Meta description for "{{ $fix['pageTitle'] }}" (70-160 characters)</label>
+                                                        @if (! empty($fix['replacesDescription']))
+                                                            <p class="text-caption mb-25" data-role="audit-current-description"><strong>Current description ({{ mb_strlen($fix['currentDescription']) }} characters{{ $fix['currentNote'] ?? '' }}):</strong> {{ $fix['currentDescription'] }}</p>
+                                                        @endif
+                                                        <textarea class="form-control form-control-sm mb-50" rows="3" id="desc-{{ $fix['pageUid'] }}-{{ $fix['ruleKey'] }}" name="meta_description" minlength="70" maxlength="160">{{ $fix['currentDescription'] ?? '' }}</textarea>
+                                                        <button type="button" class="btn btn-sm btn-outline-secondary" data-role="audit-suggest-description" data-url="{{ $fix['suggestUrl'] }}" data-target="desc-{{ $fix['pageUid'] }}-{{ $fix['ruleKey'] }}">Suggest with AI (optional)</button>
+                                                        <button type="submit" class="btn btn-sm btn-primary">Approve and save to draft</button>
+                                                        <span class="text-caption text-muted">Nothing is written until you approve. Saves to your draft only; publishing is a separate step.</span>
+                                                        <span class="text-caption text-danger d-block" data-role="audit-suggest-error" hidden role="alert"></span>
+                                                    </form>
+                                                @endif
+                                            </div>
+                                        @endif
+                                    </td>
                                 </tr>
                             @endforeach
                         </tbody>
@@ -159,4 +232,21 @@
             </div>
         </div>
     @endif
+<script>
+// Optional suggestion: runs only on an explicit click, through the existing read-only Website endpoint. It fills the field for review; nothing is saved.
+document.querySelectorAll('[data-role="audit-suggest-description"]').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+        var form = btn.closest('form'), err = form.querySelector('[data-role="audit-suggest-error"]'), field = document.getElementById(btn.dataset.target);
+        btn.disabled = true; err.hidden = true;
+        fetch(btn.dataset.url, { method: 'POST', headers: { 'X-CSRF-TOKEN': form.querySelector('input[name="_token"]').value, 'Accept': 'application/json' } })
+            .then(function (r) { return r.json().catch(function () { return {}; }); })
+            .then(function (d) {
+                if (d && d.ok && d.description) { field.value = d.description; }
+                else { err.textContent = (d && d.message) || 'A suggestion is not available right now. You can write the description yourself.'; err.hidden = false; }
+            })
+            .catch(function () { err.textContent = 'A suggestion is not available right now. You can write the description yourself.'; err.hidden = false; })
+            .then(function () { btn.disabled = false; });
+    });
+});
+</script>
 @endsection

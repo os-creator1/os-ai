@@ -191,7 +191,10 @@ class GoogleBusinessProfileTenancyTest extends TestCase
         $this->createLocation($business);
         $this->activeConnection($business);
 
-        $this->authenticateAsCustomer($customer, ['view_google_business_profile']);
+        // A NON-owner member holding only the view permission (the Workspace owner manages without it).
+        $viewer = $this->createCustomer()->user;
+        $this->addMember($workspace, $viewer, \App\Enums\Workspace\WorkspaceMembershipRole::Admin);
+        $this->authenticateAsUser($viewer, ['view_google_business_profile']);
         $args = [$workspace->uid, $business->uid];
 
         $this->get(route('customer.workspaces.businesses.gbp.index', $args))->assertOk();

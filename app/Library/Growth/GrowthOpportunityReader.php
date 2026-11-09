@@ -63,12 +63,23 @@ final class GrowthOpportunityReader
 
     private const CAP = 300;
 
+    public function __construct(private readonly GrowthOpportunityEligibility $eligibility)
+    {
+    }
+
     public function base(Business $business, GrowthViewer $viewer): Builder
     {
+        // Live plan entitlement: stored rows of a domain the plan no longer
+        // includes stay in history but are never listed, counted or opened.
+        $types = array_values(array_diff(
+            array_keys(GrowthRuleRegistry::all()),
+            $this->eligibility->ineligibleTypes($business),
+        ));
+
         $query = Opportunity::query()
             ->where('business_id', $business->id)
             ->whereIn('worker_key', GrowthRuleRegistry::workerKeys())
-            ->whereIn('type', array_keys(GrowthRuleRegistry::all()));
+            ->whereIn('type', $types === [] ? ['__none__'] : $types);
 
         if (! $viewer->fullAccess) {
             // Ad spend and cost figures are Business-wide money data: a Location-restricted actor never sees them.
@@ -114,6 +125,45 @@ final class GrowthOpportunityReader
     }
 
     /**
+     * The latest action execution of each given Opportunity, keyed by Opportunity id, in two bounded statements however many are asked
+     * for (the work record never queries per row).
+     *
+     * @param  array<int, int>  $opportunityIds
+     * @return array<int, \App\Models\OpportunityActionExecution>
+     */
+    public function latestExecutions(array $opportunityIds): array
+    {
+        if ($opportunityIds === []) {
+            return [];
+        }
+
+        $latest = \Illuminate\Support\Facades\DB::table('opportunity_action_executions')
+            ->whereIn('opportunity_id', $opportunityIds)
+            ->groupBy('opportunity_id')
+            ->selectRaw('MAX(id) as id')
+            ->pluck('id')
+            ->all();
+
+        return \App\Models\OpportunityActionExecution::query()->whereIn('id', $latest)->get()->keyBy('opportunity_id')->all();
+    }
+
+    /**
+     * Growth work that has moved past "recommended": awaiting approval, in progress, completed, or ever executed — within the same
+     * Business, plan-entitlement and Location scope as every other Growth list (base()). Newest activity first.
+     */
+    public function workHistory(Business $business, GrowthViewer $viewer, int $perPage = 20): LengthAwarePaginator
+    {
+        return $this->base($business, $viewer)
+            ->where(function (Builder $q): void {
+                $q->whereIn('status', [OpportunityStatus::AwaitingApproval->value, OpportunityStatus::InProgress->value, OpportunityStatus::Completed->value])
+                    ->orWhereIn('id', fn ($sub) => $sub->select('opportunity_id')->from('opportunity_action_executions'));
+            })
+            ->orderByDesc('updated_at')
+            ->orderByDesc('id')
+            ->paginate($perPage);
+    }
+
+    /**
      * @param  array{state?: string, category?: string, module?: string, location?: string|int, q?: string}  $filters
      */
     public function paginate(Business $business, GrowthViewer $viewer, array $filters, int $perPage = 15): LengthAwarePaginator
@@ -149,6 +199,26 @@ final class GrowthOpportunityReader
             ->orderBy('id')
             ->limit($limit)
             ->get();
+    }
+
+    /**
+     * The first open row (same ACL / entitlement / freshness / open-state filters and the same ordering as top()) among the given rule types.
+     *
+     * @param  array<int, string>  $types
+     */
+    public function topOfTypes(Business $business, GrowthViewer $viewer, array $types): ?Opportunity
+    {
+        if ($types === []) {
+            return null;
+        }
+
+        return $this->applyState($this->base($business, $viewer), self::STATE_OPEN)
+            ->whereIn('type', $types)
+            ->orderByDesc('priority_score')
+            ->orderByDesc('impact')
+            ->orderBy('first_detected_at')
+            ->orderBy('id')
+            ->first();
     }
 
     public function find(Business $business, GrowthViewer $viewer, string $uid): ?Opportunity

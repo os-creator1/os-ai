@@ -94,7 +94,7 @@ class CustomerAccountAccessGateTest extends TestCase
         $billing = $this->get(route('customer.workspaces.plan.show', $workspace->uid));
         $billing->assertOk();
 
-        $logout = $this->get(route('logout'));
+        $logout = $this->post(route('logout'));
         $this->assertNotSame(403, $logout->status());
         if ($logout->isRedirect()) {
             $this->assertStringNotContainsString('account-locked', (string) $logout->headers->get('Location'));

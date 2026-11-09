@@ -47,6 +47,21 @@
                     <p class="gc-empty-line mt-1">{{ $card['title'] }}</p>
                 </section>
 
+                @if(! empty($card['work']) && $card['work']['key'] !== 'recommended')
+                    <section class="gc-panel" data-role="work-status" data-stage="{{ $card['work']['key'] }}">
+                        <h3 class="gc-panel-title">Status: {{ $card['work']['label'] }}</h3>
+                        <p class="mb-50" data-role="work-note">{{ $card['work']['note'] }}</p>
+                        @if(! empty($execution))
+                            <ul class="gc-facts" data-role="work-execution">
+                                <li>Started {{ $execution->created_at?->diffForHumans() }}</li>
+                                @if($execution->completed_at)<li>Finished {{ $execution->completed_at->diffForHumans() }}</li>@endif
+                                @if($execution->status->value === 'succeeded' && $execution->safe_result_summary)<li data-role="work-result">{{ $execution->safe_result_summary }}</li>@endif
+                                @if($execution->status->value === 'failed' && $execution->safe_error_summary)<li data-role="work-error">{{ $execution->safe_error_summary }}</li>@endif
+                            </ul>
+                        @endif
+                    </section>
+                @endif
+
                 <section class="gc-panel" data-role="why-matters">
                     <h2>Why this matters</h2>
                     <p class="mb-0">{{ $card['why'] }}</p>

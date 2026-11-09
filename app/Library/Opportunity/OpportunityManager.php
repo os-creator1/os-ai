@@ -1059,9 +1059,9 @@ class OpportunityManager
 
         $value = $parameters['value'];
 
-        if (! is_string($value) || trim($value) === '' || mb_strlen($value) > 50) {
+        if (! OpportunityActionRegistry::valueIsValid($actionKey, $value)) {
             throw new OpportunityActionNotExecutableException(
-                "Opportunity [{$locked->id}]'s configured phone value is invalid."
+                "Opportunity [{$locked->id}]'s configured {$actionKey} value is invalid."
             );
         }
 
@@ -1711,7 +1711,7 @@ class OpportunityManager
 
             $actionKey = is_array($locked->recommended_action) ? ($locked->recommended_action['action_key'] ?? null) : null;
 
-            if ($actionKey !== 'add_phone') {
+            if (! in_array($actionKey, OpportunityActionRegistry::CONFIGURABLE, true)) {
                 throw new OpportunityActionNotConfigurableException(
                     "Opportunity [{$locked->id}] has no configurable action."
                 );
@@ -1792,6 +1792,14 @@ class OpportunityManager
 
         if (mb_strlen($value) > $rule['max_length']) {
             throw new InvalidOpportunityActionParametersException('Parameter [value] exceeds the maximum length.');
+        }
+
+        if (mb_strlen(trim($value)) < (int) ($rule['min_length'] ?? 0)) {
+            throw new InvalidOpportunityActionParametersException('Parameter [value] is shorter than the minimum length.');
+        }
+
+        if (($rule['format'] ?? null) === 'email' && filter_var($value, FILTER_VALIDATE_EMAIL) === false) {
+            throw new InvalidOpportunityActionParametersException('Parameter [value] must be a valid email address.');
         }
 
         return $value;
@@ -2091,9 +2099,9 @@ class OpportunityManager
 
         $value = $parameters['value'];
 
-        if (! is_string($value) || trim($value) === '' || mb_strlen($value) > 50) {
+        if (! OpportunityActionRegistry::valueIsValid($actionKey, $value)) {
             throw new OpportunityActionNotExecutableException(
-                "Opportunity [{$lockedOpportunity->id}]'s configured phone value is invalid."
+                "Opportunity [{$lockedOpportunity->id}]'s configured {$actionKey} value is invalid."
             );
         }
     }

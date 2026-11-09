@@ -147,7 +147,7 @@ class BusinessMessagingProvisioningService
         ])->save();
 
         try {
-            return $this->identities->attachNumber(
+            $number = $this->identities->attachNumber(
                 $identity,
                 $result->phoneNumber,
                 true,
@@ -155,6 +155,22 @@ class BusinessMessagingProvisioningService
                 $result->providerPhoneNumberId,
                 $candidate->numberType,
             );
+
+            // The carrier cost the customer confirmed and paid is recorded
+            // with the number: it is what each rental renewal charges (and
+            // the audit trail of what was quoted at purchase).
+            if ($result->monthlyCostMicro !== null) {
+                \Illuminate\Support\Facades\DB::table('business_messaging_numbers')->where('id', $number->id)->update([
+                    'upfront_cost_micro' => $result->upfrontCostMicro,
+                    'monthly_cost_micro' => $result->monthlyCostMicro,
+                    'cost_currency' => $result->costCurrency,
+                    'updated_at' => now(),
+                ]);
+
+                $number = $number->fresh();
+            }
+
+            return $number;
         } catch (\Throwable $e) {
             $this->incidents->record(
                 business: $business,

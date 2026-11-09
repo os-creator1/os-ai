@@ -16,6 +16,9 @@ final readonly class ProvisionedNumberResult
         public string $messagingProfileId,
         public string $providerPhoneNumberId,
         public string $phoneNumber,
+        public ?int $upfrontCostMicro = null,
+        public ?int $monthlyCostMicro = null,
+        public ?string $costCurrency = null,
     ) {
     }
 }

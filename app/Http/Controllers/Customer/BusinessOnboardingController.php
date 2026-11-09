@@ -12,6 +12,7 @@ use App\Http\Requests\Business\OnboardingBusinessRequest;
 use App\Http\Requests\Business\OnboardingLocationRequest;
 use App\Http\Requests\Business\OnboardingServicesRequest;
 use App\Http\Requests\Business\OnboardingWebsiteRequest;
+use App\Library\Business\GoogleOnboardingBridge;
 use App\Library\Business\OnboardingManager;
 use App\Library\Navigation\CustomerContextPreference;
 use App\Models\Customer;
@@ -80,10 +81,50 @@ class BusinessOnboardingController extends CustomerBaseController
                 array_filter(OnboardingStep::current(), fn (OnboardingStep $candidate) => $this->onboarding->resolveStep($onboarding, $candidate) === $candidate)
             ),
             'review' => $resolved === OnboardingStep::Finish ? $this->onboarding->review($onboarding) : null,
+            'firstMove' => $resolved === OnboardingStep::Finish && $onboarding->business_id !== null && ($business = \App\Models\Business::query()->find($onboarding->business_id)) !== null
+                ? app(\App\Library\Business\OnboardingFirstMove::class)->for($business, $this->onboarding->review($onboarding))
+                : null,
+            'googleLink' => app(GoogleOnboardingBridge::class)->linkState($onboarding),
+            'googleStart' => $resolved === OnboardingStep::Business ? $this->googleStart($request, $onboarding) : null,
             'websiteChoice' => $resolved === OnboardingStep::Website ? $this->onboarding->websiteChoice($onboarding) : null,
             'managedWebsite' => $resolved === OnboardingStep::Website && $onboarding->business_id !== null
                 && \App\Models\Website::query()->where('business_id', $onboarding->business_id)->exists(),
         ]);
+    }
+
+    /**
+     * Whether, and how, the Business step offers "Connect Google Business Profile".
+     *
+     * Offered only where GoogleOnboardingBridge::availability() says it can actually work (Google configured, the
+     * customer may manage it, a Draft Business that is theirs and entitled) and never once the customer chose
+     * "Set up manually". For a customer who ALREADY has their own Draft Business (a paid signup provisions one) the
+     * option appears ABOVE the existing manual form, which stays in place with its saved answers untouched: nothing
+     * is overwritten until they review and confirm the imported card. For a customer with nothing yet, it replaces
+     * the empty form (re-shown with the form after a failed save). Manual setup is always reachable.
+     *
+     * @return array{needsLocale: bool, withManualForm: bool}|null
+     */
+    private function googleStart(Request $request, CustomerOnboarding $onboarding): ?array
+    {
+        if ($request->boolean('manual')) {
+            return null;
+        }
+
+        $customer = $this->customer();
+        $availability = ($bridge = app(GoogleOnboardingBridge::class))->availability($customer, $onboarding, $bridge->mayManageGoogle(Auth::user(), $onboarding));
+
+        if (! $availability['available']) {
+            return null;
+        }
+
+        $ownDraft = ! $this->onboarding->isProvisionalBusiness($onboarding)
+            && $this->onboarding->hasDraftBusinessToContinue($customer, $onboarding);
+
+        if (! $ownDraft && $request->session()->hasOldInput()) {
+            return null;
+        }
+
+        return ['needsLocale' => ! $this->onboarding->hasDraftBusinessToContinue($customer, $onboarding), 'withManualForm' => $ownDraft];
     }
 
     public function storeBusiness(OnboardingBusinessRequest $request): RedirectResponse

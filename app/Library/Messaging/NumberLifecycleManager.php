@@ -74,6 +74,17 @@ class NumberLifecycleManager
 {
     public const FEATURE_NUMBER_RENTAL_RENEWAL = 'messaging_number_rental_renewal';
 
+    /** Recurring monthly 10DLC campaign cost, charged with a local number's rental renewal. */
+    public const FEATURE_TEN_DLC_CAMPAIGN_RENEWAL = 'messaging_10dlc_campaign_renewal';
+
+    /** Low Volume Mixed campaigns have their own (lower) monthly cost — a separate meter, never the standard one. */
+    public const FEATURE_TEN_DLC_LOW_VOLUME_CAMPAIGN_RENEWAL = 'messaging_10dlc_low_volume_campaign_renewal';
+
+    public static function campaignRenewalFeatureFor(?string $useCase): string
+    {
+        return $useCase === 'low_volume_mixed' ? self::FEATURE_TEN_DLC_LOW_VOLUME_CAMPAIGN_RENEWAL : self::FEATURE_TEN_DLC_CAMPAIGN_RENEWAL;
+    }
+
     private const NOT_CONFIGURED_EXCEPTIONS = [
         UsageWalletNotFoundException::class,
         NoActiveRateForFeatureException::class,
@@ -175,24 +186,56 @@ class NumberLifecycleManager
             }
 
             $business = $locked->identity->business;
-            $probeKey = sprintf('number_renewal_probe:%d:%s', $locked->id, $asOf->toDateString());
-
-            try {
-                $probe = $this->wallet->reserve($business, self::FEATURE_NUMBER_RENTAL_RENEWAL, $probeKey);
-            } catch (\Throwable $e) {
-                if (! $this->isNotConfiguredException($e)) {
-                    throw $e;
-                }
-
-                // Nothing real to charge yet — there is nothing to warn about.
+            // Probe every recurring charge this renewal will include
+            // (rental, plus the campaign cost when it is due), holding each
+            // probe while the next is evaluated so the combined need is what
+            // is tested — then release them all.
+            if ($locked->monthly_cost_micro === null) {
                 return false;
             }
 
-            if ($probe->granted) {
-                if ($probe->reservationId !== null && $probe->createdByThisInvocation) {
-                    $this->wallet->release($probe->reservationId);
-                }
+            $probeQuantities = [self::FEATURE_NUMBER_RENTAL_RENEWAL => bcdiv((string) $locked->monthly_cost_micro, '1000000', 6)];
+            $probeFeatures = [self::FEATURE_NUMBER_RENTAL_RENEWAL => sprintf('number_renewal_probe:%d:%s', $locked->id, $asOf->toDateString())];
 
+            if (($probeCampaignFeature = $this->campaignFeatureDue($locked)) !== null) {
+                $probeFeatures[$probeCampaignFeature] = sprintf('campaign_renewal_probe:%d:%s', $locked->id, $asOf->toDateString());
+            }
+
+            $heldProbes = [];
+            $anyDenied = false;
+
+            try {
+                foreach ($probeFeatures as $feature => $probeKey) {
+                    try {
+                        $probe = $this->wallet->reserve($business, $feature, $probeKey, $probeQuantities[$feature] ?? null);
+                    } catch (\Throwable $e) {
+                        if (! $this->isNotConfiguredException($e)) {
+                            throw $e;
+                        }
+
+                        if ($feature === self::FEATURE_NUMBER_RENTAL_RENEWAL) {
+                            // Nothing real to charge yet — there is nothing to warn about.
+                            return false;
+                        }
+
+                        continue;
+                    }
+
+                    if ($probe->granted) {
+                        if ($probe->reservationId !== null && $probe->createdByThisInvocation) {
+                            $heldProbes[] = $probe->reservationId;
+                        }
+                    } else {
+                        $anyDenied = true;
+                    }
+                }
+            } finally {
+                foreach ($heldProbes as $heldId) {
+                    $this->wallet->release($heldId);
+                }
+            }
+
+            if (! $anyDenied) {
                 return false;
             }
 
@@ -245,8 +288,36 @@ class NumberLifecycleManager
             $business = $locked->identity->business;
             $chargeKey = sprintf('number_renewal:%d:%s', $locked->id, $locked->next_renewal_at->toDateString());
 
+            // A required campaign charge with no configured price is never
+            // silently skipped (that would absorb a carrier cost): nothing
+            // at all is reserved or charged, and the renewal is reported
+            // as NotConfigured so the platform owner can act.
+            // The rental renewal charges THIS number's own carrier price (the
+            // quote confirmed at purchase) — never a guessed flat rate. A
+            // number with no recorded cost is reported NotConfigured, with
+            // nothing reserved or charged.
+            if ($locked->monthly_cost_micro === null) {
+                \Illuminate\Support\Facades\Log::warning('Number renewal blocked: no recorded carrier monthly cost.', [
+                    'business_messaging_number_id' => $locked->id,
+                ]);
+
+                return NumberRenewalOutcome::NotConfigured;
+            }
+
+            $rentalQuantity = bcdiv((string) $locked->monthly_cost_micro, '1000000', 6);
+            $campaignFeature = $this->campaignFeatureDue($locked);
+            $campaignDue = $campaignFeature !== null;
+
+            if ($campaignDue && app(MessagingChargePreview::class)->fee($campaignFeature) === null) {
+                \Illuminate\Support\Facades\Log::warning('Number renewal blocked: the 10DLC campaign monthly price is not configured.', [
+                    'business_messaging_number_id' => $locked->id,
+                ]);
+
+                return NumberRenewalOutcome::NotConfigured;
+            }
+
             try {
-                $reservation = $this->wallet->reserve($business, self::FEATURE_NUMBER_RENTAL_RENEWAL, $chargeKey);
+                $reservation = $this->wallet->reserve($business, self::FEATURE_NUMBER_RENTAL_RENEWAL, $chargeKey, $rentalQuantity);
             } catch (\Throwable $e) {
                 if (! $this->isNotConfiguredException($e)) {
                     throw $e;
@@ -261,7 +332,38 @@ class NumberLifecycleManager
                 return NumberRenewalOutcome::InsufficientFunds;
             }
 
+            // A local number's approved 10DLC campaign has its own recurring
+            // monthly cost once its prepaid months (charged with the
+            // registration) have run out — a separate meter and a separate
+            // reservation, never folded into the rental rate. The campaign
+            // price was verified as configured before anything was reserved
+            // (see campaignChargeDue() above); if the campaign charge cannot
+            // be covered the rental reservation is released and the number
+            // is treated exactly like an unpaid renewal (no partial charge).
+            $campaignReservationId = null;
+
+            if ($campaignDue) {
+                $campaign = $this->wallet->reserve(
+                    $business,
+                    $campaignFeature,
+                    sprintf('campaign_renewal:%d:%s', $locked->id, $locked->next_renewal_at->toDateString()),
+                );
+
+                if (! $campaign->granted || $campaign->reservationId === null) {
+                    $this->wallet->release($reservation->reservationId);
+                    $this->suspendLocked($locked);
+
+                    return NumberRenewalOutcome::InsufficientFunds;
+                }
+
+                $campaignReservationId = $campaign->reservationId;
+            }
+
             $this->wallet->commit($reservation->reservationId);
+
+            if ($campaignReservationId !== null) {
+                $this->wallet->commit($campaignReservationId);
+            }
 
             DB::table('business_messaging_numbers')->where('id', $locked->id)->update([
                 // Idempotent per period (contract S-8): a replayed sweep for
@@ -309,6 +411,66 @@ class NumberLifecycleManager
 
             $this->suspendLocked($locked);
         });
+    }
+
+    /**
+     * A local number's approved 10DLC campaign is billed monthly once the
+     * prepaid months (charged with the registration, as the carrier bills
+     * them upfront) have passed. Whether the campaign charge applies to the
+     * renewal due at $number->next_renewal_at.
+     */
+    public function campaignChargeDue(BusinessMessagingNumber $number): bool
+    {
+        return $this->campaignFeatureDue($number) !== null;
+    }
+
+    /** The recurring campaign meter due on this renewal (standard or Low Volume Mixed), or null. */
+    public function campaignFeatureDue(BusinessMessagingNumber $number): ?string
+    {
+        $type = $number->number_type instanceof \BackedEnum ? $number->number_type->value : (string) $number->number_type;
+
+        if ($type !== 'local' || $number->next_renewal_at === null) {
+            return null;
+        }
+
+        $registration = \App\Models\BusinessMessagingRegistration::query()
+            ->where('business_id', $number->identity->business_id)
+            ->where('number_type', 'local')
+            ->where('status', 'approved')
+            ->first();
+
+        if ($registration === null) {
+            return null;
+        }
+
+        $started = $registration->submitted_at ?? $registration->approved_at;
+
+        $due = $started === null
+            || $number->next_renewal_at->gte(Carbon::instance($started)->addMonthsNoOverflow((int) config('messaging.ten_dlc_prepaid_months', 3)));
+
+        return $due ? self::campaignRenewalFeatureFor($registration->use_case) : null;
+    }
+
+    /**
+     * The recurring charges (formatted, from the configured rates) a
+     * renewal of this number will include — for warnings and disclosure.
+     *
+     * @return list<string>
+     */
+    public function recurringChargeLabels(BusinessMessagingNumber $number): array
+    {
+        $preview = app(MessagingChargePreview::class);
+        $labels = [];
+
+        if ($number->monthly_cost_micro !== null && ($multiplier = $preview->multiplier(self::FEATURE_NUMBER_RENTAL_RENEWAL)) !== null) {
+            $labels[] = 'Number rental: ' . \App\Library\Dashboard\DashboardMoney::format((string) (int) round($number->monthly_cost_micro * $multiplier), $number->cost_currency ?? 'USD') . ' per month';
+        }
+
+        if (($campaignFeature = $this->campaignFeatureDue($number)) !== null && ($campaign = $preview->fee($campaignFeature)) !== null) {
+            $labels[] = '10DLC campaign: ' . $campaign['text'];
+        }
+
+        return $labels;
     }
 
     private function suspendLocked(BusinessMessagingNumber $locked): void

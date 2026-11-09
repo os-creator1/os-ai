@@ -8,6 +8,7 @@
     $tabs = [
         'overview' => ['Home', route('user.home')],
         'opportunities' => ['Recommendations', $growthRoute('opportunities.index')],
+        'work' => ['Work history', $growthRoute('work')],
         'score' => ['Score', $growthRoute('score')],
         'insights' => ['Insights', $growthRoute('insights')],
         'advisor' => ['Advisor', $growthRoute('advisor')],

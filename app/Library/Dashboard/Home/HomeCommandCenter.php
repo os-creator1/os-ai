@@ -64,6 +64,8 @@ final class HomeCommandCenter
         private readonly HomeV2Presenter $v2,
         private readonly HomeV2Facts $v2Facts,
         private readonly HomeBookingReader $bookingReader,
+        private readonly HomeGoogleVisibility $googleVisibility,
+        private readonly \App\Library\Conversations\BusinessConversationReadModel $conversations,
     ) {
     }
 
@@ -105,6 +107,20 @@ final class HomeCommandCenter
             $primaryUid = $nbm['move']['subjectUid'] ?? null;
             $primaryAttentionType = ($nbm['move']['kind'] ?? null) === NextBestMove::KIND_ATTENTION ? $nbm['move']['key'] : null;
         }
+
+        // Growth Home only: with nothing urgent and no better-supported opportunity, getting Google keyword visibility started comes first.
+        $google = $this->googleVisibility($business, $context, $user, $entitlements, $scoped);
+        $activation = ($journey !== null && ($journey['essentialIncomplete'] ?? false))
+            ? null // Essential booking/setup steps come before optional SEO measurement on a new Business.
+            : $this->seoActivation($primary, $nbm, $growth, $google);
+
+        if ($activation !== null) {
+            $primary = $activation;
+            $primaryUid = null;
+            $primaryAttentionType = null;
+        }
+
+        $primary = $this->withUnknowns($primary, $nbm, $growth, $context, $business, (int) $user->id, $booking);
 
         $queue = [];
 
@@ -181,19 +197,39 @@ final class HomeCommandCenter
         if ($primary !== null && $primary['key'] === AttentionType::ConversationsAwaitingReply->value) {
             $primary['metric'] = $this->waitingMetric($bands);
             $primary['aiAction'] = $this->assistantSuggestions->draftReplies($offering);
+        } elseif ($primary !== null && $primary['kind'] === NextBestMove::KIND_OPPORTUNITY) {
+            $primary['aiAction'] = $this->assistantSuggestions->explainRecommendation($offering);
         }
 
+        // One link to the whole Growth work record (recommended → approved → executed → verified), for Growth customers who may open it.
+        $growthWorkUrl = $context->frameWorkspace()?->tier === \App\Enums\Entitlement\WorkspacePlanTier::Growth
+            ? $this->links->url($context, $user, $entitlements, 'customer.workspaces.businesses.growth.work', $scoped, ['business_advisor'], 'ai_coo_basic')
+            : null;
+
+        $leadRecovery = $this->leadRecovery($business, $context, $user, $bands, $actions, $this->assistantSuggestions->draftReplies($offering) !== null ? $offering : null);
+
         $model = [
+            'leadRecovery' => $leadRecovery,
+            'growthWorkUrl' => $growthWorkUrl,
             'state' => $state,
             'greeting' => $this->greeting($business, $user),
             'briefing' => $briefing + ['unavailable' => in_array(DashboardSnapshot::BAND_ACTIVITY, $failed, true)],
             // A billing exception is something that needs the customer even when no move or attention item carries it.
             'status' => $this->status($state, $readinessUnknown, $nbmFailed, $sourcesFailed, ($primary !== null ? 1 : 0) + count($attentionItems) + ($billingException ? 1 : 0)),
             'setup' => $state === self::STATE_SETUP ? $journey : null,
+            // Verified configuration only: the journey's own steps that are actually done. No percentage, no count-up.
+            'configured' => array_values(array_map(
+                fn (array $step): array => ['title' => (string) $step['title'], 'outcome' => (string) $step['outcome']],
+                array_filter($journey['steps'] ?? [], fn (array $step): bool => ($step['done'] ?? false) === true),
+            )),
             'readinessUnknown' => $readinessUnknown,
             'primary' => $primary,
             'primaryFailed' => $nbmFailed,
             'growthShown' => is_array($growth),
+            // The customer's PLAN (the context's already-resolved Workspace tier: Growth only; an Agency's own Business keeps the existing Home, while View-As resolves the frame to the client's own workspace and tier), never the presence of Growth data: it alone selects the Growth Home.
+            'growthPlan' => $context->frameWorkspace()?->tier === \App\Enums\Entitlement\WorkspacePlanTier::Growth,
+            // Verified Growth score evidence for the Growth Home, straight from the Growth band (null = no band; score null = none recorded or not visible to this actor).
+            'growthProgress' => is_array($growth) ? ['score' => $growth['score'] ?? null, 'delta' => $growth['delta'] ?? null, 'days' => $growth['days'] ?? null, 'positives' => array_slice($growth['positives'] ?? [], 0, 3), 'url' => $growth['urls']['score'] ?? null] : null,
             'caughtUp' => $primary === null && ! $nbmFailed && ! $sourcesFailed && ! $readinessUnknown && ! $billingException && $state !== self::STATE_SETUP,
             'queue' => $queue,
             'queueCount' => is_array($growth) ? (int) $growth['open_count'] : (int) (($nbm['recommendations']['label'] ?? 0) ?: 0),
@@ -208,6 +244,9 @@ final class HomeCommandCenter
                 'hasPrimaryException' => $primaryAttentionType !== null,
             ],
             'handling' => $this->handling($bands, $growth),
+            'activity' => $this->activity($bands),
+            'currentWork' => $this->currentWork($growth),
+            'googleVisibility' => $google,
             'completedWork' => $this->completedWork($bands),
             // The CURRENT number of customers waiting for a reply (the Conversations band's own actor-scoped figure, including zero);
             // null when that band is not available to this actor or could not be read.
@@ -277,6 +316,20 @@ final class HomeCommandCenter
 
         foreach ($band['items'] ?? [] as $item) {
             if ($item['key'] === 'awaiting_reply') {
+                return (int) preg_replace('/\D/', '', (string) $item['figure']);
+            }
+        }
+
+        return null;
+    }
+
+    /** The Conversations band's own count of conversations replied to in the selected period (null when the band is absent). */
+    private function repliedCount(array $bands): ?int
+    {
+        $band = $bands[DashboardSnapshot::BAND_CONVERSATIONS] ?? null;
+
+        foreach (is_array($band) ? ($band['items'] ?? []) : [] as $item) {
+            if ($item['key'] === 'replied') {
                 return (int) preg_replace('/\D/', '', (string) $item['figure']);
             }
         }
@@ -380,7 +433,8 @@ final class HomeCommandCenter
         $enriched = null;
 
         if ($kind === NextBestMove::KIND_OPPORTUNITY && is_array($growth)) {
-            foreach ($growth['items'] as $item) {
+            // A Growth-plan SEO candidate promoted from beyond the listed rows is enriched like any listed one.
+            foreach (array_merge($growth['items'], is_array($growth['promoted'] ?? null) ? [$growth['promoted']] : []) as $item) {
                 if (($move['subjectUid'] ?? null) === $item['uid']) {
                     $enriched = $item;
 
@@ -581,6 +635,278 @@ final class HomeCommandCenter
         }
 
         return $rows;
+    }
+
+    /**
+     * Growth Home's "MotionGrove at work" feed: DATED recorded work only, newest first, deduplicated, max 10. A recommendation completion is
+     * 'completed' and an automation failure 'failed'; everything else the source records (website version, Google link, business details)
+     * is only 'recorded' — the source does not prove MotionGrove did it automatically. Awaiting-approval / in-progress recommendations
+     * have no reliable timestamp, so they are returned separately by currentWork() and never interleaved with the dated feed.
+     *
+     * @return array<int, array{key: string, text: string, status: string, at: mixed, url: ?string}>
+     */
+    private function activity(array $bands): array
+    {
+        $recent = $bands[DashboardSnapshot::BAND_RECENT_WORK] ?? null;
+        $rows = [];
+        $seen = [];
+
+        foreach (is_array($recent) ? $recent['items'] : [] as $item) {
+            $status = match (true) {
+                $item['key'] === 'automation_failed' => 'failed',
+                $item['key'] === 'recommendation_completed' => 'completed',
+                in_array($item['key'], ['seo_audit_completed', 'external_audit_completed', 'automation_messages_sent', 'workflow_completed', 'rank_check_scheduled', 'rank_check_manual', 'article_published'], true) => 'completed',
+                default => 'recorded',
+            };
+            $id = $item['key'] . '|' . $item['text'] . '|' . $item['at']->format('c');
+
+            if (isset($seen[$id])) {
+                continue;
+            }
+
+            $seen[$id] = true;
+            $rows[] = ['key' => $item['key'], 'text' => $item['text'], 'status' => $status, 'at' => $item['at'], 'url' => $item['url']];
+        }
+
+        usort($rows, fn (array $a, array $b): int => $b['at'] <=> $a['at']);
+
+        return array_slice($rows, 0, 10);
+    }
+
+    /**
+     * Work waiting on the customer or under way, from the Growth band's own recommendation states. Undated by design.
+     *
+     * @return array<int, array{key: string, text: string, status: string, at: mixed, url: ?string}>
+     */
+    private function currentWork(?array $growth): array
+    {
+        return array_slice(array_values(array_filter($this->handling([], $growth), fn (array $r): bool => $r['at'] === null)), 0, 3);
+    }
+
+    /**
+     * The SEO-first activation move (Growth Home only). The selector stays the deterministic authority for urgent and operational
+     * problems; this only replaces a ROUTINE choice. It never applies when: an attention problem is primary (customer waiting, lost or
+     * broken connection, failing automation, website not live); the queue head is a well-supported SEO / website / local / lead-response
+     * opportunity or a verified Ads recommendation; tracking already exists; the actor cannot manage SEO; or the plan has no rank tracking.
+     * An unconnected Ads account is never read as "not advertising": no Ads signal is consulted at all.
+     *
+     * @param  array<string, mixed>|null  $primary
+     * @param  array<string, mixed>|null  $growth
+     * @param  array<string, mixed>|null  $google
+     * @return array<string, mixed>|null
+     */
+    private function seoActivation(?array $primary, mixed $nbm, ?array $growth, ?array $google): ?array
+    {
+        if ($google === null || ($google['state'] ?? null) !== 'not_tracking' || ! is_array($google['activation'] ?? null) || ($google['url'] ?? null) === null) {
+            return null;
+        }
+
+        if ($primary !== null) {
+            if ($primary['kind'] !== NextBestMove::KIND_OPPORTUNITY) {
+                return null;
+            }
+
+            $head = is_array($growth) ? ($growth['promoted'] ?? null) : null;
+            $uid = is_array($nbm) ? ($nbm['move']['subjectUid'] ?? null) : null;
+
+            foreach (is_array($growth) ? $growth['items'] : [] as $item) {
+                if ($uid !== null && $item['uid'] === $uid) {
+                    $head = $item;
+                }
+            }
+
+            $category = is_array($growth) && ($growth['head'] ?? null) !== null && ($growth['head']->uid ?? null) === $uid
+                ? \App\Library\Growth\GrowthRuleRegistry::find((string) $growth['head']->type)?->definition()->category
+                : null;
+            $strong = in_array($category, [\App\Enums\Growth\GrowthCategory::Seo, \App\Enums\Growth\GrowthCategory::Website, \App\Enums\Growth\GrowthCategory::LocalPresence, \App\Enums\Growth\GrowthCategory::LeadResponse, \App\Enums\Growth\GrowthCategory::Bookings, \App\Enums\Growth\GrowthCategory::Forms], true)
+                && ($primary['confidence'] ?? null) !== 'Limited data';
+            $ads = is_array($head) && str_contains(strtolower((string) ($head['source_module'] ?? '')), 'ads');
+
+            if ($strong || $ads) {
+                return null;
+            }
+        }
+
+        $evidence = ['No Google keywords are being tracked for this business yet, so MotionGrove has no ranking data to report.'];
+        $evidence[] = 'The keyword page offers suggestions based on your saved business details when available.';
+
+        $evidence[] = 'Knowing which searches bring you up is the starting point for earning more booking enquiries from Google.';
+        $evidence[] = 'Next: review the searches, choose the ones that fit, and start tracking. You decide what is tracked.';
+
+        return [
+            'kind' => 'seo_setup',
+            'key' => 'seo_keyword_activation',
+            'headline' => 'Choose the Google searches you want to be found for',
+            'summary' => 'Tracking your key searches shows where you appear when local customers look for what you offer.',
+            'why' => [],
+            'evidence' => $evidence,
+            'impact' => null,
+            'confidence' => null,
+            'severity' => null,
+            'status' => 'ready',
+            'statusLabel' => 'Ready to act on',
+            'needsMoreInfo' => false,
+            'action' => ['label' => 'Choose keywords to track', 'url' => $google['url'], 'drawer' => null, 'drawerUrl' => null],
+            'detailUrl' => null,
+            'explanation' => null,
+            'metric' => null,
+            'aiAction' => null,
+        ];
+    }
+
+    /**
+     * Growth Home only: one plain line on what MotionGrove does NOT know, appended to the move's own evidence (shown under "Why this?").
+     * It classifies the move by the Growth rule's own category (visibility, lead response, booking path) and never states a rate,
+     * a count or an uplift. Contacts and bookings are separate populations here: no conversion rate is ever derived from them.
+     *
+     * @param  array<string, mixed>|null  $primary
+     * @param  array<string, mixed>|null  $growth
+     * @return array<string, mixed>|null
+     */
+    private function withUnknowns(?array $primary, mixed $nbm, ?array $growth, CustomerContext $context, Business $business, int $actorUserId, ?array $booking = null): ?array
+    {
+        if ($primary === null || $context->frameWorkspace()?->tier !== \App\Enums\Entitlement\WorkspacePlanTier::Growth) {
+            return $primary;
+        }
+
+        $uid = is_array($nbm) ? ($nbm['move']['subjectUid'] ?? null) : null;
+        $category = $primary['key'] === 'seo_keyword_activation'
+            ? \App\Enums\Growth\GrowthCategory::Seo
+            : (is_array($growth) && ($growth['head'] ?? null) !== null && $uid !== null && ($growth['head']->uid ?? null) === $uid
+                ? \App\Library\Growth\GrowthRuleRegistry::find((string) $growth['head']->type)?->definition()->category
+                : null);
+
+        $unknown = match (true) {
+            $primary['key'] === AttentionType::ConversationsAwaitingReply->value,
+            $category === \App\Enums\Growth\GrowthCategory::LeadResponse => 'Not known yet: how quickly customers are usually answered, and whether a reply leads to a booking.',
+            $category === \App\Enums\Growth\GrowthCategory::Bookings => 'Not known yet: which of your new contacts went on to book. Bookings are saved against contacts, but new contacts also include imports and manual entries and are counted separately, so no conversion rate is claimed.',
+            in_array($category, [\App\Enums\Growth\GrowthCategory::Bookings, \App\Enums\Growth\GrowthCategory::Forms, \App\Enums\Growth\GrowthCategory::Website], true) => 'Not known yet: how many enquiries or bookings this is costing you. New contacts and bookings are counted separately, so no conversion rate is claimed.',
+            in_array($category, [\App\Enums\Growth\GrowthCategory::Seo, \App\Enums\Growth\GrowthCategory::LocalPresence], true) => 'Not known yet: how many visitors or enquiries Google sends you. Search traffic is not measured here.',
+            default => null,
+        };
+
+        // Measured, not estimated: how long the oldest still-unanswered customer message has been waiting, by the inbox's own "waiting"
+        // definition and Location rule. No contact, number or message text is read into the summary. Typical reply speed over time is NOT
+        // measured (most outbound rows record no delivery state), so that stays unknown, as does any booking outcome.
+        if ($primary['key'] === AttentionType::ConversationsAwaitingReply->value) {
+            $waiting = $this->oldestWaiting($business, $actorUserId);
+            $unknown = 'Not known yet: how quickly you usually reply (there is no reliable reply history), and whether a reply leads to a booking.';
+
+            if ($waiting !== null) {
+                $timezone = (string) ($business->timezone ?: config('app.timezone', 'UTC'));
+                $primary['evidence'] = array_values(array_merge($primary['evidence'] ?? [], [
+                    'Of the conversations your inbox marks as waiting, the longest-waiting thread last heard from the customer on ' . $waiting->setTimezone($timezone)->format('M j, g:i A') . ' (' . $waiting->diffForHumans(['parts' => 1]) . ').',
+                    'Next: review the conversations currently marked waiting and reply where needed.',
+                ]));
+            }
+        }
+
+        // Booking readiness, from facts the Home already read for this actor's Locations (no extra query).
+        if ($category === \App\Enums\Growth\GrowthCategory::Bookings && $booking !== null) {
+            $active = (int) $booking['activeTypeCount'];
+            $ready = (int) $booking['readyCount'];
+            $lines = [];
+
+            if ($active === 0) {
+                $lines[] = 'No booking type is active for the Locations you can see, so customers cannot book online.';
+            } else {
+                $lines[] = $ready . ' of ' . (int) $booking['evaluated'] . ' active booking ' . ((int) $booking['evaluated'] === 1 ? 'type is' : 'types are') . ' ready to take bookings.';
+
+                if (($booking['problems'] ?? []) !== []) {
+                    $lines[] = 'Next: finish setting up "' . $booking['problems'][0]['name'] . '" - ' . $booking['problems'][0]['reason'];
+                }
+            }
+
+            $primary['evidence'] = array_values(array_merge($primary['evidence'] ?? [], $lines));
+        }
+
+        if ($unknown !== null) {
+            $primary['evidence'] = array_values(array_merge($primary['evidence'] ?? [], [$unknown]));
+        }
+
+        return $primary;
+    }
+
+    /** Timestamp of the latest inbound in the longest-waiting thread, per the inbox's current waiting definition. Not the first unanswered message of a multi-inbound streak. */
+    private function oldestWaiting(Business $business, int $actorUserId): ?CarbonImmutable
+    {
+        try {
+            return $this->conversations->awaitingReplyConversations($business, $actorUserId, 1)[0]['at'] ?? null;
+        } catch (\Throwable $e) {
+            report($e);
+
+            return null;
+        }
+    }
+
+    /**
+     * Growth Home — the customers genuinely waiting for a reply (the inbox's own predicate and Location rule), oldest first and bounded,
+     * with the true total, plus the replies that have since been recorded. Prepare-reply buttons only ask the assistant when CLICKED (the
+     * assistant tool then hands a reviewed draft to Follow-ups; nothing here sends or calls an AI). Null when this is not the Growth plan,
+     * the actor has no Follow-ups access, or the waiting figure could not be read.
+     *
+     * @param  array<string, mixed>  $bands
+     * @param  array<string, array<string, mixed>|null>  $actions
+     * @return array<string, mixed>|null
+     */
+    private function leadRecovery(Business $business, CustomerContext $context, User $user, array $bands, array $actions, ?AssistantContext $prepare): ?array
+    {
+        $followUps = $actions['follow-ups'] ?? null;
+        $total = $this->waitingCount($bands);
+
+        if ($context->frameWorkspace()?->tier !== \App\Enums\Entitlement\WorkspacePlanTier::Growth || $followUps === null || $total === null) {
+            return null;
+        }
+
+        $actor = (int) $user->id;
+        $rows = $total > 0 ? $this->conversations->awaitingReplyConversations($business, $actor, 5) : [];
+        // The recent-replies read only runs when it can matter: someone is still waiting, or the Conversations band already counted a
+        // reply in the selected period. A Business with neither pays no extra statement.
+        $answered = $total > 0 || ($this->repliedCount($bands) ?? 0) > 0 ? $this->conversations->recentAnsweredByReply($business, $actor, 3) : [];
+        $named = array_merge($rows, $answered);
+        $names = $named === [] ? [] : \App\Models\ChatBox::displayNamesFor($business, array_map(fn (array $r): object => (object) ['id' => $r['id'], 'to' => $r['to']], $named));
+
+        $items = array_map(function (array $r) use ($names, $prepare): array {
+            $name = (string) ($names[$r['id']] ?? $r['to']);
+            $waiting = $r['at']->diffForHumans(null, true);
+
+            // The customer sees the name; the ASSISTANT is given only the opaque, actor-and-Business-bound handle (never a name, number or
+            // message text), so two customers with the same name stay distinct and nothing personal reaches the provider.
+            $handle = $prepare === null ? null : \App\Library\Assistant\AssistantHandles::for($prepare, 'conversation', $r['uid']);
+
+            return [
+                'uid' => $r['uid'],
+                'name' => $name,
+                'at' => $r['at'],
+                'waiting' => $waiting,
+                'handle' => $handle,
+                'prompt' => $handle === null ? null : 'Prepare a reply for me to review to the waiting customer with handle ' . $handle . '. Read their latest message first, then draft the reply. Do not send it.',
+            ];
+        }, $rows);
+
+        return [
+            'total' => $total,
+            'items' => $items,
+            'answered' => array_map(fn (array $r): array => [
+                'name' => (string) ($names[$r['id']] ?? $r['to']),
+                'at' => $r['at'],
+                'status' => $r['status'],
+            ], $answered),
+            'drawerUrl' => $followUps['drawerUrl'] ?? null,
+            'fullUrl' => ($followUps['fullUrl'] ?? null) === null ? null : $followUps['fullUrl'] . (str_contains($followUps['fullUrl'], '?') ? '&' : '?') . 'filter=waiting',
+        ];
+    }
+
+    /** Stored-observation summary for Growth Home only; null (card omitted, nothing read) when this actor may not open SEO keywords. */
+    private function googleVisibility(Business $business, CustomerContext $context, User $user, MenuEntitlements $entitlements, array $scoped): ?array
+    {
+        if ($context->frameWorkspace()?->tier !== \App\Enums\Entitlement\WorkspacePlanTier::Growth) {
+            return null;
+        }
+
+        $url = $this->links->url($context, $user, $entitlements, 'customer.workspaces.businesses.seo.keywords.index', $scoped, ['view_seo'], 'seo_basic_visibility');
+
+        return $url === null ? null : $this->googleVisibility->summary($business, (int) $user->id, $url, null, \Illuminate\Support\Facades\Gate::forUser($user)->allows('manage_seo'), $entitlements->allows('seo_rank_tracking'));
     }
 
     private function handling(array $bands, ?array $growth): array

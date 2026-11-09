@@ -12,6 +12,7 @@ use App\Library\Growth\GrowthBriefBuilder;
 use App\Library\Growth\GrowthEvaluationTrigger;
 use App\Library\Growth\GrowthNavigation;
 use App\Library\Growth\GrowthOpportunityPresenter;
+use App\Library\Growth\GrowthWorkStage;
 use App\Library\Growth\GrowthOpportunityReader;
 use App\Library\Growth\GrowthRuleRegistry;
 use App\Library\Growth\GrowthScoreReader;
@@ -91,7 +92,13 @@ class GrowthCenterController extends CustomerBaseController
         $page = $this->reader->paginate($business, $viewer, $filters, 15);
 
         $names = GrowthOpportunityPresenter::locationNames($business->id);
-        $items = $page->getCollection()->map(fn (Opportunity $o) => $this->presenter->present($o, $names, $workspaceUid, $businessUid))->all();
+        $executions = $this->reader->latestExecutions($page->getCollection()->pluck('id')->map(fn ($id) => (int) $id)->all());
+        $items = $page->getCollection()->map(function (Opportunity $o) use ($names, $workspaceUid, $businessUid, $executions): array {
+            $execution = $executions[$o->id] ?? null;
+
+            return $this->presenter->present($o, $names, $workspaceUid, $businessUid)
+                + ['work' => GrowthWorkStage::for($o->status, $execution?->status, $execution?->completion_policy, $execution?->safe_error_summary)];
+        })->all();
 
         return view('customer.business.growth.opportunities', $this->shared($workspace, $business, $viewer, 'opportunities') + [
             'items' => $items,
@@ -102,6 +109,46 @@ class GrowthCenterController extends CustomerBaseController
             'categories' => collect(GrowthRuleRegistry::all())->map(fn ($r) => $r->definition()->category)->unique()->values(),
             'modules' => collect(GrowthRuleRegistry::all())->map(fn ($r) => $r->definition()->sourceModule)->unique()->values()->all(),
             'locationOptions' => collect($this->reader->locationIds($business, $viewer))->mapWithKeys(fn ($id) => [$id => $names[$id] ?? ('Location ' . $id)])->all(),
+        ]);
+    }
+
+    /**
+     * Growth work — the one record of what MotionGrove has recommended, been asked to do, done and confirmed, in a single vocabulary
+     * (GrowthWorkStage). Same tenancy, entitlement, permission and Location scope as the recommendations it lists.
+     */
+    public function work(string $workspaceUid, string $businessUid): View
+    {
+        [$workspace, $business, $viewer] = $this->context($workspaceUid, $businessUid);
+
+        $page = $this->reader->workHistory($business, $viewer, 20);
+        $executions = $this->reader->latestExecutions($page->getCollection()->pluck('id')->map(fn ($id) => (int) $id)->all());
+        $names = GrowthOpportunityPresenter::locationNames($business->id);
+
+        $rows = $page->getCollection()->map(function (Opportunity $o) use ($executions, $names, $workspaceUid, $businessUid): array {
+            $execution = $executions[$o->id] ?? null;
+            $card = $this->presenter->present($o, $names, $workspaceUid, $businessUid);
+
+            return [
+                'uid' => $o->uid,
+                'headline' => $card['headline'],
+                'category' => $card['category_label'],
+                'stage' => GrowthWorkStage::for($o->status, $execution?->status, $execution?->completion_policy, $execution?->safe_error_summary),
+                'result' => $execution?->status?->value === 'succeeded' ? $execution->safe_result_summary : null,
+                'at' => $execution?->completed_at ?? $execution?->created_at ?? $o->updated_at,
+                'url' => route('customer.workspaces.businesses.growth.opportunities.show', [$workspaceUid, $businessUid, $o->uid]),
+            ];
+        })->filter(fn (array $r): bool => $r['stage'] !== null)->values()->all();
+
+        // The records that are not Opportunity executions (booking setup, customer replies, website/SEO activity), each shown only if this
+        // actor may open its module.
+        $composer = app(\App\Library\Navigation\CustomerShellComposer::class);
+        $customer = $composer->currentContext(Auth::user());
+        $connected = app(\App\Library\Growth\GrowthWorkConnections::class)->build($business, Auth::user(), $customer, $composer->currentMenuEntitlements($customer), [$workspaceUid, $businessUid]);
+
+        return view('customer.business.growth.work', $this->shared($workspace, $business, $viewer, 'work') + [
+            'connected' => $connected,
+            'rows' => $rows,
+            'paginator' => $page,
         ]);
     }
 
@@ -116,8 +163,12 @@ class GrowthCenterController extends CustomerBaseController
 
         Log::info('growth.opportunity_viewed', ['business_id' => $business->id, 'rule' => $opportunity->type]);
 
+        $latest = $this->reader->latestExecutions([(int) $opportunity->id])[$opportunity->id] ?? null;
+        $card['work'] = GrowthWorkStage::for($opportunity->status, $latest?->status, $latest?->completion_policy, $latest?->safe_error_summary);
+
         return view('customer.business.growth.opportunity', $this->shared($workspace, $business, $viewer, 'opportunities') + [
             'card' => $card,
+            'execution' => $latest,
             'records' => $this->affected->resolve($definition?->domain ?? '', $card['evidence']['uids'] ?? [], $business->id, $viewer, $workspaceUid, $businessUid),
             'history' => $opportunity->transitions()->orderByDesc('id')->limit(15)->get(['category', 'from_status', 'to_status', 'actor_type', 'reason_code', 'safe_note', 'created_at']),
             'dismissReasons' => OpportunityManager::DISMISS_REASONS,

@@ -46,6 +46,98 @@ class HomeCommandCenterTest extends TestCase
         return $this->dashboardFor($user)->band(DashboardSnapshot::BAND_COMMAND);
     }
 
+    // ── Growth Home (plan-aware presentation) ────────────────────────────
+
+    private function growthSnapshot(\App\Models\Business $business, int $score = 72): void
+    {
+        \App\Models\GrowthScoreSnapshot::create([
+            'business_id' => $business->id,
+            'snapshot_date' => now()->toDateString(),
+            'algorithm_version' => \App\Library\Growth\GrowthScoreCalculator::ALGORITHM_VERSION,
+            'overall_score' => $score,
+            'scored_category_count' => 1,
+            'total_category_count' => 9,
+            'applicable_rule_count' => 1,
+            'category_scores' => ['website' => $score],
+            'breakdown' => [],
+            'computed_at' => now(),
+        ]);
+    }
+    public function test_core_plan_keeps_the_existing_home_even_when_growth_score_data_exists(): void
+    {
+        [$customer, $business] = $this->tenant(WorkspacePlanTier::Core, 'Core Data Venue', 'Core Data Account');
+        $this->growthSnapshot($business);
+        $this->authenticateAs($customer);
+
+        $html = $this->home()->assertOk()->getContent();
+        $this->assertStringNotContainsString('data-role="growth-home"', $html);
+        $this->assertStringNotContainsString('data-home-layout="growth"', $html);
+    }
+    public function test_growth_plan_without_any_evaluation_still_gets_growth_home_with_truthful_empty_state(): void
+    {
+        [$customer] = $this->tenant(WorkspacePlanTier::Growth, 'Growth Empty Venue', 'Growth Empty Account');
+        $this->authenticateAs($customer);
+
+        $html = $this->home()->assertOk()->getContent();
+        $this->assertStringContainsString('data-role="growth-home"', $html);
+        $this->assertStringNotContainsString('data-role="progress-verified"', $html);
+        $this->assertStringNotContainsString('data-role="secondary-opportunity"', $html);
+    }
+    public function test_an_agencys_own_business_keeps_the_existing_home_even_with_growth_data(): void
+    {
+        [$customer, $business] = $this->tenant(WorkspacePlanTier::Agency, 'Agency Own Venue', 'Agency Own Account');
+        $this->growthSnapshot($business);
+        $this->authenticateAs($customer);
+
+        $html = $this->home()->assertOk()->getContent();
+        $this->assertStringNotContainsString('data-role="growth-home"', $html);
+        $this->assertStringNotContainsString('data-home-layout="growth"', $html);
+    }
+    public function test_core_plan_keeps_the_existing_home_and_never_sees_growth_only_markup(): void
+    {
+        [$customer] = $this->tenant(WorkspacePlanTier::Core, 'Core Home Venue', 'Core Home Account');
+        $this->authenticateAs($customer);
+
+        $html = $this->home()->assertOk()->getContent();
+
+        $this->assertStringNotContainsString('data-role="growth-home"', $html);
+        $this->assertStringNotContainsString('data-home-layout="growth"', $html);
+    }
+
+    public function test_growth_plan_renders_its_dedicated_layout_with_at_most_two_secondary_recommendations(): void
+    {
+        [$customer, $business] = $this->tenant(WorkspacePlanTier::Growth, 'Growth Home Venue', 'Growth Home Account');
+        $this->growthSnapshot($business);
+        foreach (range(1, 4) as $i) {
+            $this->recommendation($business, [
+                'worker_key' => 'website',
+                'type' => 'website.not_published:v1',
+                'title' => "Website recommendation {$i}",
+                'priority_score' => 90 - $i,
+            ]);
+        }
+        $this->authenticateAs($customer);
+
+        $html = $this->home()->assertOk()->getContent();
+        $this->assertStringContainsString('data-home-layout="growth"', $html);
+        $this->assertStringContainsString('data-role="growth-home"', $html);
+        $this->assertLessThanOrEqual(1, substr_count($html, 'data-role="next-best-move"'));
+        $this->assertLessThanOrEqual(1, substr_count($html, 'data-role="secondary-opportunity"'), 'One compact secondary opportunity.');
+        $this->assertStringNotContainsString('Growth score', $html, 'The score is no longer a Growth Home section.');
+        $this->assertStringNotContainsString('data-role="progress-delta"', $html);
+    }
+    public function test_growth_plan_failed_growth_read_is_unknown_never_a_verified_result(): void
+    {
+        [$customer] = $this->tenant(WorkspacePlanTier::Growth, 'Growth Fail Venue', 'Growth Fail Account');
+        // Exercise the real final GrowthHomeBand; fail its mockable eligibility dependency.
+        $this->mock(\App\Library\Growth\GrowthOpportunityEligibility::class, fn ($m) => $m->shouldReceive('ineligibleTypes')->andThrow(new \RuntimeException('down')));
+        $this->authenticateAs($customer);
+
+        $html = $this->home()->assertOk()->getContent();
+        $this->assertStringContainsString('data-role="growth-home"', $html);
+        $this->assertStringNotContainsString('data-role="progress-verified"', $html);
+        $this->assertStringNotContainsString('data-role="secondary-opportunity"', $html);
+    }
     // ── States ───────────────────────────────────────────────────────────
 
     public function test_a_brand_new_business_sees_a_setup_journey_built_from_real_readiness(): void
@@ -63,8 +155,12 @@ class HomeCommandCenterTest extends TestCase
         $this->assertFalse($steps['booking_type']);
 
         $html = $this->home()->assertOk()->getContent();
+        // Growth keeps its unified Home: the model is still in setup, but the page shows ONE next step, never the checklist.
         $this->assertStringContainsString('data-home-state="setup"', $html);
-        $this->assertStringContainsString('data-role="setup-steps"', $html);
+        $this->assertStringContainsString('data-home-layout="growth"', $html);
+        $this->assertStringContainsString('data-role="setup-step"', $html);
+        $this->assertSame(1, substr_count($html, 'data-role="setup-step"'));
+        $this->assertStringNotContainsString('data-role="setup-steps"', $html);
         $this->assertStringNotContainsString("You're all caught up", html_entity_decode($html), 'A business still being set up is not "all caught up".');
     }
 
@@ -79,10 +175,12 @@ class HomeCommandCenterTest extends TestCase
         $home = $this->command($customer->user);
         $this->assertNotSame(HomeCommandCenter::STATE_SETUP, $home['state']);
         $this->assertNull($home['setup']);
-        $this->assertStringNotContainsString('data-role="setup-steps"', $this->home()->assertOk()->getContent());
+        $html = $this->home()->assertOk()->getContent();
+        $this->assertStringNotContainsString('data-role="setup-steps"', $html);
+        $this->assertStringNotContainsString('data-role="setup-step"', $html, 'A finished setup shows no setup step.');
     }
 
-    public function test_a_healthy_quiet_business_is_normal_with_a_truthful_all_clear_and_caught_up_state(): void
+    public function test_a_healthy_quiet_growth_business_without_rank_tracking_has_one_seo_move_and_no_urgent_problems(): void
     {
         [$customer] = $this->tenant(WorkspacePlanTier::Growth, 'Calm Venue', 'Calm Account');
         $this->authenticateAs($customer);
@@ -90,13 +188,16 @@ class HomeCommandCenterTest extends TestCase
         $home = $this->command($customer->user);
 
         $this->assertSame(HomeCommandCenter::STATE_NORMAL, $home['state']);
-        $this->assertNull($home['primary']);
-        $this->assertTrue($home['caughtUp']);
+        $this->assertSame('seo_keyword_activation', $home['primary']['key'], 'SEO setup is useful even without an urgent problem.');
+        $this->assertFalse($home['caughtUp']);
         $this->assertTrue($home['attention']['allClear']);
         $this->assertFalse($home['attention']['unknown']);
         $this->assertStringContainsString('Welcome to Calm Venue', $home['briefing']['text']);
-        $this->assertSame('clear', $home['status']['key']);
-        $this->assertStringContainsString('data-status="clear"', $this->home()->assertOk()->getContent());
+        $this->assertSame('attention', $home['status']['key']);
+        $html = $this->home()->assertOk()->getContent();
+        $this->assertStringContainsString('data-move="seo_keyword_activation"', $html);
+        $this->assertStringContainsString('data-role="next-best-move"', $html);
+        $this->assertStringNotContainsString('data-role="caught-up"', $html);
     }
 
     public function test_a_broken_provider_makes_the_business_broken_and_is_never_called_all_clear(): void
@@ -148,6 +249,11 @@ class HomeCommandCenterTest extends TestCase
         $this->assertNotContains(AttentionType::ConversationsAwaitingReply->value, $attentionKeys);
         $this->assertContains(AttentionType::WebsiteUnpublished->value, $attentionKeys, 'A different problem still appears.');
         $this->assertTrue($home['attention']['hasPrimaryException']);
+        $html = $this->home()->assertOk()->getContent();
+        // The unified Growth Home shows exactly one Best next move; the other problem stays in the model (asserted above) and is not repeated as a second primary.
+        $this->assertSame(1, substr_count($html, 'data-role="next-best-move"'));
+        $this->assertStringContainsString('1 customer needs a reply', $html);
+        $this->assertStringNotContainsString('data-band="needs_attention"', $html, 'The old attention list is retired on Growth.');
     }
 
     public function test_a_waiting_customer_opens_the_follow_up_drawer_not_just_a_link(): void
@@ -182,7 +288,7 @@ class HomeCommandCenterTest extends TestCase
         $this->assertSame(2, $home['primary']['metric']['value'], 'The figure is the awaiting-reply count the Conversations band read.');
         $this->assertSame('waiting for you', $home['primary']['metric']['caption']);
         $this->assertSame(['value', 'caption'], array_keys($home['primary']['metric']), 'Only the current waiting count; no derived denominator.');
-        $this->assertMatchesRegularExpression('/data-role="needs-count">\s*2\s*</', $this->home()->assertOk()->getContent(), 'The card leads with the real waiting count.');
+        $this->assertStringContainsString('2 customers need a reply', $this->home()->assertOk()->getContent(), 'The card states the real waiting count.');
         $this->assertSame('attention', $home['status']['key']);
         $this->assertSame('1 thing needs you', $home['status']['pill']);
     }
@@ -258,14 +364,14 @@ class HomeCommandCenterTest extends TestCase
         $this->assertArrayNotHasKey('of', $home['primary']['metric'], 'No "of 3 conversations in this period": that would compare two populations.');
 
         $html = $this->home()->assertOk()->getContent();
-        $this->assertMatchesRegularExpression('/data-role="needs-count">\s*1\s*</', $html);
+        $this->assertStringContainsString('1 customer needs a reply', $html);
         $this->assertSame(1, preg_match('#<section[^>]*data-band="next_best_move".*?</section>#s', $html, $needs));
         $this->assertDoesNotMatchRegularExpression('/\bof\s+\d+\b/i', strip_tags($needs[0]), 'The card shows the waiting count alone.');
     }
 
     public function test_suggested_next_lists_at_most_three_real_setup_actions_and_never_a_completed_one(): void
     {
-        [$customer, $business] = $this->tenant(WorkspacePlanTier::Growth, 'Suggest Venue', 'Suggest Account');
+        [$customer, $business] = $this->tenant(WorkspacePlanTier::Core, 'Suggest Venue', 'Suggest Account');
         $this->website($business, 'published');
         $this->authenticateAs($customer);
 

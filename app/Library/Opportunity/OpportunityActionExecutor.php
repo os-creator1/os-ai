@@ -14,7 +14,7 @@ use App\Models\OpportunityActionExecution;
 
 /**
  * Invokes the real, registry-approved handler for a running execution
- * (RFC-002 §30.1 step 5, §30.2). Supports exactly `add_phone` in this phase.
+ * (RFC-002 §30.1 step 5, §30.2). Supports `add_phone`, `add_email` and `add_description` (each writes exactly one Business column).
  * Owns no transaction and no lock of its own — the caller (future
  * ExecuteOpportunityAction) is expected to already hold the Opportunity and
  * execution row locks inside its own transaction. Never persists any
@@ -26,13 +26,24 @@ final class OpportunityActionExecutor
 {
     private const HANDLERS = [
         'business.update_phone' => 'executePhone',
+        'business.update_email' => 'executeEmail',
+        'business.update_description' => 'executeDescription',
     ];
 
     private const VERIFIERS = [
         'business.phone_matches_parameter' => true,
+        'business.email_matches_parameter' => true,
+        'business.description_matches_parameter' => true,
     ];
 
     private const SUCCESS_SUMMARY = 'Business phone updated and verified.';
+
+    /** The one Business column each handler may write, and its fixed customer-safe success summary. Not a generic field updater. */
+    private const FIELD_ACTIONS = [
+        'add_phone' => ['phone', 'Business phone updated and verified.'],
+        'add_email' => ['email', 'Business email updated and verified.'],
+        'add_description' => ['description', 'Business description updated and verified.'],
+    ];
 
     private const EXPECTED_RECOMMENDED_ACTION_KEYS = [
         'action_key',
@@ -86,6 +97,23 @@ final class OpportunityActionExecutor
 
     private function executePhone(Opportunity $opportunity, string $value): string
     {
+        return $this->executeField($opportunity, 'add_phone', $value);
+    }
+
+    private function executeEmail(Opportunity $opportunity, string $value): string
+    {
+        return $this->executeField($opportunity, 'add_email', $value);
+    }
+
+    private function executeDescription(Opportunity $opportunity, string $value): string
+    {
+        return $this->executeField($opportunity, 'add_description', $value);
+    }
+
+    /** Writes the approved value through BusinessManager, then re-reads persisted state: success is reported only if it matches exactly. */
+    private function executeField(Opportunity $opportunity, string $actionKey, string $value): string
+    {
+        [$field, $summary] = self::FIELD_ACTIONS[$actionKey];
 
         $business = $opportunity->business;
 
@@ -103,17 +131,17 @@ final class OpportunityActionExecutor
             );
         }
 
-        $updatedBusiness = $this->businessManager->updateBusiness($customer, $business, ['phone' => $value]);
+        $updatedBusiness = $this->businessManager->updateBusiness($customer, $business, [$field => $value]);
 
         $verifiedBusiness = $updatedBusiness->fresh();
 
-        if ($verifiedBusiness === null || $verifiedBusiness->phone !== $value) {
+        if ($verifiedBusiness === null || $verifiedBusiness->{$field} !== $value) {
             throw new OpportunityActionVerificationException(
-                "Opportunity [{$opportunity->id}]'s add_phone execution could not be verified."
+                "Opportunity [{$opportunity->id}]'s {$actionKey} execution could not be verified."
             );
         }
 
-        return self::SUCCESS_SUMMARY;
+        return $summary;
     }
 
     private function assertExecutable(Opportunity $opportunity, OpportunityActionExecution $execution): string
@@ -216,9 +244,9 @@ final class OpportunityActionExecutor
 
         $value = $parameters['value'];
 
-        if (! is_string($value) || trim($value) === '' || mb_strlen($value) > 50) {
+        if (! $this->registry::valueIsValid($actionKey, $value)) {
             throw new OpportunityActionNotExecutableException(
-                "Opportunity [{$opportunity->id}]'s configured phone value is invalid."
+                "Opportunity [{$opportunity->id}]'s configured {$actionKey} value is invalid."
             );
         }
 

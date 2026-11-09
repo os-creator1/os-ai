@@ -61,6 +61,14 @@ class OnboardingManager
 
     public const READINESS_POLICY = 'seo_first_v1';
 
+    /**
+     * The only identity the Google quick start ever writes before the customer
+     * has confirmed anything: a neutral, obviously-not-real label that
+     * onboarding metadata marks as provisional, so no screen presents it as the
+     * customer's business name and the confirm step always replaces it.
+     */
+    public const GOOGLE_PROVISIONAL_NAME = 'My business';
+
     public function __construct(
         private readonly CustomerOnboardingRepository $onboardingRepository,
         private readonly BusinessRepository $businessRepository,
@@ -329,8 +337,119 @@ class OnboardingManager
                 $onboarding = $this->onboardingRepository->attachBusiness($onboarding, $business);
             }
 
+            // The customer has now stated their own identity: it is no longer a placeholder.
+            if ($this->isProvisionalBusiness($onboarding)) {
+                $onboarding = $this->onboardingRepository->recordGoogleBridge($onboarding, ['provisional' => false]);
+            }
+
             return $this->completeStep($onboarding, OnboardingStep::Business, OnboardingStep::Location);
         }, self::TRANSACTION_ATTEMPTS);
+    }
+
+    /**
+     * The Google quick-start bridge's one write before authorization: make sure
+     * the onboarding has the Draft Business the Google connection will hang off
+     * (the connection table is keyed by Business), without asking the customer
+     * to type anything first.
+     *
+     *  - an already attached Draft Business is used as it is;
+     *  - otherwise the one Draft Business a paid signup provisioned is adopted
+     *    (exactly as saveBusinessStep() would) and keeps its own identity;
+     *  - otherwise a Draft Business is created through the ordinary
+     *    BusinessManager seam (entitlement and Workspace rules included) with a
+     *    PROVISIONAL identity: neutral name, industry "other", and the country,
+     *    timezone and currency the customer explicitly chose. Nothing is
+     *    guessed — $locale is required exactly when there is nothing to adopt.
+     *
+     * The record of consent to read the address is stored with it. Never
+     * activates anything and never advances a step.
+     *
+     * @param  array{country_code?: string, timezone?: string, currency_code?: string}|null  $locale
+     *
+     * @throws InvalidArgumentException if onboarding is finished, the attached Business is not a Draft, or a
+     *                                   Business must be created and no explicit locale was given.
+     * @throws AuthorizationException if the attached Business is not the customer's.
+     */
+    public function attachBusinessForGoogleImport(CustomerOnboarding $onboarding, Customer $customer, ?array $locale, bool $addressConsent): CustomerOnboarding
+    {
+        $this->assertOwnership($customer, $onboarding);
+
+        return DB::transaction(function () use ($onboarding, $customer, $locale, $addressConsent) {
+            $onboarding = $this->lockOnboarding($onboarding);
+
+            if ($onboarding->status === OnboardingStatus::Completed) {
+                throw new InvalidArgumentException('Onboarding is already finished.');
+            }
+
+            $provisional = false;
+
+            if ($onboarding->business_id !== null) {
+                $business = $this->businessRepository->findOwnedByCustomer($onboarding->business_id, $customer->user_id);
+
+                if ($business === null) {
+                    throw new AuthorizationException('The onboarding record references a business that does not belong to this customer.');
+                }
+
+                $provisional = $this->isProvisionalBusiness($onboarding);
+            } else {
+                $business = $this->provisionedDraftBusinessFor($customer);
+
+                if ($business === null) {
+                    foreach (['country_code', 'timezone', 'currency_code'] as $required) {
+                        if (blank($locale[$required] ?? null)) {
+                            throw new InvalidArgumentException('Choose your country, timezone and currency first.');
+                        }
+                    }
+
+                    $business = $this->businessManager->createOrUpdateOnboardingBusiness($customer, null, [
+                        'name' => self::GOOGLE_PROVISIONAL_NAME,
+                        'industry' => \App\Enums\Business\BusinessIndustry::Other->value,
+                        'country_code' => $locale['country_code'],
+                        'timezone' => $locale['timezone'],
+                        'currency_code' => $locale['currency_code'],
+                    ]);
+                    $provisional = true;
+                }
+
+                $onboarding = $this->onboardingRepository->attachBusiness($onboarding, $business);
+            }
+
+            if ($business->status !== \App\Enums\Business\BusinessStatus::Draft) {
+                throw new InvalidArgumentException('Only a business still being set up can be imported into.');
+            }
+
+            return $this->onboardingRepository->recordGoogleBridge($onboarding, [
+                'provisional' => $provisional,
+                'address_consent' => $addressConsent,
+            ]);
+        }, self::TRANSACTION_ATTEMPTS);
+    }
+
+    /** The one Draft Business a signup provisioned for this customer (see provisionedDraftBusinessFor()), if any. */
+    public function provisionedDraftFor(Customer $customer): ?Business
+    {
+        return $this->provisionedDraftBusinessFor($customer);
+    }
+
+    /**
+     * Whether there is already a Draft Business the Google quick start can continue (attached, or provisioned by a
+     * paid signup). When there is not, the customer must choose their country, timezone and currency explicitly.
+     */
+    public function hasDraftBusinessToContinue(Customer $customer, CustomerOnboarding $onboarding): bool
+    {
+        return $onboarding->business_id !== null || $this->provisionedDraftBusinessFor($customer) !== null;
+    }
+
+    /** True while the attached Business still carries the placeholder identity the Google quick start created. */
+    public function isProvisionalBusiness(CustomerOnboarding $onboarding): bool
+    {
+        return ($onboarding->metadata['google']['provisional'] ?? false) === true;
+    }
+
+    /** Whether the customer consented (before authorizing) to Google's address being read for this onboarding. */
+    public function googleAddressConsent(CustomerOnboarding $onboarding): bool
+    {
+        return ($onboarding->metadata['google']['address_consent'] ?? false) === true;
     }
 
     /**

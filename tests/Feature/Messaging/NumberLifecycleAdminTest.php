@@ -402,7 +402,7 @@ class NumberLifecycleAdminTest extends TestCase
      */
     private function usageBillingSubmenu(): array
     {
-        $submenu = collect(Helper::menuData()['admin'])->firstWhere('name', 'Number Operations')['submenu'] ?? [];
+        $submenu = collect(Helper::menuData()['admin'])->firstWhere('name', 'Messaging Operations')['submenu'] ?? [];
 
         return json_decode(json_encode($submenu));
     }
@@ -414,7 +414,7 @@ class NumberLifecycleAdminTest extends TestCase
         $html = view('panels.submenu', ['menu' => $this->usageBillingSubmenu()])->render();
 
         $this->assertStringContainsString(url(config('app.admin_path') . '/messaging-number-lifecycle'), $html);
-        $this->assertStringContainsString('Messaging Number Lifecycle', $html);
+        $this->assertStringContainsString('Number Lifecycle', $html);
     }
 
     public function test_a_non_admin_backend_account_cannot_find_the_number_lifecycle_link(): void

@@ -32,6 +32,7 @@ class NumberReleaseNoticeNotification extends Notification
         return (new MailMessage)
             ->subject('Your number is eligible for release')
             ->line("The grace period for {$this->phoneNumber} has ended.")
+            ->line('Until it is released the carrier keeps billing us for this number (its rental and, for a local number, its registered campaign). That is why it can only be held for a limited time, and why release never happens automatically: you get a written notice first and a chance to port it out or add funds.')
             ->line('This number is now eligible to be released back to the carrier. If you still want to keep it, add funds now, or request to port it out to another carrier before it is released.');
     }
 }

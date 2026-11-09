@@ -6,7 +6,13 @@ use App\Enums\GoogleBusinessProfile\GoogleOperationStatus;
 use App\Enums\GoogleBusinessProfile\GoogleOperationType;
 use App\Enums\Opportunity\OpportunityStatus;
 use App\Library\Analytics\BusinessAnalyticsQueries;
+use App\Enums\Seo\ArticleStatus;
+use App\Enums\Seo\SeoAuditRunStatus;
+use App\Enums\Seo\SeoRankRunState;
 use App\Library\Opportunity\OpportunityTypeRegistry;
+use App\Library\Workspace\LocationAccessGuard;
+use App\Models\ExternalSiteCrawl;
+use Illuminate\Support\Str;
 use App\Models\Business;
 use Carbon\CarbonImmutable;
 use Illuminate\Support\Facades\DB;
@@ -49,7 +55,7 @@ final class RecentWorkReader
         GoogleOperationType::LocationUnbound->value => 'Google listing unlinked',
     ];
 
-    public function __construct(private readonly BusinessAnalyticsQueries $analyticsQueries)
+    public function __construct(private readonly BusinessAnalyticsQueries $analyticsQueries, private readonly LocationAccessGuard $locationGuard)
     {
     }
 
@@ -58,12 +64,23 @@ final class RecentWorkReader
      *
      * @return array<int, RecentWorkItem>
      */
-    public function recent(Business $business, int $limit = self::PER_SOURCE_LIMIT): array
+    public function recent(Business $business, int $limit = self::PER_SOURCE_LIMIT, ?int $actorUserId = null): array
     {
+        // Location-scoped sources (rank checks via their keyword, articles) honour the actor's Location reach; null actor = Business-wide.
+        // The reach is resolved lazily: only when a Location-bound row is actually read, so Business-wide data costs no extra statement.
+        $reach = null;
+        $locationIds = function () use (&$reach, $business, $actorUserId): ?array {
+            return $actorUserId === null ? null : ($reach ??= $this->locationGuard->accessibleLocationIdsForBusiness($actorUserId, $business));
+        };
+
         $items = array_merge(
+            $this->rankChecks($business, $locationIds),
+            $this->seoAudits($business),
+            $this->publishedArticles($business, $locationIds),
             $this->websiteVersions($business),
             $this->completedRecommendations($business),
             $this->automationFailures($business),
+            $this->automationSuccesses($business, $locationIds),
             $this->googleWork($business),
             $this->businessDetailUpdates($business),
         );
@@ -183,6 +200,47 @@ final class RecentWorkReader
     }
 
     /**
+     * Verified automation outcomes (the analytics seam owns the reads, as for failures). "Sent N automated messages" counts only
+     * succeeded send executions; manual messages never create automation executions, so they can never be labelled automated.
+     *
+     * @return array<int, RecentWorkItem>
+     */
+    private function automationSuccesses(Business $business, \Closure $locationIds): array
+    {
+        $found = $this->analyticsQueries->recentAutomationSuccesses($business, self::PER_SOURCE_LIMIT, $locationIds);
+
+        if ($found === null) {
+            return [];
+        }
+
+        $items = [];
+
+        foreach ($found['followUps'] as $group) {
+            $items[] = new RecentWorkItem(
+                key: 'automation_messages_sent',
+                text: 'Sent ' . $group['count'] . ' automated ' . ($group['count'] === 1 ? 'message' : 'messages') . ' (' . Str::limit($group['automation'], 60) . ')',
+                at: $group['at'],
+                routeName: 'customer.workspaces.businesses.automations.workflows.index',
+                permissions: ['automations'],
+                featureKey: 'automations',
+            );
+        }
+
+        foreach ($found['workflows'] as $group) {
+            $items[] = new RecentWorkItem(
+                key: 'workflow_completed',
+                text: Str::limit($group['workflow'], 60) . ' completed for ' . $group['count'] . ' ' . ($group['count'] === 1 ? 'contact' : 'contacts'),
+                at: $group['at'],
+                routeName: 'customer.workspaces.businesses.automations.workflows.index',
+                permissions: ['automations'],
+                featureKey: 'automations',
+            );
+        }
+
+        return $items;
+    }
+
+    /**
      * The four Google operations that describe something a customer did or
      * had done to their listing, and only where the operation actually
      * succeeded: a pending or failed attempt is not a thing that happened.
@@ -268,6 +326,183 @@ final class RecentWorkReader
         }
 
         return $items;
+    }
+
+    /**
+     * Completed Google ranking checks, grouped per trigger per Business-local day (never one event per keyword). The keyword count is the
+     * number of DISTINCT tracked keywords whose completed runs the rows prove; "scheduled" / "manual" is the stored trigger. Nothing here
+     * says rankings improved. Provider ids, prices and task ids are never read.
+     *
+     * @param  \Closure(): (array<int, int>|null)  $locationIds
+     * @return array<int, RecentWorkItem>
+     */
+    private function rankChecks(Business $business, \Closure $locationIds): array
+    {
+        $query = DB::table('seo_rank_check_runs as r')
+            ->join('seo_rank_targets as t', 't.id', '=', 'r.seo_rank_target_id')
+            ->join('seo_keywords as k', 'k.id', '=', 't.seo_keyword_id')
+            ->where('r.business_id', $business->id)
+            ->where('t.business_id', $business->id)
+            ->where('r.state', SeoRankRunState::Completed->value)
+            ->whereNotNull('r.completed_at');
+
+        $bound = self::PER_SOURCE_LIMIT * self::GROUPING_FAN_OUT;
+        $rows = $query->orderByDesc('r.completed_at')->orderByDesc('r.id')->limit($bound)->get(['r.trigger', 'r.completed_at', 't.seo_keyword_id', 'k.business_location_id']);
+        $rawCount = $rows->count();
+        $rows = $this->visibleRows($rows, $locationIds);
+        $timezone = (string) ($business->timezone ?: config('app.timezone', 'UTC'));
+        $groups = [];
+
+        foreach ($rows as $row) {
+            $at = CarbonImmutable::parse((string) $row->completed_at);
+            $trigger = (string) $row->trigger === 'manual' ? 'manual' : 'scheduled';
+            $key = $trigger . '@' . $at->setTimezone($timezone)->format('Y-m-d');
+            $groups[$key] ??= ['trigger' => $trigger, 'at' => $at, 'keywords' => []];
+            $groups[$key]['keywords'][(int) $row->seo_keyword_id] = true;
+        }
+
+        // A full read may have cut the oldest day short: drop it rather than report a count that might be low.
+        if ($rawCount === $bound && count($groups) > 1) {
+            array_pop($groups);
+        }
+
+        $items = [];
+
+        foreach (array_slice($groups, 0, self::PER_SOURCE_LIMIT) as $group) {
+            $count = count($group['keywords']);
+            $noun = $count === 1 ? 'keyword' : 'keywords';
+
+            $items[] = new RecentWorkItem(
+                key: 'rank_check_' . $group['trigger'],
+                text: ($group['trigger'] === 'manual' ? 'Manual Google ranking check for ' : 'Scheduled Google ranking check for ') . $count . ' ' . $noun,
+                at: $group['at'],
+                routeName: 'customer.workspaces.businesses.seo.keywords.index',
+                permissions: ['view_seo'],
+                featureKey: 'seo_basic_visibility',
+            );
+        }
+
+        return $items;
+    }
+
+    /**
+     * Website SEO audits whose stored lifecycle proves a result: MotionGrove website audits (status completed) and external-site crawls
+     * (completed, or partial — said so). Counts come from the persisted columns only. A finding is never described as fixed.
+     *
+     * @return array<int, RecentWorkItem>
+     */
+    private function seoAudits(Business $business): array
+    {
+        $items = [];
+
+        $runs = DB::table('seo_audit_runs')
+            ->where('business_id', $business->id)
+            ->where('status', SeoAuditRunStatus::Completed->value)
+            ->orderByDesc('created_at')
+            ->orderByDesc('id')
+            ->limit(self::PER_SOURCE_LIMIT)
+            ->get(['critical_count', 'warning_count', 'info_count', 'created_at']);
+
+        foreach ($runs as $run) {
+            $items[] = new RecentWorkItem(
+                key: 'seo_audit_completed',
+                text: 'Website SEO audit completed' . self::findingsText($run->critical_count, $run->warning_count, $run->info_count),
+                at: CarbonImmutable::parse((string) $run->created_at),
+                routeName: 'customer.workspaces.businesses.seo.audit.index',
+                permissions: ['view_seo'],
+                featureKey: 'seo_module',
+            );
+        }
+
+        $crawls = DB::table('external_site_crawls')
+            ->where('business_id', $business->id)
+            ->whereIn('status', [ExternalSiteCrawl::COMPLETED, ExternalSiteCrawl::PARTIAL])
+            ->whereNotNull('finished_at')
+            ->orderByDesc('finished_at')
+            ->orderByDesc('id')
+            ->limit(self::PER_SOURCE_LIMIT)
+            ->get(['status', 'critical_count', 'warning_count', 'info_count', 'finished_at']);
+
+        foreach ($crawls as $crawl) {
+            $partial = $crawl->status === ExternalSiteCrawl::PARTIAL;
+
+            $items[] = new RecentWorkItem(
+                key: $partial ? 'external_audit_partial' : 'external_audit_completed',
+                text: ($partial ? 'External website audit finished with partial coverage' : 'External website audit completed') . self::findingsText($crawl->critical_count, $crawl->warning_count, $crawl->info_count),
+                at: CarbonImmutable::parse((string) $crawl->finished_at),
+                routeName: 'customer.workspaces.businesses.website.external.audit',
+                permissions: ['website'],
+                featureKey: 'website_generation',
+            );
+        }
+
+        return $items;
+    }
+
+    /** ": N issues found" only when all three persisted counts exist; otherwise nothing is claimed. */
+    private static function findingsText(mixed $critical, mixed $warning, mixed $info): string
+    {
+        if ($critical === null || $warning === null || $info === null) {
+            return '';
+        }
+
+        $total = (int) $critical + (int) $warning + (int) $info;
+
+        return $total === 0 ? ': no issues recorded' : ': ' . $total . ' ' . ($total === 1 ? 'issue' : 'issues') . ' found';
+    }
+
+    /**
+     * Blog articles whose publication is verified: status published AND a published_at that has arrived. Drafts, scheduled and archived
+     * articles are never listed. The stored `source` is how an article was CREATED, not how it was published, so no automatic-publication
+     * claim is ever made.
+     *
+     * @param  \Closure(): (array<int, int>|null)  $locationIds
+     * @return array<int, RecentWorkItem>
+     */
+    private function publishedArticles(Business $business, \Closure $locationIds): array
+    {
+        $query = DB::table('website_articles')
+            ->where('business_id', $business->id)
+            ->where('status', ArticleStatus::Published->value)
+            ->whereNotNull('published_at')
+            ->where('published_at', '<=', CarbonImmutable::now('UTC')->format('Y-m-d H:i:s'));
+
+        $rows = $query->orderByDesc('published_at')->orderByDesc('id')->limit(self::PER_SOURCE_LIMIT)->get(['uid', 'title', 'published_at', 'business_location_id']);
+        $items = [];
+
+        foreach ($this->visibleRows($rows, $locationIds) as $row) {
+            $title = trim((string) $row->title);
+
+            $items[] = new RecentWorkItem(
+                key: 'article_published',
+                text: $title === '' ? 'Blog article published' : 'Blog article published: ' . Str::limit($title, 60),
+                at: CarbonImmutable::parse((string) $row->published_at),
+                routeName: 'customer.workspaces.businesses.seo.content.articles.preview',
+                routeParameters: [(string) $row->uid],
+                permissions: ['view_seo'],
+                featureKey: 'seo_basic_visibility',
+            );
+        }
+
+        return $items;
+    }
+
+    /**
+     * A Business-wide row (NULL Location) is visible to everyone with Business access; a Location row only to actors who reach it.
+     * The actor's reach is read at most once, and only when a Location-bound row exists.
+     *
+     * @param  \Illuminate\Support\Collection<int, object>  $rows
+     * @return \Illuminate\Support\Collection<int, object>
+     */
+    private function visibleRows($rows, \Closure $locationIds)
+    {
+        if ($rows->every(fn ($row) => $row->business_location_id === null)) {
+            return $rows;
+        }
+
+        $reach = $locationIds();
+
+        return $reach === null ? $rows : $rows->filter(fn ($row) => $row->business_location_id === null || in_array((int) $row->business_location_id, $reach, true))->values();
     }
 
     /**

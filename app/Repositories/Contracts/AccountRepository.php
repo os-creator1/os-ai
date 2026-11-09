@@ -27,6 +27,14 @@
         public function findOrCreateSocial($provider, $data);
 
         /**
+         * An existing account for this provider identity (or a safely linked one), or the verified identity of someone with no account
+         * yet. Never creates a User.
+         *
+         * @return array{user: mixed, identity: ?array<string, mixed>}
+         */
+        public function resolveSocialIdentity($provider, $data): array;
+
+        /**
          * @param Authenticatable                            $user
          * @param                                            $name
          *

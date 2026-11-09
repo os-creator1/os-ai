@@ -67,12 +67,32 @@ final readonly class MessagingRegistrationSubmission
          * the fee for a resubmission.
          */
         public string $fundingCycle = '0',
+        /** A toll-free verification request already accepted and saved by an earlier attempt. */
+        public ?string $existingVerificationId = null,
+        public ?string $contactFirstName = null,
+        public ?string $contactLastName = null,
+        /** Toll-free verification: expected monthly volume (provider enum value). */
+        public ?string $messageVolume = null,
+        /** Toll-free verification: image URL showing the opt-in flow. */
+        public ?string $optInImageUrl = null,
+        /** 10DLC brand industry vertical (provider enum value). */
+        public ?string $brandVertical = null,
+        /** Low Volume Mixed: the customer's real purposes (care / marketing). @var list<string> */
+        public array $messagePurposes = [],
         /** Customer-edited campaign description; required for a 10DLC submission (the adapter refuses without it). */
         public ?string $campaignDescription = null,
+        /** The Business's own customer-facing SMS help contact, only when it explicitly confirmed it; null otherwise. */
+        public ?string $supportContact = null,
+        /** 10DLC lifecycle stage to perform: 'full' (legacy one-shot), 'brand' (stage 1) or 'campaign' (stage 2). */
+        public string $phase = 'full',
+        /** Owner-stated DBA (customer-facing name), when different from the legal name. */
+        public ?string $doingBusinessAs = null,
+        /** Owner-written explanation of legitimate name/domain differences. */
+        public ?string $additionalInformation = null,
     ) {
     }
 
-    public static function fromModel(BusinessMessagingRegistration $registration, ?string $phoneNumber = null): self
+    public static function fromModel(BusinessMessagingRegistration $registration, ?string $phoneNumber = null, string $phase = 'full'): self
     {
         return new self(
             businessId: (int) $registration->business_id,
@@ -95,6 +115,8 @@ final readonly class MessagingRegistrationSubmission
             sampleMessage2: (string) $registration->sample_message_2,
             privacyPolicyUrl: (string) $registration->privacy_policy_url,
             termsUrl: (string) $registration->terms_url,
+            supportContact: $registration->support_contact_confirmed_at !== null && trim((string) $registration->support_contact) !== '' ? trim((string) $registration->support_contact) : null,
+            phase: $phase,
             phoneNumber: $phoneNumber,
             existingBrandId: $registration->number_type === PhoneNumberType::Local && $registration->status === MessagingRegistrationStatus::NotStarted && $registration->provider_brand_id !== null && $registration->provider_brand_id !== ''
                 ? (string) $registration->provider_brand_id
@@ -102,8 +124,19 @@ final readonly class MessagingRegistrationSubmission
             existingCampaignId: $registration->number_type === PhoneNumberType::Local && $registration->status === MessagingRegistrationStatus::NotStarted && $registration->provider_campaign_id !== null && $registration->provider_campaign_id !== ''
                 ? (string) $registration->provider_campaign_id
                 : null,
+            existingVerificationId: $registration->number_type === PhoneNumberType::TollFree && $registration->status === MessagingRegistrationStatus::NotStarted && $registration->provider_registration_id !== null && $registration->provider_registration_id !== ''
+                ? (string) $registration->provider_registration_id
+                : null,
+            contactFirstName: $registration->contact_first_name,
+            contactLastName: $registration->contact_last_name,
+            messageVolume: $registration->message_volume,
+            optInImageUrl: $registration->opt_in_image_url,
+            brandVertical: $registration->brand_vertical,
+            messagePurposes: array_values((array) $registration->message_purposes),
             fundingCycle: (string) ($registration->rejected_at?->getTimestamp() ?? 0),
             campaignDescription: $registration->campaign_description,
+            doingBusinessAs: filled($registration->doing_business_as) ? trim((string) $registration->doing_business_as) : null,
+            additionalInformation: filled($registration->additional_information) ? trim((string) $registration->additional_information) : null,
         );
     }
 }

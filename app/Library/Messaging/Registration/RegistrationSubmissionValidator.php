@@ -3,6 +3,7 @@
 namespace App\Library\Messaging\Registration;
 
 use App\Enums\Messaging\MessagingRegistrationStatus;
+use App\Enums\Messaging\PhoneNumberType;
 use App\Models\BusinessMessagingRegistration;
 
 /**
@@ -31,9 +32,35 @@ final class RegistrationSubmissionValidator
         'terms_url' => 'SMS Terms URL',
     ];
 
+    /** Telnyx documents a 500-character maximum for `useCaseSummary` and `optInWorkflow` (toll-free). */
+    public const TOLL_FREE_TEXT_LIMIT = 500;
+
+    /** Telnyx `productionMessageContent` maximum (the transmitted sample message 1). */
+    public const TOLL_FREE_SAMPLE_LIMIT = 1000;
+
     private const PLACEHOLDER = '/\[[^\]]*\]|\{\{?[^}]*\}?\}|\.\.\.|…|\bTODO\b|\bTBD\b|lorem ipsum|add it here|your (business|company)\b|example\.(com|org|net)\b|\bxxx+\b/i';
 
-    private const PROMOTIONAL = '/\b(promo\w*|special\w*|discount\w*|sale|deal\w*|\d+%|% off|save)\b/i';
+    /**
+     * Genuine marketing behaviour, not isolated words: "special occasions",
+     * "save the date" and "sales team" describe service messages. Offers,
+     * discounts, coupons, percentages and sale pricing do not.
+     */
+    private const PROMOTIONAL = '/(?:\bpromo(?:tion\w*|s|code\w*)?\b|\bpromotional\b|\bdiscount\w*|\bcoupon\w*|\bdeals?\b|\bspecials\b|\blimited[- ]time\b|\bspecial\s+(?:offers?|deals?|prices?|pricing|promotions?|discounts?|rates?)\b|\b(?:on|for)\s+sale\b|\b(?:flash|big|huge|annual|holiday|weekend|clearance|summer)\s+sale\b|\bsave\s+(?:\$?\d|up\s+to|big|money)|\d\s*%|%\s*off\b|\bbogo\b|\bbuy\s+one\b)/i';
+
+    /**
+     * Promotional wording that is *negated* ("we do not send promotional
+     * messages", "no discounts or sales") describes the opposite of a
+     * promotion and must not classify a customer-care campaign as marketing.
+     */
+    private const NEGATED_PROMOTIONAL = '/\b(?:no|not|never|without|don\'t|doesn\'t|won\'t|isn\'t|aren\'t|neither|nor)\b(?:\s+[\w\'-]+){0,5}?\s+(?:promo\w*|specials|special\s+(?:offers?|deals?|prices?|promotions?|discounts?)|discount\w*|coupon\w*|sales?|deals?|marketing)\b(?:\s*(?:,|\bor\b|\band\b|\bnor\b)\s*(?:promo\w*|specials|special\s+(?:offers?|deals?|prices?|promotions?|discounts?)|discount\w*|coupon\w*|sales?|deals?|marketing)\b)*/i';
+
+    private static function isPromotional(string $text): bool
+    {
+        $text = str_replace(["\u{2019}", "\u{2018}"], "'", $text);
+        $text = preg_replace(self::NEGATED_PROMOTIONAL, ' ', $text) ?? $text;
+
+        return preg_match(self::PROMOTIONAL, $text) === 1;
+    }
 
     /** @return list<string> actionable corrections; empty when ready to submit */
     public function issues(BusinessMessagingRegistration $registration): array
@@ -51,11 +78,22 @@ final class RegistrationSubmissionValidator
         foreach (self::REQUIRED as $field => $label) {
             $value = $registration->{$field};
 
+            // Toll-free verification transmits only sample 1, so sample 2 is optional there
+            // (still checked for placeholders when given). Local/10DLC keeps requiring both.
+            if ($field === 'sample_message_2' && $registration->number_type === PhoneNumberType::TollFree && (! is_string($value) || trim($value) === '')) {
+                continue;
+            }
+
             if (! is_string($value) || trim($value) === '') {
                 $issues[] = 'Add your ' . $label . '.';
             } elseif (preg_match(self::PLACEHOLDER, $value) === 1) {
                 $issues[] = 'Replace the placeholder text in your ' . $label . ' with real details.';
             }
+        }
+
+        if ($registration->entity_type?->value === 'sole_proprietor' && $registration->number_type !== PhoneNumberType::TollFree
+            && trim((string) $registration->provider_brand_id) === '') {
+            $issues[] = \App\Library\Messaging\TelnyxProvisioningAdapter::SOLE_PROPRIETOR_GUIDANCE;
         }
 
         if ($registration->entity_type?->value === 'ein' && trim((string) $registration->ein) === '') {
@@ -76,9 +114,145 @@ final class RegistrationSubmissionValidator
             $issues[] = 'The Privacy Policy and SMS Terms need separate pages.';
         }
 
-        $issues = array_merge($issues, $this->messageIssues($registration), $this->consentIssues($registration));
+        $issues = array_merge($issues, $this->carrierFieldIssues($registration), $this->messageIssues($registration), $this->consentIssues($registration));
 
         return array_values(array_unique($issues));
+    }
+
+    /**
+     * Low Volume Mixed is only for a business that genuinely sends the
+     * purposes it registers: at least one real purpose, a sample for each,
+     * and never a purpose the customer did not choose.
+     *
+     * @param  array<int, string>  $promotional
+     * @param  array{0: string, 1: string}  $samples
+     * @return list<string>
+     */
+    private function lowVolumeIssues(BusinessMessagingRegistration $registration, array $promotional, array $samples): array
+    {
+        $issues = [];
+        $purposes = array_values(array_intersect(array_keys(CarrierRegistrationOptions::LOW_VOLUME_PURPOSES), (array) $registration->message_purposes));
+
+        // Low Volume Mixed is defined for several genuine, distinct purposes.
+        // A single purpose is never "mixed": that traffic belongs in its own
+        // (standard) campaign type, and is never relabelled to get a lower fee.
+        if (count($purposes) < count(CarrierRegistrationOptions::LOW_VOLUME_PURPOSES)) {
+            return ['Low Volume Mixed is only for a business that really sends both service texts and promotional texts. Tick both, or choose the single message type you send instead.'];
+        }
+
+        $promoCount = count($promotional);
+
+        if ($promoCount === 2) {
+            $issues[] = 'Both samples are promotions. One sample must be a service or customer-care example.';
+        }
+
+        if ($promoCount === 0) {
+            $issues[] = 'Neither sample is a promotion. One sample must be a promotional example.';
+        }
+
+        foreach ($promotional as $message) {
+            if (stripos($message, 'stop') === false) {
+                $issues[] = 'Every promotional sample message needs opt-out wording such as "Reply STOP to opt out".';
+            }
+        }
+
+        return $issues;
+    }
+
+    /**
+     * Opt-in evidence is a public link to the opt-in page or a screenshot of
+     * it; Telnyx accepts either in its `optInWorkflowImageURLs` field. This is
+     * a syntax check only (http/https with a real host): it cannot prove the
+     * link is publicly reachable or shows the form — the carrier reviews that.
+     */
+    public static function optInEvidenceUrlIssue(string $url): ?string
+    {
+        $url = trim($url);
+
+        if ($url === '' || preg_match('#^https?://[^/\s]+\.[^/\s]+#i', $url) !== 1 || filter_var($url, FILTER_VALIDATE_URL) === false) {
+            return 'Add a public link to your opt-in page or a screenshot of your opt-in form (the carrier requires opt-in evidence, and it must start with https://).';
+        }
+
+        return null;
+    }
+
+    /** A valid email address, or a phone number with 10-15 digits. */
+    public static function isUsableSupportContact(string $value): bool
+    {
+        $value = trim($value);
+
+        if ($value === '' || strlen($value) > 191) {
+            return false;
+        }
+
+        if (filter_var($value, FILTER_VALIDATE_EMAIL) !== false) {
+            return true;
+        }
+
+        $digits = preg_replace('/\D/', '', $value);
+
+        return preg_match('/^[+()\-.\s0-9]+$/', $value) === 1 && strlen($digits) >= 10 && strlen($digits) <= 15;
+    }
+
+    /** @return list<string> */
+    private function carrierFieldIssues(BusinessMessagingRegistration $registration): array
+    {
+        $issues = [];
+
+        foreach (['contact_first_name' => 'contact first name', 'contact_last_name' => 'contact last name'] as $field => $label) {
+            if (trim((string) $registration->{$field}) === '') {
+                $issues[] = 'Add your ' . $label . '.';
+            }
+        }
+
+        if (trim((string) $registration->region) !== '' && CarrierRegistrationOptions::stateCode($registration->region) === null) {
+            $issues[] = 'Your state must be a US state (for example TX or Texas).';
+        }
+
+        if ($registration->number_type === PhoneNumberType::TollFree) {
+            if (! isset(CarrierRegistrationOptions::MESSAGE_VOLUMES[(string) $registration->message_volume])) {
+                $issues[] = 'Choose your expected messages per month.';
+            }
+
+            $imageIssue = self::optInEvidenceUrlIssue((string) $registration->opt_in_image_url);
+
+            if ($imageIssue !== null) {
+                $issues[] = $imageIssue;
+            }
+
+            // Telnyx's published toll-free request schema: useCaseSummary and
+            // optInWorkflow max 500 characters, productionMessageContent max
+            // 1000 (no minimums). Sent exactly as written, never trimmed, so a
+            // longer value is refused here, field by field.
+            foreach ([
+                ['campaign_description', 'campaign description', self::TOLL_FREE_TEXT_LIMIT],
+                ['opt_in_method', 'message-flow (how customers opt in) description', self::TOLL_FREE_TEXT_LIMIT],
+                ['sample_message_1', 'sample message 1', self::TOLL_FREE_SAMPLE_LIMIT],
+            ] as [$field, $label, $max]) {
+                // Exact outgoing value: whitespace counts, nothing is trimmed.
+                $length = mb_strlen((string) $registration->{$field});
+
+                if ($length > $max) {
+                    $issues[] = sprintf('Your %s is %d characters; toll-free verification accepts at most %d, and it is sent exactly as written. Shorten it by %d.', $label, $length, $max, $length - $max);
+                }
+            }
+
+            if (! isset(CarrierRegistrationOptions::TOLL_FREE_USE_CASES[(string) $registration->use_case])) {
+                $issues[] = 'This messaging type can\'t be submitted for toll-free verification. Choose another.';
+            }
+        } else {
+            if (! isset(CarrierRegistrationOptions::BRAND_VERTICALS[(string) $registration->brand_vertical])) {
+                $issues[] = 'Choose your industry category.';
+            }
+
+            if (! self::isUsableSupportContact((string) $registration->support_contact)) {
+                $issues[] = 'Add the customer-facing support email or phone your Business publishes for text-message help (not the brand contact above).';
+            } elseif ($registration->support_contact_confirmed_at === null) {
+                $issues[] = 'Confirm that your text-message support contact is published by your Business and answered.';
+            }
+        }
+
+        return $issues;
     }
 
     /** @return list<string> */
@@ -93,9 +267,9 @@ final class RegistrationSubmissionValidator
             $issues[] = 'Sample messages 1 and 2 must be different examples.';
         }
 
-        $promotional = array_filter([$one, $two], fn (string $m): bool => preg_match(self::PROMOTIONAL, $m) === 1);
+        $promotional = array_filter([$one, $two], fn (string $m): bool => self::isPromotional($m));
 
-        if (RegistrationTemplateCatalog::isCareOnly($useCase) && preg_match(self::PROMOTIONAL, (string) $registration->campaign_description) === 1) {
+        if (RegistrationTemplateCatalog::isCareOnly($useCase) && self::isPromotional((string) $registration->campaign_description)) {
             $issues[] = 'Your campaign description mentions promotions, but you chose service and customer-care messages. Reword it, or change your choice to Promotional or Both.';
         }
 
@@ -107,8 +281,12 @@ final class RegistrationSubmissionValidator
             $issues[] = 'Registering both message types together is not available yet. Choose service and customer-care, or promotional and marketing.';
         }
 
-        if ($useCase === 'marketing' && count($promotional) < 2) {
+        if ($useCase === 'marketing' && count($promotional) < count(array_filter([$one, $two], fn (string $m): bool => $m !== ''))) {
             $issues[] = 'Promotional and marketing campaigns need both sample messages to be promotions. Reword the sample that is not.';
+        }
+
+        if ($useCase === 'low_volume_mixed') {
+            $issues = array_merge($issues, $this->lowVolumeIssues($registration, $promotional, [$one, $two]));
         }
 
         if ($useCase === 'mixed' && count($promotional) === 2) {
@@ -129,12 +307,75 @@ final class RegistrationSubmissionValidator
 
         $issues = array_merge($issues, $this->staleSuggestionIssues($registration));
 
-        $brand = trim((string) $registration->legal_business_name);
-        if ($brand !== '' && $one !== '' && $two !== '' && stripos($one . ' ' . $two, $this->firstWords($brand)) === false) {
-            $issues[] = 'Include your business name in at least one sample message.';
+        if ($registration->number_type === PhoneNumberType::TollFree) {
+            return array_merge($issues, $this->tollFreeSampleIssues($registration, $one, $two));
+        }
+
+        // Local / 10DLC (unchanged rule): the texts must name the registered legal entity or the
+        // Business's own customer-facing name (a stated DBA or the Business name on file) somewhere
+        // across the samples. Nothing the customer types into a sample is trusted as a name by itself.
+        $names = array_values(array_filter([
+            $this->firstWords(trim((string) $registration->legal_business_name)),
+            $this->firstWords(trim((string) $registration->doing_business_as)),
+            $this->firstWords(trim((string) $registration->business?->name)),
+        ], fn (string $n): bool => $n !== ''));
+        $combined = $one . ' ' . $two;
+        $named = false;
+
+        foreach ($names as $name) {
+            if (stripos($combined, $name) !== false) {
+                $named = true;
+                break;
+            }
+        }
+
+        if ($names !== [] && $one !== '' && $two !== '' && ! $named) {
+            $issues[] = 'Include your business name in at least one sample message — your registered name ("' . $names[0] . '…")'
+                . (count($names) > 1 ? ' or your customer-facing name ("' . $names[1] . '…")' : '') . '.';
         }
 
         return $issues;
+    }
+
+    /**
+     * Toll-free verification transmits ONLY sample 1 (productionMessageContent),
+     * so the transmitted sample is judged on its own: it must identify the
+     * customer-facing brand (the stated DBA, else the registered legal name)
+     * and carry opt-out wording. Sample 2 is not sent; if present it must still
+     * be truthfully branded, but it can never satisfy a requirement for sample 1.
+     *
+     * @return list<string>
+     */
+    private function tollFreeSampleIssues(BusinessMessagingRegistration $registration, string $one, string $two): array
+    {
+        $issues = [];
+        $dba = trim((string) $registration->doing_business_as);
+        $brand = $dba !== '' ? $dba : trim((string) $registration->legal_business_name);
+        $source = $dba !== '' ? 'the customer-facing name you entered' : 'your registered business name';
+
+        if ($brand !== '' && $one !== '' && ! self::mentionsBrand($one, $brand)) {
+            $issues[] = 'Sample message 1 must include "' . $brand . '" (' . $source . '), because it is the sample sent to the carrier.';
+        }
+
+        if ($brand !== '' && $two !== '' && ! self::mentionsBrand($two, $brand)) {
+            $issues[] = 'Sample message 2 should also include "' . $brand . '". Only the first sample is sent to the carrier; this one is kept with your draft.';
+        }
+
+        if ($one !== '' && preg_match('/\bstop\b/i', $one) !== 1) {
+            $issues[] = 'Sample message 1 needs opt-out wording such as "Reply STOP to opt out".';
+        }
+
+        return $issues;
+    }
+
+    /** Whole-name match, ignoring case, punctuation and a trailing entity suffix (LLC, Inc, …). */
+    private static function mentionsBrand(string $text, string $brand): bool
+    {
+        $normalize = static fn (string $v): string => trim((string) preg_replace('/[^a-z0-9]+/', ' ', strtolower($v)));
+        $name = $normalize($brand);
+        $name = trim((string) preg_replace('/\s(?:l l c|llc|inc|incorporated|corp|corporation|co|company|ltd|limited|llp|pllc|lp)$/', '', $name));
+
+        return $name !== '' && str_contains(' ' . $normalize($text) . ' ', ' ' . $name . ' ');
     }
 
     /**
@@ -186,7 +427,7 @@ final class RegistrationSubmissionValidator
 
         $confirmed = is_array($registration->consent_confirmations) ? $registration->consent_confirmations : [];
 
-        foreach (RegistrationTemplateCatalog::CONSENT_ITEMS as $key => $label) {
+        foreach (RegistrationTemplateCatalog::consentItemsFor($registration->use_case, $registration->message_purposes) as $key => $label) {
             if (! in_array($key, $confirmed, true)) {
                 $issues[] = 'Confirm on your website, then check: ' . $label . '.';
             }

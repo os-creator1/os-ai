@@ -1,0 +1,208 @@
+name: Growth Experience Integrated Acceptance
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'app/Library/Business/OnboardingFirstMove.php'
+      - 'app/Http/Controllers/Customer/BusinessOnboardingController.php'
+      - 'app/Library/Dashboard/Home/**'
+      - 'resources/views/customer/dashboard/home/**'
+      - 'app/Library/Seo/Rank/SeoRankLocationCatalog.php'
+      - 'app/Console/Commands/SyncSeoRankLocations.php'
+      - 'app/Console/Kernel.php'
+      - 'app/Http/Controllers/Customer/Business/SeoRankTargetsController.php'
+      - 'resources/views/customer/business/seo/_rank-location-field.blade.php'
+      - 'resources/views/customer/business/seo/keywords.blade.php'
+      - 'tests/Feature/Seo/Rank/SeoRankCityPickerTest.php'
+      - 'tests/Feature/Seo/Rank/SeoRankHttpTest.php'
+      - 'resources/views/customer/onboarding/**'
+      - 'app/Library/Business/GoogleOnboardingBridge.php'
+      - 'app/Library/Business/GoogleOnboardingPreview.php'
+      - 'app/Library/Business/OnboardingManager.php'
+      - 'app/Library/GoogleBusinessProfile/GoogleBusinessProfileOnboardingReader.php'
+      - 'app/Library/GoogleBusinessProfile/GoogleBusinessProfileEnumerator.php'
+      - 'app/Library/GoogleBusinessProfile/GoogleBusinessProfileReadMask.php'
+      - 'app/Http/Controllers/Customer/GoogleOnboardingController.php'
+      - 'app/Http/Controllers/Customer/Business/GoogleBusinessProfileController.php'
+      - 'app/Http/Requests/Business/GoogleOnboarding*Request.php'
+      - 'routes/customer.php'
+      - 'tests/Feature/Business/GoogleQuickOnboardingTest.php'
+      - 'tests/Feature/Business/GoogleOnboardingEntryTest.php'
+      - 'app/Console/Commands/DiagnoseGoogleOnboardingEntry.php'
+      - 'app/Exceptions/Business/GoogleOnboardingUnavailableException.php'
+      - 'app/Library/Assistant/**'
+      - 'resources/views/offers/**'
+      - 'app/Http/Controllers/Auth/PrivateOfferController.php'
+      - 'routes/auth.php'
+      - 'tests/Feature/PlatformBilling/PrivateOffer*Test.php'
+      - 'app/Http/Controllers/Auth/LoginController.php'
+      - 'app/Http/Controllers/Auth/V1SignupController.php'
+      - 'app/Library/PlatformBilling/V1SignupDraft.php'
+      - 'app/Repositories/Eloquent/EloquentAccountRepository.php'
+      - 'resources/views/auth/**'
+      - 'resources/views/layouts/authCover.blade.php'
+      - 'resources/scss/base/pages/authentication.scss'
+      - 'public/css/base/pages/authentication.css'
+      - 'tests/Feature/Branding/BrandingComponentRenderTest.php'
+      - 'routes/auth.php'
+      - 'tests/Feature/Auth/GoogleSignupLoginTest.php'
+      - 'tests/Feature/Auth/GoogleSignupPrivateOfferTest.php'
+      - '.github/workflows/growth-experience-tests.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: growth-experience-pr
+  cancel-in-progress: true
+
+jobs:
+  growth-acceptance:
+    name: Onboarding + Growth Home + AI handoff + Blade
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    env:
+      APP_ENV: testing
+      APP_KEY: base64:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+      DB_CONNECTION: mysql
+      DB_HOST: 127.0.0.1
+      DB_PORT: '3306'
+      DB_DATABASE: ultimatesms_testing
+      DB_USERNAME: ultimatesms_test
+      DB_PASSWORD: Choose-A-Local-Test-Password
+      EXPECTED_TEST_DATABASE: ultimatesms_testing
+      QUEUE_CONNECTION: sync
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_DATABASE: ultimatesms_testing
+          MYSQL_USER: ultimatesms_test
+          MYSQL_PASSWORD: Choose-A-Local-Test-Password
+          MYSQL_ROOT_PASSWORD: root
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=10
+    steps:
+      - name: Check out PR
+        uses: actions/checkout@v4
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.2'
+          extensions: curl, dom, exif, fileinfo, gd, intl, mbstring, pdo_mysql, zip
+          coverage: none
+          tools: composer:v2
+      - name: Install dependencies
+        run: composer install --no-interaction --prefer-dist --no-progress
+      - name: Compile all Blade templates
+        id: blade
+        continue-on-error: true
+        run: php artisan view:cache
+      - name: Onboarding and signup lifecycle
+        id: onboarding
+        continue-on-error: true
+        run: >-
+          php artisan test
+          tests/Feature/Business/BusinessOnboardingHttpTest.php
+          tests/Feature/Business/OnboardingManagerTest.php
+          tests/Feature/Business/OnboardingFirstMoveTest.php
+          tests/Feature/Business/OnboardingSeoFlowTest.php
+          tests/Feature/Website/WebsiteOnboardingSetupFlowTest.php
+          tests/Feature/PlatformBilling/V1SignupOnboardingHandoffTest.php
+          tests/Feature/PlatformBilling/V1SignupHttpTest.php
+          tests/Feature/Auth/GoogleSignupLoginTest.php
+          tests/Feature/Auth/GoogleSignupPrivateOfferTest.php
+          tests/Feature/Auth/AuthPageRenderTest.php
+      - name: Growth Home, recommendations, and actor scope
+        id: home
+        continue-on-error: true
+        run: >-
+          php artisan test
+          tests/Feature/Dashboards/HomeCommandCenterTest.php
+          tests/Feature/Dashboards/HomeV2ExperienceTest.php
+          tests/Feature/Dashboards/HomeV2PresentationTest.php
+          tests/Feature/Dashboards/HomeV2ScopeFixesTest.php
+          tests/Feature/Dashboards/HomeV2ActionAuthorityTest.php
+          tests/Feature/Dashboards/DashboardRenderTest.php
+          tests/Feature/Dashboards/GrowthHomeExperienceTest.php
+          tests/Feature/Dashboards/GrowthHomeAcceptanceTest.php
+          tests/Feature/Dashboards/GrowthHomeEvidenceTest.php
+          tests/Feature/Growth/GrowthHomeBandSeoCoverageTest.php
+          tests/Feature/Growth/GrowthEngineIntegrationTest.php
+          tests/Feature/Growth/GrowthOpportunityPlanEligibilityTest.php
+          tests/Unit/Growth/GrowthHomeBandSeoHeadTest.php
+      - name: Assistant, AI authorization, and review-only SEO suggestion
+        id: assistant
+        continue-on-error: true
+        run: >-
+          php artisan test
+          tests/Feature/Assistant/AssistantHomeUiTest.php
+          tests/Feature/Assistant/AssistantPromptSecurityTest.php
+          tests/Feature/Assistant/AssistantActionTest.php
+          tests/Feature/Assistant/AssistantViewAsApprovalTest.php
+          tests/Feature/Assistant/GrowthExplainRecommendationTest.php
+          tests/Feature/Website/WebsiteMetaDescriptionSuggestionTest.php
+          tests/Feature/Security/ViewAsRouteBoundaryTest.php
+      - name: Private Offer page, redemption, security and billing
+        id: offers
+        continue-on-error: true
+        run: >-
+          php artisan test
+          tests/Feature/PlatformBilling/PrivateOfferPageRedesignTest.php
+          tests/Feature/PlatformBilling/PrivateOfferRedemptionTest.php
+          tests/Feature/PlatformBilling/PrivateOfferSecurityTest.php
+          tests/Feature/PlatformBilling/PrivateOfferReviewFindingsTest.php
+          tests/Feature/PlatformBilling/PrivateOfferTermsTest.php
+          tests/Feature/PlatformBilling/PrivateOfferBillingChangeTest.php
+          tests/Feature/PlatformBilling/PrivateOffersFeatureFlagTest.php
+          tests/Feature/Auth/GoogleSignupPrivateOfferTest.php
+      - name: Auth logo and branding regression
+        id: authbranding
+        continue-on-error: true
+        run: php artisan test tests/Feature/Branding/BrandingComponentRenderTest.php
+      - name: SEO rank city picker, provider codes, and keyword HTTP
+        id: rankcity
+        continue-on-error: true
+        run: >-
+          php artisan test
+          tests/Feature/Seo/Rank/SeoRankCityPickerTest.php
+          tests/Feature/Seo/Rank/SeoRankHttpTest.php
+      - name: Google Business Profile quick onboarding and OAuth boundaries
+        id: gbpquick
+        continue-on-error: true
+        run: >-
+          php artisan test
+          tests/Feature/Business/GoogleQuickOnboardingTest.php
+          tests/Feature/Business/GoogleOnboardingEntryTest.php
+          tests/Feature/DesignSystem/BusinessOnboardingExistingBehaviorPreservedTest.php
+          tests/Feature/GoogleBusinessProfile/GoogleBusinessProfileOAuthTest.php
+          tests/Feature/GoogleBusinessProfile/GoogleBusinessProfileReadOnlyTest.php
+          tests/Feature/GoogleBusinessProfile/GoogleBusinessProfileConnectionStateTest.php
+          tests/Feature/Security/GoogleBusinessProfileSecurityTest.php
+      - name: Fail if any acceptance group failed
+        if: always()
+        env:
+          BLADE: ${{ steps.blade.outcome }}
+          ONBOARDING: ${{ steps.onboarding.outcome }}
+          HOME: ${{ steps.home.outcome }}
+          ASSISTANT: ${{ steps.assistant.outcome }}
+          OFFERS: ${{ steps.offers.outcome }}
+          AUTH_BRANDING: ${{ steps.authbranding.outcome }}
+          RANK_CITY: ${{ steps.rankcity.outcome }}
+          GBP_QUICK: ${{ steps.gbpquick.outcome }}
+        run: |
+          echo "Blade=$BLADE Onboarding=$ONBOARDING Home=$HOME Assistant=$ASSISTANT Offers=$OFFERS"
+          test "$BLADE" = success
+          test "$ONBOARDING" = success
+          test "$HOME" = success
+          test "$ASSISTANT" = success
+          test "$OFFERS" = success
+          test "$AUTH_BRANDING" = success
+          test "$RANK_CITY" = success
+          test "$GBP_QUICK" = success

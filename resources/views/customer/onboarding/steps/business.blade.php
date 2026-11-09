@@ -1,22 +1,31 @@
 @php
     $business = $onboarding->business;
+    // A placeholder identity created by the Google quick start is never shown as the customer's own answer.
+    $provisional = app(\App\Library\Business\OnboardingManager::class)->isProvisionalBusiness($onboarding);
+    $businessName = $provisional ? '' : ($business->name ?? '');
+    $businessIndustry = $provisional ? null : ($business->industry->value ?? null);
     $industryOptions = ['' => 'Choose your kind of business'] + collect(\App\Enums\Business\BusinessIndustry::cases())
         ->mapWithKeys(fn ($industry) => [$industry->value => $industry->label()])->all();
 @endphp
 
-<h5>Tell us about your business</h5>
+@if (! empty($googleStart))
+    @include('customer.onboarding.google.start', ['googleStart' => $googleStart, 'business' => $business])
+@endif
+
+@if (empty($googleStart) || ! empty($googleStart['withManualForm']))
+<h5 id="manual-business-form">Tell us about your business</h5>
 <p class="text-muted">Just the basics. The name and kind of business tell MotionGrove what your website and search listings are about.</p>
 
 <form method="POST" action="{{ route('customer.onboarding.business.store') }}" data-role="business-form">
     @csrf
 
-    <x-input name="name" label="Business name" type="text" value="{{ old('name', $business->name ?? '') }}" required maxlength="255" />
+    <x-input name="name" label="Business name" type="text" value="{{ old('name', $businessName) }}" required maxlength="255" />
 
     <x-select
         name="industry"
         label="What kind of business is it?"
         :options="$industryOptions"
-        :selected="old('industry', $business->industry->value ?? null)"
+        :selected="old('industry', $businessIndustry)"
         required
     />
 
@@ -45,6 +54,8 @@
 
     <x-button type="submit" variant="primary" class="mt-2">Continue</x-button>
 </form>
+
+@endif
 
 <script>
     // Progressive enhancement: the "other" description only matters for the Other niche.

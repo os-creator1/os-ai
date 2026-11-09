@@ -82,8 +82,9 @@ class BrandingComponentRenderTest extends TestCase
         $this->assertStringContainsString('max-block-size: min(56dvh, 100%);', $html);
         $this->assertStringContainsString('object-fit: contain;', $html);
         $this->assertStringContainsString('@media (max-width: 991.98px)', $html);
-        $this->assertStringContainsString('max-inline-size: min(74vw, calc(100vw - 3rem));', $html);
-        $this->assertStringContainsString('padding-top: max(5rem, 12dvh) !important;', $html);
+        $this->assertStringContainsString('position: sticky;', $html);
+        $this->assertStringContainsString('max-inline-size: min(200px, 100%);', $html);
+        $this->assertStringNotContainsString('padding-top: max(5rem, 12dvh) !important;', $html);
     }
 
     public function test_login_page_renders_clean(): void

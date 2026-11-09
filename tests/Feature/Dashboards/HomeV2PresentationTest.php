@@ -31,7 +31,7 @@ class HomeV2PresentationTest extends TestCase
 
     public function test_the_ask_card_is_nested_so_the_open_state_must_keep_its_ancestors_visible(): void
     {
-        [$owner] = $this->tenant(WorkspacePlanTier::Growth, 'Blank Guard', 'Blank Account');
+        [$owner] = $this->tenant(WorkspacePlanTier::Core, 'Blank Guard', 'Blank Account');
         $this->authenticateAs($owner);
         $html = $this->home();
 
@@ -61,7 +61,7 @@ class HomeV2PresentationTest extends TestCase
 
     public function test_the_redundant_page_heading_recedes_visually_but_stays_for_screen_readers(): void
     {
-        [$owner] = $this->tenant(WorkspacePlanTier::Growth, 'Heading Venue', 'Heading Account');
+        [$owner] = $this->tenant(WorkspacePlanTier::Core, 'Heading Venue', 'Heading Account');
         $this->authenticateAs($owner);
         $html = $this->home();
 
@@ -73,7 +73,7 @@ class HomeV2PresentationTest extends TestCase
 
     public function test_many_website_publications_show_one_latest_outcome_on_home(): void
     {
-        [$owner, $business] = $this->tenant(WorkspacePlanTier::Growth, 'Publish Venue', 'Publish Account');
+        [$owner, $business] = $this->tenant(WorkspacePlanTier::Core, 'Publish Venue', 'Publish Account');
         $this->website($business, 'published');
         foreach ([1, 2, 3] as $version) {
             $this->websiteRevision($business, $version, \Carbon\CarbonImmutable::now()->subHours(10 - $version)->setTimezone((string) config('app.timezone', 'UTC'))->format('Y-m-d H:i:s'));
@@ -89,7 +89,7 @@ class HomeV2PresentationTest extends TestCase
 
     public function test_suggested_rows_carry_an_icon_and_only_real_suggestions(): void
     {
-        [$owner] = $this->tenant(WorkspacePlanTier::Growth, 'Icon Venue', 'Icon Account');
+        [$owner] = $this->tenant(WorkspacePlanTier::Core, 'Icon Venue', 'Icon Account');
         $this->authenticateAs($owner);
         $html = $this->home();
 
@@ -107,7 +107,7 @@ class HomeV2PresentationTest extends TestCase
 
     public function test_the_third_card_is_the_real_waiting_count_with_honest_states(): void
     {
-        [$owner, $business] = $this->tenant(WorkspacePlanTier::Growth, 'Waiting Venue', 'Waiting Account');
+        [$owner, $business] = $this->tenant(WorkspacePlanTier::Core, 'Waiting Venue', 'Waiting Account');
         $this->authenticateAs($owner);
 
         // None waiting: a real zero, calm.
@@ -140,7 +140,7 @@ class HomeV2PresentationTest extends TestCase
 
     public function test_a_quiet_visit_leads_with_the_plain_greeting_line(): void
     {
-        [$owner] = $this->tenant(WorkspacePlanTier::Growth, 'Quiet Greeting', 'Quiet Greeting Account');
+        [$owner] = $this->tenant(WorkspacePlanTier::Core, 'Quiet Greeting', 'Quiet Greeting Account');
         $this->authenticateAs($owner);
 
         $this->assertStringContainsString('Here&#039;s what&#039;s happening with your business.', $this->home());

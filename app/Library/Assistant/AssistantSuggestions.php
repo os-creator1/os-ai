@@ -47,6 +47,22 @@ final class AssistantSuggestions
         return ['label' => 'Draft replies with MotionGrove', 'prompt' => 'Draft replies for the customers who are waiting for a reply.'];
     }
 
+    /**
+     * The "Explain this" button on a Growth recommendation: the assistant is asked to EXPLAIN the engine's own top
+     * recommendation from the growth_recommendations read (evidence and links the deterministic engine produced). It cannot
+     * re-rank or invent; offered only where that read and the model are available to this actor.
+     *
+     * @return array{label: string, prompt: string}|null
+     */
+    public function explainRecommendation(AssistantContext $context): ?array
+    {
+        if (! $context->entitled('ai_coo_basic') || ! isset($this->tools->availableReads($context)['growth_recommendations'])) {
+            return null;
+        }
+
+        return ['label' => 'Explain this with MotionGrove', 'prompt' => 'Explain my top recommendation: what evidence supports it, why it matters, and exactly what to do first.'];
+    }
+
     /** @return array<int, array{key: string, label: string, available: bool, prompt: string}> */
     public function for(AssistantContext $context, bool $launching): array
     {

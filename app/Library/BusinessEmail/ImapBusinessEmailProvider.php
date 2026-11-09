@@ -346,8 +346,14 @@ final class ImapBusinessEmailProvider implements BusinessEmailProvider, InboundB
             return new BusinessEmailProviderException(Category::RecipientInvalid, 'smtp_recipient_rejected');
         }
 
-        if (preg_match('/could not be established|connection refused|timed out|getaddrinfo/i', $message) === 1 && ! str_contains($message, 'DATA')) {
+        if (preg_match('/could not be established|connection refused|getaddrinfo/i', $message) === 1 && ! str_contains($message, 'DATA')) {
+            // Explicit connection failures precede SMTP DATA and are safe to retry.
             return new BusinessEmailProviderException(Category::TemporaryProviderFailure, 'smtp_connect_failed');
+        }
+
+        if (preg_match('/timed out|timeout/i', $message) === 1) {
+            // A timeout after send() began may mean the server accepted DATA but the acknowledgement was lost.
+            return new BusinessEmailProviderException(Category::TemporaryProviderFailure, 'smtp_timeout', ambiguous: $requestSent);
         }
 
         if (preg_match('/starttls|tls|ssl|certificate/i', $message) === 1) {
