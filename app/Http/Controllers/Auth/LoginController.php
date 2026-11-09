@@ -313,6 +313,9 @@
                 ]);
             }
 
+            // A plain "sign in" start: forget any signup intent left by an earlier, abandoned attempt.
+            session()->forget('social_intent');
+
             return Socialite::driver($provider)->redirect();
         }
 
@@ -339,18 +342,37 @@
                 ]);
             }
 
+            // Set by V1SignupController::googleRedirect() only: this OAuth round trip began from the signup flow.
+            $intent = (string) session()->pull('social_intent', '');
+            $fromSignup = $intent === 'signup';
+
             try {
                 $data = Socialite::driver($provider)->user();
             } catch (\Throwable $e) {
-                // invalid/expired OAuth state, denied consent, provider outage: never a server error, never a login
-                return redirect()->route('login')->with([
+                // invalid/expired OAuth state, denied consent, provider outage: never a server error, never a login or an account
+                return redirect()->route($fromSignup ? 'register.account' : 'login')->with([
                     'status'  => 'error',
                     'message' => __('locale.auth.failed'),
                 ]);
             }
 
             try {
-                $user = $this->account->findOrCreateSocial($provider, $data);
+                $resolved = $this->account->resolveSocialIdentity($provider, $data);
+            } catch (GeneralException $e) {
+                return redirect()->route($fromSignup ? 'register.account' : 'login')->with([
+                    'status'  => 'error',
+                    'message' => $e->getMessage(),
+                ]);
+            }
+
+            // A brand-new, provider-verified identity: no User is created here. It is carried into the canonical V1 signup
+            // (plan -> business -> checkout), which creates the account once at commit, with no password to invent.
+            if ($resolved['user'] === null) {
+                return $this->continueSignupWithIdentity($resolved['identity'], $fromSignup);
+            }
+
+            try {
+                $user = $resolved['user'];
 
                 if ( ! $user->status) {
                     return redirect()->route('login')->with([
@@ -359,13 +381,15 @@
                     ]);
                 }
 
+                // Existing 2FA, disabled-account and admin protections stay in force (redirectAfterLogin issues the 2FA challenge).
                 $this->account->redirectAfterLogin($user);
 
                 auth()->login($user, true);
                 request()->session()->regenerate();   // no session fixation across the OAuth round trip
 
                 if ($user->active_portal == 'customer') {
-                    return redirect()->route('user.home');
+                    // An account that exists but never finished signup resumes the legitimate plan / checkout process.
+                    return $this->signupIsIncomplete($user) ? redirect()->route('signup.plan') : redirect()->route('user.home');
                 }
 
                 return redirect()->to(\App\Helpers\Helper::adminHomeUrl())->with([
@@ -379,6 +403,62 @@
                     'message' => $e->getMessage(),
                 ]);
             }
+        }
+
+        /** A customer whose signup never produced a Workspace with a plan. */
+        private function signupIsIncomplete(User $user): bool
+        {
+            if ($user->is_admin || ! $user->customer) {
+                return false;
+            }
+
+            $workspaceId = \App\Models\Workspace::query()->where('owner_user_id', $user->id)->orderBy('id')->value('id');
+
+            return $workspaceId === null || app(\App\Repositories\Contracts\WorkspacePlanAssignmentRepository::class)->findByWorkspaceId((int) $workspaceId) === null;
+        }
+
+        /**
+         * Carry a provider-verified identity into the canonical V1 signup draft. The draft holds it in the session until checkout, so
+         * nothing durable exists until the customer commits; a closed registration setting is honoured here too.
+         *
+         * @param  array<string, mixed>  $identity
+         */
+        private function continueSignupWithIdentity(array $identity, bool $fromSignup): RedirectResponse
+        {
+            if ( ! config('account.can_register')) {
+                return redirect()->route('login')->with([
+                    'status'  => 'error',
+                    'message' => __('locale.exceptions.registration_disabled'),
+                ]);
+            }
+
+            // Signup is offered with Google only; another provider's new identity never becomes a signup account.
+            if (($identity['provider'] ?? null) !== 'google') {
+                return redirect()->route('login')->with(['status' => 'error', 'message' => __('locale.auth.failed')]);
+            }
+
+            $draft = new \App\Library\PlatformBilling\V1SignupDraft(request()->session());
+
+            // An email-bound private offer proceeds only with the address it was issued to: a different Google email is refused here,
+            // before it can become the account (the plan and offer stay pinned so the customer can use the right email).
+            $offerToken = $draft->offerToken();
+            $offer = $offerToken === null ? null : app(\App\Library\PlatformBilling\Offers\PrivateOfferRedemptionManager::class)->findByToken($offerToken);
+
+            if ($offer !== null && $offer->customer_email !== null
+                && ! hash_equals((string) $offer->customer_email, \App\Library\PlatformBilling\Offers\EmailIdentity::normalize((string) $identity['email']))) {
+                return redirect()->route('register.account')->with([
+                    'status'  => 'error',
+                    'message' => __('This offer is for a different email address. Use the email the offer was sent to.'),
+                ]);
+            }
+
+            $draft->setProviderAccount($identity);
+            request()->session()->regenerate();   // keeps the draft, rotates the session id
+
+            // The plan the customer already chose is kept; otherwise they choose one first.
+            return $draft->tier() !== null
+                ? redirect()->route('register.business')
+                : redirect()->route('register.plan')->with(['status' => 'success', 'message' => __('Google confirmed your email. Choose a plan to finish creating your account.')]);
         }
 
         /**
