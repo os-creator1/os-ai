@@ -762,6 +762,8 @@
                 '500' => ['title' => 'Something went wrong', 'description' => 'We couldn\'t complete your request. Please try again.'],
                 '503' => ['title' => 'Temporarily unavailable', 'description' => 'MotionGrove is temporarily unavailable. Please try again shortly.'],
             ],
+            'notify_button'      => 'Notify me',
+            'notify_placeholder' => 'you@example.com',
             'log_in'       => 'Log in',
             'log_in_again' => 'Log in again',
             'go_homepage'  => 'Go to homepage',

@@ -1,5 +1,7 @@
 @props([
     'code' => 404,
+    // 503 only: offer the maintenance "notify me" form (see errors/503.blade.php for when it is available).
+    'notify' => false,
 ])
 
 {{--
@@ -22,6 +24,23 @@
     } catch (\Throwable) {
         $agencyChrome = null;
         $agencyThemeStyle = null;
+    }
+    // The maintenance notification form (POST + CSRF to maintenance.notify). Never shown unless the caller says the
+    // feature is available, the route exists and a CSRF token can actually be issued.
+    $notifyToken = '';
+    if ($notify && (int) $code === 503 && \Illuminate\Support\Facades\Route::has('maintenance.notify')) {
+        try {
+            $notifyToken = (string) csrf_token();
+        } catch (\Throwable) {
+            $notifyToken = '';
+        }
+    }
+    $showNotify = $notifyToken !== '';
+    $notifyError = null;
+    try {
+        $notifyError = isset($errors) ? $errors->first('email') : null;
+    } catch (\Throwable) {
+        $notifyError = null;
     }
     $errorBrandName = $agencyChrome['name'] ?? config('app.name');
     $logoHref = app(\App\Library\ErrorPages\ErrorPagePresenter::class)->publicHomeUrl();
@@ -59,6 +78,10 @@
         .eb-btn:focus-visible{outline:2px solid var(--eb-accent);outline-offset:2px}
         .eb-btn-primary{background:var(--eb-accent);border-color:var(--eb-accent);color:#fff}
         .eb-btn-primary:hover{background:var(--eb-accent-hover);border-color:var(--eb-accent-hover)}
+        .eb-notified{margin:0 auto 1rem;max-width:22rem;padding:.625rem .875rem;border-radius:.5rem;background:#E6EEF7;color:#2F5780;font-size:.8125rem}
+        .eb-notify{display:flex;flex-wrap:wrap;gap:.5rem;justify-content:center;margin:0 0 1rem}
+        .eb-notify input{flex:1 1 12rem;min-height:2.5rem;padding:.5rem .75rem;border-radius:.5rem;border:1px solid var(--eb-border);background:var(--eb-surface);color:var(--eb-text);font:inherit;font-size:.875rem}
+        .eb-notify-error{flex:1 1 100%;margin:0;font-size:.75rem;color:#B5413B}
         .eb-card{margin:1.5rem auto 0;max-width:26rem;padding:.875rem 1rem;background:var(--eb-surface);border:1px solid var(--eb-border);border-radius:.75rem;text-align:left}
         .eb-card strong{display:block;font-size:.8125rem}
         .eb-card p{margin:.125rem 0 0;font-size:.75rem;line-height:1.5;color:var(--eb-muted)}
@@ -79,6 +102,18 @@
         <span class="eb-icon eb-icon-{{ $page['tone'] }}" data-role="status-icon" aria-hidden="true"><svg viewBox="0 0 24 24" focusable="false">{!! $page['icon'] !!}</svg></span>
         <h1 class="eb-title">{{ $page['title'] }}</h1>
         <p class="eb-desc">{{ $page['description'] }}</p>
+
+        @if($showNotify)
+            @if(request('notified'))
+                <p class="eb-notified" role="status" data-role="maintenance-notified">{{ __('locale.http.503.notify') }}</p>
+            @endif
+            <form class="eb-notify" method="POST" action="{{ route('maintenance.notify') }}" data-role="maintenance-notify-form">
+                <input type="hidden" name="_token" value="{{ $notifyToken }}">
+                <input type="email" name="email" required autocomplete="email" placeholder="{{ __('locale.error_pages.notify_placeholder') }}" aria-label="{{ __('locale.error_pages.notify_placeholder') }}" value="{{ old('email') }}">
+                <button type="submit" class="eb-btn eb-btn-primary">{{ __('locale.error_pages.notify_button') }}</button>
+                @if($notifyError)<p class="eb-notify-error">{{ $notifyError }}</p>@endif
+            </form>
+        @endif
 
         <div class="eb-actions">
             <a class="eb-btn eb-btn-primary" data-role="primary-action" href="{{ $page['primary']['url'] }}">{{ $page['primary']['label'] }}</a>
