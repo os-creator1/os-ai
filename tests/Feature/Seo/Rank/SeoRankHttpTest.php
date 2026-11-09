@@ -753,8 +753,8 @@ class SeoRankHttpTest extends TestCase
             ['code' => self::CHICAGO, 'label' => 'Chicago, Illinois, United States'],
         ], $response->json('locations'));
 
-        $this->getJson($this->u('keywords.rank-locations', $workspace, $business) . '?q=C')->assertOk()->assertExactJson(['locations' => []]);
-        $this->getJson($this->u('keywords.rank-locations', $workspace, $business))->assertOk()->assertExactJson(['locations' => []]);
+        $this->getJson($this->u('keywords.rank-locations', $workspace, $business) . '?q=C')->assertOk()->assertExactJson(['locations' => [], 'status' => 'partial']);
+        $this->getJson($this->u('keywords.rank-locations', $workspace, $business))->assertOk()->assertExactJson(['locations' => [], 'status' => 'partial']);
 
         Http::assertNothingSent();
         $this->assertSame(0, FakeSeoRankProvider::$submitCalls);

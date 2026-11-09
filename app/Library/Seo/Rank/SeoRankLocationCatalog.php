@@ -10,17 +10,49 @@ use Illuminate\Support\Facades\DB;
 /**
  * Local cache of the provider's FREE location catalogue (seo_rank_locations) and
  * the only way a search geography becomes a paid request: a typed string is
- * never sent anywhere, it must resolve to a cached row. V1 supports United
- * States cities only (Contract: geography policy), English.
+ * never sent anywhere, it must resolve to a cached row. Supported geographies
+ * are US and Lithuanian cities (SUPPORTED), English.
  *
  * search()/find() are pure local queries. sync() is the one provider call (a
  * free endpoint) and is run by the scheduled command, never by a web request.
  */
 class SeoRankLocationCatalog
 {
-    public const SUPPORTED_COUNTRY = 'US';
-    public const SUPPORTED_TYPE = 'City';
+    /**
+     * Supported country (ISO alpha-2) => provider location types accepted as a
+     * "city". Lithuania also accepts Municipality because the provider models
+     * some Lithuanian towns (e.g. Vilnius) at that level. Codes are never
+     * listed here: they always come from the provider's own free catalogue.
+     *
+     * @var array<string, list<string>>
+     */
+    public const SUPPORTED = [
+        'US' => ['City'],
+        'LT' => ['City', 'Municipality'],
+    ];
     public const LANGUAGE = 'en';
+
+    /** @return list<string> */
+    public static function supportedCountries(): array
+    {
+        return array_keys(self::SUPPORTED);
+    }
+
+    /** @return list<string> */
+    public static function supportedTypes(): array
+    {
+        return array_values(array_unique(array_merge(...array_values(self::SUPPORTED))));
+    }
+
+    /** Restrict a query to supported (country, type) pairs. */
+    private function supported(\Illuminate\Database\Eloquent\Builder $query): \Illuminate\Database\Eloquent\Builder
+    {
+        return $query->where('provider', $this->provider->key())->where(function ($q) {
+            foreach (self::SUPPORTED as $country => $types) {
+                $q->orWhere(fn ($w) => $w->where('country_iso', $country)->whereIn('location_type', $types));
+            }
+        });
+    }
 
     public function __construct(private readonly SeoRankProvider $provider)
     {
@@ -37,10 +69,7 @@ class SeoRankLocationCatalog
 
         $escaped = addcslashes($query, '\\%_');
 
-        return SeoRankLocation::query()
-            ->where('provider', $this->provider->key())
-            ->where('country_iso', self::SUPPORTED_COUNTRY)
-            ->where('location_type', self::SUPPORTED_TYPE)
+        return $this->supported(SeoRankLocation::query())
             ->where('location_name', 'like', $escaped . '%')
             ->orderBy('location_name')
             ->limit(max(1, min(25, $limit)))
@@ -50,17 +79,27 @@ class SeoRankLocationCatalog
     /** A supported, cached location by provider code, or null. */
     public function find(int $locationCode): ?SeoRankLocation
     {
-        return SeoRankLocation::query()
-            ->where('provider', $this->provider->key())
-            ->where('country_iso', self::SUPPORTED_COUNTRY)
-            ->where('location_type', self::SUPPORTED_TYPE)
+        return $this->supported(SeoRankLocation::query())
             ->where('location_code', $locationCode)
             ->first();
     }
 
+    /** True when at least one supported city is cached. */
     public function isPopulated(): bool
     {
-        return SeoRankLocation::query()->where('provider', $this->provider->key())->exists();
+        return $this->supported(SeoRankLocation::query())->exists();
+    }
+
+    /**
+     * Supported countries with no cached city yet (local query only).
+     *
+     * @return list<string>
+     */
+    public function missingCountries(): array
+    {
+        $present = $this->supported(SeoRankLocation::query())->distinct()->pluck('country_iso')->map(fn ($c) => strtoupper((string) $c))->all();
+
+        return array_values(array_diff(self::supportedCountries(), $present));
     }
 
     /** "Chicago,Illinois,United States" -> "Chicago, Illinois, United States". */
@@ -70,20 +109,54 @@ class SeoRankLocationCatalog
     }
 
     /**
-     * Upsert the supported subset of the free catalogue. Returns rows written.
+     * Upsert the supported subset of the free catalogue for every supported
+     * country. Returns rows written. A country that fails does not stop the
+     * others; the first failure is rethrown once all have been attempted.
      *
      * @throws \App\Library\Seo\Rank\Provider\SeoRankProviderException
      */
     public function sync(): int
     {
+        $total = 0;
+        $failure = null;
+
+        foreach (self::supportedCountries() as $country) {
+            try {
+                $total += $this->syncCountry($country);
+            } catch (\App\Library\Seo\Rank\Provider\SeoRankProviderException $e) {
+                $failure ??= $e;
+            }
+        }
+
+        if ($failure !== null) {
+            throw $failure;
+        }
+
+        return $total;
+    }
+
+    /**
+     * One free provider call for one supported country.
+     *
+     * @throws \App\Library\Seo\Rank\Provider\SeoRankProviderException
+     */
+    public function syncCountry(string $country): int
+    {
+        $country = strtoupper($country);
+        $types = self::SUPPORTED[$country] ?? null;
+
+        if ($types === null) {
+            throw new \InvalidArgumentException('Unsupported rank location country.');
+        }
+
         $rows = [];
         $now = now();
 
-        foreach ($this->provider->locations(self::SUPPORTED_COUNTRY) as $location) {
+        foreach ($this->provider->locations($country) as $location) {
             // Trust the row's own country metadata, never the endpoint we asked:
-            // a missing or non-US country is skipped, not stamped as US.
-            if ($location['type'] !== self::SUPPORTED_TYPE
-                || strtoupper((string) ($location['country_iso'] ?? '')) !== self::SUPPORTED_COUNTRY) {
+            // a missing or other-country row is skipped, not stamped.
+            if (! in_array($location['type'], $types, true)
+                || strtoupper((string) ($location['country_iso'] ?? '')) !== $country) {
                 continue;
             }
 
@@ -92,7 +165,7 @@ class SeoRankLocationCatalog
                 'location_code' => $location['code'],
                 'location_name' => $location['name'],
                 'parent_code' => $location['parent_code'],
-                'country_iso' => self::SUPPORTED_COUNTRY,
+                'country_iso' => $country,
                 'location_type' => $location['type'],
                 'created_at' => $now,
                 'updated_at' => $now,
