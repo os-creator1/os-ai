@@ -10,6 +10,10 @@ on:
       - 'resources/views/customer/dashboard/home/**'
       - 'resources/views/customer/onboarding/**'
       - 'app/Library/Assistant/**'
+      - 'resources/views/offers/**'
+      - 'app/Http/Controllers/Auth/PrivateOfferController.php'
+      - 'routes/auth.php'
+      - 'tests/Feature/PlatformBilling/PrivateOffer*Test.php'
       - 'app/Http/Controllers/Auth/LoginController.php'
       - 'app/Http/Controllers/Auth/V1SignupController.php'
       - 'app/Library/PlatformBilling/V1SignupDraft.php'
@@ -119,6 +123,19 @@ jobs:
           tests/Feature/Assistant/GrowthExplainRecommendationTest.php
           tests/Feature/Website/WebsiteMetaDescriptionSuggestionTest.php
           tests/Feature/Security/ViewAsRouteBoundaryTest.php
+      - name: Private Offer page, redemption, security and billing
+        id: offers
+        continue-on-error: true
+        run: >-
+          php artisan test
+          tests/Feature/PlatformBilling/PrivateOfferPageRedesignTest.php
+          tests/Feature/PlatformBilling/PrivateOfferRedemptionTest.php
+          tests/Feature/PlatformBilling/PrivateOfferSecurityTest.php
+          tests/Feature/PlatformBilling/PrivateOfferReviewFindingsTest.php
+          tests/Feature/PlatformBilling/PrivateOfferTermsTest.php
+          tests/Feature/PlatformBilling/PrivateOfferBillingChangeTest.php
+          tests/Feature/PlatformBilling/PrivateOffersFeatureFlagTest.php
+          tests/Feature/Auth/GoogleSignupPrivateOfferTest.php
       - name: Fail if any acceptance group failed
         if: always()
         env:
@@ -126,9 +143,11 @@ jobs:
           ONBOARDING: ${{ steps.onboarding.outcome }}
           HOME: ${{ steps.home.outcome }}
           ASSISTANT: ${{ steps.assistant.outcome }}
+          OFFERS: ${{ steps.offers.outcome }}
         run: |
-          echo "Blade=$BLADE Onboarding=$ONBOARDING Home=$HOME Assistant=$ASSISTANT"
+          echo "Blade=$BLADE Onboarding=$ONBOARDING Home=$HOME Assistant=$ASSISTANT Offers=$OFFERS"
           test "$BLADE" = success
           test "$ONBOARDING" = success
           test "$HOME" = success
           test "$ASSISTANT" = success
+          test "$OFFERS" = success
