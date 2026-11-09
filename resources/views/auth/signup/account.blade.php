@@ -11,6 +11,10 @@
 
     @include('auth.partials._flash-summary')
 
+    @if (! empty($googleAvailable))
+        @include('auth.partials._google-signup-button')
+    @endif
+
     <form class="auth-register-form" method="POST" action="{{ route('register.account.store') }}" novalidate>
         @csrf
         <div class="mb-1">

@@ -173,7 +173,9 @@ class V1SignupHttpTest extends TestCase
 
         $user = User::query()->where('email', $email)->sole();
 
-        Notification::assertSentTo($user, VerifyEmail::class);
+        // The app sends its branded verification mail (a VerifyEmail subclass). NotificationFake matches by exact class, so name the real one.
+        Notification::assertSentTo($user, \App\Notifications\Auth\BrandedVerifyEmail::class);
+        $this->assertInstanceOf(VerifyEmail::class, new \App\Notifications\Auth\BrandedVerifyEmail());
     }
 
     public function test_registration_creates_no_legacy_subscription_authority(): void
@@ -986,7 +988,7 @@ class V1SignupHttpTest extends TestCase
 
         // Sent when the account was created — payment was never held up for it.
         $user = User::query()->where('email', $form['email'])->sole();
-        \Illuminate\Support\Facades\Notification::assertSentTo($user, \Illuminate\Auth\Notifications\VerifyEmail::class);
+        \Illuminate\Support\Facades\Notification::assertSentTo($user, \App\Notifications\Auth\BrandedVerifyEmail::class);
 
         $subscription = PlatformSubscription::query()->sole();
         $this->stripe->completeCheckout((string) $subscription->provider_checkout_session_id);
