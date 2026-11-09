@@ -463,6 +463,150 @@ class WebsiteServiceAreaPagesTest extends TestCase
         $this->assertEquals(['serving-brooklyn' => ''], Website::where('business_id', $business->id)->sole()->custom_redirects, 'Ambiguous: no redirect for the stateless Portland page.');
     }
 
+    /** Simulates a site generated before page intent existed: its place pages carry no stored role or intent. */
+    private function makeLegacy(object $business): void
+    {
+        Website::where('business_id', $business->id)->sole()->pages()->where('slug', 'like', 'serving-%')->update(['page_intent' => null, 'page_role' => null]);
+    }
+
+    public function test_legacy_place_pages_without_a_page_intent_still_redirect_when_the_rebuild_covers_the_place(): void
+    {
+        [$customer, $business, $workspace] = $this->entitledTenant();
+        $this->bindDistinctAiClient();
+        $this->saveServiceAreas($business, ['Brooklyn', 'Queens']);
+        $this->generate($customer, $business, $workspace, $this->confirmed(['Brooklyn', 'Queens']));
+        $this->makeLegacy($business);
+        $this->assertSame(2, Website::where('business_id', $business->id)->sole()->pages()->where('slug', 'like', 'serving-%')->whereNull('page_intent')->count());
+
+        // Neither place keeps its own page, but both are still listed on the home page: both old addresses redirect.
+        $this->rebuildWith($business, ['Brooklyn', 'Queens'], ['Brooklyn', 'Queens']);
+
+        $this->assertEquals(['serving-brooklyn' => '', 'serving-queens' => ''], Website::where('business_id', $business->id)->sole()->custom_redirects);
+    }
+
+    public function test_a_legacy_place_page_whose_place_is_no_longer_covered_is_not_redirected(): void
+    {
+        [$customer, $business, $workspace] = $this->entitledTenant();
+        $this->bindDistinctAiClient();
+        $this->saveServiceAreas($business, ['Brooklyn', 'Queens']);
+        $this->generate($customer, $business, $workspace, $this->confirmed(['Brooklyn', 'Queens']));
+        $this->makeLegacy($business);
+
+        $this->rebuildWith($business, ['Brooklyn', 'Bronx'], ['Brooklyn', 'Bronx']);
+
+        $this->assertEquals(['serving-brooklyn' => ''], Website::where('business_id', $business->id)->sole()->custom_redirects, 'Queens was dropped: an honest 404, not a misleading redirect.');
+    }
+
+    public function test_a_legacy_page_for_one_state_is_not_redirected_for_the_same_city_in_another_state(): void
+    {
+        [$customer, $business, $workspace] = $this->entitledTenant();
+        $this->bindDistinctAiClient();
+        $this->saveServiceAreas($business, ['Portland, OR', 'Brooklyn']);
+        $this->generate($customer, $business, $workspace, $this->confirmed(['Portland, OR', 'Brooklyn']));
+        $this->makeLegacy($business);
+
+        $this->rebuildWith($business, ['Portland, ME', 'Brooklyn'], ['Brooklyn']);
+        $this->assertEquals(['serving-brooklyn' => ''], Website::where('business_id', $business->id)->sole()->custom_redirects, 'serving-portland-or is Oregon; only Maine is listed now.');
+    }
+
+    public function test_a_legacy_page_redirects_when_the_exact_same_state_is_still_covered(): void
+    {
+        [$customer, $business, $workspace] = $this->entitledTenant();
+        $this->bindDistinctAiClient();
+        $this->saveServiceAreas($business, ['Portland, OR', 'Portland, ME', 'Brooklyn']);
+        $this->generate($customer, $business, $workspace, $this->confirmed(['Portland, OR', 'Portland, ME', 'Brooklyn']));
+        $this->makeLegacy($business);
+
+        $this->rebuildWith($business, ['Portland, OR', 'Brooklyn'], ['Brooklyn']);
+
+        $this->assertEquals(['serving-portland-or' => '', 'serving-brooklyn' => ''], Website::where('business_id', $business->id)->sole()->custom_redirects, 'Oregon is still listed; the Maine page (dropped) is not redirected.');
+    }
+
+    public function test_a_legacy_page_for_a_similarly_named_place_is_not_redirected_to_a_neighbour(): void
+    {
+        [$customer, $business, $workspace] = $this->entitledTenant();
+        $this->bindDistinctAiClient();
+        $this->saveServiceAreas($business, ['Spokane Valley', 'Brooklyn']);
+        $this->generate($customer, $business, $workspace, $this->confirmed(['Spokane Valley', 'Brooklyn']));
+        $this->makeLegacy($business);
+
+        $this->rebuildWith($business, ['Spokane', 'Brooklyn'], ['Spokane', 'Brooklyn']);
+
+        $this->assertEquals(['serving-brooklyn' => ''], Website::where('business_id', $business->id)->sole()->custom_redirects, 'No substring matching: Spokane is not Spokane Valley.');
+    }
+
+    public function test_an_owner_defined_redirect_for_a_legacy_place_page_is_left_untouched(): void
+    {
+        [$customer, $business, $workspace] = $this->entitledTenant();
+        $this->bindDistinctAiClient();
+        $this->saveServiceAreas($business, ['Brooklyn', 'Queens']);
+        $this->generate($customer, $business, $workspace, $this->confirmed(['Brooklyn', 'Queens']));
+        $this->makeLegacy($business);
+        Website::where('business_id', $business->id)->sole()->forceFill(['custom_redirects' => ['serving-brooklyn' => 'services']])->save();
+
+        $this->rebuildWith($business, ['Brooklyn', 'Queens'], ['Brooklyn', 'Queens']);
+
+        $this->assertEquals(['serving-brooklyn' => 'services', 'serving-queens' => ''], Website::where('business_id', $business->id)->sole()->custom_redirects, "The owner's own target keeps precedence; only the missing address is added.");
+    }
+
+    /** Renders the home page's "Areas we serve" section exactly as the public page does, with the site's real place-page addresses. */
+    private function hubLinks(object $business): array
+    {
+        $website = Website::where('business_id', $business->id)->sole();
+        $hub = collect($website->pages()->where('is_home', true)->sole()->sections)->first(fn ($s) => ($s['data']['heading'] ?? '') === 'Areas we serve');
+        $this->assertNotNull($hub);
+        $urls = $website->pages()->get()->filter(fn ($page) => ($page->page_intent['place'] ?? null) !== null)
+            ->mapWithKeys(fn ($page) => [\Illuminate\Support\Str::slug((string) $page->page_intent['place']) => '/' . $page->slug])->all();
+        $html = view('public.website.components.services', ['data' => $hub['data'], 'placePageUrls' => $urls, 'servicePageUrls' => [], 'assetsByUid' => []])->render();
+        preg_match_all('/<a class="website-service-link" href="([^"]+)">([^<]*)<\/a>/', $html, $m, PREG_SET_ORDER);
+
+        return ['items' => $hub['data']['items'], 'links' => array_column($m, 1, 2), 'slugs' => $website->pages()->where('slug', 'like', 'serving-%')->pluck('slug')->all(), 'html' => $html];
+    }
+
+    public function test_a_region_qualified_area_page_is_linked_from_the_home_page_hub(): void
+    {
+        [$customer, $business, $workspace] = $this->entitledTenant();
+        $this->bindDistinctAiClient();
+        $this->saveServiceAreas($business, ['Brooklyn, NY', 'Queens']);
+        $this->generate($customer, $business, $workspace, $this->confirmed(['Brooklyn, NY', 'Queens']));
+
+        $hub = $this->hubLinks($business);
+
+        $this->assertEqualsCanonicalizing(['serving-brooklyn-ny', 'serving-queens'], $hub['slugs']);
+        $this->assertSame('Brooklyn', collect($hub['items'])->firstWhere('place', 'Brooklyn, NY')['name'], 'The friendly label stays the bare name; the identity keeps the region.');
+        $this->assertSame(['Brooklyn' => '/serving-brooklyn-ny', 'Queens' => '/serving-queens'], $hub['links']);
+    }
+
+    public function test_the_same_city_in_two_states_links_to_its_own_page_each(): void
+    {
+        [$customer, $business, $workspace] = $this->entitledTenant();
+        $this->bindDistinctAiClient();
+        $this->saveServiceAreas($business, ['Portland, OR', 'Portland, ME']);
+        $this->generate($customer, $business, $workspace, $this->confirmed(['Portland, OR', 'Portland, ME']));
+
+        $hub = $this->hubLinks($business);
+
+        $this->assertEqualsCanonicalizing(['serving-portland-or', 'serving-portland-me'], $hub['slugs']);
+        $this->assertSame(['Portland, OR' => '/serving-portland-or', 'Portland, ME' => '/serving-portland-me'], $hub['links'], 'Two entries, two different pages, no collision.');
+    }
+
+    public function test_an_area_without_a_generated_page_is_listed_without_a_link(): void
+    {
+        [$customer, $business, $workspace] = $this->entitledTenant();
+        $this->bindDistinctAiClient();
+        $this->saveServiceAreas($business, ['Brooklyn, NY', 'Queens, NY', 'Bronx']);
+        // Only Brooklyn has real supporting details; Queens and the Bronx are bare names.
+        $this->generate($customer, $business, $workspace, array_merge($this->confirmed(['Brooklyn, NY']), [['name' => 'Queens, NY'], ['name' => 'Bronx']]));
+
+        $hub = $this->hubLinks($business);
+
+        $this->assertSame(['serving-brooklyn-ny'], $hub['slugs'], 'No page is created merely to have something to link to.');
+        $this->assertSame(['Brooklyn' => '/serving-brooklyn-ny'], $hub['links'], 'No other card links anywhere.');
+        $this->assertStringContainsString('Queens', $hub['html']);
+        $this->assertStringContainsString('Bronx', $hub['html']);
+        $this->assertSame(1, substr_count($hub['html'], 'website-service-link'));
+    }
+
     public function test_a_retained_area_redirects_and_a_completely_removed_one_does_not(): void
     {
         [$customer, $business, $workspace] = $this->entitledTenant();

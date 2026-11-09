@@ -436,7 +436,7 @@ final class GuidedGenerationCommitService
                 $coveredPlaces = $this->homeCoveredPlaces($business, $bound['pages']);
                 $lost = $previous->filter(fn ($old) => ! $old->is_home && $old->slug !== null && ($old->page_role === 'location' || str_starts_with((string) $old->slug, 'serving-')))
                     ->reject(fn ($old) => in_array($old->slug, $newSlugs, true))
-                    ->filter(fn ($old) => self::placeIsCovered((string) ($old->page_intent['place'] ?? ''), $coveredPlaces))
+                    ->filter(fn ($old) => self::placeIsCovered(self::lostPagePlace($old->page_intent['place'] ?? null, (string) $old->slug, $coveredPlaces), $coveredPlaces))
                     ->pluck('slug')->values()->all();
                 $redirects = (array) ($locked->custom_redirects ?? []);
                 foreach ($lost as $slug) {
@@ -601,13 +601,43 @@ final class GuidedGenerationCommitService
     }
 
     /**
+     * The place a removed page was about. A stored page-intent place wins. A page written before page intent existed has none,
+     * so its generated address ("serving-<city>" or "serving-<city>-<region>") is compared, as a WHOLE, with the address each
+     * covered place would have had. Exactly one distinct reading is accepted; no match or several readings (a bare "serving-portland"
+     * with both Portland, OR and Portland, ME covered) gives '' — a place is never invented, and nothing is matched by substring.
+     *
+     * @param  array<int, array{0: string, 1: ?string, 2: bool}>  $covered
+     */
+    private static function lostPagePlace(mixed $storedPlace, string $slug, array $covered): string
+    {
+        $stored = trim((string) $storedPlace);
+
+        if ($stored !== '' || ! str_starts_with($slug, 'serving-')) {
+            return $stored;
+        }
+
+        $address = substr($slug, strlen('serving-'));
+        $readings = [];
+
+        foreach ($covered as [$city, $region]) {
+            if ($region !== null && $address === $city . '-' . $region) {
+                $readings[$city . ', ' . $region] = true;
+            } elseif ($address === $city) {
+                $readings[$city] = true;
+            }
+        }
+
+        return count($readings) === 1 ? (string) array_key_first($readings) : '';
+    }
+
+    /**
      * "Portland, OR" => ['portland', 'or']; "Portland" => ['portland', null]. Case, punctuation and spacing are ignored and a US
      * state name is read as its code ("Oregon" = "OR"). The city is the whole name before the comma, so "Spokane Valley" never
      * equals "Spokane".
      *
      * @return array{0: string, 1: ?string}
      */
-    private static function placeParts(string $place): array
+    public static function placeParts(string $place): array
     {
         $parts = explode(',', $place, 2);
         $city = \Illuminate\Support\Str::slug($parts[0]);

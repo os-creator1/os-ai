@@ -212,10 +212,11 @@ final class MediaBindingService
     private function bindAreaHub(Website $website, array $pages): array
     {
         $location = $website->business?->primaryLocation()->first();
-        $places = collect(array_merge([(string) ($location?->city ?? '')], (array) ($location?->service_area_cities ?? [])))
-            ->map(fn ($entry) => trim((string) \Illuminate\Support\Str::before((string) $entry, ',')))
+        // Every confirmed place keeps its FULL identity (city and region, as saved): Portland, OR and Portland, ME stay two places.
+        $places = collect(array_merge([trim(collect([$location?->city, $location?->region])->filter()->implode(', '))], (array) ($location?->service_area_cities ?? [])))
+            ->map(fn ($entry) => trim((string) $entry))
             ->filter()
-            ->unique(fn ($place) => mb_strtolower($place))
+            ->unique(fn ($place) => implode('|', array_map(fn ($part) => (string) $part, GuidedGenerationCommitService::placeParts($place))))
             ->values();
 
         if ($places->count() < 2) {
@@ -235,7 +236,7 @@ final class MediaBindingService
 
             $hub = ['type' => 'services', 'data' => [
                 'heading' => 'Areas we serve',
-                'items' => $places->take(12)->map(fn (string $place) => ['name' => \Illuminate\Support\Str::limit($place, 120, ''), 'place' => \Illuminate\Support\Str::limit($place, 120, '')])->all(),
+                'items' => $this->areaHubItems($places->take(12)->all(), $pages),
             ]];
 
             $at = collect($sections)->search(fn ($section) => in_array($section['type'] ?? null, ['cta', 'contact_details'], true));
@@ -246,6 +247,49 @@ final class MediaBindingService
         }
 
         return $pages;
+    }
+
+    /**
+     * The hub's entries. `name` is the friendly label (the city; "City, ST" only when two entries share a city name). `place` is
+     * the stored identity of the generated place page that is EXACTLY this place — same city, same region — so the link follows
+     * the page, never a guessed address. A region missing on one side counts only when that city appears once among the hub and
+     * the pages. A place with no page, or an ambiguous one, gets no `place` and so no link: nothing is invented.
+     *
+     * @param  array<int, string>  $entries  full place identities, as saved
+     * @param  array<int, array<string, mixed>>  $pages
+     * @return array<int, array<string, string>>
+     */
+    private function areaHubItems(array $entries, array $pages): array
+    {
+        $pagePlaces = [];
+
+        foreach ($pages as $page) {
+            $entity = is_array($page['entity'] ?? null) ? $page['entity'] : [];
+            $place = $entity['area'] ?? (isset($entity['location_id']) ? ($entity['city'] ?? null) : null);
+
+            if (is_string($place) && trim($place) !== '') {
+                $full = isset($entity['area']) ? $place : trim(collect([$place, $entity['region'] ?? null])->filter()->implode(', '));
+                $pagePlaces[] = ['place' => $place, 'parts' => GuidedGenerationCommitService::placeParts($full)];
+            }
+        }
+
+        $partsOf = fn (string $entry) => GuidedGenerationCommitService::placeParts($entry);
+        $hubCities = array_count_values(array_map(fn (string $entry) => $partsOf($entry)[0], $entries));
+
+        return array_map(function (string $entry) use ($pagePlaces, $partsOf, $hubCities) {
+            [$city, $region] = $partsOf($entry);
+            $matches = array_values(array_filter($pagePlaces, fn (array $page) => $page['parts'][0] === $city && ($region !== null && $page['parts'][1] !== null ? $page['parts'][1] === $region : true)));
+            $sameCity = count(array_filter($pagePlaces, fn (array $page) => $page['parts'][0] === $city));
+            $unambiguous = $region !== null && ($matches !== [] && $matches[0]['parts'][1] !== null) || ($sameCity === 1 && ($hubCities[$city] ?? 0) === 1);
+            $label = trim((string) \Illuminate\Support\Str::before($entry, ','));
+            $item = ['name' => \Illuminate\Support\Str::limit(($hubCities[$city] ?? 0) > 1 ? $entry : $label, 120, '')];
+
+            if (count($matches) === 1 && $unambiguous) {
+                $item['place'] = \Illuminate\Support\Str::limit($matches[0]['place'], 120, '');
+            }
+
+            return $item;
+        }, $entries);
     }
 
     /**
