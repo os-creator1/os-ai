@@ -253,7 +253,7 @@ final class MediaBindingService
      * The hub's entries. `name` is the friendly label (the city; "City, ST" only when two entries share a city name). `place` is
      * the stored identity of the generated place page that is EXACTLY this place — same city, same region — so the link follows
      * the page, never a guessed address. A region missing on one side counts only when that city appears once among the hub and
-     * the pages. A place with no page, or an ambiguous one, gets no `place` and so no link: nothing is invented.
+     * the pages. A place with no page, or an ambiguous one, keeps its own full identity, which no other place's page carries, so it shows without a link: nothing is invented.
      *
      * @param  array<int, string>  $entries  full place identities, as saved
      * @param  array<int, array<string, mixed>>  $pages
@@ -282,13 +282,12 @@ final class MediaBindingService
             $sameCity = count(array_filter($pagePlaces, fn (array $page) => $page['parts'][0] === $city));
             $unambiguous = $region !== null && ($matches !== [] && $matches[0]['parts'][1] !== null) || ($sameCity === 1 && ($hubCities[$city] ?? 0) === 1);
             $label = trim((string) \Illuminate\Support\Str::before($entry, ','));
-            $item = ['name' => \Illuminate\Support\Str::limit(($hubCities[$city] ?? 0) > 1 ? $entry : $label, 120, '')];
+            $place = count($matches) === 1 && $unambiguous ? $matches[0]['place'] : $entry;
 
-            if (count($matches) === 1 && $unambiguous) {
-                $item['place'] = \Illuminate\Support\Str::limit($matches[0]['place'], 120, '');
-            }
-
-            return $item;
+            return [
+                'name' => \Illuminate\Support\Str::limit(($hubCities[$city] ?? 0) > 1 ? $entry : $label, 120, ''),
+                'place' => \Illuminate\Support\Str::limit($place, 120, ''),
+            ];
         }, $entries);
     }
 

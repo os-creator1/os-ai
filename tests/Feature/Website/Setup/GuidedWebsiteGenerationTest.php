@@ -93,7 +93,8 @@ class GuidedWebsiteGenerationTest extends TestCase
 
         $hub = collect($home['services'])->firstWhere('heading', 'Areas we serve');
         $this->assertContains('Irvine', array_column($hub['items'], 'name'), 'The areas list is the saved service areas, base city first — a visible, crawlable list, never city pages.');
-        $this->assertSame(array_column($hub['items'], 'name'), array_column($hub['items'], 'place'), 'Each entry carries its place so it links to a page about it when the site has one.');
+        $this->assertSame(array_column($hub['items'], 'name'), array_map(fn ($place) => explode(',', $place)[0], array_column($hub['items'], 'place')), 'Each entry carries its full place identity (city and region) so it links only to a page about exactly that place; the label stays the bare name.');
+        $this->assertContains('Irvine, CA', array_column($hub['items'], 'place'));
 
         // Nothing is an empty shell: every list has items, every text has a body.
         foreach ($home['services'] as $section) {
