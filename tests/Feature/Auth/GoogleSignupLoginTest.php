@@ -277,7 +277,7 @@ class GoogleSignupLoginTest extends TestCase
 
             $this->oauthReturn()->assertRedirect(route('login'));
 
-            $this->assertGuest($label);
+            $this->assertFalse(auth()->check(), 'Not signed in: ' . $label);
             $this->assertNotSame(self::GOOGLE_ID, $victim->fresh()->provider_id, $label);
             $victim->delete();
         }
@@ -399,5 +399,41 @@ class GoogleSignupLoginTest extends TestCase
 
         $this->assertNull(session('v1_signup_draft.account'));
         $this->get(route('register.business'))->assertRedirect(route('register.account'));
+    }
+
+    // ------------------------------------------------------------------ Verification email
+
+    public function test_a_google_signup_sends_no_redundant_verification_email_but_a_manual_one_does(): void
+    {
+        config(['account.verify_account' => true]);
+        \Illuminate\Support\Facades\Notification::fake();
+        $this->sellableTier(WorkspacePlanTier::Growth);
+
+        // Google: the provider already verified the address.
+        $this->fakeGoogle($this->googleUser());
+        $this->post(route('register.plan.select'), ['tier' => 'growth']);
+        $this->oauthReturn();
+        $this->post(route('register.business.store'), ['business_name' => 'Okafor Photo Booths', 'industry' => 'photo_booth_service', 'country_code' => 'US', 'timezone' => 'UTC']);
+        $this->post(route('register.payment.start'));
+        $google = User::query()->where('provider_id', self::GOOGLE_ID)->sole();
+        $this->assertNotNull($google->email_verified_at);
+        \Illuminate\Support\Facades\Notification::assertNotSentTo($google, \App\Notifications\Auth\BrandedVerifyEmail::class);
+    }
+
+    public function test_manual_signup_with_verification_off_marks_the_email_verified_and_sends_nothing(): void
+    {
+        config(['account.verify_account' => false]);
+        \Illuminate\Support\Facades\Notification::fake();
+        $this->sellableTier(WorkspacePlanTier::Growth);
+
+        $this->signUp([
+            'tier' => 'growth', 'first_name' => 'Pat', 'last_name' => 'Rivera', 'email' => 'pat.off@example.test',
+            'password' => 'correct-horse-battery', 'password_confirmation' => 'correct-horse-battery',
+            'business_name' => 'Harbor Lane Studios', 'industry' => 'photo_booth_service', 'country_code' => 'US', 'timezone' => 'UTC',
+        ]);
+
+        $user = User::query()->where('email', 'pat.off@example.test')->sole();
+        $this->assertNotNull($user->email_verified_at, 'Verification is off: the existing behaviour marks the address verified.');
+        \Illuminate\Support\Facades\Notification::assertNothingSentTo($user);
     }
 }

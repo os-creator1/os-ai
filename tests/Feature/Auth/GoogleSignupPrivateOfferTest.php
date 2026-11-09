@@ -27,6 +27,12 @@ class GoogleSignupPrivateOfferTest extends TestCase
     {
         parent::setUp();
 
+        // The same fixture order the other private-offer tests use: fake Stripe first (sellableTier() needs it), config rows, platform admin.
+        $this->bindFakeStripe();
+        $this->ensureRequiredAppConfigRowsExist();
+        $this->platformAdminId();
+        config(['platform_billing.allow_public_trials' => false]);
+
         config([
             'account.can_register' => true, 'account.verify_account' => true, 'platform_billing.private_offers_enabled' => true,
             'services.google.active' => true, 'services.google.client_id' => 'test-client',
