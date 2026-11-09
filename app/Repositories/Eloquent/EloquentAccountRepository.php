@@ -141,12 +141,15 @@
         }
 
         /**
-         * get user data
+         * Resolve a provider identity to an EXISTING account, or to a verified identity that has no account yet. It never creates a
+         * User: a brand-new identity must go through the canonical V1 signup (plan, business, checkout) so authentication can never
+         * bypass required signup and billing, and no abandoned User/Workspace is left behind.
          *
+         * @return array{user: ?User, identity: ?array{provider: string, provider_id: string, email: string, first_name: string, last_name: ?string, avatar: ?string}}
          *
          * @throws GeneralException
          */
-        public function findOrCreateSocial($provider, $data): User
+        public function resolveSocialIdentity($provider, $data): array
         {
             $providerId = trim((string) $data->getId());
             $email      = strtolower(trim((string) $data->getEmail()));
@@ -160,7 +163,7 @@
             if ($linked) {
                 $this->assertSocialLoginAllowed($linked);
 
-                return $linked;
+                return ['user' => $linked, 'identity' => null];
             }
 
             // 2. Everything else needs an address the provider has vouched for: we never trust, link or create on an
@@ -184,48 +187,54 @@
                 $existing->provider_id = $providerId;
                 $existing->save();
 
-                return $existing;
+                return ['user' => $existing, 'identity' => null];
             }
 
-            if ( ! config('account.can_register')) {
-                throw new GeneralException(__('locale.exceptions.registration_disabled'));
+            // 3. Nobody has this identity or address: hand back the VERIFIED identity (names and email taken from the provider, never
+            //    from the request) for the signup flow to carry. Nothing is persisted here.
+            [$first, $last] = $this->socialNames($data);
+
+            return ['user' => null, 'identity' => [
+                'provider'    => (string) $provider,
+                'provider_id' => $providerId,
+                'email'       => $email,
+                'first_name'  => $first,
+                'last_name'   => $last,
+                'avatar'      => $data->getAvatar() ?: null,
+            ]];
+        }
+
+        /**
+         * Kept for compatibility: returns an existing, safely resolved account, and refuses (rather than creates) for a new identity.
+         *
+         * @throws GeneralException
+         */
+        public function findOrCreateSocial($provider, $data): User
+        {
+            $resolved = $this->resolveSocialIdentity($provider, $data);
+
+            if ($resolved['user'] === null) {
+                throw new GeneralException(__('locale.auth.failed'));
             }
 
-            $last_name = null;
+            return $resolved['user'];
+        }
 
-            if ($data->getName()) {
-                $first_name = $data->getName();
-                $last_name  = $data->getNickname();
-            } else {
-                $first_name = $data->getNickname();
+        /** @return array{0: string, 1: ?string} first and last name, preferring the provider's own given/family names. */
+        private function socialNames($data): array
+        {
+            $raw   = is_array($data->user ?? null) ? $data->user : [];
+            $first = trim((string) ($raw['given_name'] ?? ''));
+            $last  = trim((string) ($raw['family_name'] ?? ''));
+
+            if ($first === '') {
+                $full  = trim((string) $data->getName());
+                $parts = $full === '' ? [] : preg_split('/\s+/', $full);
+                $first = $parts[0] ?? trim((string) $data->getNickname());
+                $last  = count($parts) > 1 ? implode(' ', array_slice($parts, 1)) : $last;
             }
 
-            $user = $this->users->store([
-                'first_name'    => $first_name,
-                'last_name'     => $last_name,
-                'email'         => $email,
-                'status'        => true,
-                'phone'         => null,
-                'is_customer'   => true,
-                'active_portal' => 'customer',
-            ], true);
-
-            $user->provider          = $provider;
-            $user->provider_id       = $providerId;
-            $user->image             = $data->getAvatar();
-            $user->email_verified_at = Carbon::now();   // the provider vouched for this address
-            $user->save();
-
-            if (User::query()->whereKey(1)->exists()) {   // the notification inbox owner; without it the FK would 500 the sign-up
-                Notifications::create([
-                    'user_id'           => 1,
-                    'notification_for'  => 'admin',
-                    'notification_type' => 'user',
-                    'message'           => $user->displayName() . ' Registered',
-                ]);
-            }
-
-            return $user;
+            return [mb_substr($first !== '' ? $first : 'Customer', 0, 255), $last === '' ? null : mb_substr($last, 0, 255)];
         }
 
         /** Administrators and disabled accounts never sign in through a social provider. */

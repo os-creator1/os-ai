@@ -10,6 +10,13 @@ on:
       - 'resources/views/customer/dashboard/home/**'
       - 'resources/views/customer/onboarding/**'
       - 'app/Library/Assistant/**'
+      - 'app/Http/Controllers/Auth/LoginController.php'
+      - 'app/Http/Controllers/Auth/V1SignupController.php'
+      - 'app/Library/PlatformBilling/V1SignupDraft.php'
+      - 'app/Repositories/Eloquent/EloquentAccountRepository.php'
+      - 'resources/views/auth/**'
+      - 'routes/auth.php'
+      - 'tests/Feature/Auth/GoogleSignupLoginTest.php'
       - '.github/workflows/growth-experience-tests.yml'
 
 permissions:
@@ -77,6 +84,9 @@ jobs:
           tests/Feature/Business/OnboardingSeoFlowTest.php
           tests/Feature/Website/WebsiteOnboardingSetupFlowTest.php
           tests/Feature/PlatformBilling/V1SignupOnboardingHandoffTest.php
+          tests/Feature/PlatformBilling/V1SignupHttpTest.php
+          tests/Feature/Auth/GoogleSignupLoginTest.php
+          tests/Feature/Auth/AuthPageRenderTest.php
       - name: Growth Home, recommendations, and actor scope
         id: home
         continue-on-error: true

@@ -82,7 +82,8 @@ final class V1SignupDraft
     {
         $account = $this->all()['account'] ?? null;
 
-        if (! is_array($account) || ! isset($account['email'], $account['password_encrypted'])) {
+        // An account is a password the customer chose, OR an identity a provider verified (Google): never both, never neither.
+        if (! is_array($account) || ! isset($account['email']) || (! isset($account['password_encrypted']) && ! isset($account['provider_id']))) {
             return null;
         }
 
@@ -91,6 +92,7 @@ final class V1SignupDraft
             'last_name' => $account['last_name'] ?? null,
             'email' => (string) $account['email'],
             'locale' => $account['locale'] ?? null,
+            'provider' => isset($account['provider_id']) ? (string) ($account['provider'] ?? '') : null,
         ];
     }
 
@@ -105,6 +107,47 @@ final class V1SignupDraft
             'locale' => $account['locale'] ?? null,
             'password_encrypted' => Crypt::encryptString($account['password']),
         ];
+        $this->save($draft);
+    }
+
+    /**
+     * A provider-VERIFIED identity (Google) as the signup's account: no password is chosen or stored. Set only by the server after the
+     * provider callback, never from request input.
+     *
+     * @param array{provider: string, provider_id: string, email: string, first_name: string, last_name?: ?string, avatar?: ?string} $identity
+     */
+    public function setProviderAccount(array $identity): void
+    {
+        $draft = $this->all();
+        $draft['account'] = [
+            'first_name' => $identity['first_name'],
+            'last_name' => $identity['last_name'] ?? null,
+            'email' => $identity['email'],
+            'locale' => null,
+            'provider' => $identity['provider'],
+            'provider_id' => $identity['provider_id'],
+            'avatar' => $identity['avatar'] ?? null,
+        ];
+        $this->save($draft);
+    }
+
+    /** @return array{provider: string, provider_id: string, avatar: ?string}|null */
+    public function providerIdentity(): ?array
+    {
+        $account = $this->all()['account'] ?? null;
+
+        if (! is_array($account) || ! isset($account['provider_id'], $account['provider'])) {
+            return null;
+        }
+
+        return ['provider' => (string) $account['provider'], 'provider_id' => (string) $account['provider_id'], 'avatar' => $account['avatar'] ?? null];
+    }
+
+    /** Drop the account step's answer (e.g. to switch from Google to a manual email and password). The plan and business facts stay. */
+    public function forgetAccount(): void
+    {
+        $draft = $this->all();
+        unset($draft['account']);
         $this->save($draft);
     }
 
