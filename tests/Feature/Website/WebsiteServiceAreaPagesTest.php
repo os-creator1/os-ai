@@ -607,6 +607,80 @@ class WebsiteServiceAreaPagesTest extends TestCase
         $this->assertSame(1, substr_count($hub['html'], 'website-service-link'));
     }
 
+    public function test_both_regions_of_a_city_stay_covered_and_a_removed_maine_page_redirects(): void
+    {
+        [$customer, $business, $workspace] = $this->entitledTenant();
+        $this->bindDistinctAiClient();
+        $this->saveServiceAreas($business, ['Portland, OR', 'Portland, ME']);
+        $this->generate($customer, $business, $workspace, $this->confirmed(['Portland, OR', 'Portland, ME']));
+        $this->assertEqualsCanonicalizing(['serving-portland-or', 'serving-portland-me'], Website::where('business_id', $business->id)->sole()->pages()->where('slug', 'like', 'serving-%')->pluck('slug')->all());
+
+        // The rebuilt hub lists both places (and no page is made for either): both addresses redirect, Maine's included.
+        $this->rebuildWith($business, ['Portland, OR', 'Portland, ME'], []);
+
+        $website = Website::where('business_id', $business->id)->sole();
+        $this->assertSame(0, $website->pages()->where('slug', 'like', 'serving-%')->count());
+        $this->assertEqualsCanonicalizing(['serving-portland-or' => '', 'serving-portland-me' => ''], $website->custom_redirects);
+        $this->assertSame(['serving-portland-me', 'serving-portland-or'], collect(array_keys($website->custom_redirects))->sort()->values()->all());
+    }
+
+    public function test_a_removed_maine_page_is_not_redirected_when_only_oregon_remains(): void
+    {
+        [$customer, $business, $workspace] = $this->entitledTenant();
+        $this->bindDistinctAiClient();
+        $this->saveServiceAreas($business, ['Portland, OR', 'Portland, ME']);
+        $this->generate($customer, $business, $workspace, $this->confirmed(['Portland, OR', 'Portland, ME']));
+
+        $this->rebuildWith($business, ['Portland, OR', 'Brooklyn'], []);
+
+        $redirects = Website::where('business_id', $business->id)->sole()->custom_redirects;
+        $this->assertArrayHasKey('serving-portland-or', $redirects);
+        $this->assertArrayNotHasKey('serving-portland-me', $redirects, 'Maine is no longer listed: an honest 404.');
+    }
+
+    public function test_a_regionless_legacy_page_is_not_guessed_when_several_regions_are_listed(): void
+    {
+        [$customer, $business, $workspace] = $this->entitledTenant();
+        $this->bindDistinctAiClient();
+        $this->saveServiceAreas($business, ['Portland', 'Brooklyn']);
+        $this->generate($customer, $business, $workspace, $this->confirmed(['Portland', 'Brooklyn']));
+        $this->makeLegacy($business);
+
+        $this->rebuildWith($business, ['Portland, OR', 'Portland, ME', 'Brooklyn'], []);
+
+        $redirects = Website::where('business_id', $business->id)->sole()->custom_redirects;
+        $this->assertArrayNotHasKey('serving-portland', $redirects, 'Oregon or Maine? Unknown, so not redirected.');
+        $this->assertArrayHasKey('serving-brooklyn', $redirects);
+    }
+
+    public function test_redirect_coverage_follows_the_twelve_entry_hub_limit(): void
+    {
+        [$customer, $business, $workspace] = $this->entitledTenant();
+        $this->bindDistinctAiClient();
+        $towns = array_map(fn (int $n) => 'Town' . sprintf('%02d', $n), range(1, 13));
+        $this->saveServiceAreas($business, $towns);
+        // The base city (Manhattan, NY) is the hub's first entry, so the 12 shown are the base city and Town01..Town11.
+        $this->generate($customer, $business, $workspace, $this->confirmed(['Town11', 'Town12']));
+        $this->assertEqualsCanonicalizing(['serving-town11', 'serving-town12'], Website::where('business_id', $business->id)->sole()->pages()->where('slug', 'like', 'serving-%')->pluck('slug')->all());
+
+        $this->rebuildWith($business, $towns, []);
+
+        $this->assertEquals(['serving-town11' => ''], Website::where('business_id', $business->id)->sole()->custom_redirects, 'Town12 is beyond the 12 listed entries, so the home page does not name it.');
+    }
+
+    public function test_a_manual_redirect_for_a_regional_place_page_stays_unchanged(): void
+    {
+        [$customer, $business, $workspace] = $this->entitledTenant();
+        $this->bindDistinctAiClient();
+        $this->saveServiceAreas($business, ['Portland, OR', 'Portland, ME']);
+        $this->generate($customer, $business, $workspace, $this->confirmed(['Portland, OR', 'Portland, ME']));
+        Website::where('business_id', $business->id)->sole()->forceFill(['custom_redirects' => ['serving-portland-me' => 'services']])->save();
+
+        $this->rebuildWith($business, ['Portland, OR', 'Portland, ME'], []);
+
+        $this->assertEquals(['serving-portland-me' => 'services', 'serving-portland-or' => ''], Website::where('business_id', $business->id)->sole()->custom_redirects);
+    }
+
     public function test_a_retained_area_redirects_and_a_completely_removed_one_does_not(): void
     {
         [$customer, $business, $workspace] = $this->entitledTenant();

@@ -545,31 +545,26 @@ final class GuidedGenerationCommitService
             return [];
         }
 
-        $location = $business->primaryLocation()->first();
-        $entries = array_merge([trim(collect([$location?->city, $location?->region])->filter()->implode(', '))], (array) ($location?->service_area_cities ?? []));
         $covered = [];
         $regionsByCity = [];
 
-        foreach ($entries as $entry) {
-            [$city, $region] = self::placeParts((string) $entry);
+        // The very selection the rendered hub uses: full place identities, the first 12.
+        foreach (MediaBindingService::hubPlaces($business->primaryLocation()->first()) as $entry) {
+            [$city, $region] = self::placeParts($entry);
 
-            if ($city === '') {
-                continue;
-            }
-
-            $regionsByCity[$city][$region ?? ''] = true;
-
-            if (! isset($covered[$city]) && count($covered) < 12) {
-                $covered[$city] = [$city, $region, false];
+            if ($city !== '') {
+                $regionsByCity[$city][$region ?? ''] = true;
+                $covered[] = [$city, $region, false];
             }
         }
 
-        // A city saved under several regions ("Portland, OR" and "Portland, ME", or one of them without a region) is ambiguous.
-        foreach ($covered as $city => $entry) {
-            $covered[$city][2] = count($regionsByCity[$city]) > 1;
+        // A city listed under several regions ("Portland, OR" and "Portland, ME", or one of them without a region) is ambiguous
+        // for a page that names no region.
+        foreach ($covered as $i => [$city]) {
+            $covered[$i][2] = count($regionsByCity[$city]) > 1;
         }
 
-        return array_values($covered);
+        return $covered;
     }
 
     /**
@@ -593,8 +588,15 @@ final class GuidedGenerationCommitService
             return false;
         }
 
-        if ($region !== null && $sameCity[0][1] !== null) {
-            return count(array_filter($sameCity, fn (array $c) => $c[1] === $region)) === 1;
+        if ($region !== null) {
+            $exact = array_filter($sameCity, fn (array $c) => $c[1] === $region);
+
+            if ($exact !== []) {
+                return count($exact) === 1;
+            }
+
+            // No listed place names this region: an older, region-less listing of a single place can still stand for it.
+            return count($sameCity) === 1 && $sameCity[0][1] === null && ! $sameCity[0][2];
         }
 
         return count($sameCity) === 1 && ! $sameCity[0][2];

@@ -36,7 +36,7 @@ final class ArticleSiteInventory
     public const KIND_OTHER = 'other';
 
     /** Kinds that carry a high-intent "hire / book this" search of their own. */
-    public const MONEY_KINDS = [self::KIND_HOME, self::KIND_SERVICES_HUB, self::KIND_SERVICE, self::KIND_EVENT, self::KIND_LOCATION, self::KIND_PACKAGES];
+    public const MONEY_KINDS = [self::KIND_HOME, self::KIND_SERVICES_HUB, self::KIND_SERVICE, self::KIND_EVENT, self::KIND_LOCATION, self::KIND_AREA_HUB, self::KIND_PACKAGES];
 
     public function __construct(private readonly SeoPublishedContentReader $content)
     {

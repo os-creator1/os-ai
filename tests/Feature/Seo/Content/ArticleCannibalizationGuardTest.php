@@ -43,6 +43,29 @@ class ArticleCannibalizationGuardTest extends TestCase
         }
     }
 
+    public function test_a_published_legacy_service_areas_page_is_protected_like_any_other_money_page(): void
+    {
+        [, $business] = $this->entitledTenant();
+        $location = $this->createLocation($business, true, \App\Enums\Business\BusinessServiceMode::Storefront, ['name' => 'Chicago Studio', 'address_line_1' => '1200 W Fulton Market', 'city' => 'Chicago', 'region' => 'IL', 'postal_code' => '60607']);
+        $location->forceFill(['service_area_cities' => ['Naperville, IL', 'Aurora, IL', 'Joliet, IL']])->save();
+        $text = fn (string $heading, string $body) => [['type' => 'text', 'data' => ['heading' => $heading, 'body' => $body]]];
+        // A page written before page intent existed: no stored role, so only its address and the places it lists classify it.
+        $website = $this->publishWebsite($business, [
+            $this->snapshotPage(self::PAGE_HOME, 'Home', [], $text('Welcome', 'Photo booths.'), true),
+            $this->snapshotPage(self::PAGE_SERVICES, 'Photo Booth Service Areas', [], $text('Where we work', 'We serve Chicago, Naperville, Aurora and Joliet.'), false, 'service-areas'),
+        ]);
+        $website->forceFill(['indexing_released_at' => now()])->save();
+
+        $areaHub = collect(app(\App\Library\Seo\Content\ArticleSiteInventory::class)->pages($business))->firstWhere('slug', 'service-areas');
+        $this->assertSame(\App\Library\Seo\Content\ArticleSiteInventory::KIND_AREA_HUB, $areaHub['kind']);
+        $this->assertTrue($areaHub['money'], 'The area hub is a commercial page.');
+
+        $result = app(ArticleCannibalizationGuard::class)->check($business, ['photo booth service areas']);
+
+        $this->assertTrue($result->conflictsWithPage());
+        $this->assertTrue($result->strong());
+    }
+
     public function test_informational_topics_support_the_page_instead_of_competing(): void
     {
         [, $business] = $this->photoBoothContentTenant();

@@ -211,13 +211,7 @@ final class MediaBindingService
      */
     private function bindAreaHub(Website $website, array $pages): array
     {
-        $location = $website->business?->primaryLocation()->first();
-        // Every confirmed place keeps its FULL identity (city and region, as saved): Portland, OR and Portland, ME stay two places.
-        $places = collect(array_merge([trim(collect([$location?->city, $location?->region])->filter()->implode(', '))], (array) ($location?->service_area_cities ?? [])))
-            ->map(fn ($entry) => trim((string) $entry))
-            ->filter()
-            ->unique(fn ($place) => implode('|', array_map(fn ($part) => (string) $part, GuidedGenerationCommitService::placeParts($place))))
-            ->values();
+        $places = collect(self::hubPlaces($website->business?->primaryLocation()->first(), PHP_INT_MAX));
 
         if ($places->count() < 2) {
             return $pages;
@@ -236,7 +230,7 @@ final class MediaBindingService
 
             $hub = ['type' => 'services', 'data' => [
                 'heading' => 'Areas we serve',
-                'items' => $this->areaHubItems($places->take(12)->all(), $pages),
+                'items' => $this->areaHubItems(array_slice($places->all(), 0, self::HUB_LIMIT), $pages),
             ]];
 
             $at = collect($sections)->search(fn ($section) => in_array($section['type'] ?? null, ['cta', 'contact_details'], true));
@@ -247,6 +241,27 @@ final class MediaBindingService
         }
 
         return $pages;
+    }
+
+    /** The most places the home page's "Areas we serve" list shows. */
+    public const HUB_LIMIT = 12;
+
+    /**
+     * The confirmed places the "Areas we serve" list is drawn from, in display order: the primary city and region first, then the
+     * saved service areas, one entry per FULL place identity (Portland, OR and Portland, ME are two), at most $limit. The commit
+     * service uses this same selection to know which places the home page still lists.
+     *
+     * @return array<int, string>
+     */
+    public static function hubPlaces(?\App\Models\BusinessLocation $location, int $limit = self::HUB_LIMIT): array
+    {
+        return collect(array_merge([trim(collect([$location?->city, $location?->region])->filter()->implode(', '))], (array) ($location?->service_area_cities ?? [])))
+            ->map(fn ($entry) => trim((string) $entry))
+            ->filter()
+            ->unique(fn ($place) => implode('|', array_map(fn ($part) => (string) $part, GuidedGenerationCommitService::placeParts($place))))
+            ->take($limit)
+            ->values()
+            ->all();
     }
 
     /**
