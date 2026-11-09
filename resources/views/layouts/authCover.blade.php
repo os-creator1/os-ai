@@ -91,30 +91,41 @@
             overflow-y: auto;
         }
 
-        /* The illustration panel is hidden at tablet/phone widths. Only the
-           small corner identity remains, and the form reserves its space. */
+        /* Tablet/phone: the illustration panel is hidden and the logo becomes
+           a compact sticky header INSIDE the scrolling .auth-inner. It is a
+           normal in-flow flex item (full row), so it owns its own layout
+           space: the form/plan cards start below it and nothing can sit
+           behind it. The solid background hides content scrolling beneath. */
         @media (max-width: 991.98px) {
             .auth-wrapper.auth-cover > .auth-inner > .brand-logo {
-                max-inline-size: min(74vw, calc(100vw - 3rem));
+                position: sticky;
+                inset-block-start: 0;
+                inset-inline-start: auto;
+                flex: 0 0 auto;
+                inline-size: 100%;
+                max-inline-size: 100%;
+                box-sizing: border-box;
+                align-items: center;
+                justify-content: flex-start;
+                padding: 0.75rem 1rem;
+                margin: 0;
+                background-color: #fff;
+                border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+            }
+
+            .dark-layout .auth-wrapper.auth-cover > .auth-inner > .brand-logo {
+                background-color: #262625;
+                border-bottom-color: rgba(255, 255, 255, 0.08);
             }
 
             .auth-wrapper.auth-cover > .auth-inner > .brand-logo img {
-                max-block-size: 8vh;
-                max-block-size: 8dvh;
+                max-inline-size: min(200px, 100%);
+                max-block-size: 48px;
             }
 
             .auth-wrapper.auth-cover .auth-bg {
-                padding-top: max(5rem, 12vh) !important;
-                padding-top: max(5rem, 12dvh) !important;
+                padding-top: 1rem !important;
                 box-sizing: border-box;
-            }
-        }
-
-        @media (max-width: 575.98px) {
-            .auth-wrapper.auth-cover > .auth-inner > .brand-logo {
-                inset-block-start: 1rem;
-                inset-inline-start: 1rem;
-                max-inline-size: calc(100vw - 2rem);
             }
         }
     </style>

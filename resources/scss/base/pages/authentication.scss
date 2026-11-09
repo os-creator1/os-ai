@@ -123,14 +123,6 @@ $auth-1-inner-max-width: 400px !default;
   }
 }
 
-@media (max-width: 575.98px) {
-  .auth-wrapper.auth-cover .brand-logo {
-    left: 1.5rem;
-    padding-left: 0;
-    justify-content: center;
-  }
-}
-
 .auth-wrapper .auth-bg {
   background-color: $white;
 }
@@ -150,7 +142,6 @@ $auth-1-inner-max-width: 400px !default;
   }
   .auth-wrapper {
     .auth-bg {
-      padding-top: 3rem;
       margin: auto 0;
     }
     .auth-inner {
@@ -162,11 +153,6 @@ $auth-1-inner-max-width: 400px !default;
         display: flex;
         flex-direction: column;
         flex-wrap: nowrap;
-      }
-      .brand-logo {
-        position: relative;
-        left: 0;
-        padding-left: 1.5rem;
       }
     }
   }
