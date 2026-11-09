@@ -3,7 +3,7 @@
 namespace App\Console\Commands;
 
 use App\Library\Business\GoogleOnboardingBridge;
-use App\Library\Business\OnboardingManager;
+use App\Repositories\Contracts\CustomerOnboardingRepository;
 use App\Models\Customer;
 use App\Models\User;
 use App\Repositories\Contracts\AccountRepository;
@@ -21,7 +21,7 @@ class DiagnoseGoogleOnboardingEntry extends Command
 
     protected $description = 'Report (without exposing secrets) why Google quick onboarding is or is not offered to a customer';
 
-    public function handle(OnboardingManager $onboarding, GoogleOnboardingBridge $bridge, AccountRepository $accounts): int
+    public function handle(CustomerOnboardingRepository $onboardings, GoogleOnboardingBridge $bridge, AccountRepository $accounts): int
     {
         $key = (string) $this->argument('customer');
         $user = ctype_digit($key) ? User::query()->find((int) $key) : User::query()->where('email', $key)->first();
@@ -35,13 +35,15 @@ class DiagnoseGoogleOnboardingEntry extends Command
 
         // The session-less, durable permission set: what the customer holds, not what a request happens to carry.
         $mayManage = $accounts->durablePermissions($user, true)->contains('manage_google_business_profile');
-        $row = $onboarding->start($customer);
-        $result = $bridge->availability($customer, $row, $mayManage);
+        $row = $onboardings->findByCustomer($customer);
+        $result = $row === null
+            ? ['available' => false, 'reason' => 'onboarding_not_started']
+            : $bridge->availability($customer, $row, $mayManage);
 
         $this->table(['Check', 'Result'], [
             ['Google OAuth configured', $bridge->isConfigured() ? 'yes' : 'NO'],
             ['Holds manage_google_business_profile', $mayManage ? 'yes' : 'NO'],
-            ['Onboarding has a business attached', $row->business_id === null ? 'no' : 'yes'],
+            ['Onboarding has a business attached', $row?->business_id === null ? 'no' : 'yes'],
             ['Option offered', $result['available'] ? 'yes' : 'NO'],
             ['Reason', $result['reason']],
         ]);
