@@ -156,7 +156,7 @@ class SeoRankCityPickerTest extends TestCase
         $this->assertSame(self::VILNIUS, (int) $target->search_location_code);
     }
 
-    public function test_add_keyword_with_a_valid_city_tracks_and_an_empty_catalogue_still_saves_the_keyword(): void
+    public function test_add_keyword_with_a_valid_city_starts_tracking(): void
     {
         [$owner, $business, $workspace] = $this->tenant();
         $this->authenticateAsSeoCustomer($owner);
@@ -165,14 +165,24 @@ class SeoRankCityPickerTest extends TestCase
         $this->post($this->u('keywords.store', $workspace, $business), ['phrase' => 'photo booth chicago', 'track_rank' => '1', 'search_location_code' => (string) self::CHICAGO])
             ->assertSessionHas('message', 'Keyword added and rank tracking started. The first check is on its way.');
         $this->assertSame(1, SeoRankTarget::query()->count());
+    }
 
-        // Catalogue unavailable and no default: the keyword is still created, untracked.
+    public function test_add_keyword_without_tracking_succeeds_when_city_catalogue_is_empty(): void
+    {
+        [$owner, $business, $workspace] = $this->tenant();
+        $this->authenticateAsSeoCustomer($owner);
+
+        // Separate test transaction: no active rank target references the
+        // location catalogue, whose FK is RESTRICT in production.
         SeoRankLocation::query()->delete();
-        SeoRankTarget::query()->delete();
+        $this->assertFalse(app(SeoRankLocationCatalog::class)->isPopulated());
+
         $this->post($this->u('keywords.store', $workspace, $business), ['phrase' => 'plain keyword', 'track_rank' => '0'])
             ->assertSessionHas('message', 'Keyword added.');
-        $this->post($this->u('keywords.store', $workspace, $business), ['phrase' => 'untracked keyword', 'track_rank' => '1', 'search_location_code' => (string) self::CHICAGO]);
+        $this->post($this->u('keywords.store', $workspace, $business), ['phrase' => 'untracked keyword', 'track_rank' => '1', 'search_location_code' => (string) self::CHICAGO])
+            ->assertSessionHas('status', 'success');
 
+        $this->assertNotNull(SeoKeyword::query()->where('phrase', 'plain keyword')->first());
         $this->assertNotNull(SeoKeyword::query()->where('phrase', 'untracked keyword')->first());
         $this->assertSame(0, SeoRankTarget::query()->count());
     }
