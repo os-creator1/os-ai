@@ -49,6 +49,18 @@ class EloquentCustomerOnboardingRepository extends EloquentBaseRepository implem
         return $onboarding;
     }
 
+    public function recordGoogleBridge(CustomerOnboarding $onboarding, array $state): CustomerOnboarding
+    {
+        $metadata = $onboarding->metadata ?? [];
+        $metadata['google'] = array_merge($metadata['google'] ?? [], $state);
+
+        $onboarding->metadata = $metadata;
+        $onboarding->last_activity_at = now();
+        $onboarding->save();
+
+        return $onboarding;
+    }
+
     /**
      * business_id has no unique database constraint — only customer_id does
      * (see the class-level migration) — so this orders by id descending

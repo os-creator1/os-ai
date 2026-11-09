@@ -17,6 +17,7 @@ use App\Http\Controllers\Customer\CustomerBaseController;
 use App\Http\Requests\GoogleBusinessProfile\GoogleBusinessProfileBindRequest;
 use App\Http\Requests\GoogleBusinessProfile\GoogleBusinessProfileUnbindRequest;
 use App\Library\Entitlement\EntitlementManager;
+use App\Library\Business\GoogleOnboardingBridge;
 use App\Library\GoogleBusinessProfile\GoogleBusinessProfileBindingManager;
 use App\Library\GoogleBusinessProfile\GoogleBusinessProfileCandidateTokenSigner;
 use App\Library\GoogleBusinessProfile\GoogleBusinessProfileComparator;
@@ -299,8 +300,18 @@ class GoogleBusinessProfileController extends CustomerBaseController
             abort(404);
         }
 
+        // The ONE narrow exception to "active Business only": a Draft Business
+        // that is attached to the CALLER'S OWN unfinished onboarding (the Google
+        // quick start). Any other non-active Business is still a 404, and the
+        // entitlement, permission, actor and nonce checks below still all apply.
+        $onboardingBridge = false;
+
         if ($business->status !== BusinessStatus::Active) {
-            abort(404);
+            if (! app(GoogleOnboardingBridge::class)->authorizesCallback($business, Auth::user())) {
+                abort(404);
+            }
+
+            $onboardingBridge = true;
         }
 
         try {
@@ -340,8 +351,14 @@ class GoogleBusinessProfileController extends CustomerBaseController
         $workspaceUid = (string) $workspace->uid;
         $businessUid = (string) $business->uid;
 
+        // Onboarding failures return to onboarding, where the manual path is
+        // always available; every other failure keeps its existing destination.
+        $fail = fn (string $message, ?string $title = null): RedirectResponse => $onboardingBridge
+            ? $this->redirectToOnboardingWithError($message, $title)
+            : $this->redirectWithError($workspaceUid, $businessUid, $message, $title);
+
         if ($request->query('error') !== null || $request->query('code') === null) {
-            return $this->redirectWithError($workspaceUid, $businessUid, 'Google did not complete the connection.');
+            return $fail('Google did not complete the connection. You can try again or set up your business manually.');
         }
 
         // 7 — only now.
@@ -357,11 +374,15 @@ class GoogleBusinessProfileController extends CustomerBaseController
                 'business_uid' => $businessUid,
             ]);
 
-            return $this->redirectWithError($workspaceUid, $businessUid, $exception->customerMessage(), self::CONNECTION_UNAVAILABLE_TITLE);
+            return $fail($exception->customerMessage(), self::CONNECTION_UNAVAILABLE_TITLE);
         } catch (GoogleBusinessProfileConcurrencyException $exception) {
-            return $this->redirectWithError($workspaceUid, $businessUid, $exception->userMessage());
+            return $fail($exception->userMessage());
         } catch (GoogleBusinessProfileProviderException $exception) {
-            return $this->redirectWithError($workspaceUid, $businessUid, $exception->userMessage());
+            return $fail($exception->userMessage());
+        }
+
+        if ($onboardingBridge) {
+            return redirect()->route('customer.onboarding.google.show');
         }
 
         // 8 — canonical UIDs, resolved server-side.
@@ -819,6 +840,13 @@ class GoogleBusinessProfileController extends CustomerBaseController
         return redirect()
             ->route('customer.workspaces.businesses.gbp.index', [$workspaceUid, $businessUid])
             ->with(array_filter(['status' => 'error', 'message' => $message, 'message_title' => $title], fn ($value) => $value !== null));
+    }
+
+    private function redirectToOnboardingWithError(string $message, ?string $title = null): RedirectResponse
+    {
+        return redirect()
+            ->route('customer.onboarding.show')
+            ->withErrors(['onboarding' => $title === null ? $message : $title . ' — ' . $message]);
     }
 
     private function demoGuard(string $workspaceUid, string $businessUid): ?RedirectResponse

@@ -59,13 +59,14 @@ class OnboardingSeoFlowTest extends TestCase
         }
     }
 
-    public function test_a_new_customer_starts_at_business_and_sees_five_steps_without_the_removed_ones(): void
+    public function test_a_new_customer_starts_at_business_and_sees_compact_progress_without_the_removed_steps(): void
     {
         $this->actingAsHttpCustomer();
 
         $response = $this->get(route('customer.onboarding.show'))->assertOk();
 
-        $response->assertSee('1. Business', false)->assertSee('5. Finish', false);
+        // A compact progress indicator, not five numbered steps laid out up front.
+        $response->assertSee('Step 1 of 5', false)->assertDontSee('5. Finish', false);
         $response->assertDontSee('Goals')->assertDontSee('Assets')->assertDontSee('Analysis')->assertDontSee('Results');
         $response->assertDontSee('profile completeness', false)->assertDontSee('Profile completeness', false);
         $response->assertSee('name="industry"', false);

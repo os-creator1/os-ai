@@ -63,6 +63,19 @@ final class GoogleBusinessProfileReadMask
      *
      * @return array<int, string>
      */
+    /**
+     * Onboarding has no BusinessLocation yet, so the per-location consent
+     * above cannot be evaluated. The customer's explicit, per-attempt
+     * consent to read the address (given before authorization and recorded
+     * on the onboarding) is the only thing that can add the address field;
+     * without it the mask is the address-free base set, exactly as for a
+     * Business with no consented location.
+     */
+    public function forOnboarding(bool $addressConsented): array
+    {
+        return $this->build($addressConsented);
+    }
+
     public function forEnumeration(Business $business): array
     {
         return $this->build($this->addressPermittedForEnumeration($business));
