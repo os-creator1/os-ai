@@ -23,7 +23,6 @@ use Illuminate\Contracts\View\View;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
-use Illuminate\Support\Facades\Gate;
 use InvalidArgumentException;
 
 /**
@@ -112,7 +111,7 @@ class BusinessOnboardingController extends CustomerBaseController
         }
 
         $customer = $this->customer();
-        $availability = app(GoogleOnboardingBridge::class)->availability($customer, $onboarding, Gate::allows('manage_google_business_profile'));
+        $availability = ($bridge = app(GoogleOnboardingBridge::class))->availability($customer, $onboarding, $bridge->mayManageGoogle(Auth::user(), $onboarding));
 
         if (! $availability['available']) {
             return null;

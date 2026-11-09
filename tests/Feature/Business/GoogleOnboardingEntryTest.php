@@ -185,7 +185,9 @@ class GoogleOnboardingEntryTest extends TestCase
 
     public function test_without_the_permission_the_option_is_hidden_and_connecting_is_forbidden(): void
     {
-        $this->signupCustomer([], WorkspacePlanTier::Growth, ['view_google_business_profile']);
+        [, , $workspace] = $this->signupCustomer([], WorkspacePlanTier::Growth, ['view_google_business_profile']);
+        // Not the Workspace owner, and no explicit permission: nothing authorizes Google management.
+        $workspace->forceFill(['owner_user_id' => $this->platformAdminId()])->save();
 
         $this->get(route('customer.onboarding.show'))
             ->assertOk()
@@ -237,10 +239,8 @@ class GoogleOnboardingEntryTest extends TestCase
 
     public function test_the_diagnostic_names_the_cause_and_never_prints_a_secret(): void
     {
-        [$customer] = $this->signupCustomer([], WorkspacePlanTier::Growth, self::MANAGE);
-        // The durable permission set is what a signup copies from the defaults: manage is NOT among them.
-        $customer->permissions = json_encode(['view_google_business_profile']);
-        $customer->save();
+        [$customer, , $workspace] = $this->signupCustomer([], WorkspacePlanTier::Growth, ['view_google_business_profile']);
+        $workspace->forceFill(['owner_user_id' => $this->platformAdminId()])->save();
 
         config(['services.google_business_profile.client_secret' => 'super-secret-value-123']);
 
@@ -257,8 +257,53 @@ class GoogleOnboardingEntryTest extends TestCase
             ->assertExitCode(0);
     }
 
+    public function test_a_new_signup_with_the_real_default_permissions_is_authorized_as_workspace_owner(): void
+    {
+        $this->ensureRequiredAppConfigRowsExist();
+        $this->reserveSuperAdminId();
+
+        // The ACTUAL provisioning default every signup path writes (Customer::customerPermissions()); nothing is granted by hand.
+        $defaults = json_decode(Customer::customerPermissions(), true);
+        $this->assertNotContains('manage_google_business_profile', $defaults, 'The global default stays false.');
+
+        $customer = $this->createCustomer();
+        $customer->permissions = Customer::customerPermissions();
+        $customer->save();
+
+        $created = $this->createBusinessWithWorkspace($customer, $this->businessAttributes(['name' => 'Signup Booths']));
+        app(EntitlementManager::class)->assignFirstPlan(Workspace::query()->findOrFail($created->workspace_id), WorkspacePlanTier::Growth, $this->platformAdminId(), 'Fixture.', true, 0);
+        app(OnboardingManager::class)->startForProvisionedBusiness($customer, $created);
+        $this->authenticateAsCustomer($customer, $defaults);
+
+        $this->get(route('customer.onboarding.show'))->assertOk()->assertSee('Connect Google Business Profile');
+
+        // The whole connection works for the owner, including the OAuth callback.
+        $this->fakeGoogleWithLocation();
+        $this->connectFully();
+        $this->assertSame(GoogleConnectionState::Active, BusinessGoogleConnection::query()->firstOrFail()->state);
+        $this->assertSame(BusinessStatus::Draft, $created->refresh()->status);
+        $this->get(route('customer.onboarding.google.show'))->assertOk()->assertSee('name="candidate_token"', false);
+
+        // Ownership grants NOTHING outside onboarding: the Active-Business GBP module still needs the permission.
+        $this->assertFalse(\Illuminate\Support\Facades\Gate::forUser($customer->user)->allows('manage_google_business_profile'));
+    }
+
+    public function test_a_non_owner_without_the_permission_cannot_complete_a_callback(): void
+    {
+        [$customer, , $workspace] = $this->signupCustomer();
+        $state = $this->beginConnect();
+
+        // Ownership is revoked after the attempt began, and the actor holds no explicit permission.
+        $workspace->forceFill(['owner_user_id' => $this->platformAdminId()])->save();
+        $this->authenticateAsCustomer($customer, ['view_google_business_profile']);
+
+        $this->get(route(GoogleBusinessProfileOAuthConfig::CALLBACK_ROUTE) . '?code=c&state=' . urlencode($state))->assertNotFound();
+        $this->assertSame(0, $this->fakeGoogle->callCount('exchangeAuthorizationCode'));
+    }
+
     // -----------------------------------------------------------------
     // Helpers
+
     // -----------------------------------------------------------------
 
     /**

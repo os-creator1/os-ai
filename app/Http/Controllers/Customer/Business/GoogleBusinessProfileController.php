@@ -332,7 +332,13 @@ class GoogleBusinessProfileController extends CustomerBaseController
         // Deliberately 404 rather than the usual 401: this route has no
         // tenant parameters, so a permission-shaped response would itself
         // disclose that the signed Business exists and is reachable.
-        if (Gate::denies('manage_google_business_profile')) {
+        // A Draft onboarding Business is authorized by the onboarding bridge's owner-or-permission rule; every
+        // Active Business keeps the plain permission gate.
+        $mayManage = $onboardingBridge
+            ? app(GoogleOnboardingBridge::class)->mayManageGoogle(Auth::user(), app(\App\Repositories\Contracts\CustomerOnboardingRepository::class)->findByCustomerId((int) Auth::id()))
+            : Gate::allows('manage_google_business_profile');
+
+        if (! $mayManage) {
             abort(404);
         }
 

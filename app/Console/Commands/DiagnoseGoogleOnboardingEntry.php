@@ -34,15 +34,17 @@ class DiagnoseGoogleOnboardingEntry extends Command
         }
 
         // The session-less, durable permission set: what the customer holds, not what a request happens to carry.
-        $mayManage = $accounts->durablePermissions($user, true)->contains('manage_google_business_profile');
+        $holdsPermission = $accounts->durablePermissions($user, true)->contains('manage_google_business_profile');
         $row = $onboardings->findByCustomer($customer);
+        $mayManage = $row !== null && $bridge->mayManageGoogle($user, $row);
         $result = $row === null
             ? ['available' => false, 'reason' => 'onboarding_not_started']
             : $bridge->availability($customer, $row, $mayManage);
 
         $this->table(['Check', 'Result'], [
             ['Google OAuth configured', $bridge->isConfigured() ? 'yes' : 'NO'],
-            ['Holds manage_google_business_profile', $mayManage ? 'yes' : 'NO'],
+            ['Holds manage_google_business_profile', $holdsPermission ? 'yes' : 'no'],
+            ['Authorized (owner or permission)', $row === null ? 'not evaluated' : ($mayManage ? 'yes' : 'NO')],
             ['Onboarding has a business attached', $row?->business_id === null ? 'no' : 'yes'],
             ['Option offered', $result['available'] ? 'yes' : 'NO'],
             ['Reason', $result['reason']],

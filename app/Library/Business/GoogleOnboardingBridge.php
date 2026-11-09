@@ -14,6 +14,7 @@ use App\Exceptions\Workspace\BusinessWorkspaceMismatchException;
 use App\Exceptions\Workspace\WorkspaceBusinessNotFoundException;
 use App\Library\Entitlement\EntitlementManager;
 use App\Library\GoogleBusinessProfile\GoogleBusinessProfileBindingManager;
+use App\Library\Workspace\WorkspaceManagementAuthority;
 use App\Library\GoogleBusinessProfile\GoogleBusinessProfileCandidateTokenSigner;
 use App\Library\GoogleBusinessProfile\GoogleBusinessProfileConnectionManager;
 use App\Library\GoogleBusinessProfile\GoogleBusinessProfileEnumerator;
@@ -31,6 +32,7 @@ use App\Repositories\Contracts\BusinessGoogleConnectionRepository;
 use App\Repositories\Contracts\CustomerOnboardingRepository;
 use Illuminate\Contracts\Encryption\DecryptException;
 use Illuminate\Support\Facades\Crypt;
+use Illuminate\Support\Facades\Gate;
 
 /**
  * The narrowly authorized bridge between customer onboarding (which works on a
@@ -72,6 +74,7 @@ final class GoogleOnboardingBridge
         private readonly BusinessGoogleConnectionRepository $connectionRepository,
         private readonly CustomerOnboardingRepository $onboardingRepository,
         private readonly GoogleBusinessProfileBindingManager $bindings,
+        private readonly WorkspaceManagementAuthority $authority,
         private readonly EntitlementManager $entitlements,
     ) {
     }
@@ -86,6 +89,33 @@ final class GoogleOnboardingBridge
         }
 
         return true;
+    }
+
+    /**
+     * May this user connect Google for THIS onboarding?
+     *
+     * The global default of manage_google_business_profile stays FALSE, so a fresh signup does not hold it. The
+     * Workspace OWNER of the onboarding's own Workspace is nonetheless authorized — through the same
+     * WorkspaceManagementAuthority rule Google Ads and Meta Ads already use (active Workspace owner, or the explicit
+     * permission) — and only here, in the onboarding bridge: the Active-Business GBP module keeps its permission gate.
+     * Non-owners still need the explicit permission; a View-As session authorizes nothing; entitlement, Draft
+     * ownership, OAuth actor binding and the callback chain are checked separately and unchanged.
+     */
+    public function mayManageGoogle(User $actor, CustomerOnboarding $onboarding): bool
+    {
+        $workspaceId = $onboarding->business_id !== null
+            ? Business::query()->whereKey($onboarding->business_id)->value('workspace_id')
+            : $this->onboarding->provisionedDraftFor($actor->customer ?? new Customer(['user_id' => $actor->id]))?->workspace_id;
+
+        $workspace = $workspaceId !== null
+            ? Workspace::query()->find($workspaceId)
+            : Workspace::query()->where('owner_user_id', $actor->id)->where('is_active', true)->orderBy('id')->first();
+
+        if ($workspace === null) {
+            return Gate::forUser($actor)->allows('manage_google_business_profile');
+        }
+
+        return $this->authority->allows($actor, $workspace, 'manage_google_business_profile');
     }
 
     /**
