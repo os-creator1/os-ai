@@ -14,22 +14,35 @@ use Illuminate\Console\Command;
  */
 class SyncSeoRankLocations extends Command
 {
-    protected $signature = 'seo:rank-sync-locations';
+    protected $signature = 'seo:rank-sync-locations {--if-missing : Only call the provider when a supported country has no cached cities}';
 
     protected $description = 'Cache the rank-tracking provider search locations (free provider endpoint)';
 
     public function handle(SeoRankLocationCatalog $catalog): int
     {
-        try {
-            $count = $catalog->sync();
-        } catch (SeoRankProviderException $e) {
-            $this->error('Location sync failed (' . $e->errorCode . ').');
+        $countries = SeoRankLocationCatalog::supportedCountries();
 
-            return self::FAILURE;
+        if ($this->option('if-missing')) {
+            $countries = $catalog->missingCountries();
+
+            if ($countries === []) {
+                $this->info('Locations already cached; nothing to do.');
+
+                return self::SUCCESS;
+            }
         }
 
-        $this->info("Cached {$count} locations.");
+        $failed = false;
 
-        return self::SUCCESS;
+        foreach ($countries as $country) {
+            try {
+                $this->info("{$country}: cached " . $catalog->syncCountry($country) . ' locations.');
+            } catch (SeoRankProviderException $e) {
+                $failed = true;
+                $this->error("{$country}: location sync failed ({$e->errorCode}).");
+            }
+        }
+
+        return $failed ? self::FAILURE : self::SUCCESS;
     }
 }

@@ -72,12 +72,22 @@ class SeoRankTargetsController extends CustomerBaseController
 
         $query = (string) $request->query('q', '');
 
-        return response()->json([
-            'locations' => $this->locations->search(mb_substr($query, 0, 80), 10)->map(fn ($l) => [
-                'code' => (int) $l->location_code,
-                'label' => SeoRankLocationCatalog::label($l->location_name),
-            ])->values(),
-        ]);
+        $results = $this->locations->search(mb_substr($query, 0, 80), 10)->map(fn ($l) => [
+            'code' => (int) $l->location_code,
+            'label' => SeoRankLocationCatalog::label($l->location_name),
+        ])->values();
+
+        // Local lookups only. "not_initialized" = no supported city cached at all; "partial" = some
+        // supported country is still missing (so an empty result may only mean "not loaded yet").
+        $status = 'ok';
+
+        if (! $this->locations->isPopulated()) {
+            $status = 'not_initialized';
+        } elseif ($results->isEmpty() && $this->locations->missingCountries() !== []) {
+            $status = 'partial';
+        }
+
+        return response()->json(['locations' => $results, 'status' => $status]);
     }
 
     public function track(Request $request, string $workspaceUid, string $businessUid, string $keywordUid): RedirectResponse
