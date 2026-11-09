@@ -37,6 +37,24 @@
                         </div>
                     </nav>
 
+                    @if (! empty($googleLink))
+                        @if ($googleLink['linked'])
+                            <x-alert variant="success" data-role="google-link-state">Your Google Business Profile is linked to your location.</x-alert>
+                        @else
+                            <x-alert variant="warning" data-role="google-link-state">
+                                <div class="d-flex flex-wrap align-items-center justify-content-between gap-1">
+                                    <span>Your Google profile is not linked yet. Your setup progress is safe.</span>
+                                    @if ($googleLink['canRetry'])
+                                        <form method="POST" action="{{ route('customer.onboarding.google.link') }}" class="m-0">
+                                            @csrf
+                                            <x-button type="submit" variant="primary" size="sm" data-role="retry-google-link">Retry linking</x-button>
+                                        </form>
+                                    @endif
+                                </div>
+                            </x-alert>
+                        @endif
+                    @endif
+
                     @if ($errors->any())
                         <x-alert variant="danger">
                             <ul class="mb-0">

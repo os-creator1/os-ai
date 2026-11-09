@@ -20,4 +20,24 @@ final class GoogleOnboardingUnavailableException extends RuntimeException
     {
         return new self('Google import is not available right now. You can set up your business manually.');
     }
+
+    public static function nothingToLink(): self
+    {
+        return new self('There is no Google profile waiting to be linked. Choose your profile again.');
+    }
+
+    public static function reconnectToLink(): self
+    {
+        return new self('Your Google connection is no longer active. Connect Google again to link your profile.');
+    }
+
+    public static function locationFirst(): self
+    {
+        return new self('Finish saving where you work first, then link your Google profile.');
+    }
+
+    public static function linkedElsewhere(): self
+    {
+        return new self('This location is already linked to a different Google profile. You can change that from the Google section after setup.');
+    }
 }

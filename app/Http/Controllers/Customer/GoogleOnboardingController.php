@@ -11,6 +11,7 @@ use App\Exceptions\Entitlement\WorkspacePlanUnassignedException;
 use App\Exceptions\GoogleBusinessProfile\GoogleBusinessProfileConcurrencyException;
 use App\Exceptions\GoogleBusinessProfile\GoogleBusinessProfileConfigurationException;
 use App\Exceptions\GoogleBusinessProfile\GoogleBusinessProfileProviderException;
+use App\Exceptions\GoogleBusinessProfile\GoogleLocationAlreadyClaimedException;
 use App\Http\Requests\Business\GoogleOnboardingConfirmRequest;
 use App\Http\Requests\Business\GoogleOnboardingStartRequest;
 use App\Library\Business\GoogleOnboardingBridge;
@@ -184,12 +185,18 @@ class GoogleOnboardingController extends CustomerBaseController
 
         [$onboarding, $customer, $business, $connection] = $this->context();
 
-        if ($this->openSnapshot($request, $business, $connection, $customer) === null) {
+        $selection = $this->openSelection($request, $business, $connection, $customer);
+
+        if ($selection === null) {
             $request->session()->forget(self::SESSION_SNAPSHOT);
 
             return redirect()->route('customer.onboarding.google.show')
                 ->withErrors(['onboarding' => 'That import has expired. Choose your profile again.']);
         }
+
+        // The verified choice is remembered before anything is saved, so a failure at any later point can be
+        // retried without choosing again.
+        $onboarding = $this->bridge->rememberSelection($onboarding, $selection['account'], $selection['location']);
 
         try {
             $onboarding = $this->bridge->confirm($onboarding, $customer, $request->validated());
@@ -208,8 +215,41 @@ class GoogleOnboardingController extends CustomerBaseController
 
         $request->session()->forget(self::SESSION_SNAPSHOT);
 
+        // The local records now exist: link the chosen Google profile to the canonical location. A failure never
+        // undoes the saved details; it leaves a clear retry on the onboarding screens.
+        $failure = $this->tryLink($onboarding, $customer);
+
         // Whatever the card did not fully answer is simply the step the wizard resumes at.
-        return redirect()->route('customer.onboarding.show', ['step' => $this->onboarding->resolveStep($onboarding)->value]);
+        $redirect = redirect()->route('customer.onboarding.show', ['step' => $this->onboarding->resolveStep($onboarding->refresh())->value]);
+
+        return $failure === null ? $redirect : $redirect->withErrors(['onboarding' => $failure]);
+    }
+
+    /** "Retry linking": links the profile the customer already chose, without choosing or typing again. */
+    public function link(): RedirectResponse
+    {
+        $this->authorize('manage_google_business_profile');
+
+        [$onboarding, $customer] = $this->context();
+
+        $failure = $this->tryLink($onboarding, $customer);
+        $redirect = redirect()->route('customer.onboarding.show', ['step' => $this->onboarding->resolveStep($onboarding)->value]);
+
+        return $failure === null ? $redirect->with('status', 'Your Google profile is linked.') : $redirect->withErrors(['onboarding' => $failure]);
+    }
+
+    /** @return string|null a customer-safe failure message, or null when the profile is linked */
+    private function tryLink(CustomerOnboarding $onboarding, Customer $customer): ?string
+    {
+        try {
+            $this->bridge->link($onboarding->refresh(), $customer);
+        } catch (GoogleOnboardingUnavailableException|GoogleLocationAlreadyClaimedException|GoogleBusinessProfileProviderException|GoogleBusinessProfileConcurrencyException $exception) {
+            $message = $exception instanceof GoogleOnboardingUnavailableException ? $exception->getMessage() : $exception->userMessage();
+
+            return 'Your details are saved, but your Google profile is not linked yet. ' . $message . ' Use “Retry linking” to try again.';
+        }
+
+        return null;
     }
 
     /** "Use a different Google account": destroy this connection's stored authorization, then start over. */
@@ -247,6 +287,18 @@ class GoogleOnboardingController extends CustomerBaseController
         }
 
         return filled($snapshot['website'] ?? null) ? 'existing' : null;
+    }
+
+    /** @return array{snapshot: array<string, mixed>, account: string, location: string}|null */
+    private function openSelection(Request $request, ?Business $business, ?BusinessGoogleConnection $connection, Customer $customer): ?array
+    {
+        if ($business === null || $connection === null || ! $connection->isActive()) {
+            return null;
+        }
+
+        $token = $request->input('snapshot', $request->old('snapshot', $request->session()->get(self::SESSION_SNAPSHOT)));
+
+        return $this->bridge->openSelection(is_string($token) ? $token : null, $business, $connection, (int) $customer->user_id);
     }
 
     /** @return array<string, mixed>|null */

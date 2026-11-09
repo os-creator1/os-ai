@@ -85,6 +85,7 @@ class BusinessOnboardingController extends CustomerBaseController
             'firstMove' => $resolved === OnboardingStep::Finish && $onboarding->business_id !== null && ($business = \App\Models\Business::query()->find($onboarding->business_id)) !== null
                 ? app(\App\Library\Business\OnboardingFirstMove::class)->for($business, $this->onboarding->review($onboarding))
                 : null,
+            'googleLink' => app(GoogleOnboardingBridge::class)->linkState($onboarding),
             'googleStart' => $resolved === OnboardingStep::Business ? $this->googleStart($request, $onboarding) : null,
             'websiteChoice' => $resolved === OnboardingStep::Website ? $this->onboarding->websiteChoice($onboarding) : null,
             'managedWebsite' => $resolved === OnboardingStep::Website && $onboarding->business_id !== null

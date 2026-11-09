@@ -13,6 +13,7 @@ use App\Library\Entitlement\EntitlementManager;
 use App\Library\GoogleBusinessProfile\GoogleBusinessProfileOAuthConfig;
 use App\Models\Business;
 use App\Models\BusinessGoogleConnection;
+use App\Models\BusinessGoogleLocation;
 use App\Models\Customer;
 use App\Models\CustomerOnboarding;
 use App\Models\Workspace;
@@ -428,9 +429,10 @@ class GoogleQuickOnboardingTest extends TestCase
         $this->assertStringContainsString('We have not connected or checked it yet', $review['website']['status']);
         $this->assertSame([], $review['missing']);
 
-        // Still a Draft until the ordinary Finish step; and nothing was ever sent to Google.
+        // Still a Draft until the ordinary Finish step; Google was only ever READ (the link verifies the profile).
         $this->assertSame(BusinessStatus::Draft, $business->status);
-        $this->assertSame([], $this->fakeGoogle->callsTo('getLocation'));
+        $this->assertSame(1, $this->fakeGoogle->callCount('getLocation'));
+        $this->assertSame(1, BusinessGoogleLocation::query()->where('business_id', $business->id)->count());
         foreach ($this->fakeGoogle->calls as $call) {
             $this->assertStringStartsNotWith('update', $call['method']);
             $this->assertStringStartsNotWith('patch', $call['method']);
@@ -570,6 +572,140 @@ class GoogleQuickOnboardingTest extends TestCase
     }
 
     // -----------------------------------------------------------------
+    // The selected profile becomes the bound Business location
+    // -----------------------------------------------------------------
+
+    public function test_the_confirmed_profile_is_bound_to_the_canonical_business_location(): void
+    {
+        $customer = $this->customerWithPlan();
+        $this->fakeGoogle->withAccount('accounts/A1', 'Snap Booth Co');
+        $this->fakeGoogle->withLocation('accounts/A1', 'locations/L1', $this->rawLocationPayload(['name' => 'locations/L1', 'title' => 'First']));
+        $this->fakeGoogle->withLocation('accounts/A1', 'locations/L2', $this->rawLocationPayload(['name' => 'locations/L2', 'title' => 'Second']));
+        $this->connectFully();
+
+        // The customer explicitly picks the SECOND profile.
+        $page = $this->get(route('customer.onboarding.google.show'));
+        $this->assertSame(1, preg_match('/candidate_token" value="([^"]+)">\s*<div class="min-w-0">\s*<strong>Second/s', $page->getContent(), $m));
+        $this->post(route('customer.onboarding.google.select'), ['candidate_token' => html_entity_decode($m[1])])->assertRedirect();
+        $this->get(route('customer.onboarding.google.review'))->assertOk();
+
+        $this->post(route('customer.onboarding.google.confirm'), $this->confirmation())->assertSessionHasNoErrors();
+
+        $business = Business::query()->findOrFail($this->onboardingOf($customer)->business_id);
+        $location = $business->locations()->where('is_primary', true)->firstOrFail();
+        $binding = BusinessGoogleLocation::query()->where('business_id', $business->id)->get();
+
+        $this->assertCount(1, $binding, 'Exactly the one selected profile is bound.');
+        $this->assertSame('locations/L2', $binding[0]->provider_location_resource_name);
+        $this->assertSame('accounts/A1', $binding[0]->provider_account_resource_name);
+        $this->assertSame((int) $location->id, (int) $binding[0]->business_location_id);
+        $this->assertSame((int) $customer->user_id, (int) $binding[0]->bound_by_user_id);
+        $this->assertSame(BusinessStatus::Draft, $business->refresh()->status, 'Linking never activates the Business.');
+        $this->assertNull($this->onboardingOf($customer)->metadata['google']['pending_binding']);
+
+        $this->get(route('customer.onboarding.show', ['step' => 'finish']))->assertSee('is linked to your location');
+    }
+
+    public function test_a_tampered_or_foreign_selection_is_rejected_and_nothing_is_saved_or_bound(): void
+    {
+        $this->customerWithPlan();
+        $this->fakeGoogleWithLocation();
+        $this->connectFully();
+        $this->chooseFirstProfile()->assertOk();
+        $payload = $this->confirmation();
+
+        // Tampered: the sealed selection cannot be altered.
+        $tampered = $payload;
+        $tampered['snapshot'] = substr($payload['snapshot'], 0, -4) . 'AAAA';
+        $this->post(route('customer.onboarding.google.confirm'), $tampered)
+            ->assertRedirect(route('customer.onboarding.google.show'))
+            ->assertSessionHasErrors('onboarding');
+
+        // Foreign: another customer, with their own connected account, replays the first customer's sealed selection.
+        $other = $this->customerWithPlan();
+        $this->connectFully();
+        $this->fakeGoogle->clearCalls();
+        $this->post(route('customer.onboarding.google.confirm'), $payload)
+            ->assertRedirect(route('customer.onboarding.google.show'))
+            ->assertSessionHasErrors('onboarding');
+
+        $this->assertSame(0, BusinessGoogleLocation::query()->count());
+        $this->assertSame(0, $this->fakeGoogle->callCount('getLocation'));
+        $this->assertSame(OnboardingManager::GOOGLE_PROVISIONAL_NAME, Business::query()->findOrFail($this->onboardingOf($other)->business_id)->name);
+    }
+
+    public function test_repeated_confirmation_never_creates_a_duplicate_binding(): void
+    {
+        $customer = $this->customerWithPlan();
+        $this->fakeGoogleWithLocation();
+        $this->connectFully();
+        $this->chooseFirstProfile()->assertOk();
+        $payload = $this->confirmation();
+
+        $this->post(route('customer.onboarding.google.confirm'), $payload)->assertSessionHasNoErrors();
+        $afterFirst = $this->fakeGoogle->callCount('getLocation');
+
+        $this->post(route('customer.onboarding.google.confirm'), $payload)->assertSessionHasNoErrors();
+        $this->post(route('customer.onboarding.google.link'))->assertSessionHasNoErrors();
+
+        $business = Business::query()->findOrFail($this->onboardingOf($customer)->business_id);
+        $this->assertSame(1, BusinessGoogleLocation::query()->where('business_id', $business->id)->count());
+        $this->assertSame($afterFirst, $this->fakeGoogle->callCount('getLocation'), 'An existing identical binding is reused without another provider call.');
+    }
+
+    public function test_a_failed_binding_keeps_progress_says_so_honestly_and_can_be_retried(): void
+    {
+        $customer = $this->customerWithPlan();
+        $this->fakeGoogleWithLocation();
+        $this->connectFully();
+        $this->chooseFirstProfile()->assertOk();
+        $payload = $this->confirmation(['name' => 'Kept Booths']);
+
+        $this->fakeGoogle->failNextWith = GoogleBusinessProfileProviderException::providerUnavailable();
+        $this->post(route('customer.onboarding.google.confirm'), $payload)
+            ->assertRedirect(route('customer.onboarding.show', ['step' => 'finish']))
+            ->assertSessionHasErrors('onboarding');
+
+        $business = Business::query()->findOrFail($this->onboardingOf($customer)->business_id);
+        $this->assertSame('Kept Booths', $business->name, 'Onboarding progress is preserved.');
+        $this->assertSame([], app(OnboardingManager::class)->review($this->onboardingOf($customer))['missing']);
+        $this->assertSame(0, BusinessGoogleLocation::query()->count());
+
+        // The screen says it is NOT linked and offers the retry; it never claims a connection.
+        $finish = $this->get(route('customer.onboarding.show', ['step' => 'finish']))->assertOk();
+        $finish->assertSee('not linked yet')->assertSee('Retry linking')->assertDontSee('is linked to your location');
+
+        // The retry needs no new choice and no retyping.
+        $this->post(route('customer.onboarding.google.link'))->assertSessionHasNoErrors();
+
+        $this->assertSame(1, BusinessGoogleLocation::query()->where('business_id', $business->id)->count());
+        $this->get(route('customer.onboarding.show', ['step' => 'finish']))->assertSee('is linked to your location')->assertDontSee('Retry linking');
+    }
+
+    public function test_a_location_already_linked_to_a_different_profile_is_never_replaced(): void
+    {
+        $customer = $this->customerWithPlan();
+        $this->fakeGoogle->withAccount('accounts/A1', 'Snap Booth Co');
+        $this->fakeGoogle->withLocation('accounts/A1', 'locations/L1', $this->rawLocationPayload());
+        $this->connectFully();
+        $this->chooseFirstProfile()->assertOk();
+        $payload = $this->confirmation();
+        $this->post(route('customer.onboarding.google.confirm'), $payload)->assertSessionHasNoErrors();
+
+        $binding = BusinessGoogleLocation::query()->firstOrFail();
+        $binding->forceFill(['provider_location_resource_name' => 'locations/OTHER'])->save();
+
+        $onboarding = $this->onboardingOf($customer);
+        app(\App\Repositories\Contracts\CustomerOnboardingRepository::class)
+            ->recordGoogleBridge($onboarding, ['pending_binding' => ['a' => 'accounts/A1', 'l' => 'locations/L1']]);
+
+        $this->post(route('customer.onboarding.google.link'))->assertSessionHasErrors('onboarding');
+
+        $this->assertSame(1, BusinessGoogleLocation::query()->count());
+        $this->assertSame('locations/OTHER', $binding->refresh()->provider_location_resource_name);
+    }
+
+    // -----------------------------------------------------------------
     // The manual path is unchanged
     // -----------------------------------------------------------------
 
@@ -599,6 +735,8 @@ class GoogleQuickOnboardingTest extends TestCase
 
         $this->post(route('customer.onboarding.website.store'), ['website_choice' => 'later'])
             ->assertRedirect(route('customer.onboarding.show', ['step' => 'finish']));
+
+        $this->get(route('customer.onboarding.show', ['step' => 'finish']))->assertOk()->assertDontSee('google-link-state', false);
 
         $this->post(route('customer.onboarding.complete'))->assertRedirect(route('user.home'));
 

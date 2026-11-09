@@ -9,9 +9,11 @@ use App\Enums\Entitlement\PlatformFeature;
 use App\Enums\GoogleBusinessProfile\GoogleConnectionProduct;
 use App\Exceptions\Business\GoogleOnboardingUnavailableException;
 use App\Exceptions\GoogleBusinessProfile\GoogleBusinessProfileConfigurationException;
+use App\Exceptions\GoogleBusinessProfile\GoogleLocationAlreadyClaimedException;
 use App\Exceptions\Workspace\BusinessWorkspaceMismatchException;
 use App\Exceptions\Workspace\WorkspaceBusinessNotFoundException;
 use App\Library\Entitlement\EntitlementManager;
+use App\Library\GoogleBusinessProfile\GoogleBusinessProfileBindingManager;
 use App\Library\GoogleBusinessProfile\GoogleBusinessProfileCandidateTokenSigner;
 use App\Library\GoogleBusinessProfile\GoogleBusinessProfileConnectionManager;
 use App\Library\GoogleBusinessProfile\GoogleBusinessProfileEnumerator;
@@ -19,6 +21,8 @@ use App\Library\GoogleBusinessProfile\GoogleBusinessProfileOAuthConfig;
 use App\Library\GoogleBusinessProfile\GoogleBusinessProfileOnboardingReader;
 use App\Models\Business;
 use App\Models\BusinessGoogleConnection;
+use App\Models\BusinessGoogleLocation;
+use App\Models\BusinessLocation;
 use App\Models\Customer;
 use App\Models\CustomerOnboarding;
 use App\Models\User;
@@ -67,6 +71,7 @@ final class GoogleOnboardingBridge
         private readonly GoogleBusinessProfileOAuthConfig $oauthConfig,
         private readonly BusinessGoogleConnectionRepository $connectionRepository,
         private readonly CustomerOnboardingRepository $onboardingRepository,
+        private readonly GoogleBusinessProfileBindingManager $bindings,
         private readonly EntitlementManager $entitlements,
     ) {
     }
@@ -222,11 +227,23 @@ final class GoogleOnboardingBridge
         $profile = $this->reader->read($business, $connection, $actorUserId, $pair['location'], $addressConsent);
         $snapshot = $this->snapshotOf($profile);
 
-        return ['token' => $this->seal($snapshot, $business, $connection, $actorUserId), 'snapshot' => $snapshot];
+        // The explicitly selected account/location pair rides inside the SAME sealed, actor-bound token, so the
+        // choice the customer made is exactly what is linked at confirmation. Never a client-supplied field.
+        $selection = ['a' => $pair['account'], 'l' => $pair['location']];
+
+        return ['token' => $this->seal($snapshot, $selection, $business, $connection, $actorUserId), 'snapshot' => $snapshot];
     }
 
     /** @return array<string, mixed>|null the importable fields, or null when the token is invalid, foreign or stale */
     public function open(?string $token, Business $business, BusinessGoogleConnection $connection, int $actorUserId): ?array
+    {
+        return $this->openSelection($token, $business, $connection, $actorUserId)['snapshot'] ?? null;
+    }
+
+    /**
+     * @return array{snapshot: array<string, mixed>, account: string, location: string}|null
+     */
+    public function openSelection(?string $token, Business $business, BusinessGoogleConnection $connection, int $actorUserId): ?array
     {
         if (! is_string($token) || $token === '') {
             return null;
@@ -244,11 +261,13 @@ final class GoogleOnboardingBridge
             || ($payload['u'] ?? null) !== $actorUserId
             || ! is_int($payload['e'] ?? null)
             || $payload['e'] <= now()->getTimestamp()
-            || ! is_array($payload['d'] ?? null)) {
+            || ! is_array($payload['d'] ?? null)
+            || ! is_string($payload['g']['a'] ?? null)
+            || ! is_string($payload['g']['l'] ?? null)) {
             return null;
         }
 
-        return $payload['d'];
+        return ['snapshot' => $payload['d'], 'account' => $payload['g']['a'], 'location' => $payload['g']['l']];
     }
 
     /**
@@ -305,6 +324,118 @@ final class GoogleOnboardingBridge
         return $onboarding;
     }
 
+    /**
+     * Remember WHICH profile the customer chose, until it is actually linked. Resource names only — identifiers
+     * the binding itself stores — set solely from a verified sealed selection, never from the request.
+     */
+    public function rememberSelection(CustomerOnboarding $onboarding, string $account, string $location): CustomerOnboarding
+    {
+        return $this->onboardingRepository->recordGoogleBridge($onboarding, ['pending_binding' => ['a' => $account, 'l' => $location]]);
+    }
+
+    /**
+     * Bind the customer's selected Google location to the Business's canonical primary BusinessLocation, through the
+     * existing GoogleBusinessProfileBindingManager (read-only provider reads, budget, ledger, claim constraints).
+     *
+     * Runs only after the local records exist, is IDEMPOTENT (an existing identical binding is returned, never
+     * duplicated, and a lost unique-constraint race is resolved by re-reading), never replaces a binding to a
+     * DIFFERENT Google profile, and makes its provider calls outside any database transaction (so it must be called
+     * from none). Nothing is ever written to Google.
+     *
+     * @throws GoogleOnboardingUnavailableException when there is nothing safe to link
+     * @throws \App\Exceptions\GoogleBusinessProfile\GoogleBusinessProfileProviderException
+     * @throws GoogleLocationAlreadyClaimedException
+     */
+    public function link(CustomerOnboarding $onboarding, Customer $customer): BusinessGoogleLocation
+    {
+        $business = $this->draftBusinessFor($onboarding, $customer) ?? throw GoogleOnboardingUnavailableException::notAvailable();
+        $pending = $onboarding->metadata['google']['pending_binding'] ?? null;
+        $connection = $this->connectionFor($business);
+
+        if (! is_array($pending) || ! is_string($pending['a'] ?? null) || ! is_string($pending['l'] ?? null)) {
+            // Already linked (a repeated retry): succeed without touching anything.
+            $linked = BusinessGoogleLocation::query()->where('business_id', $business->id)->first();
+
+            return $linked ?? throw GoogleOnboardingUnavailableException::nothingToLink();
+        }
+
+        if ($connection === null || ! $connection->isActive()) {
+            throw GoogleOnboardingUnavailableException::reconnectToLink();
+        }
+
+        $this->assertEntitled($business, (int) $customer->user_id);
+
+        $locations = BusinessLocation::query()->where('business_id', $business->id)->where('is_primary', true)->get();
+
+        if ($locations->count() !== 1) {
+            throw GoogleOnboardingUnavailableException::locationFirst();
+        }
+
+        /** @var BusinessLocation $location */
+        $location = $locations->first();
+
+        $found = $this->existingBinding($business, $location, $pending['l']);
+
+        if ($found === null) {
+            try {
+                $found = $this->bindings->bind($business, $connection, $location, $pending['a'], $pending['l'], (int) $customer->user_id);
+            } catch (GoogleLocationAlreadyClaimedException $exception) {
+                // A concurrent identical request may have won the race: that is success, not a conflict.
+                $found = $this->existingBinding($business, $location, $pending['l']) ?? throw $exception;
+            }
+        }
+
+        $this->onboardingRepository->recordGoogleBridge($onboarding, ['pending_binding' => null, 'linked_at' => now()->toIso8601String()]);
+
+        return $found;
+    }
+
+    /**
+     * @throws GoogleOnboardingUnavailableException when the local location is already linked to a different profile
+     */
+    private function existingBinding(Business $business, BusinessLocation $location, string $locationResourceName): ?BusinessGoogleLocation
+    {
+        $binding = BusinessGoogleLocation::query()
+            ->where('business_id', $business->id)
+            ->where('business_location_id', $location->id)
+            ->first();
+
+        if ($binding === null) {
+            return null;
+        }
+
+        if ($binding->provider_location_resource_name !== $locationResourceName) {
+            throw GoogleOnboardingUnavailableException::linkedElsewhere();
+        }
+
+        return $binding;
+    }
+
+    /**
+     * What the onboarding screens may say about the link: "linked" ONLY when a binding row really exists.
+     *
+     * @return array{linked: bool, canRetry: bool}|null null when the customer never chose a Google profile
+     */
+    public function linkState(CustomerOnboarding $onboarding): ?array
+    {
+        if ($onboarding->business_id === null) {
+            return null;
+        }
+
+        if (BusinessGoogleLocation::query()->where('business_id', $onboarding->business_id)->exists()) {
+            return ['linked' => true, 'canRetry' => false];
+        }
+
+        if (! is_array($onboarding->metadata['google']['pending_binding'] ?? null) || $onboarding->status === OnboardingStatus::Completed) {
+            return null;
+        }
+
+        return [
+            'linked' => false,
+            'canRetry' => BusinessLocation::query()->where('business_id', $onboarding->business_id)->where('is_primary', true)->exists(),
+        ];
+    }
+
     /** Destroy the stored authorization so another Google account can be used. */
     public function disconnect(Business $business, int $actorUserId): void
     {
@@ -339,8 +470,11 @@ final class GoogleOnboardingBridge
         ];
     }
 
-    /** @param array<string, mixed> $snapshot */
-    private function seal(array $snapshot, Business $business, BusinessGoogleConnection $connection, int $actorUserId): string
+    /**
+     * @param array<string, mixed> $snapshot
+     * @param array{a: string, l: string} $selection
+     */
+    private function seal(array $snapshot, array $selection, Business $business, BusinessGoogleConnection $connection, int $actorUserId): string
     {
         return Crypt::encryptString((string) json_encode([
             'b' => (int) $business->id,
@@ -348,6 +482,7 @@ final class GoogleOnboardingBridge
             'u' => $actorUserId,
             'e' => now()->addSeconds(self::SNAPSHOT_TTL_SECONDS)->getTimestamp(),
             'd' => $snapshot,
+            'g' => $selection,
         ]));
     }
 }
