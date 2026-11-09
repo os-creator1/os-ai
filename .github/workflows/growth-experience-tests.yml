@@ -9,6 +9,17 @@ on:
       - 'app/Library/Dashboard/Home/**'
       - 'resources/views/customer/dashboard/home/**'
       - 'resources/views/customer/onboarding/**'
+      - 'app/Library/Business/GoogleOnboardingBridge.php'
+      - 'app/Library/Business/GoogleOnboardingPreview.php'
+      - 'app/Library/Business/OnboardingManager.php'
+      - 'app/Library/GoogleBusinessProfile/GoogleBusinessProfileOnboardingReader.php'
+      - 'app/Library/GoogleBusinessProfile/GoogleBusinessProfileEnumerator.php'
+      - 'app/Library/GoogleBusinessProfile/GoogleBusinessProfileReadMask.php'
+      - 'app/Http/Controllers/Customer/GoogleOnboardingController.php'
+      - 'app/Http/Controllers/Customer/Business/GoogleBusinessProfileController.php'
+      - 'app/Http/Requests/Business/GoogleOnboarding*Request.php'
+      - 'routes/customer.php'
+      - 'tests/Feature/Business/GoogleQuickOnboardingTest.php'
       - 'app/Library/Assistant/**'
       - 'resources/views/offers/**'
       - 'app/Http/Controllers/Auth/PrivateOfferController.php'
@@ -144,6 +155,17 @@ jobs:
         id: authbranding
         continue-on-error: true
         run: php artisan test tests/Feature/Branding/BrandingComponentRenderTest.php
+      - name: Google Business Profile quick onboarding and OAuth boundaries
+        id: gbpquick
+        continue-on-error: true
+        run: >-
+          php artisan test
+          tests/Feature/Business/GoogleQuickOnboardingTest.php
+          tests/Feature/Business/BusinessOnboardingExistingBehaviorPreservedTest.php
+          tests/Feature/GoogleBusinessProfile/GoogleBusinessProfileOAuthTest.php
+          tests/Feature/GoogleBusinessProfile/GoogleBusinessProfileReadOnlyTest.php
+          tests/Feature/GoogleBusinessProfile/GoogleBusinessProfileConnectionStateTest.php
+          tests/Feature/Security/GoogleBusinessProfileSecurityTest.php
       - name: Fail if any acceptance group failed
         if: always()
         env:
@@ -153,6 +175,7 @@ jobs:
           ASSISTANT: ${{ steps.assistant.outcome }}
           OFFERS: ${{ steps.offers.outcome }}
           AUTH_BRANDING: ${{ steps.authbranding.outcome }}
+          GBP_QUICK: ${{ steps.gbpquick.outcome }}
         run: |
           echo "Blade=$BLADE Onboarding=$ONBOARDING Home=$HOME Assistant=$ASSISTANT Offers=$OFFERS"
           test "$BLADE" = success
@@ -161,3 +184,4 @@ jobs:
           test "$ASSISTANT" = success
           test "$OFFERS" = success
           test "$AUTH_BRANDING" = success
+          test "$GBP_QUICK" = success
