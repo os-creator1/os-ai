@@ -2,10 +2,13 @@
     First onboarding screen: Google quick start (primary) and manual setup (secondary).
     The manual form is exactly what "Set up manually" opens; nothing about it changes.
 --}}
-<div class="gbp-start text-center py-1" data-role="google-start">
+<div class="gbp-start text-center py-1 @if ($googleStart['withManualForm']) border rounded mb-2 px-1 @endif" data-role="google-start">
     <h4 class="mb-50">Set up your business in about a minute</h4>
     <p class="text-muted mb-2">
         Already on Google? Import your Business Profile, check it, and you are done.
+        @if ($googleStart['withManualForm'])
+            Nothing you have already entered below is changed until you review and confirm what Google provides.
+        @endif
         MotionGrove only reads from Google. It never changes your profile and never publishes anything.
     </p>
 
@@ -27,7 +30,7 @@
 
         <div class="d-grid d-md-flex gap-1 justify-content-md-center mt-2">
             <x-button type="submit" variant="primary" size="lg" data-role="connect-google">Connect Google Business Profile</x-button>
-            <a class="btn btn-outline-secondary btn-lg" href="{{ route('customer.onboarding.show', ['step' => 'business', 'manual' => 1]) }}" data-role="set-up-manually">Set up manually</a>
+            <a class="btn btn-outline-secondary btn-lg" href="{{ $googleStart['withManualForm'] ? '#manual-business-form' : route('customer.onboarding.show', ['step' => 'business', 'manual' => 1]) }}" data-role="set-up-manually">Set up manually</a>
         </div>
     </form>
 </div>

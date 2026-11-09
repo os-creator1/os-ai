@@ -11,14 +11,23 @@ use RuntimeException;
  */
 final class GoogleOnboardingUnavailableException extends RuntimeException
 {
+    /** A closed, secret-free code for operator diagnostics (never shown to customers). */
+    public string $reasonCode = 'unavailable';
+
     public static function notEntitled(): self
     {
-        return new self('Importing from Google is not included in your current plan. You can set up your business manually.');
+        $e = new self('Importing from Google is not included in your current plan. You can set up your business manually.');
+        $e->reasonCode = 'entitlement_denied';
+
+        return $e;
     }
 
     public static function notAvailable(): self
     {
-        return new self('Google import is not available right now. You can set up your business manually.');
+        $e = new self('Google import is not available right now. You can set up your business manually.');
+        $e->reasonCode = 'workspace_unavailable';
+
+        return $e;
     }
 
     public static function nothingToLink(): self

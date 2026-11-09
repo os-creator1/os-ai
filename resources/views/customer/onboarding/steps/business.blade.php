@@ -10,8 +10,10 @@
 
 @if (! empty($googleStart))
     @include('customer.onboarding.google.start', ['googleStart' => $googleStart, 'business' => $business])
-@else
-<h5>Tell us about your business</h5>
+@endif
+
+@if (empty($googleStart) || ! empty($googleStart['withManualForm']))
+<h5 id="manual-business-form">Tell us about your business</h5>
 <p class="text-muted">Just the basics. The name and kind of business tell MotionGrove what your website and search listings are about.</p>
 
 <form method="POST" action="{{ route('customer.onboarding.business.store') }}" data-role="business-form">

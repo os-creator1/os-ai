@@ -88,6 +88,62 @@ final class GoogleOnboardingBridge
         return true;
     }
 
+    /**
+     * WHY the Google quick start is, or is not, offered to this customer — as a CLOSED reason code, never a value.
+     * Used by the entry point and by the operator diagnostic, so the two can never disagree. The order is the order
+     * the checks matter in. Nothing here reads, returns or logs a credential, token or configured value.
+     *
+     * @param  bool  $mayManageGoogle  whether the customer holds manage_google_business_profile (the caller's Gate)
+     * @return array{available: bool, reason: string}
+     */
+    public function availability(Customer $customer, CustomerOnboarding $onboarding, bool $mayManageGoogle): array
+    {
+        try {
+            $this->oauthConfig->assertUsable();
+        } catch (GoogleBusinessProfileConfigurationException $exception) {
+            return ['available' => false, 'reason' => 'oauth_' . $exception->reason];
+        }
+
+        if (! $mayManageGoogle) {
+            return ['available' => false, 'reason' => 'permission_manage_google_business_profile_missing'];
+        }
+
+        if ($onboarding->status === OnboardingStatus::Completed) {
+            return ['available' => false, 'reason' => 'onboarding_completed'];
+        }
+
+        if ($onboarding->business_id !== null) {
+            $business = Business::query()->find($onboarding->business_id);
+
+            if ($business === null || (int) $business->customer_id !== (int) $customer->user_id) {
+                return ['available' => false, 'reason' => 'business_not_owned_by_customer'];
+            }
+
+            if ($business->status !== BusinessStatus::Draft) {
+                return ['available' => false, 'reason' => 'business_not_draft'];
+            }
+
+            return $this->entitlementAvailability($business, (int) $customer->user_id);
+        }
+
+        // Nothing attached yet: a Draft Business a signup provisioned is adopted, so judge THAT one.
+        $draft = $this->onboarding->provisionedDraftFor($customer);
+
+        return $draft === null ? ['available' => true, 'reason' => 'available_business_created_on_connect'] : $this->entitlementAvailability($draft, (int) $customer->user_id);
+    }
+
+    /** @return array{available: bool, reason: string} */
+    private function entitlementAvailability(Business $business, int $actorUserId): array
+    {
+        try {
+            $this->assertEntitled($business, $actorUserId);
+        } catch (GoogleOnboardingUnavailableException $exception) {
+            return ['available' => false, 'reason' => $exception->reasonCode];
+        }
+
+        return ['available' => true, 'reason' => 'available'];
+    }
+
     /** The Draft Business attached to this unfinished onboarding, if any. */
     public function draftBusinessFor(CustomerOnboarding $onboarding, Customer $customer): ?Business
     {
