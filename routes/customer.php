@@ -777,6 +777,17 @@
     */
 
     Route::prefix('onboarding')->name('onboarding.')->middleware('business.onboarding.enabled')->group(function () {
+        // Google Business Profile quick start. Registered BEFORE the greedy {step?} route.
+        Route::prefix('google')->name('google.')->group(function () {
+            Route::get('/', 'GoogleOnboardingController@show')->middleware('throttle:20,1')->name('show');
+            Route::post('/connect', 'GoogleOnboardingController@connect')->middleware('throttle:10,1')->name('connect');
+            Route::post('/select', 'GoogleOnboardingController@select')->middleware('throttle:20,1')->name('select');
+            Route::get('/review', 'GoogleOnboardingController@review')->name('review');
+            Route::post('/confirm', 'GoogleOnboardingController@confirm')->middleware('throttle:20,1')->name('confirm');
+            Route::post('/link', 'GoogleOnboardingController@link')->middleware('throttle:10,1')->name('link');
+            Route::post('/reset', 'GoogleOnboardingController@reset')->name('reset');
+        });
+
         Route::get('/{step?}', 'BusinessOnboardingController@show')->name('show');
         Route::post('/business', 'BusinessOnboardingController@storeBusiness')->name('business.store');
         Route::post('/location', 'BusinessOnboardingController@storeLocation')->name('location.store');

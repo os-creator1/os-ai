@@ -42,7 +42,7 @@ final class GoogleBusinessProfileEnumerator
      *
      * @throws GoogleBusinessProfileProviderException
      */
-    public function enumerate(Business $business, BusinessGoogleConnection $connection, ?int $actorUserId): array
+    public function enumerate(Business $business, BusinessGoogleConnection $connection, ?int $actorUserId, ?bool $addressPermittedOverride = null): array
     {
         // SEO Contract 18 §7.3 — fail closed before ANY provider call or
         // write: a `search_console` row handed to Business Profile code is
@@ -84,8 +84,12 @@ final class GoogleBusinessProfileEnumerator
 
         $this->ledger->succeed($accountsOperation, count($accounts) . ' account(s) returned');
 
-        $mask = $this->readMask->forEnumeration($business);
-        $addressPermitted = $this->readMask->addressPermittedForEnumeration($business);
+        // Onboarding (no BusinessLocation yet) passes the customer's explicit
+        // consent; every other caller keeps the per-location rule.
+        $addressPermitted = $addressPermittedOverride ?? $this->readMask->addressPermittedForEnumeration($business);
+        $mask = $addressPermittedOverride === null
+            ? $this->readMask->forEnumeration($business)
+            : $this->readMask->forOnboarding($addressPermittedOverride);
 
         $locationsOperation = $this->ledger->open(
             businessId: (int) $business->id,

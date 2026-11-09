@@ -34,6 +34,16 @@ interface CustomerOnboardingRepository extends BaseRepository
     public function recordWebsiteChoice(CustomerOnboarding $onboarding, string $choice): CustomerOnboarding;
 
     /**
+     * Merge $state into the onboarding's metadata under the `google` key (the
+     * Google Business Profile quick-start bridge: provisional identity flag and
+     * the customer's address-read consent). Nothing from Google's Content is
+     * ever stored here.
+     *
+     * @param  array<string, mixed>  $state
+     */
+    public function recordGoogleBridge(CustomerOnboarding $onboarding, array $state): CustomerOnboarding;
+
+    /**
      * Equivalent to findByCustomer(), but scoped by the raw customer_id
      * (users.id) directly, for callers that don't already have a Customer
      * model materialized. Relies on the same database-level uniqueness on

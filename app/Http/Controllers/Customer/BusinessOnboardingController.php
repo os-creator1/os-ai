@@ -12,6 +12,7 @@ use App\Http\Requests\Business\OnboardingBusinessRequest;
 use App\Http\Requests\Business\OnboardingLocationRequest;
 use App\Http\Requests\Business\OnboardingServicesRequest;
 use App\Http\Requests\Business\OnboardingWebsiteRequest;
+use App\Library\Business\GoogleOnboardingBridge;
 use App\Library\Business\OnboardingManager;
 use App\Library\Navigation\CustomerContextPreference;
 use App\Models\Customer;
@@ -22,6 +23,7 @@ use Illuminate\Contracts\View\View;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Gate;
 use InvalidArgumentException;
 
 /**
@@ -83,10 +85,35 @@ class BusinessOnboardingController extends CustomerBaseController
             'firstMove' => $resolved === OnboardingStep::Finish && $onboarding->business_id !== null && ($business = \App\Models\Business::query()->find($onboarding->business_id)) !== null
                 ? app(\App\Library\Business\OnboardingFirstMove::class)->for($business, $this->onboarding->review($onboarding))
                 : null,
+            'googleLink' => app(GoogleOnboardingBridge::class)->linkState($onboarding),
+            'googleStart' => $resolved === OnboardingStep::Business ? $this->googleStart($request, $onboarding) : null,
             'websiteChoice' => $resolved === OnboardingStep::Website ? $this->onboarding->websiteChoice($onboarding) : null,
             'managedWebsite' => $resolved === OnboardingStep::Website && $onboarding->business_id !== null
                 && \App\Models\Website::query()->where('business_id', $onboarding->business_id)->exists(),
         ]);
+    }
+
+    /**
+     * Whether, and how, the first screen offers "Connect Google Business Profile" ahead of the manual form: only on
+     * the Business step, only for a customer who has not stated their own business yet, only where Google can
+     * actually be connected and the customer may manage it, and never while the manual form is being corrected
+     * (explicitly chosen, or re-shown after a failed save). Manual setup is always reachable.
+     *
+     * @return array{needsLocale: bool}|null
+     */
+    private function googleStart(Request $request, CustomerOnboarding $onboarding): ?array
+    {
+        $bridge = app(GoogleOnboardingBridge::class);
+
+        if ($request->boolean('manual')
+            || $request->session()->hasOldInput()
+            || (! $this->onboarding->isProvisionalBusiness($onboarding) && $onboarding->business_id !== null)
+            || ! $bridge->isConfigured()
+            || Gate::denies('manage_google_business_profile')) {
+            return null;
+        }
+
+        return ['needsLocale' => ! $this->onboarding->hasDraftBusinessToContinue($this->customer(), $onboarding)];
     }
 
     public function storeBusiness(OnboardingBusinessRequest $request): RedirectResponse

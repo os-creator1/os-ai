@@ -17,6 +17,17 @@ on:
       - 'tests/Feature/Seo/Rank/SeoRankCityPickerTest.php'
       - 'tests/Feature/Seo/Rank/SeoRankHttpTest.php'
       - 'resources/views/customer/onboarding/**'
+      - 'app/Library/Business/GoogleOnboardingBridge.php'
+      - 'app/Library/Business/GoogleOnboardingPreview.php'
+      - 'app/Library/Business/OnboardingManager.php'
+      - 'app/Library/GoogleBusinessProfile/GoogleBusinessProfileOnboardingReader.php'
+      - 'app/Library/GoogleBusinessProfile/GoogleBusinessProfileEnumerator.php'
+      - 'app/Library/GoogleBusinessProfile/GoogleBusinessProfileReadMask.php'
+      - 'app/Http/Controllers/Customer/GoogleOnboardingController.php'
+      - 'app/Http/Controllers/Customer/Business/GoogleBusinessProfileController.php'
+      - 'app/Http/Requests/Business/GoogleOnboarding*Request.php'
+      - 'routes/customer.php'
+      - 'tests/Feature/Business/GoogleQuickOnboardingTest.php'
       - 'app/Library/Assistant/**'
       - 'resources/views/offers/**'
       - 'app/Http/Controllers/Auth/PrivateOfferController.php'
@@ -159,6 +170,17 @@ jobs:
           php artisan test
           tests/Feature/Seo/Rank/SeoRankCityPickerTest.php
           tests/Feature/Seo/Rank/SeoRankHttpTest.php
+      - name: Google Business Profile quick onboarding and OAuth boundaries
+        id: gbpquick
+        continue-on-error: true
+        run: >-
+          php artisan test
+          tests/Feature/Business/GoogleQuickOnboardingTest.php
+          tests/Feature/DesignSystem/BusinessOnboardingExistingBehaviorPreservedTest.php
+          tests/Feature/GoogleBusinessProfile/GoogleBusinessProfileOAuthTest.php
+          tests/Feature/GoogleBusinessProfile/GoogleBusinessProfileReadOnlyTest.php
+          tests/Feature/GoogleBusinessProfile/GoogleBusinessProfileConnectionStateTest.php
+          tests/Feature/Security/GoogleBusinessProfileSecurityTest.php
       - name: Fail if any acceptance group failed
         if: always()
         env:
@@ -169,6 +191,7 @@ jobs:
           OFFERS: ${{ steps.offers.outcome }}
           AUTH_BRANDING: ${{ steps.authbranding.outcome }}
           RANK_CITY: ${{ steps.rankcity.outcome }}
+          GBP_QUICK: ${{ steps.gbpquick.outcome }}
         run: |
           echo "Blade=$BLADE Onboarding=$ONBOARDING Home=$HOME Assistant=$ASSISTANT Offers=$OFFERS"
           test "$BLADE" = success
@@ -178,3 +201,4 @@ jobs:
           test "$OFFERS" = success
           test "$AUTH_BRANDING" = success
           test "$RANK_CITY" = success
+          test "$GBP_QUICK" = success
