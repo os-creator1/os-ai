@@ -97,6 +97,45 @@ class PrivateOfferController extends Controller
         return redirect()->route('register.account');
     }
 
+    /**
+     * "This gift is for another account" -> "Switch account".
+     *
+     * A POST (the route accepts nothing else, and the web group's CSRF check
+     * guards it): signing out is a state change and must never be a link a page
+     * or an image can trigger. The session is invalidated and its token
+     * regenerated, then ONLY the offer's token is remembered in the fresh session
+     * (OfferReturn builds our own `offers.show` URL from it -- it never echoes a
+     * caller-supplied destination, so there is no open redirect) and the visitor
+     * goes to the sign-in page, which returns them to this same offer.
+     *
+     * An administrator "viewing as" a customer keeps the existing impersonation
+     * protections: this never signs them out of, or around, that session -- the
+     * real exit stays the existing impersonation flow.
+     */
+    public function switchAccount(Request $request, string $token): RedirectResponse
+    {
+        $this->offers->findByToken($token) ?? abort(404);
+
+        if ($request->session()->has('admin_user_id') || $request->session()->has('parent_user_id')) {
+            return redirect()->route('offers.show', ['token' => $token])->with([
+                'status' => 'error',
+                'message' => __('You are viewing as another user. Exit that session first, then open this offer link again.'),
+            ]);
+        }
+
+        Auth::guard()->logout();
+
+        $request->session()->invalidate();
+        $request->session()->regenerateToken();
+
+        OfferReturn::remember($token);
+
+        return redirect()->route('login')->with([
+            'status' => 'info',
+            'message' => __('Sign in with the account this offer was sent to.'),
+        ]);
+    }
+
     public function accept(Request $request, string $token): RedirectResponse
     {
         $offer = $this->offers->findByToken($token) ?? abort(404);

@@ -109,6 +109,8 @@
             Route::get('offers/{token}', 'PrivateOfferController@show')->where('token', $offerToken)->middleware(['private.offers', 'throttle:60,1'])->name('offers.show');
             Route::get('offers/{token}/signup', 'PrivateOfferController@signup')->where('token', $offerToken)->middleware(['private.offers', 'guest', 'throttle:20,1'])->name('offers.signup');
             Route::post('offers/{token}/accept', 'PrivateOfferController@accept')->where('token', $offerToken)->middleware(['private.offers', 'auth', 'throttle:10,1'])->name('offers.accept');
+            // Wrong account: sign out and come back to THIS offer. A POST (CSRF-protected), never a GET.
+            Route::post('offers/{token}/switch-account', 'PrivateOfferController@switchAccount')->where('token', $offerToken)->middleware(['private.offers', 'auth', 'throttle:10,1'])->name('offers.switch-account');
             Route::get('offers/return/{redemption}', 'PrivateOfferController@checkoutReturn')->whereUuid('redemption')->middleware('auth')->name('offers.return');
             Route::get('offers/cancelled/{redemption}', 'PrivateOfferController@checkoutCancelled')->whereUuid('redemption')->middleware('auth')->name('offers.cancelled');
 
