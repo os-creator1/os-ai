@@ -2,12 +2,13 @@
 
 namespace Tests\Feature\ErrorPages;
 
-use App\Models\User;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Auth\AuthenticationException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Session\TokenMismatchException;
 use Illuminate\Support\Facades\Route;
+use Tests\Feature\Business\Concerns\CreatesBusinessTestData;
+use Tests\Feature\Workspace\Concerns\CreatesCustomerContextFixtures;
 use Tests\TestCase;
 
 /**
@@ -17,6 +18,8 @@ use Tests\TestCase;
  */
 class UnifiedErrorPagesTest extends TestCase
 {
+    use CreatesBusinessTestData;
+    use CreatesCustomerContextFixtures;
     use RefreshDatabase;
 
     private const SECRET = 'SECRET-EXCEPTION-TEXT /var/www/app/Secret.php SELECT * FROM users';
@@ -24,6 +27,8 @@ class UnifiedErrorPagesTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
+
+        $this->ensureRequiredAppConfigRowsExist();
 
         Route::middleware('web')->group(function (): void {
             Route::get('/__unified/401', fn () => throw new AuthenticationException(self::SECRET));
@@ -103,7 +108,7 @@ class UnifiedErrorPagesTest extends TestCase
     {
         $this->get('/__unified/denied')->assertUnauthorized()->assertSee('Please log in');
 
-        $user = User::factory()->create();
+        $user = $this->createCustomer()->user;
         $page = $this->actingAs($user)->get('/__unified/denied');
 
         $page->assertUnauthorized() // this application's long-standing status for a denial is kept
@@ -125,7 +130,7 @@ class UnifiedErrorPagesTest extends TestCase
         $this->assertStringContainsString('Go to homepage', $guest);
         $this->assertStringContainsString('href="' . url('/') . '"', $guest);
 
-        $this->actingAs(User::factory()->create());
+        $this->actingAs($this->createCustomer()->user);
         $signedIn = (string) view('errors.403')->render();
         $this->assertStringContainsString('data-error-code="403"', $signedIn);
         $this->assertStringContainsString('Go to ', $signedIn);
@@ -165,7 +170,7 @@ class UnifiedErrorPagesTest extends TestCase
 
     public function test_a_signed_in_user_without_permission_cannot_open_the_platform_owner_area(): void
     {
-        $user = User::factory()->create();
+        $user = $this->createCustomer()->user;
         $status = $this->actingAs($user)->get('/admin/platform-owner')->getStatusCode();
 
         $this->assertContains($status, [401, 403, 404, 302], 'A user without the permission must stay denied.');
@@ -174,7 +179,7 @@ class UnifiedErrorPagesTest extends TestCase
 
     public function test_logout_is_post_only_and_a_get_changes_nothing(): void
     {
-        $user = User::factory()->create();
+        $user = $this->createCustomer()->user;
 
         $this->actingAs($user)->get(route('logout'))->assertNotFound();
         $this->assertAuthenticatedAs($user);

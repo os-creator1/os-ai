@@ -82,7 +82,7 @@
                 return response()->json([
                     'status'  => 'error',
                     'message' => $status === null ? $this->unexpectedErrorMessage($exception) : $exception->getMessage(),
-                ], $status ?? Response::HTTP_INTERNAL_SERVER_ERROR);
+                ], $status ?? Response::HTTP_INTERNAL_SERVER_ERROR, $this->safeJsonHeaders($exception));
             }
 
             if (config('app.env') != 'local') {
@@ -260,6 +260,29 @@
             return __('locale.exceptions.something_went_wrong');
         }
 
+
+        /**
+         * Protocol headers an HTTP exception carries that a JSON client needs (Retry-After, X-RateLimit-*,
+         * Allow, WWW-Authenticate). Only those: nothing else an exception carries is forwarded.
+         *
+         * @return array<string, string>
+         */
+        private function safeJsonHeaders(Throwable $exception): array
+        {
+            $prepared = $this->prepareException($this->mapException($exception));
+
+            if (! $prepared instanceof HttpExceptionInterface) {
+                return [];
+            }
+
+            return array_filter(
+                $prepared->getHeaders(),
+                static fn ($value, $name) => is_string($name)
+                    && preg_match('/^(retry-after|x-ratelimit-[a-z-]+|allow|www-authenticate)$/i', $name) === 1
+                    && is_scalar($value),
+                ARRAY_FILTER_USE_BOTH
+            );
+        }
 
         /**
          * Render the unified error page for a status, never throwing.

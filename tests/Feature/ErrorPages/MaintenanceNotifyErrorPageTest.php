@@ -27,7 +27,7 @@ class MaintenanceNotifyErrorPageTest extends TestCase
         // Laravel skips CSRF verification under unit tests; switch it back ON for this class so a token
         // that is not valid for the visitor's session is actually refused. CSRF is never disabled.
         $this->app->bind(VerifyCsrfToken::class, fn ($app) => new class($app, $app['encrypter']) extends VerifyCsrfToken {
-            protected function runningUnitTests()
+            protected function runningUnitTests(): bool
             {
                 return false;
             }

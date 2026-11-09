@@ -67,21 +67,34 @@ class ErrorPageSecurityAndBrandingTest extends TestCase
 
         foreach (['/__branded/404', '/__branded/500'] as $url) {
             $body = (string) $this->get($url)->getContent();
+            $logo = $this->logoMarkup($body);
 
-            $this->assertStringContainsString('data-role="agency-brand-mark"', $body, $url);
-            $this->assertStringContainsString('Northwind Digital', $body, $url);
-            $this->assertStringContainsString('background-color:#1a73e8', $body, $url);
+            $this->assertMatchesRegularExpression('/<span[^>]*data-role="agency-brand-mark"/', $logo, $url);
+            $this->assertStringContainsString('Northwind Digital', $logo, $url);
+            $this->assertStringContainsString('background-color:#1a73e8', $logo, $url);
             $this->assertStringNotContainsString('SECRET-BRAND-MESSAGE', $body);
         }
 
-        // A signed-out visitor, and an unrelated customer, get the platform brand.
+        // A signed-out visitor gets the platform brand, never another customer's Agency brand. Only the rendered
+        // logo markup is inspected: the shared stylesheet legitimately names the agency-mark selector.
         auth()->logout();
         $this->flushSession();
         app(RequestScopedCache::class)->flush();
         $guest = (string) $this->get('/__branded/404')->getContent();
-        $this->assertStringNotContainsString('Northwind Digital', $guest);
-        $this->assertStringNotContainsString('agency-brand-mark', $guest);
-        $this->assertStringContainsString('class="eb-logo"', $guest);
+        $guestLogo = $this->logoMarkup($guest);
+
+        $this->assertStringNotContainsString('Northwind', $guest);
+        $this->assertDoesNotMatchRegularExpression('/<[a-z]+[^>]*data-role="agency-brand-mark"/', $guestLogo);
+        $this->assertStringContainsString(config('app.name'), $guestLogo . $guest);
+        $this->assertMatchesRegularExpression('/<img |<span/', $guestLogo, 'The platform logo or text mark renders.');
+    }
+
+    /** The markup inside the header logo link, i.e. what is actually rendered as the brand. */
+    private function logoMarkup(string $html): string
+    {
+        $this->assertSame(1, preg_match('#<a class="eb-logo"[^>]*>(.*?)</a>#s', $html, $m), 'The logo link renders.');
+
+        return $m[1];
     }
 
     // ------------------------------------------------- cross-Business denial
@@ -123,7 +136,7 @@ class ErrorPageSecurityAndBrandingTest extends TestCase
 
     public function test_logout_requires_post_and_a_get_never_logs_out(): void
     {
-        $user = User::factory()->create();
+        $user = $this->createCustomer()->user;
 
         $this->actingAs($user)->get(route('logout'))->assertNotFound();
         $this->assertAuthenticatedAs($user);
@@ -134,8 +147,8 @@ class ErrorPageSecurityAndBrandingTest extends TestCase
 
     public function test_impersonation_exit_is_post_only(): void
     {
-        $admin = User::factory()->create(['is_admin' => true]);
-        $target = User::factory()->create();
+        $admin = User::findOrFail($this->platformAdminId());
+        $target = $this->createCustomer()->user;
 
         $this->withSession(['admin_user_id' => $admin->id, 'admin_user_name' => 'Admin'])->actingAs($target);
 
@@ -172,7 +185,7 @@ class ErrorPageSecurityAndBrandingTest extends TestCase
         }
 
         // Signed in: /login hands off to the user's home, never to itself.
-        $this->actingAs(User::factory()->create());
+        $this->actingAs($this->createCustomer()->user);
         $login = $this->get(route('login'));
         $login->assertRedirect();
         $this->assertNotSame(route('login'), $login->headers->get('Location'));
