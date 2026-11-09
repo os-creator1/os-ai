@@ -25,10 +25,14 @@
         $agencyChrome = null;
         $agencyThemeStyle = null;
     }
-    // The maintenance notification form (POST + CSRF to maintenance.notify). Never shown unless the caller says the
-    // feature is available, the route exists and a CSRF token can actually be issued.
+    // Maintenance notification: 'form' (a live response: POST + CSRF to maintenance.notify with the visitor's own
+    // session token) or 'link' (the prerendered page: a plain link to the live form). Never shown otherwise.
     $notifyToken = '';
-    if ($notify && (int) $code === 503 && \Illuminate\Support\Facades\Route::has('maintenance.notify')) {
+    $notifyLink = null;
+    if ($notify === 'link' && (int) $code === 503 && \Illuminate\Support\Facades\Route::has('maintenance.notify.form')) {
+        $notifyLink = route('maintenance.notify.form');
+    }
+    if ($notify === 'form' && (int) $code === 503 && \Illuminate\Support\Facades\Route::has('maintenance.notify')) {
         try {
             $notifyToken = (string) csrf_token();
         } catch (\Throwable) {
@@ -103,6 +107,9 @@
         <h1 class="eb-title">{{ $page['title'] }}</h1>
         <p class="eb-desc">{{ $page['description'] }}</p>
 
+        @if($notifyLink)
+            <p class="eb-desc" style="margin-bottom:1rem"><a data-role="maintenance-notify-link" href="{{ $notifyLink }}">{{ __('locale.error_pages.notify_button') }}</a></p>
+        @endif
         @if($showNotify)
             @if(request('notified'))
                 <p class="eb-notified" role="status" data-role="maintenance-notified">{{ __('locale.http.503.notify') }}</p>

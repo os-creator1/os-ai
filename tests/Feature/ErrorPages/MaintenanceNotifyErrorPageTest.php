@@ -2,19 +2,37 @@
 
 namespace Tests\Feature\ErrorPages;
 
+use App\Http\Middleware\VerifyCsrfToken;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
 use Tests\TestCase;
 
 /**
- * The compact 503 page keeps the maintenance "notify me" form: POST + CSRF to
- * maintenance.notify, the existing confirmation, and no form where the
- * endpoint cannot accept it.
+ * The maintenance "notify me" flow, exercised through a REAL maintenance mode
+ * (artisan down --render) with CSRF verification genuinely enforced.
+ *
+ * The prerendered page is produced by the CLI outside any visitor session, so
+ * it cannot carry a valid CSRF token. It links to a live, session-backed form
+ * (maintenance.notify.form) whose token the POST accepts.
  */
 class MaintenanceNotifyErrorPageTest extends TestCase
 {
     use RefreshDatabase;
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+
+        // Laravel skips CSRF verification under unit tests; switch it back ON for this class so a token
+        // that is not valid for the visitor's session is actually refused. CSRF is never disabled.
+        $this->app->bind(VerifyCsrfToken::class, fn ($app) => new class($app, $app['encrypter']) extends VerifyCsrfToken {
+            protected function runningUnitTests()
+            {
+                return false;
+            }
+        });
+    }
 
     protected function tearDown(): void
     {
@@ -22,57 +40,94 @@ class MaintenanceNotifyErrorPageTest extends TestCase
         parent::tearDown();
     }
 
-    public function test_the_prerendered_maintenance_page_offers_the_csrf_protected_post_form(): void
+    private function goDown(): void
     {
-        $html = (string) view('errors.503', ['retryAfter' => 60])->render();
-
-        $this->assertStringContainsString('data-role="maintenance-notify-form"', $html);
-        $this->assertStringContainsString('method="POST"', $html);
-        $this->assertStringContainsString('action="' . route('maintenance.notify') . '"', $html);
-        $this->assertMatchesRegularExpression('/name="_token" value="[^"]+"/', $html);
-        $this->assertStringContainsString('type="email" name="email"', $html);
-        $this->assertStringContainsString('Temporarily unavailable', $html);
-        $this->assertStringNotContainsString('misc-wrapper', $html);
-        $this->assertStringNotContainsString('under-maintenance', $html);
-        $this->assertSame(0, preg_match('/<img[^>]+(error|illustration|maintenance)/i', $html));
+        Artisan::call('down', ['--render' => 'errors.503', '--retry' => 60]);
     }
 
-    public function test_no_form_is_shown_when_the_application_is_not_in_maintenance(): void
+    /** @return array<string, string> the session cookie of a response, ready to replay on the next request */
+    private function cookiesOf($response): array
     {
-        $html = (string) view('errors.503')->render();
+        $cookies = [];
+        foreach ($response->headers->getCookies() as $cookie) {
+            $cookies[$cookie->getName()] = $cookie->getValue();
+        }
 
-        $this->assertStringContainsString('Temporarily unavailable', $html);
-        $this->assertStringNotContainsString('maintenance-notify-form', $html);
-        $this->assertStringNotContainsString('maintenance/notify', $html);
+        return $cookies;
     }
 
-    public function test_the_form_is_shown_while_maintenance_is_active_and_the_confirmation_keeps_working(): void
+    public function test_the_prerendered_page_links_to_the_live_form_and_embeds_no_token(): void
     {
-        Artisan::call('down');
+        $this->goDown();
 
-        $html = (string) view('errors.503')->render();
-        $this->assertStringContainsString('data-role="maintenance-notify-form"', $html);
+        $page = $this->get('/some/page');
 
+        $page->assertStatus(503)
+            ->assertSee('Temporarily unavailable')
+            ->assertSee('data-role="maintenance-notify-link"', false)
+            ->assertSee(route('maintenance.notify.form'), false)
+            ->assertDontSee('name="_token"', false)
+            ->assertDontSee('<form', false)
+            ->assertDontSee('misc-wrapper', false);
     }
 
-    public function test_the_confirmation_message_renders_with_the_notified_flag(): void
+    public function test_the_live_form_submits_successfully_during_maintenance(): void
     {
-        $this->app['request']->merge(['notified' => '1']);
+        $this->goDown();
 
-        $html = (string) view('errors.503', ['retryAfter' => 60])->render();
+        $form = $this->get(route('maintenance.notify.form'));
+        $form->assertStatus(503)
+            ->assertHeader('Retry-After', '60')
+            ->assertSee('data-role="maintenance-notify-form"', false)
+            ->assertSee('action="' . route('maintenance.notify') . '"', false);
 
-        $this->assertStringContainsString('data-role="maintenance-notified"', $html);
-        $this->assertStringContainsString('You will be notified when we are back online.', $html);
+        preg_match('/name="_token" value="([^"]+)"/', $form->getContent(), $m);
+        $this->assertNotEmpty($m[1] ?? null, 'The live form must carry a session token.');
+
+        $response = $this->call('POST', route('maintenance.notify'), ['_token' => $m[1], 'email' => 'visitor@example.com'], $this->cookiesOf($form));
+
+        $response->assertRedirect('/?notified=1');
+        $this->assertSame(1, DB::table('maintenance_notifications')->where('email', 'visitor@example.com')->count());
     }
 
-    public function test_the_notify_endpoint_still_refuses_outside_maintenance_and_stores_inside_it(): void
+    public function test_csrf_is_still_enforced_a_post_without_a_valid_token_is_refused(): void
     {
-        $this->post(route('maintenance.notify'), ['email' => 'a@example.com'])->assertNotFound();
+        $this->goDown();
+
+        $this->post(route('maintenance.notify'), ['email' => 'attacker@example.com'])->assertStatus(419);
+        $this->post(route('maintenance.notify'), ['_token' => 'not-a-real-token', 'email' => 'attacker@example.com'])->assertStatus(419);
+
         $this->assertSame(0, DB::table('maintenance_notifications')->count());
+    }
 
-        Artisan::call('down');
+    public function test_validation_is_preserved(): void
+    {
+        $this->goDown();
 
-        $this->post(route('maintenance.notify'), ['email' => 'a@example.com'])->assertRedirect('/?notified=1');
-        $this->assertSame(1, DB::table('maintenance_notifications')->where('email', 'a@example.com')->count());
+        $form = $this->get(route('maintenance.notify.form'));
+        preg_match('/name="_token" value="([^"]+)"/', $form->getContent(), $m);
+
+        $this->call('POST', route('maintenance.notify'), ['_token' => $m[1], 'email' => 'not-an-email'], $this->cookiesOf($form))
+            ->assertSessionHasErrors('email');
+        $this->assertSame(0, DB::table('maintenance_notifications')->count());
+    }
+
+    public function test_the_confirmation_message_renders_on_the_live_form(): void
+    {
+        $this->goDown();
+
+        $this->get(route('maintenance.notify.form', ['notified' => 1]))
+            ->assertSee('data-role="maintenance-notified"', false)
+            ->assertSee('You will be notified when we are back online.');
+    }
+
+    public function test_nothing_is_offered_and_the_endpoints_refuse_outside_maintenance(): void
+    {
+        $html = (string) view('errors.503')->render();
+        $this->assertStringContainsString('Temporarily unavailable', $html);
+        $this->assertStringNotContainsString('maintenance-notify', $html);
+
+        $this->get(route('maintenance.notify.form'))->assertNotFound();
+        $this->assertSame(0, DB::table('maintenance_notifications')->count());
     }
 }
