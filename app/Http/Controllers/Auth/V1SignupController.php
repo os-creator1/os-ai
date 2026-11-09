@@ -148,6 +148,35 @@ class V1SignupController extends Controller
         return redirect()->route('register.account');
     }
 
+    /**
+     * "Continue with Google" from the signup flow. The plan (and any private offer) stays in the session draft; the callback is the
+     * existing, fixed OAuth redirect URI, told apart only by a server-side session marker, never by anything in the URL.
+     */
+    public function googleRedirect(Request $request): \Symfony\Component\HttpFoundation\RedirectResponse|View|RedirectResponse
+    {
+        if ($redirect = $this->guestGate()) {
+            return $redirect;
+        }
+
+        if (config('app.stage') === 'demo' || ! $this->googleAvailable()) {
+            return redirect()->route('register.account')->with(['status' => 'error', 'message' => __('locale.auth.socialite.unacceptable', ['provider' => 'Google'])]);
+        }
+
+        if ($redirect = $this->requirePlan($this->draft($request))) {
+            return $redirect;
+        }
+
+        $request->session()->put('social_intent', 'signup');
+
+        return \Laravel\Socialite\Facades\Socialite::driver('google')->redirect();
+    }
+
+    /** Google is offered only when it is switched on and configured. */
+    private function googleAvailable(): bool
+    {
+        return (bool) config('services.google.active') && filled(config('services.google.client_id'));
+    }
+
     /** STEP 2 — ACCOUNT. */
     public function accountStep(Request $request): View|RedirectResponse
     {
@@ -161,7 +190,17 @@ class V1SignupController extends Controller
             return $redirect;
         }
 
+        // A Google-verified identity is already the account: nothing to type, no password to choose — unless they ask to use email instead.
+        if ($draft->providerIdentity() !== null) {
+            if (! $request->boolean('manual')) {
+                return redirect()->route('register.business');
+            }
+
+            $draft->forgetAccount();
+        }
+
         return view('auth.signup.account', [
+            'googleAvailable' => $this->googleAvailable(),
             'step' => 2,
             'plan' => $this->planFor($draft),
             'account' => $draft->account() ?? ['email' => $this->draftOffer($draft)?->customer_email],
@@ -343,16 +382,31 @@ class V1SignupController extends Controller
         // link is sent back to the offer, NOT to an undiscounted Checkout.
         $offerToken = $this->draftOffer($draft) !== null ? $draft->offerToken() : null;
 
-        if ($password === null) {
+        $identity = $draft->providerIdentity();
+
+        // A private offer bound to an email only ever proceeds with THAT address, whichever way the account is proved.
+        if ($identity !== null && ! $this->offerAllowsEmail($draft, (string) $account['email'])) {
+            $draft->forgetAccount();
+
+            return redirect()->route('register.account')->withErrors(['email' => __('This offer is for a different email address. Use the email the offer was sent to.')]);
+        }
+
+        // A Google-verified account has no password to choose; a manual one must still have the password it was given.
+        if ($identity === null && $password === null) {
             return redirect()->route('register.account')
                 ->withErrors(['password' => __('Please choose your password again to continue.')]);
         }
 
         // The email was unique when the account step accepted it; it may not
         // be now (another signup, a long-open tab). Refuse before any write.
-        if (User::query()->where('email', $account['email'])->exists()) {
-            return redirect()->route('register.account')
-                ->withErrors(['email' => __('That email address is already registered. Sign in instead, or use a different email.')]);
+        if (User::query()->where('email', $account['email'])->exists()
+            || ($identity !== null && User::query()->where('provider', $identity['provider'])->where('provider_id', $identity['provider_id'])->exists())) {
+            $draft->forget();
+
+            return redirect()->route('login')->with([
+                'status' => 'error',
+                'message' => __('That email address is already registered. Sign in instead, or use a different email.'),
+            ]);
         }
 
         $catalog = WorkspacePlanCatalog::query()->where('tier', (string) $draft->tier())->firstOrFail();
@@ -376,11 +430,23 @@ class V1SignupController extends Controller
             'first_name' => $account['first_name'],
             'last_name' => $account['last_name'] ?? '',
             'email' => $account['email'],
-            'password' => $password,
+            // A Google signup has no password of its own: an unguessable random one is hashed so password login is impossible until the
+            // customer deliberately sets one through the normal password reset.
+            'password' => $identity !== null ? \Illuminate\Support\Str::random(64) : $password,
             'status' => true,
             'phone' => null,
             'is_customer' => true,
         ], true);
+
+        if ($identity !== null) {
+            // The provider vouched for this address (checked server-side before it ever reached the draft).
+            $user->forceFill([
+                'provider' => $identity['provider'],
+                'provider_id' => $identity['provider_id'],
+                'image' => $identity['avatar'],
+                'email_verified_at' => now(),
+            ])->save();
+        }
 
         // The chosen application language (users.locale, the one canonical
         // preference). UserRepository::store() always applies the install
@@ -401,7 +467,9 @@ class V1SignupController extends Controller
         session(['locale' => $user->locale]);
         $request->session()->regenerate();
 
-        $this->sendVerificationEmail($user);
+        if ($identity === null) {
+            $this->sendVerificationEmail($user);
+        }
 
         if ($offerToken !== null) {
             // Account, Workspace and Business exist; NOTHING is bought. The
@@ -721,6 +789,18 @@ class V1SignupController extends Controller
         return $offer;
     }
 
+    /** Whether the draft's private offer (if any) accepts this address: an email-bound offer needs exactly that address. */
+    private function offerAllowsEmail(V1SignupDraft $draft, string $email): bool
+    {
+        $offer = $this->draftOffer($draft);
+
+        if ($offer === null || $offer->customer_email === null) {
+            return true;
+        }
+
+        return hash_equals((string) $offer->customer_email, \App\Library\PlatformBilling\Offers\EmailIdentity::normalize($email));
+    }
+
     private function requirePlan(V1SignupDraft $draft): ?RedirectResponse
     {
         $tier = $draft->tier();
@@ -741,9 +821,7 @@ class V1SignupController extends Controller
 
     private function requireAccount(V1SignupDraft $draft): ?RedirectResponse
     {
-        return $draft->account() === null || $draft->password() === null
-            ? redirect()->route('register.account')
-            : null;
+        return $draft->hasCompleteAccount() ? null : redirect()->route('register.account');
     }
 
     private function requireBusiness(V1SignupDraft $draft): ?RedirectResponse
@@ -754,7 +832,7 @@ class V1SignupController extends Controller
     /** Where a returning visitor with a pinned plan should pick up. */
     private function furthestStepUrl(V1SignupDraft $draft): string
     {
-        if ($draft->account() === null || $draft->password() === null) {
+        if (! $draft->hasCompleteAccount()) {
             return route('register.account');
         }
 

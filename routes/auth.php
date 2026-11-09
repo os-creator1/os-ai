@@ -28,6 +28,7 @@
                 Route::post('register/plan', 'V1SignupController@selectPlan')->name('register.plan.select');
                 Route::get('register/account', 'V1SignupController@accountStep')->name('register.account');
                 Route::post('register/account', 'V1SignupController@storeAccount')->middleware('throttle:10,1')->name('register.account.store');
+                Route::get('register/google', 'V1SignupController@googleRedirect')->middleware('throttle:20,1')->name('register.google');
                 Route::get('register/business', 'V1SignupController@businessStep')->name('register.business');
                 Route::post('register/business', 'V1SignupController@storeBusiness')->name('register.business.store');
                 Route::get('register/payment', 'V1SignupController@paymentStep')->name('register.payment');

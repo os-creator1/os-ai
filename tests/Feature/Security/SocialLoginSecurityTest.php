@@ -109,7 +109,8 @@ class SocialLoginSecurityTest extends TestCase
         $victim = $this->victim(['provider' => 'google', 'provider_id' => 'g-1']);
         $this->provider('google', 'g-1', 'victim@example.test');
 
-        $this->oauthReturn()->assertRedirect(route('user.home'));
+        // This fixture customer has no Workspace/plan, so a completed login resumes the signup/plan process rather than the home screen.
+        $this->oauthReturn()->assertRedirect(route('signup.plan'));
 
         $this->assertAuthenticatedAs($victim);
     }
@@ -119,7 +120,7 @@ class SocialLoginSecurityTest extends TestCase
         $victim = $this->victim();
         $this->provider('google', 'g-1', 'victim@example.test');
 
-        $this->oauthReturn()->assertRedirect(route('user.home'));
+        $this->oauthReturn()->assertRedirect(route('signup.plan'));   // no Workspace yet: resumes signup
 
         $this->assertAuthenticatedAs($victim);
         $this->assertSame('g-1', $victim->fresh()->provider_id);
@@ -151,17 +152,17 @@ class SocialLoginSecurityTest extends TestCase
         $this->assertSame(0, User::where('email', 'new@example.test')->count());
     }
 
-    public function test_a_verified_new_identity_creates_a_verified_customer(): void
+    public function test_a_verified_new_identity_is_carried_into_the_canonical_signup_and_no_account_is_created(): void
     {
         $this->provider('google', 'g-new2', 'fresh@example.test');
 
-        $this->oauthReturn()->assertRedirect(route('user.home'));
+        $this->oauthReturn()->assertRedirect(route('register.plan'));
 
-        $user = User::where('email', 'fresh@example.test')->first();
-        $this->assertNotNull($user);
-        $this->assertNotNull($user->email_verified_at);
-        $this->assertFalse((bool) $user->is_admin);
-        $this->assertAuthenticatedAs($user);
+        // Authentication never bypasses signup and billing: no User exists until the customer commits at checkout.
+        $this->assertSame(0, User::where('email', 'fresh@example.test')->count());
+        $this->assertGuest();
+        $this->assertSame('fresh@example.test', session('v1_signup_draft.account.email'));
+        $this->assertSame('g-new2', session('v1_signup_draft.account.provider_id'));
     }
 
     public function test_unknown_or_unconfigured_providers_are_refused_without_a_server_error(): void

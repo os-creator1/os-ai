@@ -145,11 +145,11 @@
                                 </a>
                             @endif
 
-                            @if(config('services.google.active'))
+                            @if(config('services.google.active') && filled(config('services.google.client_id')))
                                 <a class="btn btn-google" href="{{route('social.login', 'google')}}"
                                    aria-label="{{ __('locale.auth.continue_with', ['provider' => 'Google']) }}"
                                    data-bs-toggle="tooltip" data-bs-placement="top" title="Google">
-                                    <x-ds-icon name="mail" aria-hidden="true" />
+                                    @include('auth.partials._google-mark')
                                 </a>
                             @endif
 
