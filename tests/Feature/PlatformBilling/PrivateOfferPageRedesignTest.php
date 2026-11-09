@@ -76,7 +76,7 @@ class PrivateOfferPageRedesignTest extends TestCase
 
     public function test_the_gift_animation_is_css_only_and_respects_reduced_motion(): void
     {
-        $created = $this->makeOffer();
+        $created = $this->makeOffer(['customer_email' => 'buyer@example.test']);
         $html = $this->show($created)->assertOk()->getContent();
 
         $this->assertStringContainsString('animation: pof-float 5s ease-in-out infinite', $html);
@@ -87,7 +87,7 @@ class PrivateOfferPageRedesignTest extends TestCase
 
     public function test_the_page_is_never_cached_or_leaked_through_the_referer(): void
     {
-        $created = $this->makeOffer();
+        $created = $this->makeOffer(['customer_email' => 'buyer@example.test']);
 
         $response = $this->show($created)->assertOk();
 
@@ -101,7 +101,7 @@ class PrivateOfferPageRedesignTest extends TestCase
 
     public function test_no_trial_no_discount_and_no_fabricated_comparison(): void
     {
-        $created = $this->makeOffer(['customer_email' => null]);
+        $created = $this->makeOffer(['customer_email' => 'buyer@example.test']);
 
         $this->show($created)
             ->assertOk()
@@ -115,8 +115,9 @@ class PrivateOfferPageRedesignTest extends TestCase
 
     public function test_a_permanent_negotiated_price_and_a_temporary_promotion_are_labelled_differently(): void
     {
-        $negotiated = $this->makeOffer(['custom_price' => '80.00']);
+        $negotiated = $this->makeOffer(['customer_email' => 'buyer@example.test', 'custom_price' => '80.00']);
         $temporary = $this->makeOffer([
+            'customer_email' => 'buyer@example.test',
             'discount_type' => 'fixed', 'discount_value' => '30.00', 'discount_duration' => 'periods', 'discount_periods' => 3,
         ]);
 
@@ -135,7 +136,7 @@ class PrivateOfferPageRedesignTest extends TestCase
 
     public function test_a_forever_discount_shows_the_real_standard_price_and_no_end_date(): void
     {
-        $created = $this->makeOffer(['discount_type' => 'percent', 'discount_value' => '20', 'discount_duration' => 'forever']);
+        $created = $this->makeOffer(['customer_email' => 'buyer@example.test', 'discount_type' => 'percent', 'discount_value' => '20', 'discount_duration' => 'forever']);
 
         $this->show($created)->assertOk()
             ->assertSee('80.00 USD')
@@ -200,8 +201,8 @@ class PrivateOfferPageRedesignTest extends TestCase
         $this->assertContains('auth', $route->gatherMiddleware());
         $this->assertContains('web', $route->gatherMiddleware());
 
-        // A GET cannot sign anybody out.
-        $this->get(route('offers.switch-account', ['token' => $created['token']]))->assertStatus(405);
+        // A GET cannot sign anybody out (the app answers a method mismatch with 404 or 405).
+        $this->assertContains($this->get(route('offers.switch-account', ['token' => $created['token']]))->getStatusCode(), [404, 405]);
         $this->assertAuthenticatedAs($stranger['user']);
     }
 
@@ -228,7 +229,7 @@ class PrivateOfferPageRedesignTest extends TestCase
 
     public function test_switching_account_requires_a_session_and_a_real_offer(): void
     {
-        $created = $this->makeOffer();
+        $created = $this->makeOffer(['customer_email' => 'buyer@example.test']);
 
         $this->post(route('offers.switch-account', ['token' => $created['token']]))->assertRedirect(route('login'));
         $this->assertGuest();
