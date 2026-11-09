@@ -188,7 +188,39 @@
         if (first) { first.focus(); }
     }
 
+    // ---- service-area rows: the optional local details belong to ONE place and never travel to another ----
+    // A place's identity is its name with case, spacing and punctuation ignored, city and region kept apart.
+    function areaIdentity(value) {
+        return String(value || '').split(',').map(function (part) {
+            return part.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+        }).join(',').replace(/^,+|,+$/g, '');
+    }
+
+    function areaNameInput(row) {
+        var panel = row.querySelector('[data-area-detail-panel]');
+        var inputs = row.querySelectorAll('input[type="text"]');
+        return panel && inputs.length ? inputs[0] : null;
+    }
+
+    // Empties everything the row's details panel holds, visible and hidden: venues, logistics, ticked photos, the
+    // disabled states, the counter, the "Details added" badge and the JSON the form submits.
+    function resetAreaDetails(row) {
+        var panel = row.querySelector('[data-area-detail-panel]');
+        if (!panel) { return; }
+        panel.querySelectorAll('[data-area-field]').forEach(function (field) { field.value = ''; });
+        panel.querySelectorAll('[data-area-photo]').forEach(function (box) { box.checked = false; box.disabled = false; });
+        var counter = panel.querySelector('[data-area-photo-count]');
+        if (counter) { counter.textContent = '0 of ' + (counter.getAttribute('data-max') || '6') + ' photos selected'; }
+        var hidden = row.querySelector('[data-area-details-json]');
+        if (hidden) { hidden.value = ''; }
+        var badge = panel.querySelector('[data-area-detail-badge]');
+        if (badge) { badge.classList.add('d-none'); }
+        var name = areaNameInput(row);
+        row.setAttribute('data-area-identity', name ? areaIdentity(name.value) : '');
+    }
+
     function clearRow(row) {
+        resetAreaDetails(row);
         row.querySelectorAll('input[type="text"], input[type="number"], textarea').forEach(function (el) { el.value = ''; });
         row.querySelectorAll('select').forEach(function (el) { el.selectedIndex = 0; });
         row.querySelectorAll('[data-image-picker]').forEach(function (box) { setPickerImage(box, '', ''); });
@@ -681,7 +713,8 @@
     function areaSetRows(container, labels) {
         directRows(container).slice(1).forEach(function (row) { row.remove(); });
         var first = directRows(container)[0];
-        if (first) { first.querySelector('input[type="text"]').value = labels[0] || ''; }
+        // The retained first row belongs to a different place now: its old facts must not follow the new label.
+        if (first) { resetAreaDetails(first); first.querySelector('input[type="text"]').value = labels[0] || ''; resetAreaDetails(first); }
         labels.slice(1).forEach(function (label) {
             addRow(container);
             var rows = directRows(container);
@@ -706,7 +739,9 @@
             fresh.forEach(function (label) {
                 var row = blanks.shift();
                 if (!row) { addRow(container); var rows = directRows(container); row = rows[rows.length - 1]; }
+                resetAreaDetails(row);
                 row.querySelector('input[type="text"]').value = label;
+                resetAreaDetails(row);
             });
             reindex(container);
             areaSay(list, 'Added ' + fresh.length + ' suggestion' + (fresh.length === 1 ? '' : 's') + ' \u2014 review them below.');
@@ -1170,6 +1205,19 @@
                 if (panel) { syncAreaDetails(panel, event); }
             }, true);
         });
+
+        // The row's details were confirmed for the place named when they were entered. If the owner changes WHICH place the
+        // row names (not merely its case, spacing or punctuation) the old details are dropped, never re-attributed.
+        root.addEventListener('focusin', function (event) {
+            var row = event.target.closest && event.target.closest('[data-row]');
+            var name = row && areaNameInput(row);
+            if (name && event.target === name && !row.hasAttribute('data-area-identity')) { row.setAttribute('data-area-identity', areaIdentity(name.value)); }
+        }, true);
+        root.addEventListener('input', function (event) {
+            var row = event.target.closest && event.target.closest('[data-row]');
+            var name = row && areaNameInput(row);
+            if (name && event.target === name && areaIdentity(name.value) !== row.getAttribute('data-area-identity')) { resetAreaDetails(row); }
+        }, true);
 
         // ---- wiring (delegated on the persistent root; survives swaps) ----
         root.addEventListener('input', function (event) {
