@@ -83,7 +83,7 @@
             @endif
             <a class="pof-btn pof-btn-secondary" href="{{ \App\Helpers\Helper::home_route() }}" data-role="offer-go-dashboard">{{ __('Go to my dashboard') }}</a>
         </div>
-        <p class="pof-small">{{ __('Can't find the right email? Ask the person who sent you the offer.') }}</p>
+        <p class="pof-small">{{ __("Can't find the right email? Ask the person who sent you the offer.") }}</p>
 
     @elseif ($state === 'needs_verification')
         <p class="pof-lead" data-role="offer-needs-verification">{{ __('This offer was made for your email address. Please verify it first — we sent you a verification email when you signed up.') }}</p>
