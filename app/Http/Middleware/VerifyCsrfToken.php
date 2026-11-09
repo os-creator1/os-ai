@@ -33,7 +33,6 @@
             // URL-embedded HMAC token (ExternalCalendarWebhookToken),
             // verified in-controller before anything else.
             'webhooks/calendar/*',
-            'maintenance/notify',
             'stripe/webhook/usage-billing',
             // Implementation Contract 17 §5.8 — money lane B's own Connect
             // webhook. Exempt because Stripe signs the raw body; that

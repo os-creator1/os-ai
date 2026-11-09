@@ -27,7 +27,10 @@
     @elseif ($state === 'not_for_you')
         <p data-role="offer-not-for-you">{{ $view['message'] ?? __('This offer was not made for this account.') }}</p>
         <p class="text-muted small">{{ __('Sign in with the account the offer was sent to to continue.') }}</p>
-        <a class="btn btn-outline-primary w-100" href="{{ route('logout') }}">{{ __('Sign out') }}</a>
+        <form method="POST" action="{{ route('logout') }}">
+            @csrf
+            <button type="submit" class="btn btn-outline-primary w-100">{{ __('Sign out') }}</button>
+        </form>
 
     @elseif ($state === 'needs_verification')
         <p data-role="offer-needs-verification">{{ __('This offer was made for your email address. Please verify it first — we sent you a verification email when you signed up.') }}</p>
