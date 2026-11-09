@@ -14,6 +14,7 @@ use App\Exceptions\Workspace\BusinessWorkspaceMismatchException;
 use App\Exceptions\Workspace\WorkspaceBusinessNotFoundException;
 use App\Library\Entitlement\EntitlementManager;
 use App\Library\GoogleBusinessProfile\GoogleBusinessProfileBindingManager;
+use App\Library\Workspace\WorkspaceManagementAuthority;
 use App\Library\GoogleBusinessProfile\GoogleBusinessProfileCandidateTokenSigner;
 use App\Library\GoogleBusinessProfile\GoogleBusinessProfileConnectionManager;
 use App\Library\GoogleBusinessProfile\GoogleBusinessProfileEnumerator;
@@ -31,6 +32,7 @@ use App\Repositories\Contracts\BusinessGoogleConnectionRepository;
 use App\Repositories\Contracts\CustomerOnboardingRepository;
 use Illuminate\Contracts\Encryption\DecryptException;
 use Illuminate\Support\Facades\Crypt;
+use Illuminate\Support\Facades\Gate;
 
 /**
  * The narrowly authorized bridge between customer onboarding (which works on a
@@ -72,6 +74,7 @@ final class GoogleOnboardingBridge
         private readonly BusinessGoogleConnectionRepository $connectionRepository,
         private readonly CustomerOnboardingRepository $onboardingRepository,
         private readonly GoogleBusinessProfileBindingManager $bindings,
+        private readonly WorkspaceManagementAuthority $authority,
         private readonly EntitlementManager $entitlements,
     ) {
     }
@@ -86,6 +89,89 @@ final class GoogleOnboardingBridge
         }
 
         return true;
+    }
+
+    /**
+     * May this user connect Google for THIS onboarding?
+     *
+     * The global default of manage_google_business_profile stays FALSE, so a fresh signup does not hold it. The
+     * Workspace OWNER of the onboarding's own Workspace is nonetheless authorized — through the same
+     * WorkspaceManagementAuthority rule Google Ads and Meta Ads already use (active Workspace owner, or the explicit
+     * permission) — and only here, in the onboarding bridge: the Active-Business GBP module keeps its permission gate.
+     * Non-owners still need the explicit permission; a View-As session authorizes nothing; entitlement, Draft
+     * ownership, OAuth actor binding and the callback chain are checked separately and unchanged.
+     */
+    public function mayManageGoogle(User $actor, CustomerOnboarding $onboarding): bool
+    {
+        $workspaceId = $onboarding->business_id !== null
+            ? Business::query()->whereKey($onboarding->business_id)->value('workspace_id')
+            : $this->onboarding->provisionedDraftFor($actor->customer ?? new Customer(['user_id' => $actor->id]))?->workspace_id;
+
+        $workspace = $workspaceId !== null
+            ? Workspace::query()->find($workspaceId)
+            : Workspace::query()->where('owner_user_id', $actor->id)->where('is_active', true)->orderBy('id')->first();
+
+        if ($workspace === null) {
+            return Gate::forUser($actor)->allows('manage_google_business_profile');
+        }
+
+        return $this->authority->allows($actor, $workspace, 'manage_google_business_profile');
+    }
+
+    /**
+     * WHY the Google quick start is, or is not, offered to this customer — as a CLOSED reason code, never a value.
+     * Used by the entry point and by the operator diagnostic, so the two can never disagree. The order is the order
+     * the checks matter in. Nothing here reads, returns or logs a credential, token or configured value.
+     *
+     * @param  bool  $mayManageGoogle  whether the customer holds manage_google_business_profile (the caller's Gate)
+     * @return array{available: bool, reason: string}
+     */
+    public function availability(Customer $customer, CustomerOnboarding $onboarding, bool $mayManageGoogle): array
+    {
+        try {
+            $this->oauthConfig->assertUsable();
+        } catch (GoogleBusinessProfileConfigurationException $exception) {
+            return ['available' => false, 'reason' => 'oauth_' . $exception->reason];
+        }
+
+        if (! $mayManageGoogle) {
+            return ['available' => false, 'reason' => 'permission_manage_google_business_profile_missing'];
+        }
+
+        if ($onboarding->status === OnboardingStatus::Completed) {
+            return ['available' => false, 'reason' => 'onboarding_completed'];
+        }
+
+        if ($onboarding->business_id !== null) {
+            $business = Business::query()->find($onboarding->business_id);
+
+            if ($business === null || (int) $business->customer_id !== (int) $customer->user_id) {
+                return ['available' => false, 'reason' => 'business_not_owned_by_customer'];
+            }
+
+            if ($business->status !== BusinessStatus::Draft) {
+                return ['available' => false, 'reason' => 'business_not_draft'];
+            }
+
+            return $this->entitlementAvailability($business, (int) $customer->user_id);
+        }
+
+        // Nothing attached yet: a Draft Business a signup provisioned is adopted, so judge THAT one.
+        $draft = $this->onboarding->provisionedDraftFor($customer);
+
+        return $draft === null ? ['available' => true, 'reason' => 'available_business_created_on_connect'] : $this->entitlementAvailability($draft, (int) $customer->user_id);
+    }
+
+    /** @return array{available: bool, reason: string} */
+    private function entitlementAvailability(Business $business, int $actorUserId): array
+    {
+        try {
+            $this->assertEntitled($business, $actorUserId);
+        } catch (GoogleOnboardingUnavailableException $exception) {
+            return ['available' => false, 'reason' => $exception->reasonCode];
+        }
+
+        return ['available' => true, 'reason' => 'available'];
     }
 
     /** The Draft Business attached to this unfinished onboarding, if any. */

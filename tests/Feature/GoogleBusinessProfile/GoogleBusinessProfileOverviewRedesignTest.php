@@ -159,7 +159,10 @@ class GoogleBusinessProfileOverviewRedesignTest extends TestCase
     {
         [$customer, $business, $workspace] = $this->entitledTenant();
         $this->bound($business, $this->mirror());
-        $this->authenticateAsCustomer($customer, ['view_google_business_profile']);
+        // A NON-owner member holding only the view permission (the Workspace owner manages without it).
+        $viewer = $this->createCustomer()->user;
+        $this->addMember($workspace, $viewer, \App\Enums\Workspace\WorkspaceMembershipRole::Admin);
+        $this->authenticateAsUser($viewer, ['view_google_business_profile']);
 
         $response = $this->overview($workspace, $business)->assertOk();
 

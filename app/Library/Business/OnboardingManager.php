@@ -425,6 +425,12 @@ class OnboardingManager
         }, self::TRANSACTION_ATTEMPTS);
     }
 
+    /** The one Draft Business a signup provisioned for this customer (see provisionedDraftBusinessFor()), if any. */
+    public function provisionedDraftFor(Customer $customer): ?Business
+    {
+        return $this->provisionedDraftBusinessFor($customer);
+    }
+
     /**
      * Whether there is already a Draft Business the Google quick start can continue (attached, or provisioned by a
      * paid signup). When there is not, the customer must choose their country, timezone and currency explicitly.

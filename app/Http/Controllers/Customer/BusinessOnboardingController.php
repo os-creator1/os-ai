@@ -23,7 +23,6 @@ use Illuminate\Contracts\View\View;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
-use Illuminate\Support\Facades\Gate;
 use InvalidArgumentException;
 
 /**
@@ -94,26 +93,38 @@ class BusinessOnboardingController extends CustomerBaseController
     }
 
     /**
-     * Whether, and how, the first screen offers "Connect Google Business Profile" ahead of the manual form: only on
-     * the Business step, only for a customer who has not stated their own business yet, only where Google can
-     * actually be connected and the customer may manage it, and never while the manual form is being corrected
-     * (explicitly chosen, or re-shown after a failed save). Manual setup is always reachable.
+     * Whether, and how, the Business step offers "Connect Google Business Profile".
      *
-     * @return array{needsLocale: bool}|null
+     * Offered only where GoogleOnboardingBridge::availability() says it can actually work (Google configured, the
+     * customer may manage it, a Draft Business that is theirs and entitled) and never once the customer chose
+     * "Set up manually". For a customer who ALREADY has their own Draft Business (a paid signup provisions one) the
+     * option appears ABOVE the existing manual form, which stays in place with its saved answers untouched: nothing
+     * is overwritten until they review and confirm the imported card. For a customer with nothing yet, it replaces
+     * the empty form (re-shown with the form after a failed save). Manual setup is always reachable.
+     *
+     * @return array{needsLocale: bool, withManualForm: bool}|null
      */
     private function googleStart(Request $request, CustomerOnboarding $onboarding): ?array
     {
-        $bridge = app(GoogleOnboardingBridge::class);
-
-        if ($request->boolean('manual')
-            || $request->session()->hasOldInput()
-            || (! $this->onboarding->isProvisionalBusiness($onboarding) && $onboarding->business_id !== null)
-            || ! $bridge->isConfigured()
-            || Gate::denies('manage_google_business_profile')) {
+        if ($request->boolean('manual')) {
             return null;
         }
 
-        return ['needsLocale' => ! $this->onboarding->hasDraftBusinessToContinue($this->customer(), $onboarding)];
+        $customer = $this->customer();
+        $availability = ($bridge = app(GoogleOnboardingBridge::class))->availability($customer, $onboarding, $bridge->mayManageGoogle(Auth::user(), $onboarding));
+
+        if (! $availability['available']) {
+            return null;
+        }
+
+        $ownDraft = ! $this->onboarding->isProvisionalBusiness($onboarding)
+            && $this->onboarding->hasDraftBusinessToContinue($customer, $onboarding);
+
+        if (! $ownDraft && $request->session()->hasOldInput()) {
+            return null;
+        }
+
+        return ['needsLocale' => ! $this->onboarding->hasDraftBusinessToContinue($customer, $onboarding), 'withManualForm' => $ownDraft];
     }
 
     public function storeBusiness(OnboardingBusinessRequest $request): RedirectResponse

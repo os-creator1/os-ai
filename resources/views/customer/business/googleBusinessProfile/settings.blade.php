@@ -92,13 +92,13 @@
                     <a class="btn btn-outline-primary" href="{{ $item['comparisonUrl'] }}">View comparison</a>
                 @endif
 
-                @can('manage_google_business_profile')
+                @if (! empty($canManageGoogle))
                     <form method="POST" action="{{ route('customer.workspaces.businesses.gbp.unbind', [$workspaceUid, $businessUid]) }}">
                         @csrf
                         <input type="hidden" name="binding_uid" value="{{ $binding->uid }}">
                         <button type="submit" class="btn btn-outline-secondary">Unlink this location</button>
                     </form>
-                @endcan
+                @endif
             </div>
         </x-card>
     @endforeach
@@ -111,14 +111,14 @@
                 reconnecting requires going through Google's permission screen again. You can also remove this platform's access
                 from your Google Account settings.
             </p>
-            @can('manage_google_business_profile')
+            @if (! empty($canManageGoogle))
                 <form method="POST" action="{{ route('customer.workspaces.businesses.gbp.disconnect', [$workspaceUid, $businessUid]) }}">
                     @csrf
                     <button type="submit" class="btn btn-outline-danger">Disconnect Google account</button>
                 </form>
             @else
                 <p class="text-caption mb-0">You do not have permission to manage this connection.</p>
-            @endcan
+            @endif
         </x-card>
     @endif
 

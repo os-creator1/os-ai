@@ -74,7 +74,7 @@
             <h5 class="mb-50">Connect Google Business Profile</h5>
             <p class="mb-2">See how your business appears on Google and compare it with the information stored here.</p>
 
-            @can('manage_google_business_profile')
+            @if (! empty($canManageGoogle))
                 {{-- Item 9: initiation mutates state, so it is a POST. --}}
                 <form method="POST" action="{{ route('customer.workspaces.businesses.gbp.connect', [$workspaceUid, $businessUid]) }}">
                     @csrf
@@ -84,7 +84,7 @@
                 {{-- Contract §25 — permission denial is communicated,
                      not hidden behind a broken control. --}}
                 <p class="text-caption mb-0">You do not have permission to manage this connection.</p>
-            @endcan
+            @endif
 
             <p class="text-caption mt-2 mb-50">We only read your profile. Nothing on Google changes without your action.</p>
 
@@ -107,12 +107,12 @@
             <div class="gbp-connect-icon"><x-ds-icon name="alert-triangle" size="28" /></div>
             <h5 class="mb-50">Reconnect Google</h5>
             <p class="text-muted mb-2">Google access has expired or was removed. Your linked location is kept.</p>
-            @can('manage_google_business_profile')
+            @if (! empty($canManageGoogle))
                 <form method="POST" action="{{ route('customer.workspaces.businesses.gbp.connect', [$workspaceUid, $businessUid]) }}">
                     @csrf
                     <button type="submit" class="btn btn-primary">Reconnect Google</button>
                 </form>
-            @endcan
+            @endif
         </x-card>
     @endif
 
@@ -123,11 +123,11 @@
                 <div class="gbp-connect-icon"><x-ds-icon name="link" size="28" /></div>
                 <h5 class="mb-50">Choose your Google location</h5>
                 <p class="text-muted mb-2">Pick the Google listing that matches this business.</p>
-                @can('manage_google_business_profile')
+                @if (! empty($canManageGoogle))
                     <a class="btn btn-primary" href="{{ route('customer.workspaces.businesses.gbp.locations', [$workspaceUid, $businessUid]) }}">
                         Choose location
                     </a>
-                @endcan
+                @endif
             </x-card>
         @else
             {{-- Contract §25.5 — connected and bound. EVERY binding this
@@ -283,7 +283,7 @@
             @endforeach
 
             <div class="d-flex gap-1 flex-wrap">
-                @can('manage_google_business_profile')
+                @if (! empty($canManageGoogle))
                     <form method="POST" action="{{ route('customer.workspaces.businesses.gbp.refresh', [$workspaceUid, $businessUid]) }}">
                         @csrf
                         <button type="submit" class="btn btn-outline-primary">
@@ -293,7 +293,7 @@
                     <a class="btn btn-outline-primary" href="{{ route('customer.workspaces.businesses.gbp.locations', [$workspaceUid, $businessUid]) }}">
                         Link another location
                     </a>
-                @endcan
+                @endif
             </div>
         @endif
     @endif

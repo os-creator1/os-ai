@@ -21,6 +21,7 @@ use App\Models\Business;
 use App\Models\BusinessGoogleConnection;
 use App\Models\Customer;
 use App\Models\CustomerOnboarding;
+use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Contracts\View\View;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -56,7 +57,7 @@ class GoogleOnboardingController extends CustomerBaseController
     /** Authorization finished (or "Choose another profile"): the profiles this Google account manages. */
     public function show(): View|RedirectResponse
     {
-        $this->authorize('manage_google_business_profile');
+        $this->authorizeGoogle();
 
         [$onboarding, $customer, $business, $connection] = $this->context();
 
@@ -85,7 +86,7 @@ class GoogleOnboardingController extends CustomerBaseController
     /** "Connect Google Business Profile". */
     public function connect(GoogleOnboardingStartRequest $request): RedirectResponse
     {
-        $this->authorize('manage_google_business_profile');
+        $this->authorizeGoogle();
 
         $customer = $this->customer();
         $onboarding = $this->onboarding->start($customer);
@@ -127,7 +128,7 @@ class GoogleOnboardingController extends CustomerBaseController
     /** The customer explicitly chose one profile. Read it (read-only, nothing persisted) and show the card. */
     public function select(Request $request): RedirectResponse
     {
-        $this->authorize('manage_google_business_profile');
+        $this->authorizeGoogle();
 
         $token = $request->validate(['candidate_token' => ['required', 'string', 'max:2000']])['candidate_token'];
 
@@ -156,7 +157,7 @@ class GoogleOnboardingController extends CustomerBaseController
     /** The editable business listing card. */
     public function review(Request $request): View|RedirectResponse
     {
-        $this->authorize('manage_google_business_profile');
+        $this->authorizeGoogle();
 
         [$onboarding, $customer, $business, $connection] = $this->context();
 
@@ -181,7 +182,7 @@ class GoogleOnboardingController extends CustomerBaseController
     /** The customer approved the card: save it through the canonical onboarding services. */
     public function confirm(GoogleOnboardingConfirmRequest $request): RedirectResponse
     {
-        $this->authorize('manage_google_business_profile');
+        $this->authorizeGoogle();
 
         [$onboarding, $customer, $business, $connection] = $this->context();
 
@@ -228,7 +229,7 @@ class GoogleOnboardingController extends CustomerBaseController
     /** "Retry linking": links the profile the customer already chose, without choosing or typing again. */
     public function link(): RedirectResponse
     {
-        $this->authorize('manage_google_business_profile');
+        $this->authorizeGoogle();
 
         [$onboarding, $customer] = $this->context();
 
@@ -255,7 +256,7 @@ class GoogleOnboardingController extends CustomerBaseController
     /** "Use a different Google account": destroy this connection's stored authorization, then start over. */
     public function reset(Request $request): RedirectResponse
     {
-        $this->authorize('manage_google_business_profile');
+        $this->authorizeGoogle();
 
         [, $customer, $business] = $this->context();
 
@@ -328,6 +329,16 @@ class GoogleOnboardingController extends CustomerBaseController
         $redirect = redirect()->route('customer.onboarding.show');
 
         return $message === null ? $redirect : $redirect->withErrors(['onboarding' => $message]);
+    }
+
+    /** Workspace owner (or explicit permission) — see GoogleOnboardingBridge::mayManageGoogle(). Same 401 as any denial. */
+    private function authorizeGoogle(): void
+    {
+        $customer = $this->customer();
+
+        if (! $this->bridge->mayManageGoogle(Auth::user(), $this->onboarding->start($customer))) {
+            throw new AuthorizationException();
+        }
     }
 
     private function customer(): Customer

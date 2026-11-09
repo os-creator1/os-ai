@@ -28,6 +28,9 @@ on:
       - 'app/Http/Requests/Business/GoogleOnboarding*Request.php'
       - 'routes/customer.php'
       - 'tests/Feature/Business/GoogleQuickOnboardingTest.php'
+      - 'tests/Feature/Business/GoogleOnboardingEntryTest.php'
+      - 'app/Console/Commands/DiagnoseGoogleOnboardingEntry.php'
+      - 'app/Exceptions/Business/GoogleOnboardingUnavailableException.php'
       - 'app/Library/Assistant/**'
       - 'resources/views/offers/**'
       - 'app/Http/Controllers/Auth/PrivateOfferController.php'
@@ -176,6 +179,7 @@ jobs:
         run: >-
           php artisan test
           tests/Feature/Business/GoogleQuickOnboardingTest.php
+          tests/Feature/Business/GoogleOnboardingEntryTest.php
           tests/Feature/DesignSystem/BusinessOnboardingExistingBehaviorPreservedTest.php
           tests/Feature/GoogleBusinessProfile/GoogleBusinessProfileOAuthTest.php
           tests/Feature/GoogleBusinessProfile/GoogleBusinessProfileReadOnlyTest.php
