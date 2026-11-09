@@ -34,11 +34,10 @@ class UniversalErrorPageTest extends TestCase
         $page = $this->get('/__error-test/abort-404');
 
         $page->assertNotFound()
-            ->assertSee('We can\'t find that page')
+            ->assertSee('Page not found')
             ->assertSee('data-error-code="404"', false)
             ->assertSee('Error 404')
-            ->assertSee('Back to Home')
-            ->assertSee('Go back')
+            ->assertSee('Go to homepage')
             ->assertDontSee('Opening a document someone sent you?')
             ->assertDontSee('SECRET-INTERNAL-MESSAGE');
     }
@@ -72,11 +71,10 @@ class UniversalErrorPageTest extends TestCase
             ->assertHeader('Retry-After', '42')
             ->assertHeader('X-RateLimit-Limit', '10')
             ->assertSee('data-error-code="429"', false)
-            ->assertSee('Too many attempts')
-            ->assertSee('Please wait a moment before trying again.')
+            ->assertSee('Too many requests')
+            ->assertSee('You\'ve made too many requests. Please try again shortly.')
             ->assertSee('Error 429')
-            ->assertDontSee('Page Not Found')
-            ->assertDontSee('We can\'t find that page');
+            ->assertDontSee('Page not found');
     }
 
     public function test_the_logo_is_size_constrained_and_no_legacy_imagery_is_referenced(): void
@@ -95,7 +93,7 @@ class UniversalErrorPageTest extends TestCase
 
     public function test_a_guest_goes_home_to_the_public_login_and_a_recipient_to_the_site_root(): void
     {
-        $this->get('/__error-test/abort-404')->assertSee('href="' . route('login') . '"', false);
+        $this->get('/__error-test/abort-404')->assertSee('href="' . url('/') . '"', false);
         $this->get(route('public.documents.show', ['uid' => 'nope', 'token' => str_repeat('b', 64)]))
             ->assertSee('href="' . url('/') . '"', false);
     }

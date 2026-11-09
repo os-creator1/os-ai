@@ -86,37 +86,69 @@
             }
 
             if (config('app.env') != 'local') {
+                // Customer-facing HTML errors are ALWAYS the one unified page, built only from
+                // fixed copy keyed by status: the exception message, class and trace never reach it.
+                // Detail stays in the server-side log (report() runs before render()).
+
                 // A missing record is a missing page: it was answered as a 500,
                 // which sent crawlers and monitors a server-fault signal for what
                 // is a plain not-found.
                 if ($exception instanceof ModelNotFoundException) {
-                    return response()->view('errors.404', compact('exception'), 404);
+                    return $this->errorPage(404);
                 }
                 if ($exception instanceof ViewException) {
-                    return response()->view('errors.500', compact('exception'), 500);
+                    return $this->errorPage(500);
                 }
-                if ($exception instanceof AuthenticationException || $exception instanceof AuthorizationException) {
-                    return response()->view('errors.401', compact('exception'), 401);
+
+                // Not signed in: the 401 page with a "Log in" action (no redirect, so no loop).
+                if ($exception instanceof AuthenticationException) {
+                    return $this->errorPage(401);
+                }
+
+                if ($exception instanceof AuthorizationException) {
+                    // A denial that names its own status (e.g. denyAsNotFound) keeps it, so a
+                    // concealing 404 stays a 404. Otherwise this application's long-standing 401
+                    // status is kept; a signed-in user is shown the "no access" copy rather than
+                    // a misleading "please log in".
+                    if ($exception->hasStatus()) {
+                        return $this->errorPage((int) $exception->status());
+                    }
+
+                    return $this->errorPage(401, auth()->check() ? 403 : 401);
                 }
 
                 if ($exception instanceof TokenMismatchException) {
-                    return response()->view('errors.419', compact('exception'), 419);
+                    return $this->errorPage(419);
                 }
 
                 if ($exception instanceof HttpException) {
-                    // A maintenance window is temporary: answering it as a 404
-                    // tells crawlers the customer's pages are gone for good.
-                    if ($exception->getStatusCode() === 503) {
-                        return response()->view('errors.404', compact('exception'), 503, $exception->getHeaders());
+                    $status = $exception->getStatusCode();
+                    $headers = $exception->getHeaders();
+
+                    // A maintenance window is temporary (503, with Retry-After kept);
+                    // a rate-limit rejection stays a 429 with its Retry-After and
+                    // X-RateLimit-* headers.
+                    if (in_array($status, [401, 419, 429, 503], true)) {
+                        return $this->errorPage($status, $status, $headers);
                     }
 
-                    // A rate-limit rejection stays a 429, with its Retry-After and
-                    // X-RateLimit-* headers, rather than being painted as a 404.
-                    if ($exception->getStatusCode() === 429) {
-                        return response()->view('errors.429', compact('exception'), 429, $exception->getHeaders());
+                    // A 5xx is a server fault, not a missing page.
+                    if ($status >= 500) {
+                        return $this->errorPage($status, 500, $headers);
                     }
 
-                    return response()->view('errors.404', compact('exception'), 404);
+                    // Every other client error (including an explicit 403 abort) is answered as a
+                    // 404, so a protected resource is indistinguishable from one that does not exist.
+                    return $this->errorPage(404);
+                }
+
+                // Anything unexpected is a plain 500 page, even if APP_DEBUG was left on.
+                if (! ($exception instanceof ValidationException)
+                    && ! ($exception instanceof HttpResponseException)
+                    && ! ($exception instanceof GeneralException)
+                    && ! method_exists($exception, 'render')
+                    && ! ($this->prepareException($this->mapException($exception)) instanceof HttpExceptionInterface)) {
+                    return $this->errorPage(500);
                 }
             }
 
@@ -228,4 +260,37 @@
             return __('locale.exceptions.something_went_wrong');
         }
 
+
+        /**
+         * Render the unified error page for a status, never throwing.
+         *
+         * @param int      $status  HTTP status sent on the response
+         * @param int|null $display Which page copy to show (defaults to the status)
+         * @param array    $headers Response headers to preserve (Retry-After, X-RateLimit-*)
+         */
+        private function errorPage(int $status, ?int $display = null, array $headers = []): Response
+        {
+            $page = $display ?? $status;
+            if (! in_array($page, [401, 403, 404, 419, 429, 500, 503], true)) {
+                $page = $page >= 500 ? 500 : 404;
+            }
+
+            try {
+                return response()->view('errors.' . $page, [], $status, $headers);
+            } catch (Throwable $e) {
+                try {
+                    report($e);
+                } catch (Throwable) {
+                    // nothing more can be done
+                }
+
+                return response(
+                    '<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="robots" content="noindex"><title>Error</title></head>'
+                    . '<body style="font-family:system-ui,sans-serif;background:#F7F6F2;color:#262522;text-align:center;padding:4rem 1rem"><h1 style="font-size:1.25rem">Something went wrong</h1>'
+                    . '<p>We couldn\'t complete your request. Please try again.</p></body></html>',
+                    $status,
+                    $headers + ['Content-Type' => 'text/html; charset=UTF-8']
+                );
+            }
+        }
     }
