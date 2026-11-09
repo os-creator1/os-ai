@@ -28,6 +28,7 @@ use App\Library\GoogleBusinessProfile\GoogleBusinessProfileOverviewPresenter;
 use App\Library\GoogleBusinessProfile\GoogleBusinessProfileReadMask;
 use App\Library\GoogleBusinessProfile\GoogleOAuthStateSigner;
 use App\Library\Workspace\BusinessRouteAccess;
+use App\Library\Workspace\WorkspaceManagementAuthority;
 use App\Library\Workspace\WorkspaceManager;
 use App\Models\Business;
 use App\Models\BusinessGoogleConnection;
@@ -38,6 +39,7 @@ use App\Repositories\Contracts\BusinessGoogleLocationRepository;
 use App\Repositories\Contracts\BusinessGoogleOperationRepository;
 use App\Repositories\Contracts\WorkspaceRepository;
 use Illuminate\Contracts\Foundation\Application;
+use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Contracts\View\Factory;
 use Illuminate\Contracts\View\View;
 use Illuminate\Http\RedirectResponse;
@@ -187,8 +189,7 @@ class GoogleBusinessProfileController extends CustomerBaseController
      */
     public function connect(string $workspaceUid, string $businessUid): RedirectResponse
     {
-        $this->authorize('manage_google_business_profile');
-        [, $business] = $this->resolveEntitledBusiness($workspaceUid, $businessUid);
+        [, $business] = $this->managed($this->resolveEntitledBusiness($workspaceUid, $businessUid));
 
         if ($demo = $this->demoGuard($workspaceUid, $businessUid)) {
             return $demo;
@@ -336,7 +337,7 @@ class GoogleBusinessProfileController extends CustomerBaseController
         // Active Business keeps the plain permission gate.
         $mayManage = $onboardingBridge
             ? app(GoogleOnboardingBridge::class)->mayManageGoogle(Auth::user(), app(\App\Repositories\Contracts\CustomerOnboardingRepository::class)->findByCustomerId((int) Auth::id()))
-            : Gate::allows('manage_google_business_profile');
+            : app(WorkspaceManagementAuthority::class)->allows(Auth::user(), $workspace, 'manage_google_business_profile');
 
         if (! $mayManage) {
             abort(404);
@@ -408,8 +409,7 @@ class GoogleBusinessProfileController extends CustomerBaseController
      */
     public function candidates(string $workspaceUid, string $businessUid): View|Factory|Application|RedirectResponse
     {
-        $this->authorize('manage_google_business_profile');
-        [, $business] = $this->resolveEntitledBusiness($workspaceUid, $businessUid);
+        [, $business] = $this->managed($this->resolveEntitledBusiness($workspaceUid, $businessUid));
 
         $connection = $this->connectionRepository->findForBusiness($business, GoogleConnectionProduct::BusinessProfile);
 
@@ -463,8 +463,7 @@ class GoogleBusinessProfileController extends CustomerBaseController
      */
     public function bind(GoogleBusinessProfileBindRequest $request, string $workspaceUid, string $businessUid): RedirectResponse
     {
-        $this->authorize('manage_google_business_profile');
-        [, $business] = $this->resolveEntitledBusiness($workspaceUid, $businessUid);
+        [, $business] = $this->managed($this->resolveEntitledBusiness($workspaceUid, $businessUid));
 
         if ($demo = $this->demoGuard($workspaceUid, $businessUid)) {
             return $demo;
@@ -526,8 +525,7 @@ class GoogleBusinessProfileController extends CustomerBaseController
      */
     public function unbind(GoogleBusinessProfileUnbindRequest $request, string $workspaceUid, string $businessUid): RedirectResponse
     {
-        $this->authorize('manage_google_business_profile');
-        [, $business] = $this->resolveAccessibleBusiness($workspaceUid, $businessUid);
+        [, $business] = $this->managed($this->resolveAccessibleBusiness($workspaceUid, $businessUid));
 
         if ($demo = $this->demoGuard($workspaceUid, $businessUid)) {
             return $demo;
@@ -551,8 +549,7 @@ class GoogleBusinessProfileController extends CustomerBaseController
      */
     public function disconnect(string $workspaceUid, string $businessUid): RedirectResponse
     {
-        $this->authorize('manage_google_business_profile');
-        [, $business] = $this->resolveAccessibleBusiness($workspaceUid, $businessUid);
+        [, $business] = $this->managed($this->resolveAccessibleBusiness($workspaceUid, $businessUid));
 
         if ($demo = $this->demoGuard($workspaceUid, $businessUid)) {
             return $demo;
@@ -587,8 +584,7 @@ class GoogleBusinessProfileController extends CustomerBaseController
      */
     public function refresh(string $workspaceUid, string $businessUid): View|Factory|Application|RedirectResponse
     {
-        $this->authorize('manage_google_business_profile');
-        [, $business] = $this->resolveEntitledBusiness($workspaceUid, $businessUid);
+        [, $business] = $this->managed($this->resolveEntitledBusiness($workspaceUid, $businessUid));
 
         if ($demo = $this->demoGuard($workspaceUid, $businessUid)) {
             return $demo;
@@ -778,7 +774,7 @@ class GoogleBusinessProfileController extends CustomerBaseController
      */
     private function resolveEntitledBusiness(string $workspaceUid, string $businessUid): array
     {
-        return $this->resolveEntitledBusinessTenancy($workspaceUid, $businessUid, PlatformFeature::GoogleBusinessProfileModule->value);
+        return $this->shareManageability($this->resolveEntitledBusinessTenancy($workspaceUid, $businessUid, PlatformFeature::GoogleBusinessProfileModule->value));
     }
 
     /**
@@ -789,7 +785,38 @@ class GoogleBusinessProfileController extends CustomerBaseController
      */
     private function resolveAccessibleBusiness(string $workspaceUid, string $businessUid): array
     {
-        return $this->resolveBusinessTenancy($workspaceUid, $businessUid, requireActive: true);
+        return $this->shareManageability($this->resolveBusinessTenancy($workspaceUid, $businessUid, requireActive: true));
+    }
+
+    /**
+     * Whether the actor may MANAGE this Workspace's Google connection: the Workspace owner, or an actor holding the
+     * explicit manage_google_business_profile permission (default false) — the same WorkspaceManagementAuthority rule
+     * Google Ads and Meta Ads use. A View-As session never counts as owner. Runs only after the full tenancy chain
+     * (and, where applicable, entitlement) has already accepted the Workspace and Business.
+     *
+     * @param  array{0: Workspace, 1: Business}  $resolved
+     * @return array{0: Workspace, 1: Business}
+     */
+    private function shareManageability(array $resolved): array
+    {
+        view()->share('canManageGoogle', app(WorkspaceManagementAuthority::class)->mayManage($resolved[0], 'manage_google_business_profile'));
+
+        return $resolved;
+    }
+
+    /**
+     * @param  array{0: Workspace, 1: Business}  $resolved
+     * @return array{0: Workspace, 1: Business}
+     *
+     * @throws AuthorizationException
+     */
+    private function managed(array $resolved): array
+    {
+        if (! app(WorkspaceManagementAuthority::class)->mayManage($resolved[0], 'manage_google_business_profile')) {
+            throw new AuthorizationException();
+        }
+
+        return $resolved;
     }
 
     /**
