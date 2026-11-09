@@ -753,14 +753,21 @@
 
         //Localization for application http status codes
         'error_pages' => [
-            '404' => [
-                'title'       => 'We can\'t find that page',
-                'description' => 'The link may be mistyped, or the page may have moved or been removed.',
+            'pages' => [
+                '401' => ['title' => 'Please log in', 'description' => 'Your session has ended, or you need to sign in to continue.'],
+                '403' => ['title' => 'You don\'t have access', 'description' => 'Your account doesn\'t have permission to open this page.'],
+                '404' => ['title' => 'Page not found', 'description' => 'This page doesn\'t exist or isn\'t available to your account.'],
+                '419' => ['title' => 'Your session timed out', 'description' => 'For your security, we couldn\'t finish that request. Log in again to pick up where you left off.'],
+                '429' => ['title' => 'Too many requests', 'description' => 'You\'ve made too many requests. Please try again shortly.'],
+                '500' => ['title' => 'Something went wrong', 'description' => 'We couldn\'t complete your request. Please try again.'],
+                '503' => ['title' => 'Temporarily unavailable', 'description' => 'MotionGrove is temporarily unavailable. Please try again shortly.'],
             ],
-            '429' => [
-                'title'       => 'Too many attempts',
-                'description' => 'Please wait a moment before trying again.',
-            ],
+            'notify_button'      => 'Notify me',
+            'notify_placeholder' => 'you@example.com',
+            'log_in'       => 'Log in',
+            'log_in_again' => 'Log in again',
+            'go_homepage'  => 'Go to homepage',
+            'go_dashboard' => 'Go to dashboard',
             'document' => [
                 'card_title' => 'Opening a document someone sent you?',
                 'card_text'  => 'Signing links can expire. Ask the business that sent it for a new link.',
@@ -769,7 +776,6 @@
                 'card_title' => 'Looking for a feature?',
                 'card_text'  => 'It may not be available here. Head home and use the navigation to find it.',
             ],
-            'go_back'     => 'Go back',
             'rights'      => 'All rights reserved.',
             'error_label' => 'Error :code',
         ],

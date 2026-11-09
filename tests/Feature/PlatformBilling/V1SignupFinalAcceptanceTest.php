@@ -140,7 +140,7 @@ class V1SignupFinalAcceptanceTest extends TestCase
 
     private function logoutAndLogin(array $form): void
     {
-        $this->get(route('logout'));
+        $this->post(route('logout'));
         $this->assertGuest();
         $this->flushSession();
         $this->post(route('login'), ['email' => $form['email'], 'password' => self::PASSWORD]);

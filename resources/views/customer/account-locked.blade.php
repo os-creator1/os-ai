@@ -43,7 +43,7 @@
                             </a>
                         @endif
 
-                        <a href="{{ route('logout') }}"
+                        <a href="#"
                            class="btn btn-outline-secondary"
                            data-role="account-locked-logout"
                            onclick="event.preventDefault(); document.getElementById('account-locked-logout-form').submit();">

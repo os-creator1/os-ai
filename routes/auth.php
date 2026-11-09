@@ -118,7 +118,8 @@
             // Authentication Routes...
             Route::get('login', 'LoginController@showLoginForm')->name('login');
             Route::post('login', 'LoginController@login')->middleware('throttle:10,1');
-            Route::any('logout', 'LoginController@logout')->name('logout');
+            // POST only (CSRF-protected): a GET must never perform a state-changing logout.
+            Route::post('logout', 'LoginController@logout')->name('logout');
 
             Route::get('login/{provider}', 'LoginController@redirectToProvider')->name('social.login');
             Route::get('login/{provider}/callback', 'LoginController@handleProviderCallback')->name('social.callback');

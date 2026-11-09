@@ -467,7 +467,7 @@ class V1SignupOnboardingHandoffTest extends TestCase
         $before = $this->onboardingFor($user);
         $this->assertSame(OnboardingStep::Business, $before->current_step);
 
-        $this->get(route('logout'));
+        $this->post(route('logout'));
         $this->assertGuest();
 
         $this->post(route('login'), ['email' => $form['email'], 'password' => self::PASSWORD]);
