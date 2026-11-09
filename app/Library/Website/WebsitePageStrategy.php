@@ -358,12 +358,30 @@ final class WebsitePageStrategy
 
         // The local-usefulness bar (LocalAreaUsefulness): an area earns its own page only with a local fact the owner
         // confirmed. The rest stay in the visible "Areas we serve" list — never a page that differs by the city name alone.
-        $baseCity = $business->primaryLocation()->first()?->city;
+        $primaryLocation = $business->primaryLocation()->first();
+        $baseCity = $primaryLocation?->city;
+        $baseRegion = $primaryLocation?->region;
+        // A photo counts as local evidence only while it is still one of THIS website's own gallery photos: the same set the page
+        // content is built from (PhotoBoothBlueprint). Deleted, non-gallery and other customers' assets never qualify an area.
+        // Read-only: the stored answers are not touched.
+        $galleryUids = array_flip($website->assets()->where('purpose', WebsiteAssetPurpose::Gallery->value)->pluck('uid')->all());
+        $areaEntries = array_map(function (array $entry) use ($galleryUids) {
+            if (isset($entry['details'][LocalAreaUsefulness::PHOTOS])) {
+                $photos = array_values(array_filter($entry['details'][LocalAreaUsefulness::PHOTOS], fn ($uid) => isset($galleryUids[$uid])));
+                if ($photos === []) {
+                    unset($entry['details'][LocalAreaUsefulness::PHOTOS]);
+                } else {
+                    $entry['details'][LocalAreaUsefulness::PHOTOS] = $photos;
+                }
+            }
+
+            return $entry;
+        }, $areaEntries);
         $areaDetails = [];
         $hubOnly = [];
         $usefulAreas = [];
         foreach ($areaEntries as $entry) {
-            $assessment = LocalAreaUsefulness::assess($entry, $baseCity);
+            $assessment = LocalAreaUsefulness::assess($entry, $baseCity, $baseRegion);
             $areaDetails[$entry['name']] = $entry['details'];
             if ($assessment['qualifies']) {
                 $usefulAreas[] = $entry['name'];

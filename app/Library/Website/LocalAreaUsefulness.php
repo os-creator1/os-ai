@@ -73,11 +73,9 @@ final class LocalAreaUsefulness
      * @param  array{name: string, details: array<string, mixed>}  $area  see normalize()
      * @return array{qualifies: bool, signals: array<int, string>, reason: string}
      */
-    public static function assess(array $area, ?string $baseCity): array
+    public static function assess(array $area, ?string $baseCity, ?string $baseRegion = null): array
     {
-        // An owner's area is usually written "City, ST": it is the base city whatever follows the comma.
-        $areaCity = trim(Str::before($area['name'], ','));
-        if ($baseCity !== null && Str::slug($baseCity) !== '' && in_array(Str::slug($baseCity), [Str::slug($area['name']), Str::slug($areaCity)], true)) {
+        if (self::isBasePlace($area['name'], $baseCity, $baseRegion)) {
             return [
                 'qualifies' => false,
                 'signals' => [],
@@ -96,6 +94,28 @@ final class LocalAreaUsefulness
         }
 
         return ['qualifies' => true, 'signals' => $signals, 'reason' => 'You confirmed local details for this area (' . implode(', ', $signals) . ').'];
+    }
+
+    /**
+     * Whether an area is the business's own base market. The city must match exactly (case, spacing and punctuation ignored;
+     * "Kansas City" is not "Kansas City North"); when BOTH sides name a region it must match too, so Kansas City, KS is a
+     * different place from a Kansas City, MO base. When either side names no region (an older value) the same city name is
+     * treated as the base: certainty about a different state is never invented.
+     */
+    private static function isBasePlace(string $areaName, ?string $baseCity, ?string $baseRegion): bool
+    {
+        if ($baseCity === null || Str::slug($baseCity) === '') {
+            return false;
+        }
+
+        [$baseCityKey, $baseRegionKey] = GuidedGeneration\GuidedGenerationCommitService::placeParts($baseCity . ($baseRegion !== null && trim($baseRegion) !== '' ? ', ' . $baseRegion : ''));
+        [$areaCityKey, $areaRegionKey] = GuidedGeneration\GuidedGenerationCommitService::placeParts($areaName);
+
+        if ($baseCityKey !== $areaCityKey && $baseCityKey !== Str::slug($areaName)) {
+            return false;
+        }
+
+        return $baseRegionKey === null || $areaRegionKey === null || $baseRegionKey === $areaRegionKey;
     }
 
     /** A suggestion the form shows as a placeholder is never a confirmed fact, even if it is submitted back verbatim. */

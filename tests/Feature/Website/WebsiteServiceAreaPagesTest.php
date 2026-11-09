@@ -74,6 +74,111 @@ class WebsiteServiceAreaPagesTest extends TestCase
         return array_values(array_filter($plan, fn ($page) => str_starts_with($page['page_key'], 'area:')));
     }
 
+    private function basedIn(object $business, string $city, ?string $region): void
+    {
+        $location = $business->locations()->create(['name' => 'Primary Location', 'service_mode' => 'service_area', 'country_code' => 'US', 'city' => $city, 'region' => $region]);
+        $location->forceFill(['is_primary' => true])->save();
+    }
+
+    private function gallery(\App\Models\Website $website, string $purpose = 'gallery'): string
+    {
+        return $website->assets()->create(['disk' => 'public', 'path' => 'images/websites/' . $website->uid . '/' . uniqid('', true) . '.png', 'mime_type' => 'image/png', 'size' => 1024, 'purpose' => $purpose])->uid;
+    }
+
+    /** @param  array<int, array<string, mixed>>  $areas */
+    private function planFor(object $business, \App\Models\Website $website, array $areas): array
+    {
+        return app(WebsitePageStrategy::class)->buildPlan($business, WebsiteTemplate::findActiveOrFail('photo_booth_modern'), $website, null, null, $areas);
+    }
+
+    public function test_a_same_named_city_in_another_state_can_earn_its_own_page(): void
+    {
+        [, $business] = $this->entitledTenant();
+        $this->services($business);
+        $this->basedIn($business, 'Kansas City', 'MO');
+        $website = $this->createWebsite($business);
+
+        $this->assertSame(['serving-kansas-city-ks'], array_column($this->areaPages($this->planFor($business, $website, $this->confirmed(['Kansas City, KS']))), 'slug'), 'Kansas City, KS is not the Missouri home market.');
+        $this->assertSame([], $this->areaPages($this->planFor($business, $website, $this->confirmed(['Kansas City, MO']))), 'The base market never gets a duplicate page.');
+        $this->assertSame([], $this->areaPages($this->planFor($business, $website, $this->confirmed(['Kansas City']))), 'A regionless value is the base city: no certainty is invented.');
+        $this->assertSame([], $this->areaPages($this->planFor($business, $website, ['Kansas City, KS'])), 'Without local facts the other state is a list entry, not a doorway page.');
+    }
+
+    public function test_state_names_and_abbreviations_are_the_same_place(): void
+    {
+        [, $business] = $this->entitledTenant();
+        $this->services($business);
+        $this->basedIn($business, 'Kansas City', 'Missouri');
+        $website = $this->createWebsite($business);
+
+        $this->assertSame([], $this->areaPages($this->planFor($business, $website, $this->confirmed(['Kansas City, MO']))));
+        $this->assertSame(['serving-kansas-city-kansas'], array_column($this->areaPages($this->planFor($business, $website, $this->confirmed(['Kansas City, Kansas']))), 'slug'));
+    }
+
+    public function test_a_legacy_base_location_without_a_region_stays_safe_and_deterministic(): void
+    {
+        [, $business] = $this->entitledTenant();
+        $this->services($business);
+        $this->basedIn($business, 'Kansas City', null);
+        $website = $this->createWebsite($business);
+
+        $first = $this->planFor($business, $website, $this->confirmed(['Kansas City, KS', 'Overland Park, KS']));
+
+        $this->assertSame(['serving-overland-park-ks'], array_column($this->areaPages($first), 'slug'), 'Only the unambiguous other city is planned.');
+        $this->assertSame($first, $this->planFor($business, $website, $this->confirmed(['Kansas City, KS', 'Overland Park, KS'])));
+    }
+
+    public function test_a_valid_gallery_photo_qualifies_a_photo_only_area_and_a_deleted_one_does_not(): void
+    {
+        [, $business] = $this->entitledTenant();
+        $this->services($business);
+        $this->basedIn($business, 'Spokane', 'WA');
+        $website = $this->createWebsite($business);
+        $photo = $this->gallery($website);
+        $areas = [['name' => 'Cheney, WA', 'details' => ['photos' => [$photo]]]];
+
+        $this->assertSame(['serving-cheney-wa'], array_column($this->areaPages($this->planFor($business, $website, $areas)), 'slug'));
+
+        $website->assets()->where('uid', $photo)->delete();
+        $plan = $this->planFor($business, $website, $areas);
+        $this->assertSame([], $this->areaPages($plan), 'The photo is gone: a list entry, not a thin page.');
+    }
+
+    public function test_a_deleted_photo_does_not_cancel_a_real_venue_and_one_surviving_photo_still_counts(): void
+    {
+        [, $business] = $this->entitledTenant();
+        $this->services($business);
+        $this->basedIn($business, 'Spokane', 'WA');
+        $website = $this->createWebsite($business);
+        $gone = $this->gallery($website);
+        $kept = $this->gallery($website);
+        $website->assets()->where('uid', $gone)->delete();
+
+        $withVenue = $this->areaPages($this->planFor($business, $website, [['name' => 'Cheney, WA', 'details' => ['venues' => ['The Cheney Depot'], 'photos' => [$gone]]]]));
+        $this->assertSame(['serving-cheney-wa'], array_column($withVenue, 'slug'));
+        $this->assertSame(['The Cheney Depot'], $withVenue[0]['entity']['local_facts']['venues']);
+        $this->assertArrayNotHasKey('photos', $withVenue[0]['entity']['local_facts'], 'The deleted photo is not offered to the page content.');
+
+        $one = $this->areaPages($this->planFor($business, $website, [['name' => 'Cheney, WA', 'details' => ['photos' => [$gone, $kept]]]]));
+        $this->assertSame(['serving-cheney-wa'], array_column($one, 'slug'));
+        $this->assertSame([$kept], $one[0]['entity']['local_facts']['photos']);
+    }
+
+    public function test_another_websites_photo_and_a_non_gallery_asset_never_qualify_an_area(): void
+    {
+        [, $business] = $this->entitledTenant();
+        [, $other] = $this->entitledTenant();
+        $this->services($business);
+        $this->basedIn($business, 'Spokane', 'WA');
+        $website = $this->createWebsite($business);
+        $foreign = $this->gallery($this->createWebsite($other));
+        $hero = $this->gallery($website, 'hero');
+
+        foreach ([$foreign, $hero] as $uid) {
+            $this->assertSame([], $this->areaPages($this->planFor($business, $website, [['name' => 'Cheney, WA', 'details' => ['photos' => [$uid]]]])), $uid);
+        }
+    }
+
     public function test_each_chosen_area_gets_a_distinct_page_plan_in_the_owners_priority_order(): void
     {
         [, $business] = $this->entitledTenant();
