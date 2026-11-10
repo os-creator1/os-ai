@@ -406,9 +406,20 @@ final class GuidedGenerationCommitService
                 $ownerOpened = $locked->indexing_released_at !== null;
                 $ownerHidden = $previous->filter(fn ($old) => $old->noindex && $old->noindex_explicit)->map(fn ($old) => $old->is_home ? '' : (string) $old->slug)->all();
 
+                // A page that is the SAME page as one in the live revision keeps its uid, so published articles that point at it
+                // (supports_page_uid, `page:<uid>` links) keep working after the owner publishes. Only this website's own published
+                // revision is consulted; the live revision itself is never touched here.
+                $identities = array_map(function (array $page) {
+                    $identity = \App\Library\Website\Seo\WebsitePageIntent::forPlanPage($page);
+
+                    return ['is_home' => (bool) $page['is_home'], 'slug' => $page['slug'], 'role' => $identity['role'], 'intent' => $identity['intent']];
+                }, $bound['pages']);
+                $livePages = (array) (\App\Models\WebsiteRevision::where('website_id', $locked->id)->whereKey($locked->published_revision_id)->first()?->snapshot['pages'] ?? []);
+                $keptUids = PublishedPageIdentity::match($identities, $livePages);
+
                 $locked->pages()->delete();
 
-                foreach ($bound['pages'] as $page) {
+                foreach ($bound['pages'] as $index => $page) {
                     $hiddenByOwner = in_array($page['is_home'] ? '' : (string) $page['slug'], $ownerHidden, true);
 
                     $identity = \App\Library\Website\Seo\WebsitePageIntent::forPlanPage($page);
@@ -424,7 +435,7 @@ final class GuidedGenerationCommitService
                         'meta_description' => $page['meta_description'] ?? null,
                         'noindex' => $hiddenByOwner || ! $ownerOpened,
                         'noindex_explicit' => $hiddenByOwner,
-                    ]);
+                    ], $keptUids[$index]);
                 }
 
                 // A place page this rebuild no longer creates may already be indexed or linked to. Its address answers a permanent
