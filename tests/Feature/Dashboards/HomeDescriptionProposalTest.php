@@ -206,10 +206,16 @@ class HomeDescriptionProposalTest extends TestCase
         $this->postJson($url, $body)->assertOk()->assertJson(['state' => 'pending']);
         $executions = DB::table('opportunity_action_executions')->count();
         $this->postJson($url, $body)->assertOk()->assertJson(['state' => 'pending']);
-        $this->postJson($url, ['value' => 'A different value that is also comfortably longer than fifty characters.', 'base' => 'x'])->assertOk()->assertJson(['state' => 'pending']);
+        $transitions = DB::table('opportunity_transitions')->count();
+        // A different value with a valid but stale 64-character base reaches the InProgress branch and still only reports pending.
+        $this->postJson($url, ['value' => 'A different value that is also comfortably longer than fifty characters.', 'base' => hash('sha256', 'stale')])
+            ->assertOk()->assertJson(['state' => 'pending']);
 
         Queue::assertPushed(ExecuteOpportunityAction::class, 1);
-        $this->assertSame($executions, DB::table('opportunity_action_executions')->count());
+        $this->assertSame($executions, DB::table('opportunity_action_executions')->count(), 'No second execution.');
+        $this->assertSame($transitions, DB::table('opportunity_transitions')->count(), 'No second confirmation.');
+        $this->assertSame(OpportunityStatus::InProgress, \App\Models\Opportunity::find($id)->status);
+        $this->assertNull($business->fresh()->description);
     }
 
     public function test_a_different_value_after_approval_was_requested_is_refused(): void
@@ -240,6 +246,17 @@ class HomeDescriptionProposalTest extends TestCase
 
         Queue::assertNothingPushed();
         $this->assertNull($business->fresh()->description, 'The controller never writes the description itself.');
+    }
+
+    public function test_the_ai_improve_flow_locks_the_text_and_never_overwrites_newer_edits_silently(): void
+    {
+        $view = file_get_contents(resource_path('views/customer/dashboard/home/v2/_description-proposal.blade.php'));
+
+        // The textarea is read-only for the whole request and its previous state is restored on success, refusal and network error.
+        $this->assertStringContainsString('text.readOnly = true; }', $view);
+        $this->assertStringContainsString('text.readOnly = prevReadOnly', $view);
+        // Defence in depth: if the text differs from what was sent, replacing it needs explicit confirmation.
+        $this->assertStringContainsString('text.value !== before && !window.confirm', $view);
     }
 
     public function test_the_detail_page_returns_to_home_and_other_recommendations_still_render(): void

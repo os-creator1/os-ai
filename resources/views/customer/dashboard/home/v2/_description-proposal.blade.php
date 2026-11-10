@@ -29,13 +29,14 @@
     var root = document.querySelector('[data-role="description-proposal"]');
     var q = function (r) { return root.querySelector('[data-role="' + r + '"]'); };
     var text = q('description-text'), status = q('description-status'), approve = q('description-approve'), improve = q('description-improve'), edit = q('description-edit');
-    var token = document.querySelector('meta[name="csrf-token"]'), saved = text.value, dirty = false, busy = false;
+    var token = document.querySelector('meta[name="csrf-token"]'), saved = text.value, dirty = false, busy = false, prevReadOnly = text.readOnly;
     var say = function (m, bad) { status.hidden = false; status.textContent = m; status.className = 'hv2-desc__status mb-0 ' + (bad ? 'text-danger' : 'text-success'); };
     var post = function (url, body) {
         return fetch(url, { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json', 'Accept': 'application/json', 'X-CSRF-TOKEN': token ? token.content : '' }, body: JSON.stringify(body) })
             .then(function (r) { return r.json().catch(function () { return {}; }).then(function (j) { j.http = r.status; return j; }); });
     };
-    var lock = function (on) { busy = on; approve.disabled = on; if (improve) improve.disabled = on; edit.disabled = on; };
+    // While a request is in flight the text cannot change: it is read-only, and its previous editable/read-only state returns afterwards.
+    var lock = function (on) { if (on) { prevReadOnly = text.readOnly; text.readOnly = true; } else { text.readOnly = prevReadOnly; } busy = on; approve.disabled = on; if (improve) improve.disabled = on; edit.disabled = on; };
     text.addEventListener('input', function () { dirty = true; });
     edit.addEventListener('click', function () { text.readOnly = false; text.focus(); });
     var poll = function (url, tries) {
@@ -61,10 +62,15 @@
         improve.addEventListener('click', function () {
             if (busy) { return; }
             if (dirty && text.value.trim() !== saved.trim() && !window.confirm('Replace your edits with an AI suggestion?')) { return; }
+            var before = text.value;
             lock(true); say('Asking AI for a suggestion…');
             post(root.dataset.improveUrl, { text: text.value, request_id: String(Date.now()) + Math.random().toString(36).slice(2) }).then(function (j) {
                 lock(false);
-                if (j.ok && j.text) { text.value = j.text; text.readOnly = false; dirty = false; saved = j.text; say('Suggestion ready. Review it, then approve to save.'); }
+                if (j.ok && j.text) {
+                    // Newer customer text is never silently discarded.
+                    if (text.value !== before && !window.confirm('Your text changed while AI was working. Replace it with the suggestion?')) { say('Suggestion discarded. Your text is unchanged.'); return; }
+                    text.value = j.text; text.readOnly = false; dirty = false; saved = j.text; say('Suggestion ready. Review it, then approve to save.');
+                }
                 else { say(j.message || 'AI suggestions are not available right now.', true); }
             }).catch(function () { lock(false); say('AI suggestions are not available right now.', true); });
         });
