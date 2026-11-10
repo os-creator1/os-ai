@@ -266,7 +266,7 @@
 (function () {
     // "MotionGrove at work": filter chips and Show more over the rows the server already rendered. Presentation only; nothing is fetched.
     var box = document.querySelector('[data-role="growth-activity"] [data-work]');
-    if (!box) { return; }
+    if (!box || !box.querySelector('[data-role="activity-more"]')) { return; }
     var rows = [].slice.call(box.querySelectorAll('[data-bucket]')), tabs = [].slice.call(box.querySelectorAll('.gh-tab'));
     var more = box.querySelector('[data-role="activity-more"]'), none = box.querySelector('[data-role="work-filter-empty"]');
     var filter = 'all', expanded = false, LIMIT = 5;
