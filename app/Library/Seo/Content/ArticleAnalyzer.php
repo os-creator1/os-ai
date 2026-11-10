@@ -167,14 +167,23 @@ final class ArticleAnalyzer
             }
         }
 
+        // Every complete (token-bounded) place-name match is found first; the most specific name wins, so "Spokane Valley" is
+        // never read as "Spokane" whatever order the places were saved in. Equal-length names keep the saved order.
+        $best = null;
+        $bestLength = 0;
+
         foreach ($entries as $entry) {
-            $name = trim(\Illuminate\Support\Str::before($entry, ','));
-            $tokens = \App\Library\Website\Seo\WebsitePageIntentClassifier::tokens($name, false);
+            $candidate = trim(\Illuminate\Support\Str::before($entry, ','));
+            $tokens = \App\Library\Website\Seo\WebsitePageIntentClassifier::tokens($candidate, false);
 
-            if ($tokens === [] || ! str_contains($words, ' ' . implode(' ', $tokens) . ' ')) {
-                continue;
+            if ($tokens !== [] && str_contains($words, ' ' . implode(' ', $tokens) . ' ') && count($tokens) > $bestLength) {
+                $best = $candidate;
+                $bestLength = count($tokens);
             }
+        }
 
+        if ($best !== null) {
+            $name = $best;
             [$city] = \App\Library\Website\GuidedGeneration\GuidedGenerationCommitService::placeParts($name);
             $regions = [];
 

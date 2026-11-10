@@ -369,10 +369,10 @@ class ArticleManagerTest extends TestCase
      * @param  array<int, string>  $areas
      * @param  array<int, array<string, mixed>>  $placePages  snapshot pages (see snapshotPage())
      */
-    private function localTenant(array $areas, array $placePages): \App\Models\Business
+    private function localTenant(array $areas, array $placePages, string $baseCity = 'Spokane'): \App\Models\Business
     {
         [, $business] = $this->entitledTenant();
-        $location = $this->createLocation($business, true, \App\Enums\Business\BusinessServiceMode::Storefront, ['name' => 'Spokane Studio', 'address_line_1' => '1 Main St', 'city' => 'Spokane', 'region' => 'WA', 'postal_code' => '99201']);
+        $location = $this->createLocation($business, true, \App\Enums\Business\BusinessServiceMode::Storefront, ['name' => 'Spokane Studio', 'address_line_1' => '1 Main St', 'city' => $baseCity, 'region' => 'WA', 'postal_code' => '99201']);
         $location->forceFill(['service_area_cities' => $areas])->save();
         $home = $this->snapshotPage(self::PAGE_HOME, 'Home', [], [['type' => 'text', 'data' => ['heading' => 'Welcome', 'body' => 'Photo booths.']]], true);
         $website = $this->publishWebsite($business, array_merge([$home], $placePages));
@@ -444,5 +444,36 @@ class ArticleManagerTest extends TestCase
         $this->localTenant(['Cheney, WA'], [$this->placePage('bbbbbbbb-0000-4000-8000-000000000007', 'serving-cheney-wa', 'Cheney, WA')]);
         $other = $this->localTenant(['Cheney, WA'], []);
         $this->assertSame('attention', $this->localCheck($other, 'Photo Booth Timeline for Cheney Weddings')['status'], 'Another customer\'s Cheney page is not this business\'s.');
+    }
+
+    public function test_the_most_specific_overlapping_place_name_wins_in_any_saved_order(): void
+    {
+        // Base city Spokane is saved first, Spokane Valley second.
+        $valley = $this->placePage('bbbbbbbb-0000-4000-8000-000000000008', 'serving-spokane-valley-wa', 'Spokane Valley, WA');
+        $spokane = $this->placePage('bbbbbbbb-0000-4000-8000-000000000009', 'serving-spokane-wa', 'Spokane, WA');
+
+        $business = $this->localTenant(['Spokane Valley, WA'], [$valley]);
+        $this->assertSame('good', $this->localCheck($business, 'Photo Booth Timeline for Spokane Valley Weddings')['status']);
+
+        $onlySpokane = $this->localTenant(['Spokane Valley, WA'], [$spokane]);
+        $check = $this->localCheck($onlySpokane, 'Photo Booth Timeline for Spokane Valley Weddings');
+        $this->assertSame('attention', $check['status'], 'The Spokane page is not a Spokane Valley page.');
+        $this->assertStringContainsString('no page about Spokane Valley', $check['detail']);
+
+        $this->assertSame('good', $this->localCheck($onlySpokane, 'Photo Booth Timeline for Spokane Weddings')['status'], 'An article about Spokane still matches Spokane.');
+
+        // Spokane Valley is the base (saved first), Spokane a later area.
+        $reversed = $this->localTenant(['Spokane, WA'], [$spokane], 'Spokane Valley');
+        $this->assertSame('good', $this->localCheck($reversed, 'Photo Booth Timeline for Spokane Weddings')['status']);
+        $this->assertSame('attention', $this->localCheck($reversed, 'Photo Booth Timeline for Spokane Valley Weddings')['status']);
+    }
+
+    public function test_a_stated_state_survives_the_most_specific_match(): void
+    {
+        $business = $this->localTenant(['Portland, OR', 'Portland, ME'], [$this->placePage('bbbbbbbb-0000-4000-8000-000000000010', 'serving-portland-me', 'Portland, ME')]);
+
+        $this->assertSame('good', $this->localCheck($business, 'Photo Booth Ideas for Portland, ME Weddings')['status']);
+        $this->assertSame('attention', $this->localCheck($business, 'Photo Booth Ideas for Portland, OR Weddings')['status']);
+        $this->assertStringContainsString('does not say which', $this->localCheck($business, 'Photo Booth Ideas for Portland Weddings')['detail']);
     }
 }
