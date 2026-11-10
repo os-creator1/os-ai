@@ -5,10 +5,6 @@ namespace Tests\Feature\Dashboards;
 use App\Enums\Entitlement\WorkspacePlanTier;
 use App\Enums\Opportunity\OpportunityStatus;
 use App\Jobs\Opportunity\ExecuteOpportunityAction;
-use App\Library\Ai\AiGateway;
-use App\Library\Ai\AiRequest;
-use App\Library\Ai\AiResult;
-use App\Library\Ai\Enums\AiRefusalReason;
 use App\Library\Dashboard\DashboardSnapshot;
 use App\Library\Opportunity\DescriptionProposal;
 use App\Library\Opportunity\OpportunityActionExecutor;
@@ -20,8 +16,7 @@ use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Str;
-use Mockery\MockInterface;
-use Tests\Feature\Dashboards\Concerns\CreatesDashboardFixtures;
+use Tests\Feature\Assistant\Concerns\AssistantTestSupport;
 use Tests\TestCase;
 
 /**
@@ -31,7 +26,7 @@ use Tests\TestCase;
 class HomeDescriptionProposalTest extends TestCase
 {
     use RefreshDatabase;
-    use CreatesDashboardFixtures;
+    use AssistantTestSupport; // fake AI completion client + stray-HTTP guard (no live AI)
 
     private const VALUE = 'We rent photo booths for weddings, birthdays and corporate events across Orange, with on-site attendants.';
 
@@ -39,8 +34,8 @@ class HomeDescriptionProposalTest extends TestCase
     {
         parent::setUp();
 
-        $this->freezeClock();
-        config(['business.onboarding.enabled' => true, 'opportunity.enabled' => true]);
+        $this->bootAssistant();
+        config(['business.onboarding.enabled' => true]);
     }
 
     /** @return array{0: \App\Models\Customer, 1: Business, 2: int} a launched-onboarding Business with NO enquiry path, and its description Opportunity id */
@@ -78,7 +73,7 @@ class HomeDescriptionProposalTest extends TestCase
 
     private function noAi(): void
     {
-        $this->mock(AiGateway::class, fn (MockInterface $m) => $m->shouldNotReceive('complete'));
+        $this->assertSame(0, $this->aiCalls());
     }
 
     private function uid(int $id): string
@@ -94,9 +89,9 @@ class HomeDescriptionProposalTest extends TestCase
     public function test_no_enquiry_path_prioritises_setup_over_the_missing_description(): void
     {
         [$customer] = $this->onboarded();
-        $this->noAi();
 
         $primary = $this->primary($customer);
+        $this->noAi();
 
         $this->assertSame('reach_setup', $primary['key']);
         $this->assertNotNull($primary['action']['url']);
@@ -115,9 +110,9 @@ class HomeDescriptionProposalTest extends TestCase
     {
         [$customer, $business, $id] = $this->onboarded();
         $this->liveForm($business);
-        $this->noAi();
 
         $primary = $this->primary($customer);
+        $this->noAi();
 
         $this->assertSame('opportunity', $primary['key']);
         $this->assertStringContainsString('Orange Glam Booths provides Photo Booth Rental in Orange, CA.', $primary['description']['text']);
@@ -130,23 +125,34 @@ class HomeDescriptionProposalTest extends TestCase
     {
         [, $business] = $this->onboarded();
         $this->liveForm($business);
-        $this->mock(AiGateway::class, function (MockInterface $m) {
-            $m->shouldReceive('complete')->once()->withArgs(fn (AiRequest $r) => $r->lane->value === 'interactive' && $r->category->value === 'ask_assistant')
-                ->andReturn(AiResult::success(self::VALUE, $this->ledgerEntry()));
-        });
+        $this->onTrial($business->workspace);
+        $this->modelReturnsRaw(self::VALUE);
 
         $this->postJson($this->url('description.improve', $business), ['text' => 'Short', 'request_id' => 'r1'])
             ->assertOk()->assertJson(['ok' => true, 'text' => self::VALUE]);
+
+        $this->assertSame(1, $this->aiCalls(), 'Exactly one provider call, after an explicit request.');
+        $this->assertNotSame(0, DB::table('ai_usage_ledger')->count(), 'The call was metered by the gateway.');
         $this->assertNull($business->fresh()->description);
     }
 
-    public function test_improve_refusal_is_reported_and_budget_is_not_bypassed(): void
+    public function test_improve_is_refused_by_the_gateway_when_the_budget_is_exhausted(): void
     {
         [, $business] = $this->onboarded();
-        $this->mock(AiGateway::class, fn (MockInterface $m) => $m->shouldReceive('complete')->once()->andReturn(AiResult::refused(AiRefusalReason::BudgetExhausted)));
+        $workspace = $business->workspace;
+        $this->onTrial($workspace);
+        app(\App\Library\Support\RequestScopedCache::class)->forgetPrefixed('workspace_plan_assignment:');
+        DB::table('ai_usage_periods')->insert([
+            'scope_type' => 'workspace', 'scope_id' => $workspace->id, 'workspace_id' => $workspace->id, 'period_key' => 'trial',
+            'policy_key' => 'trial', 'policy_version' => 1, 'cap_microusd' => 3_000_000, 'reserved_microusd' => 0,
+            'committed_microusd' => 3_000_000, 'interactive_reserved_microusd' => 0, 'interactive_committed_microusd' => 2_400_000,
+            'created_at' => now(), 'updated_at' => now(),
+        ]);
 
         $this->postJson($this->url('description.improve', $business), ['text' => '', 'request_id' => 'r2'])
             ->assertStatus(422)->assertJson(['ok' => false]);
+
+        $this->assertSame(0, $this->aiCalls(), 'No provider call after a refusal.');
     }
 
     public function test_another_tenants_business_and_opportunity_are_not_reachable(): void
@@ -238,6 +244,33 @@ class HomeDescriptionProposalTest extends TestCase
         $this->assertNull($business->fresh()->description);
     }
 
+    public function test_a_configuration_change_from_another_endpoint_cannot_make_another_value_approved(): void
+    {
+        [, $business, $id] = $this->onboarded();
+        Queue::fake();
+        $other = 'The other tab saved this different description, which is also longer than fifty characters.';
+        $fired = false;
+
+        // Another tab's configuration lands right after OUR configure step, before approval is requested.
+        \App\Models\Opportunity::saved(function (\App\Models\Opportunity $o) use (&$fired, $other, $id) {
+            if ($fired || (int) $o->id !== $id || ($o->recommended_action['parameters']['value'] ?? null) !== self::VALUE) {
+                return;
+            }
+            $fired = true;
+            $action = $o->recommended_action;
+            $action['parameters'] = ['value' => $other];
+            DB::table('opportunities')->where('id', $id)->update(['recommended_action' => json_encode($action), 'recommended_action_hash' => (new OpportunityActionHash())->compute($action)]);
+        });
+
+        $this->postJson($this->url('description.approve', $business, [$this->uid($id)]), ['value' => self::VALUE, 'base' => hash('sha256', '')])
+            ->assertStatus(409)->assertJson(['state' => 'changed']);
+
+        $this->assertTrue($fired);
+        $this->assertSame(OpportunityStatus::Open, \App\Models\Opportunity::find($id)->status, 'Approval was never requested for the other value.');
+        Queue::assertNothingPushed();
+        $this->assertNull($business->fresh()->description);
+    }
+
     public function test_an_already_completed_opportunity_reports_completed_without_executing_again(): void
     {
         [, $business, $id] = $this->onboarded();
@@ -275,10 +308,5 @@ class HomeDescriptionProposalTest extends TestCase
     private function minutesAgo(int $minutes): string
     {
         return now()->utc()->subMinutes($minutes)->format('Y-m-d H:i:s');
-    }
-
-    private function ledgerEntry(): \App\Models\AiUsageLedgerEntry
-    {
-        return new \App\Models\AiUsageLedgerEntry();
     }
 }

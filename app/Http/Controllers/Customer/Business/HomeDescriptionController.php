@@ -18,6 +18,7 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
 use Throwable;
 
@@ -114,10 +115,33 @@ class HomeDescriptionController extends Controller
 
         try {
             if ($status === OpportunityStatus::Open) {
-                $opportunity = $this->opportunities->configureAction($opportunity, $customer, ['value' => $value]);
-                $this->opportunities->requestApproval($opportunity->fresh(), $customer);
-            } elseif (($opportunity->recommended_action['parameters']['value'] ?? null) !== $value) {
-                // Approval was already requested for a specific value; a different one is never silently executed.
+                // Configure and request approval under ONE row lock, and prove the persisted parameter is exactly the submitted
+                // value before approval is requested. Another tab's configuration change cannot slip in between: it waits on
+                // the lock, or (if it already won) is detected here and nothing is approved.
+                $opportunity = DB::transaction(function () use ($opportunity, $business, $customer, $value) {
+                    $locked = Opportunity::query()->whereKey($opportunity->id)->where('business_id', $business->id)->lockForUpdate()->first();
+
+                    if ($locked === null || $locked->status !== OpportunityStatus::Open) {
+                        return null;
+                    }
+
+                    $configured = $this->opportunities->configureAction($locked, $customer, ['value' => $value])->fresh();
+
+                    if (($configured->recommended_action['parameters']['value'] ?? null) !== $value) {
+                        return null;
+                    }
+
+                    return $this->opportunities->requestApproval($configured, $customer);
+                });
+
+                if ($opportunity === null) {
+                    return response()->json(['state' => 'changed', 'message' => 'This recommendation was changed elsewhere. Refresh to review it.'], 409);
+                }
+            }
+
+            // Whatever path led here, only the exact value the customer submitted may be confirmed (configuring is only
+            // possible while Open, so once approval is requested the value is fixed).
+            if (($opportunity->fresh()->recommended_action['parameters']['value'] ?? null) !== $value) {
                 return response()->json(['state' => 'mismatch', 'message' => 'A different description is already awaiting approval. Refresh to review it.'], 409);
             }
 
