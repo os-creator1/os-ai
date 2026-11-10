@@ -74,10 +74,13 @@ final class ArticleAnalyzer
         $overlap = $this->guard->check($business, array_filter([$title, $article->primary_topic]), (int) $article->id);
         $add('duplication', 'Overlap', ! $overlap->strong(), 'No strong overlap with your other pages or articles.', $overlap->strongFindings()[0]['reason'] ?? 'Strong topic overlap.');
 
-        $placeNamed = $this->placeNamed($business, $title . ' ' . (string) $article->primary_topic);
-        if ($placeNamed !== null) {
-            $hasPlacePage = collect($this->inventory->pages($business))->contains(fn (array $page) => $page['linkable'] && $page['kind'] === ArticleSiteInventory::KIND_LOCATION && ($page['place'] ?? null) !== null && \Illuminate\Support\Str::slug((string) $page['place']) === \Illuminate\Support\Str::slug($placeNamed));
-            $add('local', 'Local substance', $hasPlacePage, 'Your site has a page about ' . $placeNamed . ' this article supports.', 'This article is about ' . $placeNamed . ', but your site has no page about ' . $placeNamed . ' with local details. Without one it is generic advice with a city name on it: add that page (a venue you have worked at, how serving it works), or write about something that is not tied to a city.');
+        $place = $this->placeNamed($business, $title . ' ' . (string) $article->primary_topic);
+        if ($place !== null) {
+            $placeNamed = $place['name'];
+            $hasPlacePage = ! $place['ambiguous'] && collect($this->inventory->pages($business))->contains(fn (array $page) => $page['linkable'] && $page['kind'] === ArticleSiteInventory::KIND_LOCATION && $this->pageIsPlace($page, $place));
+            $add('local', 'Local substance', $hasPlacePage, 'Your site has a page about ' . $placeNamed . ' this article supports.', $place['ambiguous']
+                ? 'You serve more than one ' . $placeNamed . ', and this article does not say which. Name the state in the title or topic so it can be matched to the right page.'
+                : 'This article is about ' . $placeNamed . ', but your site has no page about ' . $placeNamed . ($place['region'] !== null ? ' (' . strtoupper($place['region']) . ')' : '') . ' with local details. Without one it is generic advice with a city name on it: add that page (a venue you have worked at, how serving it works), or write about something that is not tied to a city.');
         }
 
         $schemaMissing = $this->schemaGaps($business, $article);
@@ -144,19 +147,136 @@ final class ArticleAnalyzer
     }
 
     /** The first place this Business serves that a title/topic names, as the Business wrote it; null when it names none. */
-    private function placeNamed(Business $business, string $text): ?string
+    /**
+     * The business place this text is about: its city, the region the TEXT names ("Cheney, WA"), and whether that is ambiguous
+     * (the business serves the same city name in several regions and the text does not say which). Places come with their
+     * regions, as saved; matching uses the same normalized city/region identity as the rest of the generator.
+     *
+     * @return array{name: string, city: string, region: ?string, businessRegions: array<int, string>, ambiguous: bool}|null
+     */
+    private function placeNamed(Business $business, string $text): ?array
     {
         $words = ' ' . implode(' ', \App\Library\Website\Seo\WebsitePageIntentClassifier::tokens($text, false)) . ' ';
+        $entries = [];
 
-        foreach (\App\Library\Website\Seo\WebsitePageIntentClassifier::placeNames($business) as $place) {
-            $tokens = \App\Library\Website\Seo\WebsitePageIntentClassifier::tokens($place, false);
-
-            if ($tokens !== [] && str_contains($words, ' ' . implode(' ', $tokens) . ' ')) {
-                return $place;
+        foreach ($business->locations()->orderByDesc('is_primary')->orderBy('id')->get() as $location) {
+            foreach (array_merge([trim(collect([$location->city, $location->region])->filter()->implode(', '))], (array) ($location->service_area_cities ?? [])) as $entry) {
+                if (trim((string) $entry) !== '') {
+                    $entries[] = trim((string) $entry);
+                }
             }
         }
 
+        foreach ($entries as $entry) {
+            $name = trim(\Illuminate\Support\Str::before($entry, ','));
+            $tokens = \App\Library\Website\Seo\WebsitePageIntentClassifier::tokens($name, false);
+
+            if ($tokens === [] || ! str_contains($words, ' ' . implode(' ', $tokens) . ' ')) {
+                continue;
+            }
+
+            [$city] = \App\Library\Website\GuidedGeneration\GuidedGenerationCommitService::placeParts($name);
+            $regions = [];
+
+            foreach ($entries as $other) {
+                [$otherCity, $otherRegion] = \App\Library\Website\GuidedGeneration\GuidedGenerationCommitService::placeParts($other);
+
+                if ($otherCity === $city) {
+                    $regions[$otherRegion ?? ''] = true;
+                }
+            }
+
+            $stated = $this->regionStated($text, $name);
+            $businessRegions = array_values(array_filter(array_keys($regions), fn ($region) => $region !== ''));
+
+            return [
+                'name' => $name,
+                'city' => $city,
+                'region' => $stated ?? (count($regions) === 1 ? ($businessRegions[0] ?? null) : null),
+                'businessRegions' => $businessRegions,
+                'ambiguous' => $stated === null && count($regions) > 1,
+            ];
+        }
+
         return null;
+    }
+
+    /** The US state the text puts right after the city ("Cheney, WA", "Cheney WA", "Cheney, Washington"), as its code, else null. */
+    private function regionStated(string $text, string $city): ?string
+    {
+        if (preg_match('/' . preg_quote($city, '/') . '\b(\s*,\s*|\s+)([A-Za-z]+)(?:\s+([A-Za-z]+))?/iu', $text, $m) !== 1) {
+            return null;
+        }
+
+        $comma = str_contains($m[1], ',');
+        $code = fn (string $value) => \App\Library\Website\GuidedGeneration\GuidedGenerationCommitService::placeParts('x, ' . $value)[1];
+
+        foreach (array_filter([isset($m[3]) ? $m[2] . ' ' . $m[3] : null, $m[2]]) as $candidate) {
+            $region = $code($candidate);
+
+            if ($region === null || strlen($region) !== 2) {
+                continue;
+            }
+
+            // A bare two-letter word ("in", "or", "me") is a state only when written as one: after a comma or in capitals.
+            if (strlen(trim($candidate)) === 2 && ! $comma && $candidate !== strtoupper($candidate)) {
+                continue;
+            }
+
+            return $region;
+        }
+
+        return null;
+    }
+
+    /**
+     * Whether a published location page is about the place the article names: the same city and, where both sides name a
+     * region, the same region. A page's place comes from its stored intent, else its generated address ("serving-cheney-wa").
+     * A page with no region matches only when the business has a single region for that city (or the article's stated region
+     * is that one).
+     *
+     * @param  array<string, mixed>  $page
+     * @param  array{city: string, region: ?string, businessRegions: array<int, string>}  $place
+     */
+    private function pageIsPlace(array $page, array $place): bool
+    {
+        $parse = fn (string $value) => \App\Library\Website\GuidedGeneration\GuidedGenerationCommitService::placeParts($value);
+        $identities = [];
+
+        if (($page['place'] ?? null) !== null) {
+            $identities[] = $parse((string) $page['place']);
+        }
+
+        $address = (string) preg_replace('/^serving-/', '', (string) ($page['slug'] ?? ''));
+
+        if ($address !== '' && str_starts_with((string) ($page['slug'] ?? ''), 'serving-')) {
+            $identities[] = [$address, null];
+
+            if (str_starts_with($address, $place['city'] . '-')) {
+                $identities[] = [$place['city'], $parse('x, ' . str_replace('-', ' ', substr($address, strlen($place['city']) + 1)))[1]];
+            }
+        }
+
+        foreach ($identities as [$city, $region]) {
+            if ($city !== $place['city']) {
+                continue;
+            }
+
+            if ($region !== null && $place['region'] !== null) {
+                if ($region === $place['region']) {
+                    return true;
+                }
+
+                continue;
+            }
+
+            // One side names no region: it is the same place only when the business has no other region for this city.
+            if (count($place['businessRegions']) <= 1 && ($place['region'] === null || $place['businessRegions'] === [] || $place['businessRegions'] === [$place['region']])) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private function topicRepresented(WebsiteArticle $article): bool
