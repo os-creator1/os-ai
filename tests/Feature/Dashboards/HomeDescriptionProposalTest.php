@@ -50,6 +50,9 @@ class HomeDescriptionProposalTest extends TestCase
         app(BusinessLocationRepository::class)->upsertPrimary($business, ['name' => 'Main', 'service_mode' => 'service_area', 'city' => 'Orange', 'region' => 'CA', 'country_code' => 'US']);
         $this->primaryService($business);
         $this->adoptSeoFirstPolicy($business);
+        // The customer holds the advisor capability, exactly as the existing Opportunity HTTP tests arrange it.
+        $customer->permissions = \App\Models\Customer::customerPermissions();
+        $customer->save();
         $action = ['schema_version' => 1, 'action_key' => 'add_description', 'parameters' => [], 'approval_required' => true, 'completion_policy' => 'system_verified'];
         $id = $this->recommendation($business, [
             'type' => 'missing_description', 'title' => 'Add a description',
