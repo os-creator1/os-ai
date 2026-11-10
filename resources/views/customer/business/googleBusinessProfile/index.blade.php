@@ -4,9 +4,11 @@
 
     READ-ONLY SURFACE. There is deliberately no edit, post, review-reply,
     verification, photo-upload or any other write control anywhere in this
-    view, and no Reviews/Posts/Media/Performance/Q&A tab — not even
+    view, and no Reviews/Posts/Media/Q&A tab — not even
     disabled. There is no GBP score, profile-strength percentage, grade,
-    chart or AI-generated analysis (contract §25.10, §31).
+    chart or AI-generated analysis (contract §25.10, §31). The one addition is
+    the read-only "Google performance" section (_performance.blade.php): Google's
+    own counts and search terms, loaded only on request and never stored.
 
     Layout: not connected = one short connect card (the §25.9 permission
     wording sits behind a disclosure, never removed); connected = the
@@ -281,6 +283,8 @@
                     <a class="btn btn-outline-primary mb-2" href="{{ $item['comparisonUrl'] }}">View comparison</a>
                 @endif
             @endforeach
+
+            @include('customer.business.googleBusinessProfile._performance')
 
             <div class="d-flex gap-1 flex-wrap">
                 @if (! empty($canManageGoogle))
