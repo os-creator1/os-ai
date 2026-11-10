@@ -203,6 +203,7 @@ final class HomeV2Presenter
                 'confidence' => $primary['confidence'] ?? null,
                 'statusLabel' => $primary['statusLabel'] ?? null,
                 'detailUrl' => $primary['detailUrl'] ?? null,
+                'description' => $primary['description'] ?? null,
                 'others' => $others,
             ];
         }

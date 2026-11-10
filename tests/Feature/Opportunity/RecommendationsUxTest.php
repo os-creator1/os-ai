@@ -111,7 +111,7 @@ class RecommendationsUxTest extends TestCase
         $page->assertSee('Optional improvement');
         $page->assertSee('this does not affect your CRM setup');
         $page->assertSee('Open business profile');
-        $page->assertSee('Back to recommendations');
+        $page->assertSee('Back to Home');
         $page->assertSee('Dismiss recommendation');
         $this->assertSame(1, substr_count($page->getContent(), 'data-role="primary-cta"'));
 

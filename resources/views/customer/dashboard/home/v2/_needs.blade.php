@@ -33,7 +33,7 @@
                 @if($needs['sub'])<p class="hv2-muted mb-0" data-role="needs-sub">{{ $needs['sub'] }}</p>@endif
             </div>
             <div class="hv2-needs__actions">
-                @if($needs['primary'] !== null)
+                @if($needs['primary'] !== null && ($needs['description'] ?? null) === null)
                     <a class="btn btn-primary hv2-btn" href="{{ $needs['primary']['url'] }}" data-role="next-best-move-action">{{ $needs['primary']['label'] }} <span aria-hidden="true">→</span></a>
                 @endif
                 @if($needs['ai'] !== null)
@@ -41,6 +41,7 @@
                 @endif
             </div>
         </div>
+        @if(($needs['description'] ?? null) !== null)@include('customer.dashboard.home.v2._description-proposal', ['needs' => $needs])@endif
 
         @if($needs['why'] !== [] || $needs['others'] !== [] || ($needs['recommendations'] ?? null) !== null)
             <details class="hv2-details" data-role="needs-details">
