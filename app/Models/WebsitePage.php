@@ -26,6 +26,8 @@ class WebsitePage extends Model
         'title',
         'slug',
         'is_home',
+        'page_role',
+        'page_intent',
         'sections',
         'seo_title',
         'meta_description',
@@ -36,6 +38,7 @@ class WebsitePage extends Model
 
     protected $casts = [
         'is_home' => 'boolean',
+        'page_intent' => 'array',
         'sections' => 'array',
         'noindex' => 'boolean',
         'noindex_explicit' => 'boolean',

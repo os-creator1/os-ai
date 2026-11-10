@@ -23,6 +23,9 @@ final class SeoPublishedPage
         public readonly ?string $metaDescription,
         public readonly bool $noindex,
         private readonly array $sections,
+        public readonly ?string $role = null,
+        /** @var ?array<string, mixed> */
+        public readonly ?array $intent = null,
     ) {
     }
 

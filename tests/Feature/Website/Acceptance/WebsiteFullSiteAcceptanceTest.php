@@ -384,7 +384,10 @@ class WebsiteFullSiteAcceptanceTest extends TestCase
 
         $pageCount = $this->website->pages()->count();
         $this->report->context('lifecycle');
-        $this->report->expect($pageCount === WebsitePageStrategy::MAX_TOTAL_PAGES, 'site', 'generated_page_count', $pageCount . ' pages generated (canonical ceiling ' . WebsitePageStrategy::MAX_TOTAL_PAGES . ')');
+        // The canonical ceiling bounds the site; bare city names (the fixture's service areas) earn no page of their own, so the
+        // budget is no longer padded with name-only area pages.
+        $areaPages = $this->website->pages()->where('slug', 'like', 'serving-%')->count();
+        $this->report->expect($pageCount <= WebsitePageStrategy::MAX_TOTAL_PAGES && $pageCount >= 10 && $areaPages === 0, 'site', 'generated_page_count', $pageCount . ' pages generated (canonical ceiling ' . WebsitePageStrategy::MAX_TOTAL_PAGES . '), ' . $areaPages . ' name-only area pages');
         $this->report->expect($this->website->template_key === $first->templateKey && $this->website->pages()->where('is_home', true)->count() === 1, 'site', 'template_and_single_home', $this->website->template_key);
         $this->assertSame(array_values(array_unique($this->fakeAi->requests)), $this->fakeAi->requests, 'The fake AI was asked for each page exactly once.');
         $this->report->expect(

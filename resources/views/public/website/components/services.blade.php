@@ -18,6 +18,8 @@
     <div class="website-services-grid @if ($wd) wd-grid @endif">
         @foreach ($items as $item)
             @php($detailUrl = ! $isPackages && ! empty($item['service_uid']) ? (($servicePageUrls ?? [])[$item['service_uid']] ?? null) : null)
+            {{-- An "Areas we serve" entry links to the page about that place, when the site has one (by place identity). --}}
+            @php($detailUrl = $detailUrl ?? (! $isPackages && ! empty($item['place']) ? (($placePageUrls ?? [])[\Illuminate\Support\Str::slug((string) $item['place'])] ?? null) : null))
             @php($itemImage = ! empty($item['image']) && isset($assetsByUid[$item['image']]) ? $assetsByUid[$item['image']] : null)
             <div class="website-service-card @if ($wd) wd-card @endif @if (! empty($item['featured'])) wd-card-featured @endif @if ($detailUrl) wd-card-linked @endif" @if ($isPackages) data-package-uid="{{ $item['catalog_item_uid'] ?? '' }}" @endif>
                 @if ($itemImage)

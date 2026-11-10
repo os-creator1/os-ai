@@ -45,7 +45,7 @@ namespace App\Library\Website\Seo;
 final class WebsiteLocalBusinessStructuredData
 {
     /**
-     * @param  array{name: ?string, telephone: ?string, email: ?string, address: ?array<string, ?string>, hours: ?array}  $facts
+     * @param  array{name: ?string, telephone: ?string, email: ?string, address: ?array<string, ?string>, hours: ?array, areas?: array<int, string>}  $facts
      *                                                                                                                            the frozen snapshot facts from WebsiteSnapshotBuilder::localBusinessFacts() — never a live model
      * @return ?array<string, mixed> null only when the published
      *                               snapshot carries no usable business name — schema.org requires one
@@ -81,6 +81,12 @@ final class WebsiteLocalBusinessStructuredData
 
         if (! empty($facts['email'])) {
             $data['email'] = $facts['email'];
+        }
+
+        // Coverage the site visibly states (WebsiteSnapshotBuilder::visibleServiceAreas) — never an area nobody can read about.
+        $areas = array_values(array_filter(array_map(fn ($area) => trim((string) $area), (array) ($facts['areas'] ?? []))));
+        if ($areas !== []) {
+            $data['areaServed'] = array_map(fn (string $area) => ['@type' => 'City', 'name' => $area], $areas);
         }
 
         $address = $this->postalAddress($facts['address'] ?? null);

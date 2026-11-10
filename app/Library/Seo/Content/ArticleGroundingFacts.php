@@ -107,7 +107,7 @@ final class ArticleGroundingFacts
 
         foreach ($pages as $page) {
             if ($page['kind'] === ArticleSiteInventory::KIND_LOCATION && $page['linkable']) {
-                $cities[] = Str::title(str_replace('-', ' ', (string) preg_replace('/^serving-/', '', (string) $page['slug'])));
+                $cities[] = ($page['place'] ?? null) !== null ? (string) $page['place'] : Str::title(str_replace('-', ' ', (string) preg_replace('/^serving-/', '', (string) $page['slug'])));
             }
         }
 

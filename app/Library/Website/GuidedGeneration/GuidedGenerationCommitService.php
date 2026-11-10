@@ -379,7 +379,7 @@ final class GuidedGenerationCommitService
             $bound = $this->mediaBinding->bind($website, $merged, $customSection, $customerFaq);
             $bound['pages'] = $this->groundInventedFacts($bound['pages'], $business, $plan);
 
-            DB::transaction(function () use ($website, $template, $bound, $attempt, $retryCount, $fenceToken) {
+            DB::transaction(function () use ($business, $website, $template, $bound, $attempt, $retryCount, $fenceToken) {
                 // Blocker 4 — real rebuild semantics: lock the Website
                 // row, then replace the ENTIRE draft page set atomically.
                 // If any createPage() call below throws, the whole
@@ -402,7 +402,7 @@ final class GuidedGenerationCommitService
                 // let search engines find their pages, the rebuilt pages stay open, and a
                 // page the owner hid on purpose stays hidden (matched by its address). A
                 // first generation, or a site never released, stays hidden until reviewed.
-                $previous = $locked->pages()->get(['slug', 'is_home', 'noindex', 'noindex_explicit']);
+                $previous = $locked->pages()->get(['slug', 'is_home', 'page_role', 'page_intent', 'noindex', 'noindex_explicit']);
                 $ownerOpened = $locked->indexing_released_at !== null;
                 $ownerHidden = $previous->filter(fn ($old) => $old->noindex && $old->noindex_explicit)->map(fn ($old) => $old->is_home ? '' : (string) $old->slug)->all();
 
@@ -411,10 +411,14 @@ final class GuidedGenerationCommitService
                 foreach ($bound['pages'] as $page) {
                     $hiddenByOwner = in_array($page['is_home'] ? '' : (string) $page['slug'], $ownerHidden, true);
 
+                    $identity = \App\Library\Website\Seo\WebsitePageIntent::forPlanPage($page);
+
                     $this->pages->createPage($locked, [
                         'title' => $page['title'],
                         'slug' => $page['slug'],
                         'is_home' => $page['is_home'],
+                        'page_role' => $identity['role'],
+                        'page_intent' => $identity['intent'],
                         'sections' => $page['sections'],
                         'seo_title' => $page['seo_title'] ?? null,
                         'meta_description' => $page['meta_description'] ?? null,
@@ -423,7 +427,27 @@ final class GuidedGenerationCommitService
                     ]);
                 }
 
+                // A place page this rebuild no longer creates may already be indexed or linked to. Its address answers a permanent
+                // redirect to the home page ONLY when the new home page's "Areas we serve" list names that exact place (a
+                // normalized whole-name match — "Spokane" is not "Spokane Valley"). A place the owner dropped is not redirected
+                // (an honest 404 beats a misleading landing page). Existing redirects — the owner's own, or generated earlier,
+                // which cannot be told apart — are never changed or removed here, and never point anywhere but a live page.
+                $newSlugs = collect($bound['pages'])->pluck('slug')->filter()->all();
+                $coveredPlaces = $this->homeCoveredPlaces($business, $bound['pages']);
+                $lost = $previous->filter(fn ($old) => ! $old->is_home && $old->slug !== null && ($old->page_role === 'location' || str_starts_with((string) $old->slug, 'serving-')))
+                    ->reject(fn ($old) => in_array($old->slug, $newSlugs, true))
+                    ->filter(fn ($old) => self::placeIsCovered(self::lostPagePlace($old->page_intent['place'] ?? null, (string) $old->slug, $coveredPlaces), $coveredPlaces))
+                    ->pluck('slug')->values()->all();
+                $redirects = (array) ($locked->custom_redirects ?? []);
+                foreach ($lost as $slug) {
+                    // Added only while there is room: the cap never evicts a redirect somebody else may have set.
+                    if (! array_key_exists(strtolower((string) $slug), $redirects) && count($redirects) < \App\Library\Website\Seo\WebsiteRedirectManager::MAX) {
+                        $redirects[strtolower((string) $slug)] = '';
+                    }
+                }
+
                 $locked->update([
+                    'custom_redirects' => $redirects === [] ? $locked->custom_redirects : $redirects,
                     // The template's own tokens, plus the owner's brand colour,
                     // logo and hero image (never lost to a rebuild).
                     'theme' => array_merge($template->theme, \App\Library\Website\Design\WebsiteLookService::ownerTokens($locked->theme)),
@@ -502,6 +526,127 @@ final class GuidedGenerationCommitService
         }
 
         return [null, $attempts - 1];
+    }
+
+    /**
+     * The confirmed service areas (city AND region) that the new home page's "Areas we serve" list actually shows. It mirrors
+     * MediaBindingService::bindAreaHub: the primary city first, then the saved areas, one entry per city name, at most 12.
+     * Empty when the home page has no such list.
+     *
+     * @param  array<int, array<string, mixed>>  $pages
+     * @return array<int, array{0: string, 1: ?string, 2: bool}> [city slug, region code|null, saved under several regions]
+     */
+    private function homeCoveredPlaces(Business $business, array $pages): array
+    {
+        $home = collect($pages)->firstWhere('is_home', true);
+        $hasHub = collect((array) ($home['sections'] ?? []))->contains(fn ($section) => str_contains(mb_strtolower((string) ($section['data']['heading'] ?? '')), 'areas we serve'));
+
+        if (! $hasHub) {
+            return [];
+        }
+
+        $covered = [];
+        $regionsByCity = [];
+
+        // The very selection the rendered hub uses: full place identities, the first 12.
+        foreach (MediaBindingService::hubPlaces($business->primaryLocation()->first()) as $entry) {
+            [$city, $region] = self::placeParts($entry);
+
+            if ($city !== '') {
+                $regionsByCity[$city][$region ?? ''] = true;
+                $covered[] = [$city, $region, false];
+            }
+        }
+
+        // A city listed under several regions ("Portland, OR" and "Portland, ME", or one of them without a region) is ambiguous
+        // for a page that names no region.
+        foreach ($covered as $i => [$city]) {
+            $covered[$i][2] = count($regionsByCity[$city]) > 1;
+        }
+
+        return $covered;
+    }
+
+    /**
+     * Whether a removed page's place is one of the covered places: the city must match exactly; when both sides name a region it
+     * must match too; when either lacks one (older values) it matches only if that city is covered by a single place. Anything
+     * ambiguous is not a match.
+     *
+     * @param  array<int, array{0: string, 1: ?string, 2: bool}>  $covered
+     */
+    private static function placeIsCovered(string $place, array $covered): bool
+    {
+        [$city, $region] = self::placeParts($place);
+
+        if ($city === '') {
+            return false;
+        }
+
+        $sameCity = array_values(array_filter($covered, fn (array $c) => $c[0] === $city));
+
+        if ($sameCity === []) {
+            return false;
+        }
+
+        if ($region !== null) {
+            $exact = array_filter($sameCity, fn (array $c) => $c[1] === $region);
+
+            if ($exact !== []) {
+                return count($exact) === 1;
+            }
+
+            // No listed place names this region: an older, region-less listing of a single place can still stand for it.
+            return count($sameCity) === 1 && $sameCity[0][1] === null && ! $sameCity[0][2];
+        }
+
+        return count($sameCity) === 1 && ! $sameCity[0][2];
+    }
+
+    /**
+     * The place a removed page was about. A stored page-intent place wins. A page written before page intent existed has none,
+     * so its generated address ("serving-<city>" or "serving-<city>-<region>") is compared, as a WHOLE, with the address each
+     * covered place would have had. Exactly one distinct reading is accepted; no match or several readings (a bare "serving-portland"
+     * with both Portland, OR and Portland, ME covered) gives '' — a place is never invented, and nothing is matched by substring.
+     *
+     * @param  array<int, array{0: string, 1: ?string, 2: bool}>  $covered
+     */
+    private static function lostPagePlace(mixed $storedPlace, string $slug, array $covered): string
+    {
+        $stored = trim((string) $storedPlace);
+
+        if ($stored !== '' || ! str_starts_with($slug, 'serving-')) {
+            return $stored;
+        }
+
+        $address = substr($slug, strlen('serving-'));
+        $readings = [];
+
+        foreach ($covered as [$city, $region]) {
+            if ($region !== null && $address === $city . '-' . $region) {
+                $readings[$city . ', ' . $region] = true;
+            } elseif ($address === $city) {
+                $readings[$city] = true;
+            }
+        }
+
+        return count($readings) === 1 ? (string) array_key_first($readings) : '';
+    }
+
+    /**
+     * "Portland, OR" => ['portland', 'or']; "Portland" => ['portland', null]. Case, punctuation and spacing are ignored and a US
+     * state name is read as its code ("Oregon" = "OR"). The city is the whole name before the comma, so "Spokane Valley" never
+     * equals "Spokane".
+     *
+     * @return array{0: string, 1: ?string}
+     */
+    public static function placeParts(string $place): array
+    {
+        $parts = explode(',', $place, 2);
+        $city = \Illuminate\Support\Str::slug($parts[0]);
+        $region = isset($parts[1]) ? \Illuminate\Support\Str::slug($parts[1]) : '';
+        $states = ['alabama' => 'al', 'alaska' => 'ak', 'arizona' => 'az', 'arkansas' => 'ar', 'california' => 'ca', 'colorado' => 'co', 'connecticut' => 'ct', 'delaware' => 'de', 'district-of-columbia' => 'dc', 'florida' => 'fl', 'georgia' => 'ga', 'hawaii' => 'hi', 'idaho' => 'id', 'illinois' => 'il', 'indiana' => 'in', 'iowa' => 'ia', 'kansas' => 'ks', 'kentucky' => 'ky', 'louisiana' => 'la', 'maine' => 'me', 'maryland' => 'md', 'massachusetts' => 'ma', 'michigan' => 'mi', 'minnesota' => 'mn', 'mississippi' => 'ms', 'missouri' => 'mo', 'montana' => 'mt', 'nebraska' => 'ne', 'nevada' => 'nv', 'new-hampshire' => 'nh', 'new-jersey' => 'nj', 'new-mexico' => 'nm', 'new-york' => 'ny', 'north-carolina' => 'nc', 'north-dakota' => 'nd', 'ohio' => 'oh', 'oklahoma' => 'ok', 'oregon' => 'or', 'pennsylvania' => 'pa', 'rhode-island' => 'ri', 'south-carolina' => 'sc', 'south-dakota' => 'sd', 'tennessee' => 'tn', 'texas' => 'tx', 'utah' => 'ut', 'vermont' => 'vt', 'virginia' => 'va', 'washington' => 'wa', 'west-virginia' => 'wv', 'wisconsin' => 'wi', 'wyoming' => 'wy'];
+
+        return [$city, $region === '' ? null : ($states[$region] ?? $region)];
     }
 
     /**

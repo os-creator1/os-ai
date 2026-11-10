@@ -83,7 +83,9 @@ final class MediaBindingService
         $slugOf = fn (string $type) => collect($pages)->firstWhere('page_type', $type)['slug'] ?? null;
         $contactSlug = $slugOf('contact');
         $servicesSlug = $slugOf('services_overview');
-        $areaPages = array_values(array_filter($pages, fn ($p) => is_array($p['entity'] ?? null) && isset($p['entity']['area'])));
+        // A place page: an owner-chosen area with local details, or a saved served location.
+        $placeOf = fn ($p) => is_array($p['entity'] ?? null) ? ($p['entity']['area'] ?? (isset($p['entity']['location_id']) ? ($p['entity']['city'] ?? null) : null)) : null;
+        $areaPages = array_values(array_filter($pages, fn ($p) => is_string($placeOf($p))));
 
         if ($areaPages === []) {
             return $pages;
@@ -102,7 +104,7 @@ final class MediaBindingService
         };
 
         foreach ($pages as $index => $page) {
-            $area = is_array($page['entity'] ?? null) ? ($page['entity']['area'] ?? null) : null;
+            $area = $placeOf($page);
 
             if (! is_string($area)) {
                 continue;
@@ -130,7 +132,7 @@ final class MediaBindingService
             $nearby = [];
             foreach ($areaPages as $other) {
                 if ($other['slug'] !== $page['slug'] && ! $linksTo($page, (string) $other['slug'])) {
-                    $nearby[] = ['label' => \Illuminate\Support\Str::limit('Also serving ' . $other['entity']['area'], 40, ''), 'url' => '/' . $other['slug']];
+                    $nearby[] = ['label' => \Illuminate\Support\Str::limit('Also serving ' . $placeOf($other), 40, ''), 'url' => '/' . $other['slug']];
                 }
                 if (count($nearby) === 2) {
                     break;
@@ -149,6 +151,163 @@ final class MediaBindingService
     }
 
     /**
+     * Every booth page points on to up to two of the owner's other booth pages ("Also available"), so a visitor comparing
+     * options never reaches a dead end and the booth pages support each other. Deterministic, from the planned pages only.
+     *
+     * @param  array<int, array<string, mixed>>  $pages
+     * @return array<int, array<string, mixed>>
+     */
+    private function linkServicePages(array $pages): array
+    {
+        // Booths: only ones the owner described have something of their own to link on from; a booth page that is just its name
+        // and a generic line is flagged at publish time instead of being padded with more shared blocks.
+        // Event pages exist only because the owner described them (EventPageUsefulness), so every one of them links on to two others.
+        $groups = [
+            ['type' => 'service_detail', 'heading' => 'Also available', 'eligible' => fn ($page) => trim((string) ($page['entity']['description'] ?? '')) !== ''],
+            ['type' => 'event_detail', 'heading' => 'Other occasions', 'eligible' => fn ($page) => true],
+        ];
+
+        foreach ($groups as $group) {
+            $members = array_values(array_filter($pages, fn ($page) => ($page['page_type'] ?? null) === $group['type'] && ! empty($page['slug']) && $group['eligible']($page)));
+
+            if (count($members) < 2) {
+                continue;
+            }
+
+            foreach ($pages as $index => $page) {
+                if (($page['page_type'] ?? null) !== $group['type'] || empty($page['slug']) || ! $group['eligible']($page)) {
+                    continue;
+                }
+
+                $buttons = [];
+                foreach ($members as $other) {
+                    if ($other['slug'] !== $page['slug']) {
+                        $buttons[] = ['label' => \Illuminate\Support\Str::limit((string) $other['title'], 40, ''), 'url' => '/' . $other['slug']];
+                    }
+                    if (count($buttons) === 2) {
+                        break;
+                    }
+                }
+
+                $sections = (array) ($page['sections'] ?? []);
+                $at = collect($sections)->search(fn ($section) => in_array($section['type'] ?? null, ['cta', 'contact_details'], true));
+                array_splice($sections, $at === false ? count($sections) : $at, 0, [['type' => 'cta', 'data' => ['heading' => $group['heading'], 'body' => null, 'buttons' => $buttons]]]);
+                $pages[$index]['sections'] = $sections;
+            }
+        }
+
+        return $pages;
+    }
+
+    /**
+     * The "Areas we serve" list on the home page: every place the owner confirmed serving (their base city and saved
+     * service areas), whether or not it has a page of its own. This is where an area WITHOUT local substance lives
+     * (WebsitePageStrategy / LocalAreaUsefulness) — visible and crawlable, never a name-swapped page. A place that does
+     * have its own page links to it, by place identity (`place`), so a renamed address never breaks the link.
+     * Deterministic and built only from saved facts; an existing section of that name is the owner's and is left alone.
+     *
+     * @param  array<int, array<string, mixed>>  $pages
+     * @return array<int, array<string, mixed>>
+     */
+    private function bindAreaHub(Website $website, array $pages): array
+    {
+        $places = collect(self::hubPlaces($website->business?->primaryLocation()->first(), PHP_INT_MAX));
+
+        if ($places->count() < 2) {
+            return $pages;
+        }
+
+        foreach ($pages as $index => $page) {
+            if (empty($page['is_home'])) {
+                continue;
+            }
+
+            $sections = (array) ($page['sections'] ?? []);
+
+            if (collect($sections)->contains(fn ($section) => str_contains(mb_strtolower((string) ($section['data']['heading'] ?? '')), 'areas we serve'))) {
+                return $pages;
+            }
+
+            $hub = ['type' => 'services', 'data' => [
+                'heading' => 'Areas we serve',
+                'items' => $this->areaHubItems(array_slice($places->all(), 0, self::HUB_LIMIT), $pages),
+            ]];
+
+            $at = collect($sections)->search(fn ($section) => in_array($section['type'] ?? null, ['cta', 'contact_details'], true));
+            array_splice($sections, $at === false ? count($sections) : $at, 0, [$hub]);
+            $pages[$index]['sections'] = $sections;
+
+            return $pages;
+        }
+
+        return $pages;
+    }
+
+    /** The most places the home page's "Areas we serve" list shows. */
+    public const HUB_LIMIT = 12;
+
+    /**
+     * The confirmed places the "Areas we serve" list is drawn from, in display order: the primary city and region first, then the
+     * saved service areas, one entry per FULL place identity (Portland, OR and Portland, ME are two), at most $limit. The commit
+     * service uses this same selection to know which places the home page still lists.
+     *
+     * @return array<int, string>
+     */
+    public static function hubPlaces(?\App\Models\BusinessLocation $location, int $limit = self::HUB_LIMIT): array
+    {
+        return collect(array_merge([trim(collect([$location?->city, $location?->region])->filter()->implode(', '))], (array) ($location?->service_area_cities ?? [])))
+            ->map(fn ($entry) => trim((string) $entry))
+            ->filter()
+            ->unique(fn ($place) => implode('|', array_map(fn ($part) => (string) $part, GuidedGenerationCommitService::placeParts($place))))
+            ->take($limit)
+            ->values()
+            ->all();
+    }
+
+    /**
+     * The hub's entries. `name` is the friendly label (the city; "City, ST" only when two entries share a city name). `place` is
+     * the stored identity of the generated place page that is EXACTLY this place — same city, same region — so the link follows
+     * the page, never a guessed address. A region missing on one side counts only when that city appears once among the hub and
+     * the pages. A place with no page, or an ambiguous one, keeps its own full identity, which no other place's page carries, so it shows without a link: nothing is invented.
+     *
+     * @param  array<int, string>  $entries  full place identities, as saved
+     * @param  array<int, array<string, mixed>>  $pages
+     * @return array<int, array<string, string>>
+     */
+    private function areaHubItems(array $entries, array $pages): array
+    {
+        $pagePlaces = [];
+
+        foreach ($pages as $page) {
+            $entity = is_array($page['entity'] ?? null) ? $page['entity'] : [];
+            $place = $entity['area'] ?? (isset($entity['location_id']) ? ($entity['city'] ?? null) : null);
+
+            if (is_string($place) && trim($place) !== '') {
+                // The same identity WebsitePageIntent stores for the page: the area as written, or the saved location's city AND region.
+                $full = isset($entity['area']) ? $place : trim(collect([$place, $entity['region'] ?? null])->filter()->implode(', '));
+                $pagePlaces[] = ['place' => $full, 'parts' => GuidedGenerationCommitService::placeParts($full)];
+            }
+        }
+
+        $partsOf = fn (string $entry) => GuidedGenerationCommitService::placeParts($entry);
+        $hubCities = array_count_values(array_map(fn (string $entry) => $partsOf($entry)[0], $entries));
+
+        return array_map(function (string $entry) use ($pagePlaces, $partsOf, $hubCities) {
+            [$city, $region] = $partsOf($entry);
+            $matches = array_values(array_filter($pagePlaces, fn (array $page) => $page['parts'][0] === $city && ($region !== null && $page['parts'][1] !== null ? $page['parts'][1] === $region : true)));
+            $sameCity = count(array_filter($pagePlaces, fn (array $page) => $page['parts'][0] === $city));
+            $unambiguous = $region !== null && ($matches !== [] && $matches[0]['parts'][1] !== null) || ($sameCity === 1 && ($hubCities[$city] ?? 0) === 1);
+            $label = trim((string) \Illuminate\Support\Str::before($entry, ','));
+            $place = count($matches) === 1 && $unambiguous ? $matches[0]['place'] : $entry;
+
+            return [
+                'name' => \Illuminate\Support\Str::limit(($hubCities[$city] ?? 0) > 1 ? $entry : $label, 120, ''),
+                'place' => \Illuminate\Support\Str::limit($place, 120, ''),
+            ];
+        }, $entries);
+    }
+
+    /**
      * @param  array<int, array{page_key: string, page_type: string, is_home: bool, slug: ?string, title: string, seo_title: ?string, meta_description: ?string, sections: array}>  $pages
      * @param  ?array{title: string, layout: string, body: ?string, images: array<int, string>}  $customSection  see WebsitePageStrategy::buildPlan()'s matching parameter
      * @param  ?array<int, array{question: string, answer: string}>  $customerFaq  the owner's own FAQ answers (WebsiteSetupAnswerApplier never writes these anywhere canonical — 'faq' has no canonical model — so the wizard controller reads them straight from QuestionnaireResponse.answers and hands them here)
@@ -164,6 +323,8 @@ final class MediaBindingService
         // by uid (resolved live at preview/publish) — stamped here from the
         // catalog, never trusted from AI output.
         $pages = $this->linkAreaPages($pages);
+        $pages = $this->linkServicePages($pages);
+        $pages = $this->bindAreaHub($website, $pages);
         $pages = $this->catalogReferences->stampPackagePages($pages, (int) $website->business_id);
         $pages = $this->mirrorServiceImages($website, $pages);
         $pages = $this->mirrorPackageImages($website, $pages);

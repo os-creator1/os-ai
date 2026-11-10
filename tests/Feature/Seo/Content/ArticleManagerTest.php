@@ -343,4 +343,137 @@ class ArticleManagerTest extends TestCase
         $this->assertSame(4, ArticleMarkdown::wordCount("## Head\n\nthree little words"));
         $this->assertSame(5, ArticleMarkdown::wordCount("1. first step\n2. second step here"));
     }
+
+    public function test_an_article_about_a_place_the_site_has_no_page_for_is_flagged_as_thin_but_never_blocked(): void
+    {
+        [, $business] = $this->photoBoothContentTenant();
+        $this->locationFor($business)->update(['service_area_cities' => ['Evanston, IL']]);
+        $analyzer = app(ArticleAnalyzer::class);
+
+        $thin = $this->draftArticle($business, ['title' => 'Photo Booth Timeline for Evanston Weddings', 'primary_topic' => 'photo booth timeline evanston weddings']);
+        $check = collect($analyzer->analyze($business, $thin)['checks'])->firstWhere('key', 'local');
+        $this->assertSame('attention', $check['status']);
+        $this->assertStringContainsString('no page about Evanston', $check['detail']);
+        $this->assertNotContains($check['detail'], $analyzer->blockers($business, $thin), 'Advice for the owner\'s approval, not a publishing block.');
+
+        $backed = $this->draftArticle($business, ['title' => 'Photo Booth Timeline for Chicago Weddings', 'slug' => 'photo-booth-timeline-chicago', 'primary_topic' => 'photo booth timeline chicago weddings']);
+        $this->assertSame('good', collect($analyzer->analyze($business, $backed)['checks'])->firstWhere('key', 'local')['status'], 'The site has a Chicago page.');
+
+        $none = $this->draftArticle($business, ['title' => 'Photo Booth Power Needs', 'slug' => 'photo-booth-power-needs', 'primary_topic' => 'photo booth power needs']);
+        $this->assertNull(collect($analyzer->analyze($business, $none)['checks'])->firstWhere('key', 'local'), 'An article not tied to a place is not judged on local substance.');
+    }
+
+    /**
+     * A business based in Spokane, WA serving the given areas, with a published site made of a home page plus the given place pages.
+     *
+     * @param  array<int, string>  $areas
+     * @param  array<int, array<string, mixed>>  $placePages  snapshot pages (see snapshotPage())
+     */
+    private function localTenant(array $areas, array $placePages, string $baseCity = 'Spokane'): \App\Models\Business
+    {
+        [, $business] = $this->entitledTenant();
+        $location = $this->createLocation($business, true, \App\Enums\Business\BusinessServiceMode::Storefront, ['name' => 'Spokane Studio', 'address_line_1' => '1 Main St', 'city' => $baseCity, 'region' => 'WA', 'postal_code' => '99201']);
+        $location->forceFill(['service_area_cities' => $areas])->save();
+        $home = $this->snapshotPage(self::PAGE_HOME, 'Home', [], [['type' => 'text', 'data' => ['heading' => 'Welcome', 'body' => 'Photo booths.']]], true);
+        $website = $this->publishWebsite($business, array_merge([$home], $placePages));
+        $website->forceFill(['indexing_released_at' => now()])->save();
+
+        return $business->fresh();
+    }
+
+    private function placePage(string $uid, string $slug, ?string $place, array $seo = []): array
+    {
+        $page = $this->snapshotPage($uid, 'Photo Booth Rental in ' . ($place ?? $slug), $seo, [['type' => 'text', 'data' => ['heading' => 'Serving', 'body' => 'Local details.']]], false, $slug);
+
+        return $place === null ? $page : $page + ['role' => 'location', 'intent' => ['place' => $place]];
+    }
+
+    private function localCheck(\App\Models\Business $business, string $title): array
+    {
+        $article = $this->draftArticle($business, ['title' => $title, 'slug' => \Illuminate\Support\Str::slug($title), 'supports_page_uid' => self::PAGE_HOME, 'body' => $this->goodBody(), 'primary_topic' => strtolower($title)]);
+
+        return collect(app(ArticleAnalyzer::class)->analyze($business, $article)['checks'])->firstWhere('key', 'local');
+    }
+
+    public function test_a_bare_city_article_is_backed_by_the_region_qualified_location_page(): void
+    {
+        $business = $this->localTenant(['Cheney, WA'], [$this->placePage('bbbbbbbb-0000-4000-8000-000000000001', 'serving-cheney-wa', 'Cheney, WA')]);
+
+        $this->assertSame('good', $this->localCheck($business, 'Photo Booth Timeline for Cheney Weddings')['status']);
+        $this->assertSame('good', $this->localCheck($business, 'Photo Booth Timeline for Cheney, WA Weddings')['status']);
+    }
+
+    public function test_an_article_about_a_place_with_no_page_is_still_warned(): void
+    {
+        $business = $this->localTenant(['Cheney, WA'], []);
+
+        $check = $this->localCheck($business, 'Photo Booth Timeline for Cheney Weddings');
+        $this->assertSame('attention', $check['status']);
+        $this->assertStringContainsString('no page about Cheney', $check['detail']);
+    }
+
+    public function test_a_stated_state_matches_that_state_and_an_unstated_one_is_never_guessed(): void
+    {
+        $business = $this->localTenant(['Portland, OR', 'Portland, ME'], [$this->placePage('bbbbbbbb-0000-4000-8000-000000000002', 'serving-portland-or', 'Portland, OR')]);
+
+        $this->assertSame('good', $this->localCheck($business, 'Photo Booth Ideas for Portland, OR Weddings')['status']);
+        $this->assertSame('attention', $this->localCheck($business, 'Photo Booth Ideas for Portland, ME Weddings')['status'], 'The Oregon page is not a Maine page.');
+        $ambiguous = $this->localCheck($business, 'Photo Booth Ideas for Portland Weddings');
+        $this->assertSame('attention', $ambiguous['status']);
+        $this->assertStringContainsString('does not say which', $ambiguous['detail']);
+    }
+
+    public function test_a_legacy_location_page_without_stored_intent_is_recognized(): void
+    {
+        $withState = $this->localTenant(['Cheney, WA'], [$this->placePage('bbbbbbbb-0000-4000-8000-000000000003', 'serving-cheney-wa', null)]);
+        $this->assertSame('good', $this->localCheck($withState, 'Photo Booth Timeline for Cheney Weddings')['status']);
+
+        $bare = $this->localTenant(['Cheney, WA'], [$this->placePage('bbbbbbbb-0000-4000-8000-000000000004', 'serving-cheney', null)]);
+        $this->assertSame('good', $this->localCheck($bare, 'Photo Booth Timeline for Cheney Weddings')['status']);
+
+        $two = $this->localTenant(['Portland, OR', 'Portland, ME'], [$this->placePage('bbbbbbbb-0000-4000-8000-000000000005', 'serving-portland-me', null)]);
+        $this->assertSame('good', $this->localCheck($two, 'Photo Booth Ideas for Portland, ME Weddings')['status']);
+        $this->assertSame('attention', $this->localCheck($two, 'Photo Booth Ideas for Portland, OR Weddings')['status']);
+    }
+
+    public function test_hidden_pages_and_another_customers_pages_never_back_an_article(): void
+    {
+        $hidden = $this->localTenant(['Cheney, WA'], [$this->placePage('bbbbbbbb-0000-4000-8000-000000000006', 'serving-cheney-wa', 'Cheney, WA', ['noindex' => true])]);
+        $this->assertSame('attention', $this->localCheck($hidden, 'Photo Booth Timeline for Cheney Weddings')['status'], 'A noindex page cannot support an article.');
+
+        $this->localTenant(['Cheney, WA'], [$this->placePage('bbbbbbbb-0000-4000-8000-000000000007', 'serving-cheney-wa', 'Cheney, WA')]);
+        $other = $this->localTenant(['Cheney, WA'], []);
+        $this->assertSame('attention', $this->localCheck($other, 'Photo Booth Timeline for Cheney Weddings')['status'], 'Another customer\'s Cheney page is not this business\'s.');
+    }
+
+    public function test_the_most_specific_overlapping_place_name_wins_in_any_saved_order(): void
+    {
+        // Base city Spokane is saved first, Spokane Valley second.
+        $valley = $this->placePage('bbbbbbbb-0000-4000-8000-000000000008', 'serving-spokane-valley-wa', 'Spokane Valley, WA');
+        $spokane = $this->placePage('bbbbbbbb-0000-4000-8000-000000000009', 'serving-spokane-wa', 'Spokane, WA');
+
+        $business = $this->localTenant(['Spokane Valley, WA'], [$valley]);
+        $this->assertSame('good', $this->localCheck($business, 'Photo Booth Timeline for Spokane Valley Weddings')['status']);
+
+        $onlySpokane = $this->localTenant(['Spokane Valley, WA'], [$spokane]);
+        $check = $this->localCheck($onlySpokane, 'Photo Booth Timeline for Spokane Valley Weddings');
+        $this->assertSame('attention', $check['status'], 'The Spokane page is not a Spokane Valley page.');
+        $this->assertStringContainsString('no page about Spokane Valley', $check['detail']);
+
+        $this->assertSame('good', $this->localCheck($onlySpokane, 'Photo Booth Timeline for Spokane Weddings')['status'], 'An article about Spokane still matches Spokane.');
+
+        // Spokane Valley is the base (saved first), Spokane a later area.
+        $reversed = $this->localTenant(['Spokane, WA'], [$spokane], 'Spokane Valley');
+        $this->assertSame('good', $this->localCheck($reversed, 'Photo Booth Timeline for Spokane Weddings')['status']);
+        $this->assertSame('attention', $this->localCheck($reversed, 'Photo Booth Timeline for Spokane Valley Weddings')['status']);
+    }
+
+    public function test_a_stated_state_survives_the_most_specific_match(): void
+    {
+        $business = $this->localTenant(['Portland, OR', 'Portland, ME'], [$this->placePage('bbbbbbbb-0000-4000-8000-000000000010', 'serving-portland-me', 'Portland, ME')]);
+
+        $this->assertSame('good', $this->localCheck($business, 'Photo Booth Ideas for Portland, ME Weddings')['status']);
+        $this->assertSame('attention', $this->localCheck($business, 'Photo Booth Ideas for Portland, OR Weddings')['status']);
+        $this->assertStringContainsString('does not say which', $this->localCheck($business, 'Photo Booth Ideas for Portland Weddings')['detail']);
+    }
 }

@@ -43,6 +43,29 @@ class ArticleCannibalizationGuardTest extends TestCase
         }
     }
 
+    public function test_a_published_legacy_service_areas_page_is_protected_like_any_other_money_page(): void
+    {
+        [, $business] = $this->entitledTenant();
+        $location = $this->createLocation($business, true, \App\Enums\Business\BusinessServiceMode::Storefront, ['name' => 'Chicago Studio', 'address_line_1' => '1200 W Fulton Market', 'city' => 'Chicago', 'region' => 'IL', 'postal_code' => '60607']);
+        $location->forceFill(['service_area_cities' => ['Naperville, IL', 'Aurora, IL', 'Joliet, IL']])->save();
+        $text = fn (string $heading, string $body) => [['type' => 'text', 'data' => ['heading' => $heading, 'body' => $body]]];
+        // A page written before page intent existed: no stored role, so only its address and the places it lists classify it.
+        $website = $this->publishWebsite($business, [
+            $this->snapshotPage(self::PAGE_HOME, 'Home', [], $text('Welcome', 'Photo booths.'), true),
+            $this->snapshotPage(self::PAGE_SERVICES, 'Photo Booth Service Areas', [], $text('Where we work', 'We serve Chicago, Naperville, Aurora and Joliet.'), false, 'service-areas'),
+        ]);
+        $website->forceFill(['indexing_released_at' => now()])->save();
+
+        $areaHub = collect(app(\App\Library\Seo\Content\ArticleSiteInventory::class)->pages($business))->firstWhere('slug', 'service-areas');
+        $this->assertSame(\App\Library\Seo\Content\ArticleSiteInventory::KIND_AREA_HUB, $areaHub['kind']);
+        $this->assertTrue($areaHub['money'], 'The area hub is a commercial page.');
+
+        $result = app(ArticleCannibalizationGuard::class)->check($business, ['photo booth service areas']);
+
+        $this->assertTrue($result->conflictsWithPage());
+        $this->assertTrue($result->strong());
+    }
+
     public function test_informational_topics_support_the_page_instead_of_competing(): void
     {
         [, $business] = $this->photoBoothContentTenant();
@@ -118,5 +141,22 @@ class ArticleCannibalizationGuardTest extends TestCase
 
         $this->assertSame('attention', $row['status']);
         $this->assertSame('attention', $analysis['overall']);
+    }
+
+    public function test_the_same_article_for_another_city_is_a_strong_duplicate_but_a_different_question_is_not(): void
+    {
+        [, $business] = $this->photoBoothContentTenant();
+        $this->publishedArticle($business, ['title' => 'How Much Space Does a Photo Booth Need in Chicago?', 'primary_topic' => 'how much space does a photo booth need in chicago']);
+        $guard = app(ArticleCannibalizationGuard::class);
+
+        $swapped = $guard->check($business, ['How Much Space Does a Photo Booth Need in Naperville?']);
+        $this->assertTrue($swapped->strong(), 'Only the city name changed: a name-swapped copy of the article.');
+        $this->assertStringContainsString('same article for a different place', $swapped->strongFindings()[0]['reason']);
+
+        $different = $guard->check($business, ['What Does a Photo Booth Cost in Naperville?']);
+        $this->assertFalse($different->strong(), 'A different question about that city is a different article.');
+
+        $nonPlace = $guard->check($business, ['How Much Space Does a Photo Booth Need for a Wedding?']);
+        $this->assertFalse($nonPlace->strong(), 'Swapping a non-place word is judged by the existing topic rules, not as a city swap.');
     }
 }

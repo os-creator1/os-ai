@@ -152,6 +152,39 @@ final class WizardPresentationAnswers
         return $rows;
     }
 
+    /**
+     * The event types the owner entered (item_kind "event"), shown ones only, with their own descriptions — what the Review
+     * screen previews event pages from before the answers are saved as services.
+     *
+     * @return array<int, array{name: string, description: ?string}>
+     */
+    public static function eventRows(?QuestionnaireResponse $response): array
+    {
+        if ($response === null) {
+            return [];
+        }
+
+        $rows = [];
+
+        foreach ($response->version->steps() as $step) {
+            if (($step['target_module'] ?? null) !== 'business_service' || ($step['item_kind'] ?? null) !== 'event') {
+                continue;
+            }
+
+            $answer = $response->answer($step['key']);
+
+            foreach (is_array($answer) ? $answer : [] as $item) {
+                $name = trim((string) (is_array($item) ? ($item['name'] ?? '') : ''));
+
+                if ($name !== '' && (! is_array($item) || ($item['visible'] ?? true))) {
+                    $rows[] = ['name' => $name, 'description' => isset($item['description']) ? trim((string) $item['description']) : null];
+                }
+            }
+        }
+
+        return $rows;
+    }
+
     /** Whether the owner entered at least one backdrop (so a Backdrops page will be planned). */
     public static function hasBackdrops(?QuestionnaireResponse $response): bool
     {
@@ -180,7 +213,7 @@ final class WizardPresentationAnswers
      * Null for a questionnaire that does not (v1's free-text answer): no
      * service-area pages are planned from it.
      *
-     * @return ?array<int, string>
+     * @return ?array<int, string|array{name: string, details: array<string, mixed>}>
      */
     public static function serviceAreas(?QuestionnaireResponse $response): ?array
     {
@@ -196,13 +229,21 @@ final class WizardPresentationAnswers
             return null;
         }
 
+        $answer = $response->answer($step['key']);
+
+        // A guided questionnaire that collects local details per area: every area is passed on (a bare name, or the name
+        // with what the owner confirmed), and LocalAreaUsefulness decides which of them earn a page of their own.
+        if (($step['area_details'] ?? false) === true) {
+            return is_array($answer) && $answer !== []
+                ? ServiceAreaDetails::entries(ServiceAreaList::normalize($answer), $response->answer(ServiceAreaDetails::ANSWER_KEY))
+                : null;
+        }
+
         // A guided questionnaire that collects areas for the business's own records only (never for
         // separate city SEO pages) says so; a v1/v2 list keeps planning area pages as before.
         if (($step['area_pages'] ?? true) === false) {
             return null;
         }
-
-        $answer = $response->answer($step['key']);
 
         return is_array($answer) && $answer !== [] ? ServiceAreaList::normalize($answer) : null;
     }

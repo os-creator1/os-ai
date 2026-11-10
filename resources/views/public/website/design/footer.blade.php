@@ -29,7 +29,7 @@
 
         @if (count($footerLinks['explore']) > 1)
             <nav class="wd-footer-col" aria-label="Explore">
-                <h2 class="wd-footer-heading">Explore</h2>
+                <p class="wd-footer-heading">Explore</p>
                 <ul>
                     @foreach ($footerLinks['explore'] as $link)
                         <li><a href="{{ $link['url'] }}">{{ $link['title'] }}</a></li>
@@ -40,7 +40,7 @@
 
         @if (count($footerLinks['services']) > 0)
             <nav class="wd-footer-col" aria-label="Services">
-                <h2 class="wd-footer-heading">Services</h2>
+                <p class="wd-footer-heading">Services</p>
                 <ul>
                     @foreach ($footerLinks['services'] as $link)
                         <li><a href="{{ $link['url'] }}">{{ $link['title'] }}</a></li>
@@ -51,7 +51,7 @@
 
         @if (count($footerLinks['areas']) > 0)
             <nav class="wd-footer-col" aria-label="Areas we serve">
-                <h2 class="wd-footer-heading">Areas we serve</h2>
+                <p class="wd-footer-heading">Areas we serve</p>
                 <ul>
                     @foreach ($footerLinks['areas'] as $link)
                         <li><a href="{{ $link['url'] }}">{{ $link['title'] }}</a></li>
@@ -63,7 +63,7 @@
     <div class="website-container wd-footer-legal">
         <p>&copy; {{ date('Y') }} {{ $websiteMeta['name'] }}</p>
         {{-- The owner's own notice addresses only (https, validated); nothing is written or implied on their behalf. --}}
-        @php($legalLinks = \App\Library\Website\Design\WebsiteLegalLinks::fromTheme($websiteMeta['theme'] ?? []))
+        @php($legalLinks = \App\Library\Website\Design\WebsiteLegalLinks::fromTheme($websiteMeta['theme'] ?? [], $pageUrls ?? []))
         @if ($legalLinks['privacy'] || $legalLinks['terms'])
             <nav class="wd-footer-legal-links" aria-label="Legal">
                 @if ($legalLinks['privacy'])<a href="{{ $legalLinks['privacy'] }}" rel="noopener" data-testid="privacy-notice-link">Privacy notice</a>@endif
