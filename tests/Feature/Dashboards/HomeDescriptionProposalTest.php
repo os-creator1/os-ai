@@ -39,9 +39,9 @@ class HomeDescriptionProposalTest extends TestCase
     }
 
     /** @return array{0: \App\Models\Customer, 1: Business, 2: int} a launched-onboarding Business with NO enquiry path, and its description Opportunity id */
-    private function onboarded(string $name = 'Orange Glam Booths'): array
+    private function onboarded(string $name = 'Orange Glam Booths', WorkspacePlanTier $tier = WorkspacePlanTier::Growth): array
     {
-        [$customer, $business] = $this->bareTenant(WorkspacePlanTier::Growth, $name, $name . ' Account');
+        [$customer, $business] = $this->bareTenant($tier, $name, $name . ' Account');
         app(BusinessLocationRepository::class)->upsertPrimary($business, ['name' => 'Main', 'service_mode' => 'service_area', 'city' => 'Orange', 'region' => 'CA', 'country_code' => 'US']);
         $this->primaryService($business);
         $this->adoptSeoFirstPolicy($business);
@@ -108,7 +108,8 @@ class HomeDescriptionProposalTest extends TestCase
 
     public function test_a_usable_enquiry_path_keeps_the_description_and_shows_a_proposal_from_saved_facts_without_ai(): void
     {
-        [$customer, $business, $id] = $this->onboarded();
+        // Core Home: on a Growth plan with no tracked keywords the existing SEO activation move (a different, established rule) leads instead.
+        [$customer, $business, $id] = $this->onboarded('Orange Glam Booths', WorkspacePlanTier::Core);
         $this->liveForm($business);
 
         $primary = $this->primary($customer);
