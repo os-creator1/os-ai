@@ -10,7 +10,7 @@
 <div class="gh-desc" data-role="description-proposal" data-approve-url="{{ $d['approveUrl'] }}" @if($d['improveUrl']) data-improve-url="{{ $d['improveUrl'] }}" @endif data-base="{{ $d['base'] }}" data-opportunity="{{ $d['uid'] }}" data-min="50" data-max="5000">
     <div class="gh-desc__panel" data-role="description-panel">
         <label class="gh-desc__label" for="hv2-desc-text">{{ $d['fromFacts'] ? 'Prepared by MotionGrove · from your saved business details' : 'Your business description' }}</label>
-        <textarea id="hv2-desc-text" class="gh-desc__text" rows="3" maxlength="5000" readonly data-role="description-text" placeholder="Write 2–3 sentences about what you do and where you work (at least 50 characters).">{{ $d['text'] }}</textarea>
+        <textarea id="hv2-desc-text" class="gh-desc__text" rows="1" maxlength="5000" readonly data-role="description-text" placeholder="Write 2–3 sentences about what you do and where you work (at least 50 characters).">{{ $d['text'] }}</textarea>
     </div>
     <div class="gh-desc__actions" data-role="description-actions">
         <button type="button" class="gh-btn gh-btn--light" data-role="description-approve"><svg class="gh-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>Approve &amp; save</button>

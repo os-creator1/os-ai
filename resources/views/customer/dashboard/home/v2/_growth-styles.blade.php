@@ -81,7 +81,7 @@
     .hv2 .gh-root .gh-desc__actions { position: relative; display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 18px 30px 24px; }
     .hv2 .gh-root .gh-desc__actions[hidden] { display: none; }
     .hv2 .gh-root .gh-desc__spacer { flex: 1; min-width: 12px; }
-    .hv2 .gh-root .gh-desc__note { font-size: 12.5px; color: #FBE3DF; }
+    .hv2 .gh-root .gh-desc__note { font-size: 12.5px; color: #FBE3DF; flex: 0 1 auto; }
     .hv2 .gh-root .gh-desc__result { position: relative; display: flex; align-items: center; gap: 16px; margin: 16px 30px 0; padding: 18px 20px; border-radius: 14px; background: #fff; color: var(--gh-text); }
     .hv2 .gh-root .gh-desc__result[hidden] { display: none; }
     .hv2 .gh-root .gh-desc__result:last-child { margin-bottom: 24px; }
@@ -119,7 +119,7 @@
     .hv2 .gh-root .home-ask:not(.is-conversation-open) .home-ask-card .card-body { padding: 16px 16px 14px 20px; }
     .hv2 .gh-root .home-ask:not(.is-conversation-open) .home-ask-form { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 8px; }
     .hv2 .gh-root .home-ask:not(.is-conversation-open) .home-ask-icon { display: none; }
-    .hv2 .gh-root .home-ask:not(.is-conversation-open) .home-ask-input { order: 0; flex: 1 1 100%; width: 100%; padding: 4px 0; font-size: 16px; line-height: 1.5; min-height: 1.5rem; }
+    .hv2 .gh-root .home-ask:not(.is-conversation-open) .home-ask-input { order: 0; flex: 1 1 100%; width: 100%; padding: 4px 0; font-family: inherit; font-size: 16px; line-height: 1.5; min-height: 1.5rem; }
     .hv2 .gh-root .home-ask:not(.is-conversation-open) .hv2-ask-chips { order: 1; flex: 1 1 auto; flex-wrap: wrap; gap: 8px; margin: 0; padding: 0; }
     .hv2 .gh-root .home-ask:not(.is-conversation-open) .home-ask-resume { order: 2; }
     .hv2 .gh-root .home-ask:not(.is-conversation-open) .gh-ask-history { order: 3; }
@@ -219,6 +219,7 @@
         .hv2 .gh-root .gh-row { padding: 14px 16px; flex-wrap: wrap; }
         .hv2 .gh-root .gh-row__when { order: 3; flex: 1 1 100%; text-align: left; min-width: 0; padding-left: 50px; }
         .hv2 .gh-root .home-ask:not(.is-conversation-open) .home-ask-card .card-body { padding: 14px 14px 12px 16px; }
+        .hv2 .gh-root .home-ask:not(.is-conversation-open) .home-ask-input { min-height: 3rem; }
         .hv2 .gh-root .gh-tabs { overflow-x: auto; flex-wrap: nowrap; }
         .hv2 .gh-root .gh-tab { flex: none; }
     }
