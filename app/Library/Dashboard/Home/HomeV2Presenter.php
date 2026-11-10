@@ -82,6 +82,8 @@ final class HomeV2Presenter
                 'available' => $headlines !== null,
                 'failed' => $headlinesFailed,
                 'kpis' => $kpis,
+                // The reporting period the figures cover, exactly as the performance band computed it (null when unreadable).
+                'period' => $headlines === null ? null : ['label' => $headlines['range']->label(), 'previous' => $headlines['previousRange']->label(), 'state' => (string) ($headlines['periodState'] ?? 'complete')],
                 'revenue' => $this->revenuePrompt($home['actions'], $facts),
                 'chart' => $headlines === null ? null : $this->chart($headlines, $facts),
             ],
@@ -125,6 +127,13 @@ final class HomeV2Presenter
             'currentWork' => $home['currentWork'] ?? [],
             'activityFailed' => $recentFailed,
             'setupStep' => $step,
+            // The existing journey's own persisted-fact checklist; null once onboarding is finished (HomeCommandCenter only supplies it while setting up).
+            'setup' => is_array($setup) && ($setup['total'] ?? 0) > 0 ? [
+                'done' => (int) $setup['done'],
+                'total' => (int) $setup['total'],
+                'nextKey' => $setup['nextKey'] ?? null,
+                'steps' => array_map(fn (array $s): array => ['key' => $s['key'], 'title' => $s['title'], 'done' => (bool) $s['done'], 'url' => $s['action']['url'] ?? null], $setup['steps']),
+            ] : null,
         ];
     }
 

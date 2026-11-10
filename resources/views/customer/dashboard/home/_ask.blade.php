@@ -13,7 +13,7 @@
     Suggestions this actor cannot use are absent, never disabled. Everything dynamic is rendered by
     public/js/home/ask-assistant.js with textContent.
 --}}
-@php $v2Chips = $v2Chips ?? null; @endphp
+@php $v2Chips = $v2Chips ?? null; $growthSkin = $growthSkin ?? false; @endphp
 <section class="mb-2 home-ask" aria-labelledby="home-ask-heading" data-band="ask" data-role="home-ask"
          data-assistant-show="{{ $home['ask']['assistant']['show'] }}"
          data-assistant-conversations="{{ $home['ask']['assistant']['conversations'] }}"
@@ -21,6 +21,7 @@
          data-assistant-approve="{{ $home['ask']['assistant']['approve'] }}"
          data-assistant-decline="{{ $home['ask']['assistant']['decline'] }}"
          data-assistant-delete="{{ $home['ask']['assistant']['delete'] }}">
+    @if($growthSkin)<h2 class="gh-h2 gh-ask-title" aria-hidden="true">Ask MotionGrove</h2>@endif
     <x-card class="home-ask-card">
         <div class="home-ask-head" data-role="ask-head">
             <button type="button" class="btn btn-outline-secondary btn-sm home-ask-back" data-role="ask-minimize">
@@ -70,7 +71,10 @@
                 </ul>
             @endif
             <button type="button" class="btn btn-link btn-sm p-0 home-ask-resume" data-role="ask-resume" hidden>Continue your conversation</button>
-            <button type="submit" class="btn btn-primary home-ask-submit" data-role="ask-submit" aria-label="Ask"><span class="home-ask-submit-label">Ask</span><span class="home-ask-submit-icon" aria-hidden="true"></span></button>
+            @if($growthSkin)
+                <button type="button" class="gh-ask-history" data-role="ask-history-link" aria-label="Open your chat history"><svg class="gh-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12a8 8 0 1 0 2.3-5.6M4 4v4h4"/><path d="M12 8v4l3 2"/></svg>History</button>
+            @endif
+            <button type="submit" class="btn btn-primary home-ask-submit" data-role="ask-submit" aria-label="Ask"><span class="home-ask-submit-label">Ask</span><span class="home-ask-submit-icon" aria-hidden="true"></span>@if($growthSkin)<svg class="gh-ic gh-ask-send" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 19V5M6 11l6-6 6 6"/></svg>@endif</button>
         </form>
 
         @if($v2Chips === null)
@@ -85,11 +89,22 @@
             </ul>
         @endif
 
+        @unless($growthSkin)
         <div class="home-ask-foot text-caption text-muted" data-role="ask-foot">
             <details data-role="ask-uses-ai">
                 <summary>How Ask MotionGrove uses AI</summary>
                 <p class="mb-0 mt-50">{{ $home['ask']['disclosure'] }}</p>
             </details>
         </div>
+        @endunless
     </x-card>
+    @if($growthSkin)
+        {{-- Growth Home: the same disclosure, shown beneath the composer as a quiet note (no AI is called by reading it). --}}
+        <div class="gh-ask-note home-ask-foot" data-role="ask-foot">
+            <details data-role="ask-uses-ai">
+                <summary><span>MotionGrove asks before changing anything.</span> <span class="gh-ask-note__link">How Ask uses AI</span></summary>
+                <p class="mb-0 mt-50">{{ $home['ask']['disclosure'] }}</p>
+            </details>
+        </div>
+    @endif
 </section>
