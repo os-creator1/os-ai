@@ -145,7 +145,8 @@ class HomeDescriptionController extends Controller
                 return response()->json(['state' => 'mismatch', 'message' => 'A different description is already awaiting approval. Refresh to review it.'], 409);
             }
 
-            $this->opportunities->confirmApproval($opportunity->fresh(), $customer);
+            // The execution durably records what the customer saw; the worker refuses to write over a newer description.
+            $this->opportunities->confirmApproval($opportunity->fresh(), $customer, expectedStateHash: (string) $base);
         } catch (\App\Library\Opportunity\Exceptions\InvalidOpportunityActionParametersException) {
             return response()->json(['state' => 'invalid', 'message' => 'That description is not valid.'], 422);
         } catch (Throwable $e) {

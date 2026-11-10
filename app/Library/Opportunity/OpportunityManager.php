@@ -1085,11 +1085,11 @@ class OpportunityManager
      * eligibility is always re-derived from the locked Opportunity's own
      * persisted state, never trusted from the caller.
      */
-    public function confirmApproval(Opportunity $opportunity, Customer $customer, OpportunityInitiatedByType $confirmingPrincipal = OpportunityInitiatedByType::Customer): OpportunityActionExecution
+    public function confirmApproval(Opportunity $opportunity, Customer $customer, OpportunityInitiatedByType $confirmingPrincipal = OpportunityInitiatedByType::Customer, ?string $expectedStateHash = null): OpportunityActionExecution
     {
         $this->authority->assertEngineEnabled();
 
-        $result = DB::transaction(function () use ($opportunity, $customer, $confirmingPrincipal) {
+        $result = DB::transaction(function () use ($opportunity, $customer, $confirmingPrincipal, $expectedStateHash) {
             $locked = $this->opportunityRepository->findOwnedForUpdate($opportunity->id, $opportunity->business_id);
 
             $locked = $this->assertOpportunityOwnership($customer, $locked);
@@ -1175,6 +1175,7 @@ class OpportunityManager
                 'approval_expires_at' => $locked->approval_expires_at,
                 ...$this->authority->actionCostSnapshot($locked),
                 'completion_policy' => OpportunityCompletionPolicy::SystemVerified->value,
+                'expected_state_hash' => $expectedStateHash,
             ]);
 
             $this->opportunityRepository->update($locked, [
@@ -1292,6 +1293,8 @@ class OpportunityManager
                 'approval_expires_at' => $failedExecution->approval_expires_at,
                 ...$this->authority->actionCostSnapshot($failedExecution),
                 'completion_policy' => OpportunityCompletionPolicy::SystemVerified->value,
+                // A retry keeps the original approval's expectation: it can never overwrite a newer edit either.
+                'expected_state_hash' => $failedExecution->expected_state_hash,
             ]);
 
             $this->opportunityRepository->update($lockedOpportunity, [

@@ -92,26 +92,26 @@ final class OpportunityActionExecutor
         $definition = $this->registry::get($execution->action_key);
         $handler = self::HANDLERS[$definition['handler_identifier']];
 
-        return $this->{$handler}($opportunity, $value);
+        return $this->{$handler}($opportunity, $value, $execution);
     }
 
-    private function executePhone(Opportunity $opportunity, string $value): string
+    private function executePhone(Opportunity $opportunity, string $value, OpportunityActionExecution $execution): string
     {
-        return $this->executeField($opportunity, 'add_phone', $value);
+        return $this->executeField($opportunity, 'add_phone', $value, $execution);
     }
 
-    private function executeEmail(Opportunity $opportunity, string $value): string
+    private function executeEmail(Opportunity $opportunity, string $value, OpportunityActionExecution $execution): string
     {
-        return $this->executeField($opportunity, 'add_email', $value);
+        return $this->executeField($opportunity, 'add_email', $value, $execution);
     }
 
-    private function executeDescription(Opportunity $opportunity, string $value): string
+    private function executeDescription(Opportunity $opportunity, string $value, OpportunityActionExecution $execution): string
     {
-        return $this->executeField($opportunity, 'add_description', $value);
+        return $this->executeField($opportunity, 'add_description', $value, $execution);
     }
 
     /** Writes the approved value through BusinessManager, then re-reads persisted state: success is reported only if it matches exactly. */
-    private function executeField(Opportunity $opportunity, string $actionKey, string $value): string
+    private function executeField(Opportunity $opportunity, string $actionKey, string $value, OpportunityActionExecution $execution): string
     {
         [$field, $summary] = self::FIELD_ACTIONS[$actionKey];
 
@@ -129,6 +129,19 @@ final class OpportunityActionExecutor
             throw new OpportunityActionNotExecutableException(
                 "Business [{$business->id}] has no owning Customer."
             );
+        }
+
+        // Compare-and-swap on what the customer saw at approval: the Business row is locked (a concurrent manual save waits for this
+        // transaction), and the authoritative current value must still match the durably recorded expectation. Otherwise nothing is
+        // written and the execution fails safely, leaving the newer value untouched.
+        if ($execution->expected_state_hash !== null) {
+            $business = $business::query()->whereKey($business->id)->lockForUpdate()->first();
+
+            if ($business === null || ! hash_equals($execution->expected_state_hash, hash('sha256', (string) $business->{$field}))) {
+                throw new OpportunityActionNotExecutableException(
+                    "Opportunity [{$opportunity->id}]'s {$actionKey} target changed after approval."
+                );
+            }
         }
 
         $updatedBusiness = $this->businessManager->updateBusiness($customer, $business, [$field => $value]);

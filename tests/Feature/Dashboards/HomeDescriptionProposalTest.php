@@ -272,6 +272,33 @@ class HomeDescriptionProposalTest extends TestCase
         $this->assertNull($business->fresh()->description);
     }
 
+    public function test_a_newer_manual_edit_between_approval_and_the_job_is_preserved_and_the_stale_job_fails_safely(): void
+    {
+        [, $business, $id] = $this->onboarded();
+        $this->liveForm($business);
+        Queue::fake();
+        $newer = 'The customer typed this newer description by hand after approving, and it must survive the queued job.';
+
+        $this->postJson($this->url('description.approve', $business, [$this->uid($id)]), ['value' => self::VALUE, 'base' => hash('sha256', '')])
+            ->assertOk()->assertJson(['state' => 'pending']);
+        $this->assertNotNull(DB::table('opportunity_action_executions')->where('opportunity_id', $id)->value('expected_state_hash'), 'The expectation is durably recorded.');
+
+        // The manual save lands after approval, before the worker runs.
+        DB::table('businesses')->where('id', $business->id)->update(['description' => $newer]);
+
+        $job = Queue::pushed(ExecuteOpportunityAction::class)->first();
+        $job->handle(app(OpportunityManager::class), app(OpportunityActionExecutor::class));
+
+        $this->assertSame($newer, $business->fresh()->description, 'The newer edit is untouched.');
+        $this->assertSame('failed', DB::table('opportunity_action_executions')->where('opportunity_id', $id)->value('status'));
+        $this->assertNotSame(OpportunityStatus::Completed, \App\Models\Opportunity::find($id)->status, 'Never reported as Completed.');
+
+        // Replaying the stale job cannot overwrite it either.
+        $job->handle(app(OpportunityManager::class), app(OpportunityActionExecutor::class));
+        $this->assertSame($newer, $business->fresh()->description);
+        $this->assertNotSame(OpportunityStatus::Completed, \App\Models\Opportunity::find($id)->status);
+    }
+
     public function test_an_already_completed_opportunity_reports_completed_without_executing_again(): void
     {
         [, $business, $id] = $this->onboarded();
