@@ -119,4 +119,71 @@ class WebsiteSeoReviewTest extends TestCase
         $this->assertArrayHasKey('seo_proof', $review);
         $this->assertSame('Review photos', $review['seo_repeated_alt']['action']['label']);
     }
+
+    private function article($website, string $title, array $attributes = []): \App\Models\WebsiteArticle
+    {
+        $article = (new \App\Models\WebsiteArticle())->forceFill(array_merge([
+            'business_id' => $website->business_id, 'website_id' => $website->id, 'title' => $title, 'slug' => \Illuminate\Support\Str::slug($title),
+            'status' => 'published', 'noindex' => false, 'published_at' => now(), 'body' => 'Plain text.',
+        ], $attributes));
+        $article->save();
+
+        return $article;
+    }
+
+    private function siteWithHome(): void
+    {
+        $this->homePage($this->website, ['sections' => [$this->section('hero'), ['type' => 'gallery', 'data' => ['heading' => 'Photos', 'items' => [['image' => 'x']]]]]]);
+    }
+
+    public function test_articles_pointing_at_pages_the_draft_still_has_cause_no_warning(): void
+    {
+        $this->siteWithHome();
+        $page = $this->page('service-digital', 'Digital', [$this->section('hero')]);
+        $this->article($this->website, 'Booth tips', ['supports_page_uid' => $page->uid, 'body' => 'See [our booth](page:' . $page->uid . ').']);
+
+        $this->assertArrayNotHasKey('seo_article_links', $this->review());
+    }
+
+    public function test_an_article_supporting_a_removed_page_is_named_without_changing_anything(): void
+    {
+        $this->siteWithHome();
+        $article = $this->article($this->website, 'Booth tips', ['supports_page_uid' => '11111111-1111-4111-8111-111111111111']);
+        $before = [\App\Models\WebsiteArticle::query()->get()->toArray(), $this->website->pages()->count(), $this->website->fresh()->toArray()];
+
+        $review = $this->review();
+
+        $this->assertSame('warn', $review['seo_article_links']['status']);
+        $this->assertStringContainsString('"Booth tips" supports a page that is not in this draft', $review['seo_article_links']['items'][0]);
+        $this->assertStringContainsString('11111111-1111-4111-8111-111111111111', $review['seo_article_links']['items'][0]);
+        $this->assertSame($before, [\App\Models\WebsiteArticle::query()->get()->toArray(), $this->website->pages()->count(), $this->website->fresh()->toArray()], 'Checking changes no article, page or website.');
+        $this->assertSame('11111111-1111-4111-8111-111111111111', $article->fresh()->supports_page_uid);
+    }
+
+    public function test_a_broken_markdown_page_reference_is_named(): void
+    {
+        $this->siteWithHome();
+        $page = $this->page('service-digital', 'Digital', [$this->section('hero')]);
+        $this->article($this->website, 'Planning guide', ['body' => "Good: [booth](page:{$page->uid}). Gone: [old](page:22222222-2222-4222-8222-222222222222)."]);
+
+        $items = $this->review()['seo_article_links']['items'];
+
+        $this->assertCount(1, $items);
+        $this->assertStringContainsString('"Planning guide" links to a page that is not in this draft (reference 22222222-2222-4222-8222-222222222222)', $items[0]);
+    }
+
+    public function test_sites_without_published_articles_and_unpublished_or_other_business_articles_are_unchanged(): void
+    {
+        $this->siteWithHome();
+        $this->assertSame([], $this->review(), 'No articles: no review entry at all.');
+
+        $this->article($this->website, 'A draft', ['status' => 'draft', 'published_at' => null, 'supports_page_uid' => '33333333-3333-4333-8333-333333333333']);
+        $this->assertArrayNotHasKey('seo_article_links', $this->review(), 'An unpublished article is not live, so nothing breaks.');
+
+        [, $other] = $this->entitledTenant();
+        $otherWebsite = $this->createWebsite($other);
+        $this->article($otherWebsite, 'Someone else', ['supports_page_uid' => '44444444-4444-4444-8444-444444444444', 'body' => '[x](page:55555555-5555-4555-8555-555555555555)']);
+
+        $this->assertArrayNotHasKey('seo_article_links', $this->review(), 'Another business\'s articles are never read or reported.');
+    }
 }

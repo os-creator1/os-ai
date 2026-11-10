@@ -2,8 +2,10 @@
 
 namespace App\Library\Website\Seo;
 
+use App\Library\Seo\Content\ArticleMarkdown;
 use App\Models\Business;
 use App\Models\Website;
+use App\Models\WebsiteArticle;
 use App\Models\WebsiteAsset;
 use App\Models\WebsitePage;
 use Illuminate\Support\Collection;
@@ -127,7 +129,36 @@ final class WebsiteSeoReview
         $hasProof = $pages->contains(fn (WebsitePage $page) => collect($page->sections ?? [])->contains(fn ($section) => in_array($section['type'] ?? null, ['gallery', 'testimonials'], true)));
         $add('seo_proof', 'No event photos or customer words yet', 'Visitors and search engines trust a business that shows real work. Add event photos or genuine customer quotes when you have them — never invented ones.', $hasProof ? [] : ['No page shows a gallery or testimonials'], 'Add photos', 'photos');
 
+        // Published articles that point at a page this draft does not have (a rebuild that dropped or could not reliably match it):
+        // once published, that link shows as plain text and the article loses its supported page. Never rewritten here.
+        $add('seo_article_links', 'Blog articles that point at a missing page', 'These published articles link to, or support, a page that is not in this draft, so after you publish the link becomes plain text. Edit the article to point at a current page, or keep the page. Nothing was changed.', $this->brokenArticleLinks($website, $pages), 'Review articles', 'articles');
+
         return $review;
+    }
+
+    /**
+     * @return array<int, string> one line per published article of THIS website with an unresolvable page reference
+     */
+    private function brokenArticleLinks(Website $website, Collection $pages): array
+    {
+        $present = $pages->pluck('uid')->map(fn ($uid) => strtolower((string) $uid))->flip();
+        $lines = [];
+
+        foreach (WebsiteArticle::query()->published()->where('website_id', $website->id)->where('business_id', $website->business_id)->get(['title', 'body', 'supports_page_uid']) as $article) {
+            $supports = strtolower(trim((string) $article->supports_page_uid));
+
+            if ($supports !== '' && ! $present->has($supports)) {
+                $lines[] = '"' . $article->title . '" supports a page that is not in this draft (reference ' . $supports . ')';
+            }
+
+            foreach (collect(ArticleMarkdown::internalRefs($article->body))->where('type', 'page')->pluck('uid')->unique() as $uid) {
+                if (! $present->has($uid)) {
+                    $lines[] = '"' . $article->title . '" links to a page that is not in this draft (reference ' . $uid . ')';
+                }
+            }
+        }
+
+        return $lines;
     }
 
     /** @param array<int, array<string, mixed>> $sections */
