@@ -70,8 +70,11 @@ final class WebsitePageIntent
     public static function forPlanPage(array $planPage): array
     {
         $entity = is_array($planPage['entity'] ?? null) ? $planPage['entity'] : [];
+        // A service-area page is identified by the area as the owner wrote it; a saved-location page by its city AND region
+        // ("Portland, OR" and "Portland, ME" are two places), so no two pages share a place identity.
+        $savedLocation = isset($entity['city']) ? trim(implode(', ', array_filter([(string) $entity['city'], (string) ($entity['region'] ?? '')], fn ($part) => trim($part) !== ''))) : null;
         $intent = array_filter([
-            'place' => isset($entity['area']) ? (string) $entity['area'] : (isset($entity['city']) ? (string) $entity['city'] : null),
+            'place' => isset($entity['area']) ? (string) $entity['area'] : $savedLocation,
             'service_uid' => isset($entity['service_uid']) ? (string) $entity['service_uid'] : null,
         ], fn ($value) => $value !== null && $value !== '');
 

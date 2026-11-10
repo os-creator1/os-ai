@@ -283,8 +283,9 @@ final class MediaBindingService
             $place = $entity['area'] ?? (isset($entity['location_id']) ? ($entity['city'] ?? null) : null);
 
             if (is_string($place) && trim($place) !== '') {
+                // The same identity WebsitePageIntent stores for the page: the area as written, or the saved location's city AND region.
                 $full = isset($entity['area']) ? $place : trim(collect([$place, $entity['region'] ?? null])->filter()->implode(', '));
-                $pagePlaces[] = ['place' => $place, 'parts' => GuidedGenerationCommitService::placeParts($full)];
+                $pagePlaces[] = ['place' => $full, 'parts' => GuidedGenerationCommitService::placeParts($full)];
             }
         }
 

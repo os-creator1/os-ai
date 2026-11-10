@@ -786,6 +786,64 @@ class WebsiteServiceAreaPagesTest extends TestCase
         $this->assertEquals(['serving-portland-me' => 'services', 'serving-portland-or' => ''], Website::where('business_id', $business->id)->sole()->custom_redirects);
     }
 
+    /** A saved, eligible secondary location (two real signals: a service-area list and a public address). */
+    private function savedLocation(object $business, string $city, string $region): void
+    {
+        \App\Models\BusinessLocation::create(['business_id' => $business->id, 'service_mode' => 'service_area', 'city' => $city, 'region' => $region, 'service_area_cities' => [$city, 'Suburb of ' . $city], 'public_address' => true, 'address_line_1' => '1 Main St ' . $region]);
+    }
+
+    /** Generates, publishes and renders the real home page; returns [stored place identities by slug, name => href of every card link]. */
+    private function publishedHome(object $customer, object $business, object $workspace): array
+    {
+        $this->generate($customer, $business, $workspace, []);
+        $website = Website::where('business_id', $business->id)->sole();
+        app(\App\Library\Website\WebsiteSearchVisibility::class)->release($website);
+        app(\App\Library\Website\WebsitePublisher::class)->publish($website->fresh(), $this->platformAdminId());
+        $website->domains()->create(['domain' => 'portland.test', 'is_primary' => true, 'status' => \App\Enums\Website\WebsiteDomainStatus::Active, 'verification_token' => 't', 'verified_at' => now(), 'activated_at' => now()]);
+        $html = $this->get('http://portland.test/')->assertOk()->getContent();
+        preg_match_all('/<a class="website-service-link" href="([^"]+)">([^<]*)<\/a>/', $html, $m, PREG_SET_ORDER);
+
+        return [
+            $website->pages()->where('slug', 'like', 'serving-%')->pluck('page_intent', 'slug')->map(fn ($intent) => $intent['place'] ?? null)->all(),
+            array_column(array_map(fn ($row) => [html_entity_decode($row[2]), parse_url(html_entity_decode($row[1]), PHP_URL_PATH)], $m), 1, 0),
+        ];
+    }
+
+    #[\PHPUnit\Framework\Attributes\DataProvider('portlandOrders')]
+    public function test_two_saved_locations_with_one_city_name_keep_distinct_identities_and_links(array $order): void
+    {
+        [$customer, $business, $workspace] = $this->entitledTenant();
+        $this->bindDistinctAiClient();
+        $this->saveServiceAreas($business, ['Portland, OR', 'Portland, ME']);
+        foreach ($order as $region) {
+            $this->savedLocation($business, 'Portland', $region);
+        }
+
+        [$places, $links] = $this->publishedHome($customer, $business, $workspace);
+
+        $this->assertEquals(['serving-portland-or' => 'Portland, OR', 'serving-portland-me' => 'Portland, ME'], array_intersect_key($places, array_flip(['serving-portland-or', 'serving-portland-me'])), 'Distinct stored identities.');
+        $this->assertSame('/serving-portland-or', $links['Portland, OR'] ?? null);
+        $this->assertSame('/serving-portland-me', $links['Portland, ME'] ?? null);
+    }
+
+    public static function portlandOrders(): array
+    {
+        return ['OR then ME' => [['OR', 'ME']], 'ME then OR' => [['ME', 'OR']]];
+    }
+
+    public function test_a_hub_entry_without_a_generated_page_gets_no_link_beside_a_linked_same_named_city(): void
+    {
+        [$customer, $business, $workspace] = $this->entitledTenant();
+        $this->bindDistinctAiClient();
+        $this->saveServiceAreas($business, ['Portland, OR', 'Portland, ME']);
+        $this->savedLocation($business, 'Portland', 'OR');
+
+        [, $links] = $this->publishedHome($customer, $business, $workspace);
+
+        $this->assertSame('/serving-portland-or', $links['Portland, OR'] ?? null);
+        $this->assertArrayNotHasKey('Portland, ME', $links, 'Maine has no page: no link, and never the Oregon one.');
+    }
+
     public function test_a_retained_area_redirects_and_a_completely_removed_one_does_not(): void
     {
         [$customer, $business, $workspace] = $this->entitledTenant();
