@@ -42,11 +42,16 @@ final class WebsiteDraftPageService
     /**
      * @throws ValidationException
      */
-    public function createPage(Website $website, array $attributes): WebsitePage
+    /**
+     * @param  ?string  $keepUid  ONLY the guided rebuild passes this (a page that is the same page as one in the live revision keeps
+     *                            its uid). It is a separate argument, never read from `$attributes`, so no request can choose a
+     *                            uid; it is ignored unless no page anywhere already holds it.
+     */
+    public function createPage(Website $website, array $attributes, ?string $keepUid = null): WebsitePage
     {
         $validated = $this->validateAttributes($website, $attributes, null);
 
-        return DB::transaction(function () use ($website, $validated) {
+        return DB::transaction(function () use ($website, $validated, $keepUid) {
             // Locks the Website row itself (mirrors WebsitePublisher::
             // publish()'s and clearExistingHomepage()'s existing
             // lockForUpdate() discipline) so a concurrent createPage()
@@ -64,6 +69,10 @@ final class WebsiteDraftPageService
 
             if ($validated['is_home']) {
                 $this->clearExistingHomepage($website);
+            }
+
+            if ($keepUid !== null && $keepUid !== '' && ! WebsitePage::where('uid', $keepUid)->exists()) {
+                $validated['uid'] = $keepUid;
             }
 
             return $website->pages()->create($validated);
