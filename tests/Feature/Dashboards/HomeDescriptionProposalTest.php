@@ -195,6 +195,53 @@ class HomeDescriptionProposalTest extends TestCase
         Queue::assertNothingPushed();
     }
 
+    public function test_a_double_submit_while_pending_never_confirms_or_enqueues_again(): void
+    {
+        [, $business, $id] = $this->onboarded();
+        $this->liveForm($business);
+        Queue::fake();
+        $url = $this->url('description.approve', $business, [$this->uid($id)]);
+        $body = ['value' => self::VALUE, 'base' => hash('sha256', '')];
+
+        $this->postJson($url, $body)->assertOk()->assertJson(['state' => 'pending']);
+        $executions = DB::table('opportunity_action_executions')->count();
+        $this->postJson($url, $body)->assertOk()->assertJson(['state' => 'pending']);
+        $this->postJson($url, ['value' => 'A different value that is also comfortably longer than fifty characters.', 'base' => 'x'])->assertOk()->assertJson(['state' => 'pending']);
+
+        Queue::assertPushed(ExecuteOpportunityAction::class, 1);
+        $this->assertSame($executions, DB::table('opportunity_action_executions')->count());
+    }
+
+    public function test_a_different_value_after_approval_was_requested_is_refused(): void
+    {
+        [, $business, $id] = $this->onboarded();
+        Queue::fake();
+        $action = \App\Models\Opportunity::find($id)->recommended_action;
+        $action['parameters'] = ['value' => self::VALUE];
+        DB::table('opportunities')->where('id', $id)->update(['recommended_action' => json_encode($action), 'recommended_action_hash' => (new OpportunityActionHash())->compute($action), 'status' => 'awaiting_approval', 'approval_expires_at' => now()->addHour()]);
+        $url = $this->url('description.approve', $business, [$this->uid($id)]);
+
+        $this->postJson($url, ['value' => 'Another description that is long enough to pass the fifty character minimum.', 'base' => hash('sha256', '')])
+            ->assertStatus(409)->assertJson(['state' => 'mismatch']);
+
+        Queue::assertNothingPushed();
+        $this->assertSame(OpportunityStatus::AwaitingApproval, \App\Models\Opportunity::find($id)->status);
+        $this->assertNull($business->fresh()->description);
+    }
+
+    public function test_an_already_completed_opportunity_reports_completed_without_executing_again(): void
+    {
+        [, $business, $id] = $this->onboarded();
+        Queue::fake();
+        DB::table('opportunities')->where('id', $id)->update(['status' => 'completed']);
+
+        $this->postJson($this->url('description.approve', $business, [$this->uid($id)]), ['value' => self::VALUE, 'base' => hash('sha256', '')])
+            ->assertOk()->assertJson(['state' => 'completed']);
+
+        Queue::assertNothingPushed();
+        $this->assertNull($business->fresh()->description, 'The controller never writes the description itself.');
+    }
+
     public function test_the_detail_page_returns_to_home_and_other_recommendations_still_render(): void
     {
         [, $business, $id] = $this->onboarded();

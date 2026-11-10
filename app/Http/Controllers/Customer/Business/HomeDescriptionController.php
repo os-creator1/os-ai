@@ -94,24 +94,34 @@ class HomeDescriptionController extends Controller
 
     private function run(Business $business, Opportunity $opportunity, $customer, string $value, ?string $base): JsonResponse
     {
-        if ($opportunity->status === OpportunityStatus::Completed) {
-            return $this->state($opportunity, 'completed');
+        // State is read AFTER the per-Opportunity lock is held, so a concurrent request's outcome is what is judged here.
+        $opportunity = $opportunity->fresh();
+        $status = $opportunity?->status;
+
+        // Completed (already verified by the executor) and InProgress (the genuine pending state) never trigger another step.
+        if ($status === OpportunityStatus::Completed || $status === OpportunityStatus::InProgress) {
+            return $this->state($opportunity);
+        }
+
+        if (! in_array($status, [OpportunityStatus::Open, OpportunityStatus::AwaitingApproval], true)) {
+            return response()->json(['state' => 'unavailable', 'message' => "This recommendation can't be approved right now."], 409);
         }
 
         // Stale: the saved description changed since this proposal was shown.
-        if ($opportunity->status === OpportunityStatus::Open && hash('sha256', (string) $business->description) !== (string) $base) {
+        if (hash('sha256', (string) $business->description) !== (string) $base) {
             return response()->json(['state' => 'stale', 'message' => 'The saved description has changed. Refresh to review the current one.'], 409);
         }
 
         try {
-            if ($opportunity->status === OpportunityStatus::Open) {
+            if ($status === OpportunityStatus::Open) {
                 $opportunity = $this->opportunities->configureAction($opportunity, $customer, ['value' => $value]);
-                $opportunity = $this->opportunities->requestApproval($opportunity->fresh(), $customer);
+                $this->opportunities->requestApproval($opportunity->fresh(), $customer);
+            } elseif (($opportunity->recommended_action['parameters']['value'] ?? null) !== $value) {
+                // Approval was already requested for a specific value; a different one is never silently executed.
+                return response()->json(['state' => 'mismatch', 'message' => 'A different description is already awaiting approval. Refresh to review it.'], 409);
             }
 
-            if (in_array($opportunity->fresh()->status, [OpportunityStatus::AwaitingApproval, OpportunityStatus::InProgress], true)) {
-                $this->opportunities->confirmApproval($opportunity->fresh(), $customer);
-            }
+            $this->opportunities->confirmApproval($opportunity->fresh(), $customer);
         } catch (\App\Library\Opportunity\Exceptions\InvalidOpportunityActionParametersException) {
             return response()->json(['state' => 'invalid', 'message' => 'That description is not valid.'], 422);
         } catch (Throwable $e) {
@@ -120,14 +130,14 @@ class HomeDescriptionController extends Controller
             return response()->json(['state' => 'unavailable', 'message' => "This recommendation can't be approved right now."], 409);
         }
 
-        return $this->state($opportunity->fresh(), null);
+        return $this->state($opportunity->fresh());
     }
 
-    private function state(Opportunity $opportunity, ?string $force): JsonResponse
+    private function state(Opportunity $opportunity): JsonResponse
     {
         $execution = $this->executions->findLatestForOpportunity($opportunity->id);
         $state = match (true) {
-            $force !== null, $opportunity->status === OpportunityStatus::Completed => 'completed',
+            $opportunity->status === OpportunityStatus::Completed => 'completed',
             $execution?->status === OpportunityActionExecutionStatus::Failed => 'failed',
             default => 'pending',
         };
