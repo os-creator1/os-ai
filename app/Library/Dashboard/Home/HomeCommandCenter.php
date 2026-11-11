@@ -103,7 +103,7 @@ final class HomeCommandCenter
         $primaryAttentionType = null;
 
         if (is_array($nbm) && is_array($nbm['move'] ?? null)) {
-            $primary = $this->primary($nbm['move'], $growth, $actions);
+            $primary = $this->primary($nbm['move'], $growth, $actions, $context, $user, $entitlements, $scoped);
             $primaryUid = $nbm['move']['subjectUid'] ?? null;
             $primaryAttentionType = ($nbm['move']['kind'] ?? null) === NextBestMove::KIND_ATTENTION ? $nbm['move']['key'] : null;
         }
@@ -440,7 +440,7 @@ final class HomeCommandCenter
      * @param  array<string, array<string, mixed>|null>  $actions
      * @return array<string, mixed>
      */
-    private function primary(array $move, ?array $growth, array $actions): array
+    private function primary(array $move, ?array $growth, array $actions, CustomerContext $context, User $user, MenuEntitlements $entitlements, array $scoped): array
     {
         $kind = $move['kind'];
         $enriched = null;
@@ -492,8 +492,9 @@ final class HomeCommandCenter
 
             if ($isAds && ($actions['ads']['drawerUrl'] ?? null) !== null) {
                 $action = ['label' => 'Review ads recommendation', 'url' => $actions['ads']['fullUrl'], 'drawer' => 'ads', 'drawerUrl' => $actions['ads']['drawerUrl']];
-            } elseif ($enriched['action_url'] !== null) {
-                $action = ['label' => $enriched['action_label'], 'url' => $enriched['action_url'], 'drawer' => null, 'drawerUrl' => null];
+            } elseif (($direct = $this->growthDirectUrl((string) ($enriched['rule_key'] ?? ''), $context, $user, $entitlements, $scoped)) !== null) {
+                // One click to the owning module, only for an actor who could open it (permission, entitlement, View-As).
+                $action = ['label' => $enriched['action_label'], 'url' => $direct, 'drawer' => null, 'drawerUrl' => null];
             } else {
                 $action = ['label' => 'See details', 'url' => $detailUrl, 'drawer' => null, 'drawerUrl' => null];
             }
@@ -530,6 +531,25 @@ final class HomeCommandCenter
             'metric' => null,
             'aiAction' => null,
         ];
+    }
+
+    /**
+     * The Growth rule's own owning-module destination for the primary action, resolved through GrowthNavigation's closed map and the
+     * same DashboardLinkGate every Home link passes. Null (so Home keeps the "See details" fallback) when the rule has no target, the
+     * route is not registered, or this actor/context may not open that module.
+     *
+     * @param  array<int, string>  $scoped
+     */
+    private function growthDirectUrl(string $ruleKey, CustomerContext $context, User $user, MenuEntitlements $entitlements, array $scoped): ?string
+    {
+        $target = \App\Library\Growth\GrowthRuleRegistry::find($ruleKey)?->definition()->target;
+        $access = $target === null ? null : \App\Library\Growth\GrowthNavigation::access($target);
+
+        if ($access === null || ($target === 'ads' && ! \App\Library\Ads\AdsFeatureAccess::menuHasAnyAds($entitlements))) {
+            return null;
+        }
+
+        return $this->links->url($context, $user, $entitlements, $access['route'], $scoped, $access['abilities'], $access['feature']);
     }
 
     /**

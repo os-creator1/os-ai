@@ -32,7 +32,7 @@ final class WebsiteNotPublishedRule extends AbstractGrowthRule
             factKey: 'website_not_published',
             evidenceSummary: 'The Business has no published Website and no external website on its profile.',
             actionKey: 'growth_publish_website',
-            actionLabel: 'Open website',
+            actionLabel: 'Finish your website',
             target: 'website',
             safetyClass: GrowthActionSafetyClass::ReadOnly,
             weight: 3,
