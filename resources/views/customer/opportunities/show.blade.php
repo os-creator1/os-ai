@@ -6,8 +6,8 @@
     <section id="opportunities-show">
         <div class="row">
             <div class="col-12 mb-1">
-                <x-button variant="secondary" size="sm" :href="route('customer.opportunities.index')">
-                    &larr; Back to recommendations
+                <x-button variant="secondary" size="sm" :href="route('user.home')" data-role="back-to-home">
+                    &larr; Back to Home
                 </x-button>
             </div>
 

@@ -123,6 +123,8 @@ class EloquentOpportunityActionExecutionRepository extends EloquentBaseRepositor
                 'action_cost_expires_at',
                 'action_cost_wallet_sufficient',
                 'completion_policy',
+                // Set once at creation (what the customer saw at approval); never updatable afterwards.
+                'expected_state_hash',
             ],
             self::MUTABLE_FIELDS
         )));

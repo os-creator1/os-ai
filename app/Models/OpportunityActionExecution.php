@@ -38,6 +38,7 @@ class OpportunityActionExecution extends Model
         'action_cost_expires_at',
         'action_cost_wallet_sufficient',
         'completion_policy',
+        'expected_state_hash',
         'safe_result_summary',
         'safe_error_summary',
         'started_at',

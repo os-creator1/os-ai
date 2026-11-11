@@ -706,6 +706,7 @@ final class BusinessHomePresenter
                 'kind' => NextBestMove::KIND_OPPORTUNITY,
                 'key' => 'opportunity',
                 'subjectUid' => (string) $opportunity->uid,
+                'actionKey' => is_array($opportunity->recommended_action ?? null) ? ($opportunity->recommended_action['action_key'] ?? null) : null,
                 'headline' => self::opportunityTitle($opportunity),
                 'severity' => null,
                 'why' => $this->whyThis->forOpportunity($opportunity),

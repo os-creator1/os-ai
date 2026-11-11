@@ -108,6 +108,19 @@ final class HomeCommandCenter
             $primaryAttentionType = ($nbm['move']['kind'] ?? null) === NextBestMove::KIND_ATTENTION ? $nbm['move']['key'] : null;
         }
 
+        // A low-impact profile fix (the missing description) never outranks opening a customer enquiry path that does not exist yet;
+        // otherwise the description is shown as an inline proposal on Home. Urgent attention moves are never touched here.
+        if ($primary !== null && $primary['kind'] === NextBestMove::KIND_OPPORTUNITY && ($nbm['move']['actionKey'] ?? null) === 'add_description') {
+            $reach = $this->reachMove($journey);
+
+            if ($reach !== null) {
+                $primary = $reach;
+                $primaryUid = null;
+            } else {
+                $primary['description'] = $this->descriptionProposal($business, $context, $user, $entitlements, $scoped, (string) ($nbm['move']['subjectUid'] ?? ''), $primary);
+            }
+        }
+
         // Growth Home only: with nothing urgent and no better-supported opportunity, getting Google keyword visibility started comes first.
         $google = $this->googleVisibility($business, $context, $user, $entitlements, $scoped);
         $activation = ($journey !== null && ($journey['essentialIncomplete'] ?? false))
@@ -681,6 +694,76 @@ final class HomeCommandCenter
     private function currentWork(?array $growth): array
     {
         return array_slice(array_values(array_filter($this->handling([], $growth), fn (array $r): bool => $r['at'] === null)), 0, 3);
+    }
+
+    /**
+     * Reuses the setup journey's own REACH evidence: while no usable enquiry path exists (reachComplete === false) and a website/forms
+     * step carries an authorised action, that step is the move. Null when reach is complete, unknown (legacy journey) or unreachable.
+     *
+     * @param  array<string, mixed>|null  $journey
+     * @return array<string, mixed>|null
+     */
+    private function reachMove(?array $journey): ?array
+    {
+        if ($journey === null || ($journey['reachComplete'] ?? true) !== false || ! ($journey['foundationComplete'] ?? false)) {
+            return null;
+        }
+
+        foreach (['website', 'lead_capture'] as $key) {
+            foreach ($journey['steps'] as $step) {
+                if ($step['key'] === $key && ! $step['done'] && ($step['action']['url'] ?? null) !== null) {
+                    return [
+                        'kind' => 'setup',
+                        'key' => 'reach_setup',
+                        'headline' => $step['title'],
+                        'summary' => $step['outcome'],
+                        'why' => ['Customers have no working way to find or contact this business yet.'],
+                        'evidence' => [],
+                        'impact' => null,
+                        'confidence' => null,
+                        'severity' => null,
+                        'status' => 'ready',
+                        'statusLabel' => 'Ready to act on',
+                        'needsMoreInfo' => false,
+                        'action' => ['label' => $step['action']['label'], 'url' => $step['action']['url'], 'drawer' => null, 'drawerUrl' => null],
+                        'detailUrl' => null,
+                        'explanation' => null,
+                        'metric' => null,
+                        'aiAction' => null,
+                    ];
+                }
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * The inline description proposal, only for an actor who may act on the recommendation (the same advisor gate that produced
+     * the move's own action link) and never while viewing as a client. The draft is deterministic: no AI is called to build it.
+     *
+     * @param  array<int, string>  $scoped
+     * @param  array<string, mixed>  $primary
+     * @return array<string, mixed>|null
+     */
+    private function descriptionProposal(Business $business, CustomerContext $context, User $user, MenuEntitlements $entitlements, array $scoped, string $uid, array $primary): ?array
+    {
+        if ($uid === '' || ($primary['action']['url'] ?? null) === null || $context->isViewingAsClient()
+            || ! Route::has('customer.workspaces.businesses.home.description.approve')) {
+            return null;
+        }
+
+        $saved = trim((string) $business->description);
+        $proposal = app(\App\Library\Opportunity\DescriptionProposal::class)->for($business);
+
+        return [
+            'uid' => $uid,
+            'text' => $saved !== '' ? $saved : (string) ($proposal['draft'] ?? ''),
+            'fromFacts' => $saved === '' && $proposal['draft'] !== null,
+            'base' => hash('sha256', (string) $business->description),
+            'approveUrl' => route('customer.workspaces.businesses.home.description.approve', array_merge($scoped, [$uid])),
+            'improveUrl' => $entitlements->allows('ai_coo_basic') ? route('customer.workspaces.businesses.home.description.improve', $scoped) : null,
+        ];
     }
 
     /**

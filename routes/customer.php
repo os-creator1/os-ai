@@ -1806,6 +1806,9 @@
             Route::post('/assistant/messages', 'Business\AssistantController@message')->middleware('throttle:20,1')->name('assistant.message');
             Route::post('/assistant/conversations/{conversationUid}/delete', 'Business\\AssistantController@destroy')->middleware('throttle:20,1')->name('assistant.delete');
             Route::post('/assistant/proposals/{proposalUid}/approve', 'Business\AssistantController@approve')->middleware('throttle:20,1')->name('assistant.approve');
+            // Inline "Complete your business description": an explicit AI improve (metered) and the trusted approve & save.
+            Route::post('/description/improve', 'Business\HomeDescriptionController@improve')->middleware('throttle:10,1')->name('description.improve');
+            Route::post('/description/{opportunityUid}/approve', 'Business\HomeDescriptionController@approve')->middleware('throttle:20,1')->name('description.approve');
             Route::post('/assistant/proposals/{proposalUid}/decline', 'Business\AssistantController@decline')->middleware('throttle:20,1')->name('assistant.decline');
         });
 
