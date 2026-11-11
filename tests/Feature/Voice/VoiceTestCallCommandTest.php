@@ -31,6 +31,7 @@ class VoiceTestCallCommandTest extends TestCase
             'messaging.voice.test_call_allowlist' => self::DEST,
             'services.telnyx.mode' => 'live',
             'services.telnyx.api_key' => 'fixture_api_key_not_a_real_credential',
+            'services.telnyx.webhook_public_key' => base64_encode(str_repeat('k', 32)),
             'messaging.voice.webhook_url' => 'https://app.example.test/webhooks/telnyx-voice',
         ]);
         [$this->business, , $this->number] = $this->managedBusiness();
@@ -93,6 +94,7 @@ class VoiceTestCallCommandTest extends TestCase
             'not enabled' => [['messaging.voice.test_call_enabled' => false], null],
             'not live' => [['services.telnyx.mode' => 'sandbox'], null],
             'no connection id' => [['messaging.voice.connection_id' => ''], null],
+            'no webhook public key' => [['services.telnyx.webhook_public_key' => ''], null],
             'no api key' => [['services.telnyx.api_key' => ''], null],
             'empty allowlist' => [['messaging.voice.test_call_allowlist' => ''], null],
             'destination not allowlisted' => [[], '+14155552672'],

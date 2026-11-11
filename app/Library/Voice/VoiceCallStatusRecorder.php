@@ -68,6 +68,20 @@ final class VoiceCallStatusRecorder
             }
 
             if (! $applied) {
+                // Status never regresses, but an `answered` that arrives after `hangup` still fills the missing answer
+                // time and the answer → hangup duration that the earlier hangup could not compute.
+                if ($target === BusinessVoiceCall::STATUS_ANSWERED
+                    && $call->status === BusinessVoiceCall::STATUS_ENDED
+                    && $call->answered_at === null) {
+                    $call->answered_at = $this->parse($occurredAt) ?? now();
+                    if ($call->ended_at !== null) {
+                        $call->duration_seconds = (int) max(0, $call->answered_at->diffInSeconds($call->ended_at, false));
+                    }
+                    $call->save();
+
+                    return self::APPLIED;
+                }
+
                 return self::IGNORED;
             }
 

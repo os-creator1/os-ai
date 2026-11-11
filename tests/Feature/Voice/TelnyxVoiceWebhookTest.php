@@ -80,7 +80,8 @@ class TelnyxVoiceWebhookTest extends TestCase
     public function test_a_late_earlier_event_never_regresses_the_call(): void
     {
         $this->send('evt-1', 'call.hangup', ['end_time' => '2026-11-12T10:00:42Z']);
-        $this->send('evt-2', 'call.answered', ['start_time' => '2026-11-12T10:00:00Z'])->assertJson(['status' => 'ignored']);
+        // Applied only as a timestamp backfill: the status stays ended.
+        $this->send('evt-2', 'call.answered', ['start_time' => '2026-11-12T10:00:00Z'])->assertJson(['status' => 'applied']);
 
         $this->assertSame('ended', $this->voiceCall->fresh()->status);
     }
@@ -139,6 +140,24 @@ class TelnyxVoiceWebhookTest extends TestCase
             ->assertOk()->assertJson(['status' => 'ignored']);
 
         $this->assertSame('v3:cc-1', $this->voiceCall->fresh()->telnyx_call_control_id);
+    }
+
+    public function test_a_late_answer_after_hangup_backfills_answer_time_and_duration_without_regressing(): void
+    {
+        $this->send('evt-h', 'call.hangup', ['end_time' => '2026-11-12T10:00:42Z'])->assertJson(['status' => 'applied']);
+        $this->assertNull($this->voiceCall->fresh()->duration_seconds);
+
+        $this->send('evt-a', 'call.answered', [], true, 'v3:cc-1', '2026-11-12T10:00:08Z')->assertJson(['status' => 'applied']);
+
+        $call = $this->voiceCall->fresh();
+        $this->assertSame('ended', $call->status);
+        $this->assertSame(34, $call->duration_seconds);
+        $this->assertSame('2026-11-12 10:00:08', $call->answered_at->utc()->format('Y-m-d H:i:s'));
+
+        // Redelivery is a no-op and a second answer cannot overwrite the recorded time.
+        $this->send('evt-a', 'call.answered', [], true, 'v3:cc-1', '2026-11-12T10:00:30Z')->assertJson(['status' => 'duplicate']);
+        $this->send('evt-a2', 'call.answered', [], true, 'v3:cc-1', '2026-11-12T10:00:30Z')->assertJson(['status' => 'ignored']);
+        $this->assertSame(34, $this->voiceCall->fresh()->duration_seconds);
     }
 
     public function test_an_unknown_call_is_ignored_and_creates_nothing(): void

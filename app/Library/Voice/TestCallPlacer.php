@@ -37,6 +37,8 @@ final class TestCallPlacer
     {
         $apiKey = trim((string) config('services.telnyx.api_key'));
         $connectionId = trim((string) config('messaging.voice.connection_id'));
+        // Without the webhook verification key every event is acknowledged and discarded, losing all call results.
+        $webhookKey = trim((string) config('services.telnyx.webhook_public_key'));
 
         if (! (bool) config('messaging.voice.test_call_enabled')) {
             throw new TestCallRefusedException('disabled', 'Voice test calls are not enabled.');
@@ -44,8 +46,8 @@ final class TestCallPlacer
         if (config('services.telnyx.mode') !== 'live') {
             throw new TestCallRefusedException('not_live', 'Telnyx is not in live mode.');
         }
-        if ($apiKey === '' || $connectionId === '') {
-            throw new TestCallRefusedException('not_configured', 'The Telnyx API key or Voice Connection id is not configured.');
+        if ($apiKey === '' || $connectionId === '' || $webhookKey === '') {
+            throw new TestCallRefusedException('not_configured', 'The Telnyx API key, webhook public key or Voice Connection id is not configured.');
         }
 
         $destination = E164Normalizer::normalize($to);
