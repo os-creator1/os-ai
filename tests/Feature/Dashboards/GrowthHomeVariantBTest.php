@@ -103,7 +103,7 @@ class GrowthHomeVariantBTest extends TestCase
         $html = $this->html();
         $this->noAi();
 
-        $this->assertStringContainsString('data-move="opportunity"', $html);
+        $this->assertStringContainsString('data-role="next-best-move"', $html);
         $this->assertStringContainsString('data-role="description-proposal"', $html);
         $this->assertStringContainsString('Approve &amp; save', $html);
         $this->assertStringContainsString('Edit first', $html);
@@ -163,7 +163,8 @@ class GrowthHomeVariantBTest extends TestCase
         $this->authenticateAs($customer);
         $html = $this->html();
 
-        foreach (['gh-root', 'gh-metrics', 'gh-nbm', 'data-role="recent-chats"', 'gh-ask-history'] as $marker) {
+        // Markup-only markers: the shared Home stylesheet legitimately mentions `.gh-root` selectors, so class names alone prove nothing.
+        foreach (['data-role="growth-home"', 'class="gh-metrics"', 'class="gh-nbm"', 'data-role="recent-chats"', 'data-role="ask-history-link"', 'class="gh-desc"'] as $marker) {
             $this->assertStringNotContainsString($marker, $html, $marker);
         }
         $this->assertStringContainsString('data-role="home-greeting"', $html);
