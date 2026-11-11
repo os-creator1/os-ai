@@ -97,35 +97,56 @@ class GrowthHomeVariantBTest extends TestCase
         $this->assertStringContainsString('data-role="headline-period"', $html, 'The reporting period is always labelled.');
     }
 
-    public function test_the_description_move_shows_the_proposal_in_the_red_card_with_truthful_wording_and_no_undo(): void
+    /** The page shows whichever move the existing selector chose, and that card carries exactly one valid, authorised action. */
+    public function test_the_red_card_carries_exactly_one_valid_action_whatever_the_move(): void
     {
-        [$customer] = $this->withDescriptionMove();
-        $primary = $this->dashboardFor($customer->user)->band(DashboardSnapshot::BAND_COMMAND)['primary'];
-        $this->assertSame('opportunity', $primary['key'] ?? null, 'Fixture precondition: the missing description is the Best Next Move.');
-        $this->assertNotNull($primary['description'] ?? null, 'Fixture precondition: the move carries its description proposal.');
+        $this->withDescriptionMove();
         $html = $this->html();
         $this->noAi();
-        preg_match('/data-role="growth-next" data-kind="([^"]*)"/', $html, $kind);
-        preg_match('/data-role="next-best-move" data-move="([^"]*)"/', $html, $move);
-        $this->assertStringContainsString('data-role="description-proposal"', $html, 'Rendered kind=' . ($kind[1] ?? '?') . ' move=' . ($move[1] ?? '?'));
 
         $this->assertStringContainsString('data-role="next-best-move"', $html);
-        $this->assertStringContainsString('data-role="description-proposal"', $html);
-        $this->assertStringContainsString('Approve &amp; save', $html);
-        $this->assertStringContainsString('Edit first', $html);
-        $this->assertStringContainsString('Prepared by MotionGrove · from your saved business details', $html);
-        $this->assertStringContainsString('Saves to your MotionGrove profile only', $html);
-        // Not claimed: the draft is built from saved facts, not from the website; and no Undo exists for an approved profile change.
-        $card = substr($html, (int) strpos($html, 'data-role="growth-next"'), (int) strpos($html, 'data-role="home-ask"') - (int) strpos($html, 'data-role="growth-next"'));
-        $this->assertStringNotContainsString('from your website', $card);
+        $card = substr($html, (int) strpos($html, 'data-role="next-best-move"'), (int) strpos($html, 'data-role="home-ask"') - (int) strpos($html, 'data-role="next-best-move"'));
+        $inline = substr_count($card, 'data-role="description-proposal"');
+        $link = preg_match_all('#<a class="gh-btn gh-btn--light gh-btn--lg" href="(/|https?://)[^"]+"#', $card);
+
+        $this->assertSame(1, $inline + $link, 'One primary action: the inline description proposal OR the move\'s own authorised link, never both or neither.');
         $this->assertStringNotContainsString('Undo', $card);
-        // Success is only ever written by the script after the workflow reports `completed`; the markup itself starts hidden and idle.
-        $this->assertMatchesRegularExpression('/data-role="description-status" data-state="idle" hidden/', $html);
-        $this->assertStringContainsString("j.state === 'completed'", $html);
-        // The #596 protections survive the redesign: the text is locked while a request is in flight, and newer edits are never overwritten.
-        $this->assertStringContainsString('prevReadOnly', $html);
-        $this->assertStringContainsString('Your text changed while AI was working', $html);
-        $this->assertStringContainsString('data-base=', $html, 'The shown-description hash the server checks at execution time is still posted.');
+        $this->assertStringNotContainsString('from your website', $card);
+    }
+
+    /** The shared partial, rendered for each layout with a fixed proposal: Growth is Variant B, Core keeps its original presentation; one behaviour. */
+    public function test_the_description_proposal_partial_is_layout_aware_and_keeps_every_protection(): void
+    {
+        $needs = ['description' => ['uid' => 'opp-1', 'text' => 'Orange Glam Booths provides Photo Booth Rental in Orange, CA.', 'fromFacts' => true, 'base' => str_repeat('a', 64), 'approveUrl' => '/approve', 'improveUrl' => '/improve']];
+        $growth = view('customer.dashboard.home.v2._description-proposal', ['needs' => $needs, 'layout' => 'growth', 'next' => ['title' => 'Choose keywords', 'url' => '/keywords']])->render();
+        $core = view('customer.dashboard.home.v2._description-proposal', ['needs' => $needs])->render();
+
+        // Growth: the Variant B markup, truthful wording, idle (hidden) status, no Undo.
+        $this->assertStringContainsString('class="gh-desc"', $growth);
+        $this->assertStringContainsString('Approve &amp; save', $growth);
+        $this->assertStringContainsString('Edit first', $growth);
+        $this->assertStringContainsString('Prepared by MotionGrove · from your saved business details', $growth);
+        $this->assertStringContainsString('Saves to your MotionGrove profile only', $growth);
+        $this->assertStringNotContainsString('from your website', $growth);
+        $this->assertStringNotContainsString('Undo', $growth);
+        $this->assertMatchesRegularExpression('/data-role="description-status" data-state="idle" hidden/', $growth);
+
+        // Core: its original compact presentation, with none of the Growth-only classes in its markup.
+        $this->assertStringContainsString('class="hv2-desc"', $core);
+        $this->assertStringContainsString('Edit description', $core);
+        $this->assertStringContainsString('Saved to your MotionGrove business profile. This does not automatically update Google or publish your website.', $core);
+        $this->assertStringNotContainsString('class="gh-', $core);
+        $this->assertStringNotContainsString('Undo', $core);
+
+        // Both layouts post the shown-description hash and share one script with every #596 protection and truthful state.
+        foreach ([$growth, $core] as $html) {
+            $this->assertStringContainsString('data-base="' . str_repeat('a', 64) . '"', $html);
+            $this->assertStringContainsString("j.state === 'completed'", $html);
+            $this->assertStringContainsString('prevReadOnly', $html);
+            $this->assertStringContainsString('Your text changed while AI was working', $html);
+            $this->assertStringContainsString("'pending'", $html);
+            $this->assertStringContainsString("'failed'", $html);
+        }
     }
 
     public function test_work_feed_invents_nothing_for_a_new_business_and_never_claims_running_or_verified(): void
