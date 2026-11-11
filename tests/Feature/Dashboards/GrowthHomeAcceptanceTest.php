@@ -104,8 +104,14 @@ class GrowthHomeAcceptanceTest extends TestCase
         $this->assertSame([], array_filter($shown, fn (int $n): bool => $n > 1), 'No recommendation is shown twice.');
         $this->assertLessThanOrEqual(1, substr_count($html, 'data-role="next-best-move"'), 'One primary move.');
         $this->assertStringContainsString($workspace->uid . '/businesses/' . $business->uid . '/growth/opportunities/', $html, 'Links are scoped to this Workspace and Business.');
-        // The deterministic order: the highest-priority recommendation is never left out in favour of a lower one.
-        $this->assertContains($own[0], $linked);
+        // The highest-priority item is the primary move. Its CTA now links straight to the owning
+        // module, so the primary uid is no longer necessarily embedded in a Growth detail URL.
+        $this->assertStringContainsString('data-role="next-best-move-headline">Own recommendation 1', $html);
+        $this->assertStringContainsString(
+            route('customer.workspaces.businesses.website.show', [$workspace->uid, $business->uid]),
+            $html,
+            'The primary action opens this Business\'s Website module directly.'
+        );
         $this->assertNotContains($own[3], $linked, 'The lowest of four is neither primary nor one of the two secondaries.');
     }
 
