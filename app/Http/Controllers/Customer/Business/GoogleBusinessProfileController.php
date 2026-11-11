@@ -695,12 +695,14 @@ class GoogleBusinessProfileController extends CustomerBaseController
     }
 
     /**
-     * Performance Insights V1 — a MANUAL, read-only "Load Google performance". Never triggered by a page view.
+     * Google performance: the page calls this itself (no click) when a linked location has no result yet, and the Refresh button
+     * calls it with `refresh=1`. Same authority, demo guard, connection claim and per-Business call budget as refresh().
      *
-     * Same authority, demo guard, connection and per-Business call budget as refresh(). What Google returns is rendered in
-     * THIS response only: nothing is stored, cached, flashed or logged, so the next GET shows the empty "Load" state.
+     * Without `refresh` it never re-reads a location that holds a recent result or that failed a moment ago (the visit that
+     * started it simply gets what is there). What Google returned is kept only by the 24-hour, encrypted, per-location store
+     * (GoogleBusinessProfilePerformanceStore); nothing is flashed, logged or put in the ledger but the operation's name.
      */
-    public function loadPerformance(string $workspaceUid, string $businessUid): View|Factory|Application|RedirectResponse
+    public function loadPerformance(Request $request, string $workspaceUid, string $businessUid): View|Factory|Application|RedirectResponse
     {
         [, $business] = $this->managed($this->resolveEntitledBusiness($workspaceUid, $businessUid));
 
@@ -720,21 +722,64 @@ class GoogleBusinessProfileController extends CustomerBaseController
             return $this->redirectWithError($workspaceUid, $businessUid, 'Link a Google location first.');
         }
 
+        $force = $request->boolean('refresh');
+        $claimed = $this->connections->claimRefresh($connection);
         $results = [];
+        $revoked = false;
 
-        foreach ($bindings as $binding) {
-            $entry = ['location' => $binding->businessLocation?->name, 'data' => null, 'error' => null];
+        try {
+            foreach ($bindings as $binding) {
+                if ($revoked) {
+                    // The shared connection was just revoked: nothing more is read, and nothing cached is shown.
+                    $results[$binding->uid] = ['location' => $binding->businessLocation?->name, 'data' => null, 'error' => null, 'failed_at' => null];
 
-            try {
-                $entry['data'] = $this->performance->load($binding, $connection, (int) Auth::id());
-            } catch (GoogleBusinessProfileProviderException $exception) {
-                $entry['error'] = $exception->userMessage();
+                    continue;
+                }
+
+                $entry = ['location' => $binding->businessLocation?->name, 'data' => $this->performance->cached($binding), 'error' => null, 'failed_at' => null];
+                $failure = $this->performance->recentFailure($binding);
+
+                if (! $force && ($entry['data'] !== null || $failure !== null || ! $claimed)) {
+                    $entry['error'] = $entry['data'] === null ? ($failure['message'] ?? 'A Google read is already running; reload in a moment.') : null;
+                    $entry['failed_at'] = $entry['data'] === null ? ($failure['at'] ?? null) : null;
+                } elseif ($claimed) {
+                    try {
+                        $entry['data'] = $this->performance->load($binding, $connection, (int) Auth::id());
+                    } catch (GoogleBusinessProfileProviderException $exception) {
+                        // A failed refresh never marks the older result current: it is shown as older, beside the error.
+                        $entry['error'] = $exception->userMessage();
+                        $entry['failed_at'] = now();
+                        $revoked = $exception->isRevocation();
+                    }
+                } else {
+                    $entry['error'] = 'A Google read is already running; try again in a moment.';
+                }
+
+                $results[$binding->uid] = $entry;
             }
-
-            $results[$binding->uid] = $entry;
+        } finally {
+            if ($claimed) {
+                $this->connections->releaseRefreshClaim($connection);
+            }
         }
 
-        return view('customer.business.googleBusinessProfile.index', $this->overviewData($workspaceUid, $businessUid, $business) + ['performance' => $results]);
+        if ($revoked) {
+            // Google rejected the authorization: the connection is revoked and its cache purged. No locations' numbers or search
+            // terms from it may be shown (only a transient failure keeps the older numbers, labelled as not current).
+            $message = GoogleBusinessProfileProviderException::invalidGrant()->userMessage();
+
+            foreach ($results as $uid => $entry) {
+                $results[$uid] = ['location' => $entry['location'], 'data' => null, 'error' => $message, 'failed_at' => now()];
+            }
+        }
+
+        if ($request->ajax()) {
+            return view('customer.business.googleBusinessProfile._performance-body', ['workspaceUid' => $workspaceUid, 'businessUid' => $businessUid, 'performance' => $results, 'performanceAuto' => false]);
+        }
+
+        // array_merge, not `+`: the freshly read results (and no further automatic read) must win over overviewData()'s own values,
+        // which matters most when nothing is cached.
+        return view('customer.business.googleBusinessProfile.index', array_merge($this->overviewData($workspaceUid, $businessUid, $business), ['performance' => $results, 'performanceAuto' => false]));
     }
 
     // -----------------------------------------------------------------
@@ -759,12 +804,33 @@ class GoogleBusinessProfileController extends CustomerBaseController
     {
         $connection = $this->connectionRepository->findForBusiness($business, GoogleConnectionProduct::BusinessProfile);
 
+        $bindings = $this->bindingViewModels($workspaceUid, $businessUid, $business);
+        $performance = [];
+
+        if ($connection !== null && $connection->isActive()) {
+            foreach ($bindings as $item) {
+                $failure = $this->performance->recentFailure($item['binding']);
+                $performance[$item['binding']->uid] = [
+                    'location' => $item['location']?->name,
+                    'data' => $this->performance->cached($item['binding']),
+                    'error' => $failure['message'] ?? null,
+                    'failed_at' => $failure['at'] ?? null,
+                ];
+            }
+        } elseif ($connection !== null) {
+            // A disconnected or revoked account keeps nothing it read from Google.
+            $this->performance->forgetBusiness((int) $business->id);
+        }
+
         return [
             'workspaceUid' => $workspaceUid,
             'businessUid' => $businessUid,
             'business' => $business,
             'connection' => $connection,
-            'bindings' => $this->bindingViewModels($workspaceUid, $businessUid, $business),
+            'bindings' => $bindings,
+            'performance' => $performance,
+            // Only someone who may manage the connection starts the read; everyone else sees what is already there.
+            'performanceAuto' => (bool) view()->shared('canManageGoogle') && collect($performance)->contains(fn ($entry) => $entry['data'] === null && $entry['error'] === null),
         ];
     }
 

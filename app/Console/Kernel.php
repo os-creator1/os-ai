@@ -23,6 +23,7 @@
     use App\Jobs\GoogleAds\SweepGoogleAdsSyncs;
     use App\Jobs\MetaAds\SweepMetaAdsSyncs;
     use App\Jobs\GoogleBusinessProfile\PurgeExpiredGoogleBusinessProfileMirrors;
+    use App\Jobs\GoogleBusinessProfile\SweepGoogleBusinessProfilePerformance;
     use App\Jobs\GoogleBusinessProfile\SweepGoogleBusinessProfileRefreshes;
     use App\Jobs\Messaging\RefreshPendingCampaignAssignments;
     use App\Jobs\Messaging\RefreshPendingMessagingRegistrations;
@@ -284,6 +285,8 @@
             // distribution". Manual refresh remains the primary mechanism.
             $schedule->job(new PurgeExpiredGoogleBusinessProfileMirrors())->hourly();
             $schedule->job(new SweepGoogleBusinessProfileRefreshes())->daily();
+            // Google performance numbers (cached 24 hours, see config google_business_profile.performance): daily and staggered too.
+            $schedule->job(new SweepGoogleBusinessProfilePerformance())->dailyAt('03:30');
 
             // Platform Automations: state-based triggers every 15 minutes, and the
             // announcement lifecycle (publish due / expire lapsed) every minute.

@@ -2,6 +2,7 @@
 
 namespace App\Library\GoogleBusinessProfilePerformance;
 
+use App\Enums\GoogleBusinessProfile\GoogleConnectionState;
 use App\Enums\GoogleBusinessProfile\GoogleOperationType;
 use App\Exceptions\GoogleBusinessProfile\GoogleBusinessProfileProviderException;
 use App\Library\GoogleBusinessProfile\GoogleBusinessProfileCallBudget;
@@ -26,6 +27,7 @@ final class GoogleBusinessProfilePerformanceLoader
         private readonly GoogleBusinessProfileConnectionManager $connections,
         private readonly GoogleBusinessProfileOperationLedger $ledger,
         private readonly GoogleBusinessProfileCallBudget $budget,
+        private readonly GoogleBusinessProfilePerformanceStore $store,
     ) {
     }
 
@@ -39,6 +41,8 @@ final class GoogleBusinessProfilePerformanceLoader
         $now ??= CarbonImmutable::now('UTC');
         $periods = GoogleBusinessProfilePerformanceSummary::periods($now);
         $resource = (string) $binding->provider_location_resource_name;
+        // Captured BEFORE Google is called: any unlink, disconnect or revocation while it answers rotates it.
+        $generation = $this->store->generation((int) $binding->business_id, (int) $binding->id);
 
         $operation = $this->ledger->open(
             businessId: (int) $binding->business_id,
@@ -62,23 +66,104 @@ final class GoogleBusinessProfilePerformanceLoader
         } catch (GoogleBusinessProfileProviderException $exception) {
             $this->ledger->fail($operation, $exception, 'Reading Google performance');
 
+            // A revoked authorization means nothing kept for this connection should be shown again.
+            if ($exception->classification === \App\Models\BusinessGoogleOperation::FAILURE_INVALID_GRANT) {
+                $this->store->forget((int) $binding->business_id, (int) $binding->id);
+            }
+
+            $this->store->markFailure((int) $binding->business_id, (int) $binding->id, $exception->userMessage());
+
             throw $exception;
         }
 
         $this->ledger->succeed($operation, 'Performance read');
 
+        // Only what Google returned is kept (see the Store); totals and comparisons are drawn from it on every view.
+        $raw = ['series' => $result['series'], 'keywords' => $result['keywords']];
+        // Written only if the location is STILL linked to this active connection and nothing purged it meanwhile (checked under the
+        // lock every purge takes). Otherwise the result is shown to whoever asked, and kept nowhere.
+        $this->store->putIfCurrent(
+            (int) $binding->business_id,
+            (int) $binding->id,
+            $generation,
+            $now,
+            $raw,
+            fn (): bool => BusinessGoogleLocation::query()
+                ->whereKey($binding->id)
+                ->where('business_id', $binding->business_id)
+                ->where('business_google_connection_id', $connection->id)
+                ->whereHas('connection', fn ($query) => $query->whereKey($connection->id)->where('state', GoogleConnectionState::Active->value))
+                ->exists(),
+        );
+
+        return $this->present($now, $raw);
+    }
+
+    /**
+     * The last successful read for this linked location, if it is still inside its 24-hour window. Never calls Google.
+     *
+     * @return array<string, mixed>|null
+     */
+    public function cached(BusinessGoogleLocation $binding): ?array
+    {
+        $stored = $this->store->get((int) $binding->business_id, (int) $binding->id);
+
+        return $stored === null ? null : $this->present($stored['fetched_at'], $stored);
+    }
+
+    /**
+     * True only when the result this location already holds will still be there at $until (the next moment a scheduled refresh
+     * can replace it). The cache never lives longer than 24 hours, so a result read at 10:00 expires at 10:00 the next day:
+     * if the next scheduled read of this location is after that, skipping now would leave a gap with no numbers at all.
+     */
+    public function remainsAvailableThrough(BusinessGoogleLocation $binding, CarbonImmutable $until): bool
+    {
+        $cached = $this->cached($binding);
+
+        return $cached !== null && $cached['fetched_at']->addHours($this->store->ttlHours())->greaterThan($until);
+    }
+
+    /** @return array{at: CarbonImmutable, message: string}|null */
+    public function recentFailure(BusinessGoogleLocation $binding): ?array
+    {
+        return $this->store->failure((int) $binding->business_id, (int) $binding->id);
+    }
+
+    public function forgetBinding(int $businessId, int $bindingId): void
+    {
+        $this->store->forget($businessId, $bindingId);
+    }
+
+    public function forgetBusiness(int $businessId): void
+    {
+        BusinessGoogleLocation::query()->where('business_id', $businessId)->pluck('id')->each(fn ($id) => $this->store->forget($businessId, (int) $id));
+    }
+
+    /**
+     * @param  array{series: array, keywords: array}  $raw
+     * @return array{period: array<string, string>, kpis: array<int, array<string, mixed>>, keywords: array{month: ?string, items: array<int, array<string, mixed>>, error: ?string}, fetched_at: CarbonImmutable}
+     */
+    private function present(CarbonImmutable $fetchedAt, array $raw): array
+    {
+        $periods = GoogleBusinessProfilePerformanceSummary::periods($fetchedAt);
+        $keywords = $raw['keywords'];
+
         return [
             'period' => array_map(fn (CarbonImmutable $date) => $date->toDateString(), $periods),
-            'kpis' => GoogleBusinessProfilePerformanceSummary::kpis($result['series'], $periods),
-            'keywords' => $result['keywords'],
-            'fetched_at' => $now,
+            'kpis' => GoogleBusinessProfilePerformanceSummary::kpis($raw['series'], $periods),
+            'keywords' => [
+                'month' => $keywords['month'] ?? null,
+                'items' => GoogleBusinessProfilePerformanceSummary::topTerms((array) ($keywords['terms'] ?? [])),
+                'error' => $keywords['error'] ?? null,
+            ],
+            'fetched_at' => $fetchedAt,
         ];
     }
 
     /**
      * Keyword failures never discard the metrics already read: they are reported on their own.
      *
-     * @return array{month: ?string, items: array<int, array<string, mixed>>, error: ?string}
+     * @return array{month: ?string, terms: array<int, array<string, mixed>>, error: ?string}
      */
     private function keywords(string $token, string $resource, CarbonImmutable $now): array
     {
@@ -88,13 +173,13 @@ final class GoogleBusinessProfilePerformanceLoader
                 $terms = $this->reader->monthlySearchKeywords($token, $resource, $month->year, $month->month);
 
                 if ($terms !== []) {
-                    return ['month' => $month->format('Y-m'), 'items' => GoogleBusinessProfilePerformanceSummary::topTerms($terms), 'error' => null];
+                    return ['month' => $month->format('Y-m'), 'terms' => $terms, 'error' => null];
                 }
             }
         } catch (GoogleBusinessProfileProviderException $exception) {
-            return ['month' => null, 'items' => [], 'error' => $exception->userMessage()];
+            return ['month' => null, 'terms' => [], 'error' => $exception->userMessage()];
         }
 
-        return ['month' => null, 'items' => [], 'error' => null];
+        return ['month' => null, 'terms' => [], 'error' => null];
     }
 }
