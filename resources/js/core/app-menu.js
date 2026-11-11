@@ -58,6 +58,14 @@
         }
       },
 
+      // The ONE place the scrollbar is re-measured. The menu's height comes from CSS (a flex column under the logo and the account/business
+      // context block, see _navigation.scss); nothing here writes a height. PerfectScrollbar only learns the new content height when asked.
+      refresh: function () {
+        if (this.obj) {
+          this.obj.update();
+        }
+      },
+
       // PerfectScrollbar only knows the content height it last measured. Re-measure whenever the menu or its list changes size: a submenu
       // opening or closing, navigation items changing, the viewport resizing or rotating.
       watch: function () {
@@ -68,9 +76,7 @@
         }
         content.setAttribute('data-ps-watch', '1');
         var refresh = function () {
-          if (self.obj) {
-            self.obj.update();
-          }
+          self.refresh();
         };
         if (window.ResizeObserver) {
           var observer = new ResizeObserver(refresh);
@@ -131,22 +137,9 @@
         }
       },
 
+      // Kept for the window-resize hook in app.js: the layout no longer needs a computed height, only a fresh measurement.
       updateHeight: function () {
-        if (
-          ($body.data('menu') == 'vertical-menu' ||
-            $body.data('menu') == 'vertical-menu-modern' ||
-            $body.data('menu') == 'vertical-overlay-menu') &&
-          $('.main-menu').hasClass('menu-fixed')
-        ) {
-          $('.main-menu-content').css(
-            'height',
-            $(window).height() -
-              $('.header-navbar').height() -
-              $('.main-menu-header').outerHeight() -
-              $('.main-menu-footer').outerHeight()
-          );
-          this.update();
-        }
+        this.refresh();
       }
     },
 
@@ -365,14 +358,7 @@
         function () {
           if (!$('.main-menu').hasClass('menu-native-scroll') && $('.main-menu').hasClass('menu-fixed')) {
             this.manualScroller.enable();
-            $('.main-menu-content').css(
-              'height',
-              $(window).height() -
-                $('.header-navbar').height() -
-                $('.main-menu-header').outerHeight() -
-                $('.main-menu-footer').outerHeight()
-            );
-            // this.manualScroller.update();
+            this.manualScroller.refresh();
           }
 
           if (!$body.hasClass('vertical-overlay-menu')) {
@@ -440,14 +426,7 @@
               ($body.data('menu') == 'vertical-menu' || $body.data('menu') == 'vertical-menu-modern') &&
               $('.main-menu').hasClass('menu-fixed')
             ) {
-              $('.main-menu-content').css(
-                'height',
-                $(window).height() -
-                  $('.header-navbar').height() -
-                  $('.main-menu-header').outerHeight() -
-                  $('.main-menu-footer').outerHeight()
-              );
-              // this.manualScroller.update();
+              this.manualScroller.refresh();
             }
           }
         );
@@ -481,8 +460,7 @@
               ($body.data('menu') == 'vertical-menu' || $body.data('menu') == 'vertical-menu-modern') &&
               $('.main-menu').hasClass('menu-fixed')
             ) {
-              $('.main-menu-content').css('height', $(window).height() - $('.header-navbar').height());
-              // this.manualScroller.update();
+              this.manualScroller.refresh();
             }
             if ($body.data('menu') == 'vertical-menu-modern') {
               if ($('.main-menu').hasClass('menu-fixed')) this.manualScroller.enable();
@@ -909,6 +887,7 @@
       $.app.nav._bindAnimationEndEvent($listItem, function () {
         $listItem.removeClass('open');
         $.app.nav._clearItemStyle($listItem);
+        $.app.menu.manualScroller.refresh();
       });
 
       setTimeout(function () {
@@ -935,6 +914,7 @@
 
       $.app.nav._bindAnimationEndEvent($listItem, function () {
         $.app.nav._clearItemStyle($listItem);
+        $.app.menu.manualScroller.refresh();
       });
 
       setTimeout(function () {
