@@ -614,4 +614,120 @@ class GoogleBusinessProfilePerformanceTest extends TestCase
         $this->assertCount(1, $events);
         $this->assertSame('30 3 * * *', $events->first()->expression);
     }
+
+    public function test_a_full_page_refresh_with_caching_off_shows_what_google_just_returned_and_starts_nothing_else(): void
+    {
+        config(['google_business_profile.performance.cache_hours' => 0]);
+        $this->fakeGoogleApi($this->dailyResponse($this->fullValues()), ['2026-10' => [['searchKeyword' => 'photo booth', 'insightsValue' => ['value' => '9']]]]);
+
+        $response = $this->load()->assertOk();
+
+        $response->assertSee('data-kpi="visibility"', false)->assertSee('photo booth')->assertSee('Updated today');
+        $response->assertDontSee('data-auto="1"', false)->assertDontSee('Loading your Google performance');
+        $this->assertStringContainsString('224', $response->getContent());
+        $calls = count(Http::recorded());
+
+        // Nothing was stored, so the next page view starts its own (single) automatic read, exactly as designed; the ordinary AJAX route still answers.
+        $this->autoLoad()->assertOk()->assertSee('data-kpi="visibility"', false);
+        $this->assertGreaterThan($calls, count(Http::recorded()));
+    }
+
+    // ------------------------------------------------------------------ every disconnect path purges the cache
+
+    private function warmCache(): string
+    {
+        $this->fakeGoogleApi($this->dailyResponse($this->fullValues()));
+        $this->autoLoad()->assertOk();
+        $key = $this->cacheKey($this->business->id, $this->binding()->id);
+        $this->assertNotNull(Cache::get($key));
+
+        return $key;
+    }
+
+    /** A second, unrelated business with its own warm cache entry. */
+    private function otherBusinessCache(): string
+    {
+        [, $other] = $this->entitledTenant();
+        $location = $this->createLocation($other, true);
+        $connection = $this->activeConnection($other);
+        $binding = BusinessGoogleLocation::create([
+            'business_google_connection_id' => $connection->id, 'business_id' => $other->id, 'business_location_id' => $location->id,
+            'provider_account_resource_name' => 'accounts/A9', 'provider_location_resource_name' => 'locations/L9',
+        ]);
+        $key = $this->cacheKey($other->id, $binding->id);
+        Cache::put($key, 'other-business-entry', now()->addHour());
+
+        return $key;
+    }
+
+    public function test_the_onboarding_disconnect_purges_the_cache(): void
+    {
+        $key = $this->warmCache();
+        $otherKey = $this->otherBusinessCache();
+
+        app(\App\Library\Business\GoogleOnboardingBridge::class)->disconnect($this->business, (int) $this->customer->user_id);
+
+        $this->assertNull(Cache::get($key));
+        $this->assertSame('other-business-entry', Cache::get($otherKey), 'Another business is untouched.');
+    }
+
+    public function test_the_account_closure_disconnect_purges_the_cache(): void
+    {
+        $key = $this->warmCache();
+        $otherKey = $this->otherBusinessCache();
+        $token = (string) \Illuminate\Support\Str::uuid();
+        $id = \DB::table('platform_account_closures')->insertGetId([
+            'uid' => (string) \Illuminate\Support\Str::uuid(), 'user_uid' => (string) \Illuminate\Support\Str::uuid(), 'user_email' => 'closure@example.test',
+            'requested_by_user_id' => 1, 'reason' => 'test', 'state' => 'running', 'claim_token' => $token, 'claimed_at' => now(), 'created_at' => now(), 'updated_at' => now(),
+        ]);
+        $closure = \App\Models\PlatformAccountClosure::query()->findOrFail($id);
+        $manager = app(\App\Library\PlatformOwner\AccountDeletion\PlatformAccountClosureManager::class);
+
+        $method = new \ReflectionMethod($manager, 'disconnectProviders');
+        $method->setAccessible(true);
+        $method->invoke($manager, $closure, [$this->business->id], 1);
+
+        $this->assertNull(Cache::get($key));
+        $this->assertSame('other-business-entry', Cache::get($otherKey));
+    }
+
+    public function test_revocation_purges_the_cache_and_repeated_cleanup_is_harmless(): void
+    {
+        $key = $this->warmCache();
+        $otherKey = $this->otherBusinessCache();
+        $manager = app(\App\Library\GoogleBusinessProfile\GoogleBusinessProfileConnectionManager::class);
+
+        $connectionId = $this->binding()->business_google_connection_id;
+        $connection = fn () => \App\Models\BusinessGoogleConnection::query()->findOrFail($connectionId);
+        $userId = (int) $this->customer->user_id;
+
+        $manager->revoke($connection());
+        $this->assertNull(Cache::get($key));
+        $this->assertSame('other-business-entry', Cache::get($otherKey));
+
+        $manager->revoke($connection());
+        $manager->disconnect($connection(), $userId);
+        $manager->disconnect($connection(), $userId);
+        $this->assertNull(Cache::get($key));
+        $this->assertSame('other-business-entry', Cache::get($otherKey));
+    }
+
+    public function test_unbinding_one_location_purges_only_that_locations_cache(): void
+    {
+        $second = $this->createLocation($this->business, false, overrides: ['name' => 'Second Studio']);
+        $secondBinding = BusinessGoogleLocation::create([
+            'business_google_connection_id' => $this->binding()->business_google_connection_id, 'business_id' => $this->business->id, 'business_location_id' => $second->id,
+            'provider_account_resource_name' => 'accounts/A1', 'provider_location_resource_name' => 'locations/L2',
+        ]);
+        $this->fakeGoogleApi($this->dailyResponse($this->fullValues()));
+        $this->autoLoad()->assertOk();
+        $first = $this->binding();
+        $this->assertNotNull(Cache::get($this->cacheKey($this->business->id, $first->id)));
+        $this->assertNotNull(Cache::get($this->cacheKey($this->business->id, $secondBinding->id)));
+
+        app(\App\Library\GoogleBusinessProfile\GoogleBusinessProfileBindingManager::class)->unbind($first, (int) $this->customer->user_id);
+
+        $this->assertNull(Cache::get($this->cacheKey($this->business->id, $first->id)));
+        $this->assertNotNull(Cache::get($this->cacheKey($this->business->id, $secondBinding->id)));
+    }
 }

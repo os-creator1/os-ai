@@ -38,6 +38,7 @@ final class GoogleBusinessProfileBindingManager
         private readonly GoogleBusinessProfileMirrorService $mirror,
         private readonly GoogleBusinessProfileOperationLedger $ledger,
         private readonly GoogleBusinessProfileCallBudget $budget,
+        private readonly \App\Library\GoogleBusinessProfilePerformance\GoogleBusinessProfilePerformanceStore $performanceStore,
     ) {
     }
 
@@ -153,6 +154,9 @@ final class GoogleBusinessProfileBindingManager
             actorUserId: $actorUserId,
             summary: 'Unbinding ' . $binding->provider_location_resource_name,
         );
+
+        // The location's cached performance goes with it.
+        $this->performanceStore->forget($businessId, (int) $binding->id);
 
         DB::transaction(function () use ($binding) {
             // Deleting the binding removes the mirror with it: there is no

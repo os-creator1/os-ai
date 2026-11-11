@@ -538,7 +538,6 @@ class GoogleBusinessProfileController extends CustomerBaseController
         abort_unless($binding !== null, 404);
 
         $this->bindings->unbind($binding, (int) Auth::id());
-        $this->performance->forgetBinding((int) $business->id, (int) $binding->id);
 
         return redirect()
             ->route('customer.workspaces.businesses.gbp.index', [$workspaceUid, $businessUid])
@@ -563,9 +562,6 @@ class GoogleBusinessProfileController extends CustomerBaseController
         if ($connection === null) {
             return redirect()->route('customer.workspaces.businesses.gbp.index', [$workspaceUid, $businessUid]);
         }
-
-        // Nothing read from Google for this business is kept once its account is disconnected (done first: disconnecting unlinks the locations).
-        $this->performance->forgetBusiness((int) $business->id);
 
         try {
             $this->connections->disconnect($connection, (int) Auth::id());
@@ -762,7 +758,9 @@ class GoogleBusinessProfileController extends CustomerBaseController
             return view('customer.business.googleBusinessProfile._performance-body', ['workspaceUid' => $workspaceUid, 'businessUid' => $businessUid, 'performance' => $results, 'performanceAuto' => false]);
         }
 
-        return view('customer.business.googleBusinessProfile.index', $this->overviewData($workspaceUid, $businessUid, $business) + ['performance' => $results, 'performanceAuto' => false]);
+        // array_merge, not `+`: the freshly read results (and no further automatic read) must win over overviewData()'s own values,
+        // which matters most when nothing is cached.
+        return view('customer.business.googleBusinessProfile.index', array_merge($this->overviewData($workspaceUid, $businessUid, $business), ['performance' => $results, 'performanceAuto' => false]));
     }
 
     // -----------------------------------------------------------------

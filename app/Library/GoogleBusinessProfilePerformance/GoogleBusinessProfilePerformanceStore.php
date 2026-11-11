@@ -77,6 +77,17 @@ final class GoogleBusinessProfilePerformanceStore
         $this->clearFailure($businessId, $bindingId);
     }
 
+    /**
+     * Deletes everything kept for ONE connection's linked locations (and ONLY that connection's: the ids come from the
+     * connection itself, so another Business's entries can never be reached). Idempotent. Call it BEFORE the locations are
+     * deleted, because the ids are read from them.
+     */
+    public function forgetConnection(\App\Models\BusinessGoogleConnection $connection): void
+    {
+        $connection->locations()->where('business_id', $connection->business_id)->pluck('id')
+            ->each(fn ($id) => $this->forget((int) $connection->business_id, (int) $id));
+    }
+
     public function markFailure(int $businessId, int $bindingId, string $message): void
     {
         Cache::put($this->failureKey($businessId, $bindingId), ['at' => now()->toIso8601String(), 'message' => $message], now()->addMinutes($this->backoffMinutes()));

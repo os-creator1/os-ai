@@ -75,6 +75,7 @@ final class GoogleBusinessProfileConnectionManager
         private readonly GoogleBusinessProfileOperationLedger $ledger,
         private readonly GoogleBusinessProfileOAuthConfig $oauthConfig,
         private readonly GoogleBusinessProfileCallBudget $budget,
+        private readonly \App\Library\GoogleBusinessProfilePerformance\GoogleBusinessProfilePerformanceStore $performanceStore,
     ) {
     }
 
@@ -368,6 +369,9 @@ final class GoogleBusinessProfileConnectionManager
             return;
         }
 
+        // A revoked authorization leaves nothing read from Google accessible.
+        $this->performanceStore->forgetConnection($connection);
+
         $this->transition($connection, GoogleConnectionState::Revoked, [
             'revoked_at' => now(),
             'refresh_token_encrypted' => null,
@@ -391,6 +395,10 @@ final class GoogleBusinessProfileConnectionManager
         $this->assertBusinessProfileConnection($connection);
 
         $businessId = (int) $connection->business_id;
+
+        // Every disconnect (customer, onboarding, account closure) passes here: nothing read from Google stays behind. This is
+        // first because the cached entries are found through the locations the next statement deletes.
+        $this->performanceStore->forgetConnection($connection);
 
         DB::transaction(function () use ($connection) {
             $connection->locations()->delete();
