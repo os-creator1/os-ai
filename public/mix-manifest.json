@@ -1,5 +1,5 @@
 {
-    "/js/core/app-menu.js": "/js/core/app-menu.js",
+    "/js/core/app-menu.js": "/js/core/app-menu.js?id=e2266c7271b95d02884f5f3093c4b29e",
     "/js/core/theme-tokens.js": "/js/core/theme-tokens.js",
     "/js/core/async-region.js": "/js/core/async-region.js",
     "/js/core/app.js": "/js/core/app.js",
@@ -12,7 +12,7 @@
     "/css-rtl/style-rtl.css": "/css-rtl/style-rtl.css",
     "/css-rtl/custom-rtl.css": "/css-rtl/custom-rtl.css",
     "/css/overrides.css": "/css/overrides.css",
-    "/css/core.css": "/css/core.css",
+    "/css/core.css": "/css/core.css?id=99e75355a9c5a377a0053643b6fb9e8d",
     "/css/base/themes/semi-dark-layout.css": "/css/base/themes/semi-dark-layout.css",
     "/css/base/themes/bordered-layout.css": "/css/base/themes/bordered-layout.css",
     "/css/base/themes/dark-layout.css": "/css/base/themes/dark-layout.css",
