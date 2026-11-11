@@ -99,9 +99,15 @@ class GrowthHomeVariantBTest extends TestCase
 
     public function test_the_description_move_shows_the_proposal_in_the_red_card_with_truthful_wording_and_no_undo(): void
     {
-        $this->withDescriptionMove();
+        [$customer] = $this->withDescriptionMove();
+        $primary = $this->dashboardFor($customer->user)->band(DashboardSnapshot::BAND_COMMAND)['primary'];
+        $this->assertSame('opportunity', $primary['key'] ?? null, 'Fixture precondition: the missing description is the Best Next Move.');
+        $this->assertNotNull($primary['description'] ?? null, 'Fixture precondition: the move carries its description proposal.');
         $html = $this->html();
         $this->noAi();
+        preg_match('/data-role="growth-next" data-kind="([^"]*)"/', $html, $kind);
+        preg_match('/data-role="next-best-move" data-move="([^"]*)"/', $html, $move);
+        $this->assertStringContainsString('data-role="description-proposal"', $html, 'Rendered kind=' . ($kind[1] ?? '?') . ' move=' . ($move[1] ?? '?'));
 
         $this->assertStringContainsString('data-role="next-best-move"', $html);
         $this->assertStringContainsString('data-role="description-proposal"', $html);
