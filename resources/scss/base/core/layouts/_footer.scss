@@ -60,11 +60,17 @@ footer {
   .app-content {
     padding-bottom: 0.1px !important;
   }
+  // The authenticated app has no footer bar at all: standard pages keep real breathing room under their last card. Full-height pages
+  // (content-area-wrapper: chat, calendar, kanban) nest their own .content-wrapper and are deliberately not touched.
+  .app-content > .content-wrapper {
+    padding-bottom: 1.5rem !important;
+  }
 }
 // scroll to Top Footer Button
 .scroll-top {
   position: fixed;
-  bottom: 5%;
+  // Sits inside the bottom room the layout keeps under the last card, so at the end of a page it never covers the final row.
+  bottom: 0.5rem;
   right: 30px;
   display: none;
   z-index: 99;
