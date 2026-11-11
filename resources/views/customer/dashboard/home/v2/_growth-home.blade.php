@@ -12,10 +12,10 @@
     $g = $v2['growthHome'];
     $needs = $v2['needs'];
     $period = $v2['growth']['period'] ?? null;
-    $kpis = collect($v2['growth']['kpis'] ?? [])->filter(fn ($k) => in_array($k['key'], ['contacts', 'bookings'], true))->sortBy(fn ($k) => $k['key'] === 'contacts' ? 0 : 1)->values();
+    $kpis = collect($v2['growth']['kpis'] ?? [])->filter(fn ($k) => in_array($k['key'], ['contacts', 'bookings'], true))->sortBy(fn ($k) => $k['key'] === 'contacts' ? 0 : 1)->values()->all();
     $google = $g['google'];
     $labels = ['contacts' => 'New contacts', 'bookings' => 'Bookings'];
-    $missing = array_diff_key($labels, $kpis->keyBy('key')->all());
+    $missing = array_diff_key($labels, array_column($kpis, null, 'key'));
     $activity = $g['activity'];
     $setup = $g['setup'];
     $greeting = $home['greeting']['salutation'] . ($greetingName ? ', ' . $greetingName : '');
@@ -41,7 +41,7 @@
         'completed' => 'M5 12.5l4.5 4.5L19 7.5',
         'recorded' => 'M6 3.5h8l4 4v13H6zM14 3.5v4h4M9 12.5h6M9 16.5h6',
     ];
-    $others = collect([$g['secondary']])->filter()->merge($g['more'])->values();
+    $others = array_values(array_filter(array_merge([$g['secondary']], $g['more'])));
     $moveIcon = match (true) {
         ($needs['description'] ?? null) !== null => 'M4 20h4L19 9l-4-4L4 16zM13.5 6.5l4 4',
         ($needs['kind'] ?? '') === 'waiting' => 'M4 5h16v11H9l-5 4z',
@@ -58,7 +58,7 @@
                 <h1 class="gh-h1" id="gh-greeting" data-role="home-salutation">{{ $greeting }}</h1>
                 @if($period !== null)<span class="gh-period" data-role="headline-period">{{ $period['label'] }}</span>@endif
             </div>
-            <div class="gh-metrics" data-role="kpis" style="--gh-cols: {{ max(1, ($google !== null ? 1 : 0) + $kpis->count() + ($v2['growth']['failed'] ? 0 : count($missing))) }}">
+            <div class="gh-metrics" data-role="kpis" style="--gh-cols: {{ max(1, ($google !== null ? 1 : 0) + count($kpis) + ($v2['growth']['failed'] ? 0 : count($missing))) }}">
                 @if($google !== null)
                     @php $gTag = $google['url'] ? 'a' : 'div'; $notTracking = $google['state'] === 'not_tracking'; @endphp
                     <{{ $gTag }} class="gh-met gh-met--lead" @if($google['url']) href="{{ $google['url'] }}" @endif data-role="google-visibility" data-state="{{ $google['state'] }}">
@@ -135,9 +135,9 @@
                     @elseif($needs['primary'] !== null)
                         <div class="gh-nbm__actions"><a class="gh-btn gh-btn--light gh-btn--lg" href="{{ $needs['primary']['url'] }}" data-role="next-best-move-action">{{ $needs['primary']['label'] }} <svg class="gh-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg></a></div>
                     @endif
-                    @if($others->isNotEmpty() || $g['moreUrl'] !== null)
+                    @if($others !== [] || $g['moreUrl'] !== null)
                         <details class="gh-nbm__more" data-role="other-opportunities">
-                            <summary>{{ $others->isEmpty() ? 'More recommendations' : $others->count() . ' more ' . ($others->count() === 1 ? 'opportunity' : 'opportunities') }}<svg class="gh-ic gh-chev" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg></summary>
+                            <summary>{{ $others === [] ? 'More recommendations' : count($others) . ' more ' . (count($others) === 1 ? 'opportunity' : 'opportunities') }}<svg class="gh-ic gh-chev" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg></summary>
                             <div class="gh-nbm__more-body">
                                 @foreach($others as $item)
                                     <div class="gh-nbm__more-row" @if($loop->first && $item === $g['secondary']) data-role="secondary-opportunity" @else data-role="other-opportunity" @endif data-uid="{{ $item['uid'] }}"><span>{{ $item['title'] }}</span>@if($item['url'] !== null)<a href="{{ $item['url'] }}">Open</a>@endif</div>
