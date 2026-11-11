@@ -72,14 +72,26 @@ class GrowthHomeVariantBTest extends TestCase
         $html = $this->html();
         $this->noAi();
 
-        $order = ['data-role="home-greeting"', 'data-role="growth-performance"', 'data-role="growth-next"', 'data-role="home-ask"', 'data-role="growth-activity"', 'data-role="recent-chats"'];
+        // The real reading order. `growth-performance` is the ENCLOSING section of the greeting and the metrics, so it opens before the
+        // greeting by design: the greeting is compared with the KPI contents, and the section with what follows it.
+        $order = [
+            'greeting' => 'id="gh-greeting"',
+            'metrics' => 'class="gh-metrics"',
+            'next move' => 'data-role="growth-next"',
+            'ask' => 'data-role="home-ask"',
+            'work' => 'data-role="growth-activity"',
+            'recent chats (supporting column)' => 'data-role="recent-chats"',
+        ];
         $last = -1;
-        foreach ($order as $marker) {
+        foreach ($order as $name => $marker) {
             $at = strpos($html, $marker);
-            $this->assertNotFalse($at, $marker);
-            $this->assertGreaterThan($last, $at, $marker . ' is out of the approved order.');
+            $this->assertNotFalse($at, $name . ' is missing.');
+            $this->assertGreaterThan($last, $at, $name . ' is out of the approved order.');
             $last = $at;
         }
+        $this->assertLessThan(strpos($html, 'id="gh-greeting"'), strpos($html, 'data-role="growth-performance"'), 'The performance section encloses the greeting.');
+        $this->assertLessThan(strpos($html, 'data-role="growth-next"'), strpos($html, 'class="gh-metrics"'), 'Performance comes before the next move.');
+        $this->assertStringContainsString('aria-label="Setup and recent chats"', $html, 'The supporting column renders.');
         $this->assertSame(1, substr_count($html, 'class="gh-metrics"'), 'One compact performance card.');
         $this->assertSame(1, substr_count($html, 'data-role="home-ask"'), 'One assistant.');
         $this->assertStringContainsString('data-role="headline-period"', $html, 'The reporting period is always labelled.');

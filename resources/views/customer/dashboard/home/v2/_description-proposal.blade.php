@@ -7,6 +7,33 @@
 --}}
 @php($d = $needs['description'])
 @php($next = $next ?? null)
+@php($layout = $layout ?? 'core')
+@if($layout !== 'growth')
+{{-- Core Home: the original compact presentation (hv2 classes only; the Growth stylesheet is never loaded here). Same behaviour and roles. --}}
+<div class="hv2-desc" data-role="description-proposal" data-approve-url="{{ $d['approveUrl'] }}" @if($d['improveUrl']) data-improve-url="{{ $d['improveUrl'] }}" @endif data-base="{{ $d['base'] }}" data-opportunity="{{ $d['uid'] }}" data-min="50" data-max="5000">
+    <label class="hv2-desc__label" for="hv2-desc-text">{{ $d['fromFacts'] ? 'Proposed description — built from your saved business details' : 'Your business description' }}</label>
+    <textarea id="hv2-desc-text" class="form-control hv2-desc__text" rows="4" maxlength="5000" readonly data-role="description-text" placeholder="Write 2–3 sentences about what you do and where you work (at least 50 characters).">{{ $d['text'] }}</textarea>
+    <div class="hv2-needs__actions hv2-desc__actions" data-role="description-actions">
+        <button type="button" class="btn btn-primary hv2-btn" data-role="description-approve">Approve &amp; save</button>
+        <button type="button" class="btn btn-outline-secondary hv2-btn" data-role="description-edit">Edit description</button>
+        @if($d['improveUrl'])<button type="button" class="btn btn-outline-secondary hv2-btn" data-role="description-improve"><span class="hv2-spark" aria-hidden="true">✦</span> Improve with AI</button>@endif
+    </div>
+    <p class="hv2-muted hv2-desc__note mb-0">Saved to your MotionGrove business profile. This does not automatically update Google or publish your website.</p>
+    <p class="hv2-desc__status mb-0" role="status" aria-live="polite" data-role="description-status" data-state="idle" hidden><b data-role="description-status-title"></b> <span data-role="description-status-detail"></span></p>
+</div>
+<style>
+    .hv2 .hv2-desc { margin-top: .5rem; display: grid; gap: .5rem; }
+    .hv2 .hv2-desc__label { font-size: .8125rem; font-weight: 600; margin: 0; }
+    .hv2 .hv2-desc__text { font-size: .9375rem; line-height: 1.5; }
+    .hv2 .hv2-desc__text[readonly] { background: var(--hv2-card); }
+    .hv2 .hv2-desc__actions { display: flex; flex-wrap: wrap; gap: .5rem; }
+    .hv2 .hv2-desc__actions[hidden], .hv2 .hv2-desc__status[hidden] { display: none; }
+    .hv2 .hv2-desc__note, .hv2 .hv2-desc__status { font-size: .8125rem; }
+    .hv2 .hv2-desc__status[data-state="completed"] { color: var(--color-status-success, #1E7B3C); }
+    .hv2 .hv2-desc__status[data-state="failed"] { color: var(--color-status-danger, #B3261E); }
+    @media (max-width: 575px) { .hv2 .hv2-desc__actions .hv2-btn { flex: 1 1 100%; min-height: 2.75rem; } }
+</style>
+@else
 <div class="gh-desc" data-role="description-proposal" data-approve-url="{{ $d['approveUrl'] }}" @if($d['improveUrl']) data-improve-url="{{ $d['improveUrl'] }}" @endif data-base="{{ $d['base'] }}" data-opportunity="{{ $d['uid'] }}" data-min="50" data-max="5000">
     <div class="gh-desc__panel" data-role="description-panel">
         <label class="gh-desc__label" for="hv2-desc-text">{{ $d['fromFacts'] ? 'Prepared by MotionGrove · from your saved business details' : 'Your business description' }}</label>
@@ -31,6 +58,7 @@
         </div>
     @endif
 </div>
+@endif
 <script>
 (function () {
     var root = document.querySelector('[data-role="description-proposal"]');
@@ -39,7 +67,8 @@
     var text = q('description-text'), box = q('description-status'), title = q('description-status-title'), detail = q('description-status-detail');
     var approve = q('description-approve'), improve = q('description-improve'), edit = q('description-edit'), actions = q('description-actions'), next = q('description-next');
     var token = document.querySelector('meta[name="csrf-token"]'), saved = text.value, dirty = false, busy = false, prevReadOnly = text.readOnly;
-    var size = function () { text.style.height = 'auto'; text.style.height = text.scrollHeight + 'px'; };
+    var grow = root.classList.contains('gh-desc');
+    var size = function () { if (!grow) { return; } text.style.height = 'auto'; text.style.height = text.scrollHeight + 'px'; };
     // state: working | pending | completed | failed. Only `completed` is ever presented as success, and only once the workflow says so.
     var show = function (state, head, body) { box.hidden = false; box.setAttribute('data-state', state); title.textContent = head; detail.textContent = body || ''; };
     var post = function (url, body) {

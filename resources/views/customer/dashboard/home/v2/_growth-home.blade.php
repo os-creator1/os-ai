@@ -131,7 +131,7 @@
                         </div>
                     </div>
                     @if(($needs['description'] ?? null) !== null)
-                        @include('customer.dashboard.home.v2._description-proposal', ['needs' => $needs, 'next' => $g['secondary']])
+                        @include('customer.dashboard.home.v2._description-proposal', ['needs' => $needs, 'next' => $g['secondary'], 'layout' => 'growth'])
                     @elseif($needs['primary'] !== null)
                         <div class="gh-nbm__actions"><a class="gh-btn gh-btn--light gh-btn--lg" href="{{ $needs['primary']['url'] }}" data-role="next-best-move-action">{{ $needs['primary']['label'] }} <svg class="gh-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg></a></div>
                     @endif
