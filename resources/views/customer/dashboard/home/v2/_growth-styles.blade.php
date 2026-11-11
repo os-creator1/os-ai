@@ -38,6 +38,7 @@
     .hv2 .gh-root a.gh-met:hover { background: #FBF9F7; }
     .hv2 .gh-root .gh-met__k { font-size: 13px; font-weight: 600; color: #5E5652; }
     .hv2 .gh-root .gh-met__v { font-size: 26px; font-weight: 700; letter-spacing: -.02em; font-variant-numeric: tabular-nums; line-height: 1.25; }
+    .hv2 .gh-root .gh-met__row { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; }
     .hv2 .gh-root .gh-met__state { font-size: 17px; font-weight: 700; padding: 6px 0 2px; color: #3A3330; }
     .hv2 .gh-root .gh-met__s { font-size: 12.5px; color: var(--gh-muted); overflow-wrap: anywhere; }
     .hv2 .gh-root .gh-met__link { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; font-weight: 600; color: var(--gh-brand-dark); }

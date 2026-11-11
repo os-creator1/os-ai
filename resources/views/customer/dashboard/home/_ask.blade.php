@@ -102,7 +102,7 @@
         {{-- Growth Home: the same disclosure, shown beneath the composer as a quiet note (no AI is called by reading it). --}}
         <div class="gh-ask-note home-ask-foot" data-role="ask-foot">
             <details data-role="ask-uses-ai">
-                <summary><span>MotionGrove asks before changing anything.</span> <span class="gh-ask-note__link">How Ask uses AI</span></summary>
+                <summary><span>MotionGrove asks before changing anything.</span> <span class="gh-ask-note__link">How Ask MotionGrove uses AI</span></summary>
                 <p class="mb-0 mt-50">{{ $home['ask']['disclosure'] }}</p>
             </details>
         </div>

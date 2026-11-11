@@ -72,9 +72,9 @@
                     @php $tag = $kpi['url'] === null ? 'div' : 'a'; @endphp
                     <{{ $tag }} class="gh-met" @if($kpi['url'] !== null) href="{{ $kpi['url'] }}" @endif data-role="kpi" data-kpi="{{ $kpi['key'] }}">
                         <span class="gh-met__k">{{ $kpi['label'] }}</span>
-                        <span class="gh-met__v" data-role="headline-figure">{{ $kpi['value'] }}</span>
-                        {{-- A comparison appears only when the performance band proved one (its own wording); otherwise its honest note. --}}
-                        @if($kpi['badge'] !== null)<span class="gh-met__s" data-role="kpi-badge" data-tone="{{ $kpi['badge']['tone'] }}">{{ $kpi['badge']['sr'] }}</span>@endif
+                        {{-- The figure and the performance band's own comparison badge (▲ n / ▼ n / Same / First month …), then its plain-language period wording. --}}
+                        <span class="gh-met__row"><span class="gh-met__v" data-role="headline-figure">{{ $kpi['value'] }}</span>@if($kpi['badge'] !== null)<span class="hv2-badge hv2-badge--{{ $kpi['badge']['tone'] }}" data-role="kpi-badge" aria-label="{{ $kpi['badge']['sr'] }}">{{ $kpi['badge']['text'] }}</span>@endif</span>
+                        @if($kpi['badge'] !== null)<span class="gh-met__s" data-role="kpi-comparison">{{ $kpi['badge']['sr'] }}</span>@endif
                         @if($kpi['note'])<span class="gh-met__s" data-role="kpi-note">{{ $kpi['note'] }}</span>@endif
                     </{{ $tag }}>
                 @endforeach
