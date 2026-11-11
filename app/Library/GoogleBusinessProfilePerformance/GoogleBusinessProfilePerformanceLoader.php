@@ -2,6 +2,7 @@
 
 namespace App\Library\GoogleBusinessProfilePerformance;
 
+use App\Enums\GoogleBusinessProfile\GoogleConnectionState;
 use App\Enums\GoogleBusinessProfile\GoogleOperationType;
 use App\Exceptions\GoogleBusinessProfile\GoogleBusinessProfileProviderException;
 use App\Library\GoogleBusinessProfile\GoogleBusinessProfileCallBudget;
@@ -40,6 +41,8 @@ final class GoogleBusinessProfilePerformanceLoader
         $now ??= CarbonImmutable::now('UTC');
         $periods = GoogleBusinessProfilePerformanceSummary::periods($now);
         $resource = (string) $binding->provider_location_resource_name;
+        // Captured BEFORE Google is called: any unlink, disconnect or revocation while it answers rotates it.
+        $generation = $this->store->generation((int) $binding->business_id, (int) $binding->id);
 
         $operation = $this->ledger->open(
             businessId: (int) $binding->business_id,
@@ -77,7 +80,21 @@ final class GoogleBusinessProfilePerformanceLoader
 
         // Only what Google returned is kept (see the Store); totals and comparisons are drawn from it on every view.
         $raw = ['series' => $result['series'], 'keywords' => $result['keywords']];
-        $this->store->put((int) $binding->business_id, (int) $binding->id, $now, $raw);
+        // Written only if the location is STILL linked to this active connection and nothing purged it meanwhile (checked under the
+        // lock every purge takes). Otherwise the result is shown to whoever asked, and kept nowhere.
+        $this->store->putIfCurrent(
+            (int) $binding->business_id,
+            (int) $binding->id,
+            $generation,
+            $now,
+            $raw,
+            fn (): bool => BusinessGoogleLocation::query()
+                ->whereKey($binding->id)
+                ->where('business_id', $binding->business_id)
+                ->where('business_google_connection_id', $connection->id)
+                ->whereHas('connection', fn ($query) => $query->whereKey($connection->id)->where('state', GoogleConnectionState::Active->value))
+                ->exists(),
+        );
 
         return $this->present($now, $raw);
     }

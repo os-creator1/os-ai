@@ -730,4 +730,130 @@ class GoogleBusinessProfilePerformanceTest extends TestCase
         $this->assertNull(Cache::get($this->cacheKey($this->business->id, $first->id)));
         $this->assertNotNull(Cache::get($this->cacheKey($this->business->id, $secondBinding->id)));
     }
+
+    // ------------------------------------------------------------------ a purge while Google is still answering
+
+    /**
+     * Google answers the daily-metrics request normally, but ONLY AFTER $duringTheRead has run: the lifecycle change lands in the
+     * middle of the real read, exactly where the race is.
+     */
+    private function fakeGoogleWhileSomethingHappens(callable $duringTheRead): void
+    {
+        $daily = $this->dailyResponse($this->fullValues());
+        $ran = false;
+
+        Http::fake(function (Request $request) use ($daily, $duringTheRead, &$ran) {
+            if (str_contains($request->url(), ':fetchMultiDailyMetricsTimeSeries')) {
+                if (! $ran) {
+                    $ran = true;
+                    $duringTheRead();
+                }
+
+                return Http::response($daily);
+            }
+
+            return Http::response(['searchKeywordsCounts' => []]);
+        });
+    }
+
+    private function connectionOf(BusinessGoogleLocation $binding): \App\Models\BusinessGoogleConnection
+    {
+        return \App\Models\BusinessGoogleConnection::query()->findOrFail($binding->business_google_connection_id);
+    }
+
+    public function test_unlinking_the_location_while_google_answers_caches_nothing(): void
+    {
+        $otherKey = $this->otherBusinessCache();
+        $binding = $this->binding();
+        $key = $this->cacheKey($this->business->id, $binding->id);
+        $userId = (int) $this->customer->user_id;
+        $this->fakeGoogleWhileSomethingHappens(fn () => app(\App\Library\GoogleBusinessProfile\GoogleBusinessProfileBindingManager::class)->unbind(BusinessGoogleLocation::query()->findOrFail($binding->id), $userId));
+
+        $this->autoLoad();
+
+        $this->assertNull(Cache::get($key), 'The late Google response was not cached for a location that is no longer linked.');
+        $this->assertSame('other-business-entry', Cache::get($otherKey));
+    }
+
+    public function test_disconnecting_while_google_answers_caches_nothing(): void
+    {
+        $otherKey = $this->otherBusinessCache();
+        $binding = $this->binding();
+        $key = $this->cacheKey($this->business->id, $binding->id);
+        $userId = (int) $this->customer->user_id;
+        $this->fakeGoogleWhileSomethingHappens(fn () => app(\App\Library\GoogleBusinessProfile\GoogleBusinessProfileConnectionManager::class)->disconnect($this->connectionOf($binding), $userId));
+
+        $this->autoLoad();
+
+        $this->assertNull(Cache::get($key));
+        $this->assertSame('other-business-entry', Cache::get($otherKey));
+    }
+
+    public function test_the_onboarding_disconnect_while_google_answers_caches_nothing(): void
+    {
+        $binding = $this->binding();
+        $key = $this->cacheKey($this->business->id, $binding->id);
+        $this->fakeGoogleWhileSomethingHappens(fn () => app(\App\Library\Business\GoogleOnboardingBridge::class)->disconnect($this->business, (int) $this->customer->user_id));
+
+        $this->autoLoad();
+
+        $this->assertNull(Cache::get($key));
+    }
+
+    public function test_revocation_while_google_answers_caches_nothing(): void
+    {
+        $binding = $this->binding();
+        $key = $this->cacheKey($this->business->id, $binding->id);
+        $this->fakeGoogleWhileSomethingHappens(fn () => app(\App\Library\GoogleBusinessProfile\GoogleBusinessProfileConnectionManager::class)->revoke($this->connectionOf($binding)));
+
+        $this->autoLoad();
+
+        $this->assertNull(Cache::get($key));
+    }
+
+    public function test_a_reconnected_account_never_inherits_a_read_started_under_the_old_authorization(): void
+    {
+        $binding = $this->binding();
+        $oldKey = $this->cacheKey($this->business->id, $binding->id);
+        $userId = (int) $this->customer->user_id;
+        $newBindingId = null;
+
+        $this->fakeGoogleWhileSomethingHappens(function () use ($binding, $userId, &$newBindingId) {
+            app(\App\Library\GoogleBusinessProfile\GoogleBusinessProfileConnectionManager::class)->disconnect($this->connectionOf($binding), $userId);
+            // The owner reconnects Google and links the same location again.
+            $this->connectionOf($binding)->forceFill(['state' => GoogleConnectionState::Active, 'refresh_token_encrypted' => 'new-authorization-token'])->save();
+            $newBindingId = BusinessGoogleLocation::create([
+                'business_google_connection_id' => $binding->business_google_connection_id, 'business_id' => $this->business->id, 'business_location_id' => $binding->business_location_id,
+                'provider_account_resource_name' => 'accounts/A2', 'provider_location_resource_name' => 'locations/L1',
+            ])->id;
+        });
+
+        $this->autoLoad();
+
+        $this->assertNotNull($newBindingId);
+        $this->assertNull(Cache::get($oldKey));
+        $this->assertNull(Cache::get($this->cacheKey($this->business->id, $newBindingId)), 'The new link starts empty; the old authorization\'s response is not attached to it.');
+    }
+
+    public function test_a_read_that_nothing_interrupts_is_still_cached_and_repeated_cleanup_is_safe(): void
+    {
+        $this->fakeGoogleWhileSomethingHappens(fn () => null);
+        $binding = $this->binding();
+        $key = $this->cacheKey($this->business->id, $binding->id);
+
+        $this->autoLoad()->assertOk()->assertSee('data-kpi="visibility"', false);
+        $this->assertNotNull(Cache::get($key));
+
+        $store = app(\App\Library\GoogleBusinessProfilePerformance\GoogleBusinessProfilePerformanceStore::class);
+        $store->forget($this->business->id, $binding->id);
+        $store->forget($this->business->id, $binding->id);
+        $store->forgetConnection($this->connectionOf($binding));
+        $store->forgetConnection($this->connectionOf($binding));
+        $this->assertNull(Cache::get($key));
+
+        // After a purge the next read starts a fresh generation and caches normally.
+        $this->fakeGoogleWhileSomethingHappens(fn () => null);
+        $this->autoLoad()->assertOk();
+        $this->assertNotNull(Cache::get($key));
+    }
 }

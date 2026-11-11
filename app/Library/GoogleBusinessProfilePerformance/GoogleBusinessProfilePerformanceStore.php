@@ -46,7 +46,7 @@ final class GoogleBusinessProfilePerformanceStore
 
         // Defence in depth: the cache entry expires by itself, but nothing older than the window is ever shown.
         if ($fetchedAt->addHours($ttl)->isPast()) {
-            $this->forget($businessId, $bindingId);
+            Cache::forget($this->key($businessId, $bindingId));
 
             return null;
         }
@@ -54,27 +54,70 @@ final class GoogleBusinessProfilePerformanceStore
         return ['fetched_at' => $fetchedAt, 'series' => $payload['series'], 'keywords' => $payload['keywords']];
     }
 
-    /** @param array{series: array, keywords: array} $raw */
-    public function put(int $businessId, int $bindingId, CarbonImmutable $fetchedAt, array $raw): void
+    /**
+     * The token a read captures BEFORE it calls Google. Every purge rotates it, so a read that was in flight while the location
+     * was unlinked, the account disconnected or the authorization revoked can no longer write its result.
+     */
+    public function generation(int $businessId, int $bindingId): string
+    {
+        $key = $this->generationKey($businessId, $bindingId);
+        Cache::add($key, bin2hex(random_bytes(8)), now()->addDays(2));
+
+        return (string) Cache::get($key);
+    }
+
+    /**
+     * Writes the result of a read ONLY if, at this very moment and under the same lock every purge takes, the generation captured
+     * before the Google call is still current and `$stillAuthorized` (the authoritative connection/location state, read from the
+     * database) says the location is still linked to an active connection. Returns whether it was written. A lock that cannot be
+     * had means nothing is written: the result is simply not kept.
+     *
+     * @param  array{series: array, keywords: array}  $raw
+     * @param  callable(): bool  $stillAuthorized
+     */
+    public function putIfCurrent(int $businessId, int $bindingId, string $generation, CarbonImmutable $fetchedAt, array $raw, callable $stillAuthorized): bool
     {
         $ttl = $this->ttlHours();
 
         if ($ttl === 0) {
-            return;
+            return false;
         }
 
-        Cache::put(
-            $this->key($businessId, $bindingId),
-            Crypt::encryptString((string) json_encode(['fetched_at' => $fetchedAt->toIso8601String(), 'series' => $raw['series'], 'keywords' => $raw['keywords']])),
-            now()->addHours($ttl),
-        );
-        $this->clearFailure($businessId, $bindingId);
+        try {
+            return (bool) Cache::lock($this->lockKey($businessId, $bindingId), 10)->block(5, function () use ($businessId, $bindingId, $generation, $fetchedAt, $raw, $ttl, $stillAuthorized): bool {
+                if (Cache::get($this->generationKey($businessId, $bindingId)) !== $generation || ! $stillAuthorized()) {
+                    return false;
+                }
+
+                Cache::put(
+                    $this->key($businessId, $bindingId),
+                    Crypt::encryptString((string) json_encode(['fetched_at' => $fetchedAt->toIso8601String(), 'series' => $raw['series'], 'keywords' => $raw['keywords']])),
+                    now()->addHours($ttl),
+                );
+                Cache::forget($this->failureKey($businessId, $bindingId));
+
+                return true;
+            });
+        } catch (\Illuminate\Contracts\Cache\LockTimeoutException) {
+            return false;
+        }
     }
 
     public function forget(int $businessId, int $bindingId): void
     {
-        Cache::forget($this->key($businessId, $bindingId));
-        $this->clearFailure($businessId, $bindingId);
+        $purge = function () use ($businessId, $bindingId): void {
+            // Rotating the generation is what invalidates a read that is still waiting on Google.
+            Cache::forget($this->generationKey($businessId, $bindingId));
+            Cache::forget($this->key($businessId, $bindingId));
+            Cache::forget($this->failureKey($businessId, $bindingId));
+        };
+
+        try {
+            Cache::lock($this->lockKey($businessId, $bindingId), 10)->block(5, $purge);
+        } catch (\Illuminate\Contracts\Cache\LockTimeoutException) {
+            // Deleting must never fail to happen: without the lock it is still a delete and a rotation.
+            $purge();
+        }
     }
 
     /**
@@ -132,6 +175,16 @@ final class GoogleBusinessProfilePerformanceStore
     private function key(int $businessId, int $bindingId): string
     {
         return 'gbp-performance:v1:b' . $businessId . ':l' . $bindingId;
+    }
+
+    private function generationKey(int $businessId, int $bindingId): string
+    {
+        return 'gbp-performance-generation:v1:b' . $businessId . ':l' . $bindingId;
+    }
+
+    private function lockKey(int $businessId, int $bindingId): string
+    {
+        return 'gbp-performance-lock:v1:b' . $businessId . ':l' . $bindingId;
     }
 
     private function failureKey(int $businessId, int $bindingId): string
