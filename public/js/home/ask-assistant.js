@@ -1074,6 +1074,48 @@
         });
     }
 
+    // Growth Home: the composer's "History" link and the "Recent chats" card open the SAME conversation card and history list.
+    var historyLink = section.querySelector('[data-role="ask-history-link"]');
+    if (historyLink && historyPanel) {
+        historyLink.addEventListener('click', function () {
+            if (!isOpen()) { setOpen(true); }
+            window.setTimeout(function () { setHistoryOpen(true); }, 0);
+        });
+    }
+    document.addEventListener('click', function (e) {
+        var t = e.target && e.target.closest ? e.target.closest('[data-role="recent-chat-open"], [data-role="recent-chats-all"]') : null;
+        if (!t || !section.contains(historyPanel)) { return; }
+        e.preventDefault();
+        var uid = t.getAttribute('data-uid');
+        if (!isOpen()) { setOpen(true); }
+        window.setTimeout(function () { if (uid) { openConversation(uid); } else { setHistoryOpen(true); } }, 0);
+    });
+    // "Recent chats": the customer's own saved conversations, read from the same history endpoint (read-only; never calls the assistant).
+    (function () {
+        var box = document.querySelector('[data-role="recent-chats-list"]');
+        var empty = document.querySelector('[data-role="recent-chats-empty"]');
+        if (!box || !cfg.conversations) { return; }
+        request(cfg.conversations).then(function (res) {
+            if (!res.ok || !res.body) { throw new Error('status ' + res.status); }
+            var rows = (res.body.conversations || []).slice(0, 3);
+            if (!rows.length) { if (empty) { empty.hidden = false; } return; }
+            rows.forEach(function (c) {
+                var a = el('a', 'gh-chat');
+                a.href = '#ask';
+                a.setAttribute('data-role', 'recent-chat-open');
+                a.setAttribute('data-uid', c.uid);
+                a.appendChild(el('span', 'gh-chat__title', c.title));
+                a.appendChild(el('span', 'gh-chat__when', fmtWhen(c.last_message_at)));
+                box.appendChild(a);
+            });
+            var all = document.querySelector('[data-role="recent-chats-all"]');
+            if (all) { all.hidden = false; }
+        }).catch(function () {
+            var err = document.querySelector('[data-role="recent-chats-error"]');
+            if (err) { err.hidden = false; }
+        });
+    })();
+
     if (historyBtn && historyPanel) {
         historyBtn.addEventListener('click', function () { setHistoryOpen(historyPanel.hidden); });
         if (historyClose) { historyClose.addEventListener('click', function () { setHistoryOpen(false); }); }

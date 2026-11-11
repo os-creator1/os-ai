@@ -294,19 +294,24 @@ class BusinessHomeRecentWorkTest extends TestCase
         $this->websiteRevision($business, 3, $this->hoursAgo(2));
         $this->googleOperation($business, 'connect_completed', $this->hoursAgo(1));
 
-        // With the permissions, both are links.
+        // With the permissions, each of the two recorded facts carries exactly one working link — into THIS Business only.
         $this->authenticateAs($customer);
-        $band = $this->growthActivityHtml($this->home()->assertOk()->getContent());
+        $rows = $this->activityRows($this->growthActivityHtml($this->home()->assertOk()->getContent()));
 
-        $this->assertSame(2, preg_match_all('/<li data-role="activity-item"[^>]*>\s*<a href="/', $band), 'Both verified activities have authorized links.');
+        foreach (['Website version 3 published', 'Google connected'] as $title) {
+            $this->assertArrayHasKey($title, $rows, $title . ' is shown as recorded work.');
+            $this->assertCount(1, $rows[$title], $title . ' has one authorized link.');
+            $this->assertStringContainsString('/' . $business->uid . '/', $rows[$title][0] . '/', 'The link stays inside this Business.');
+        }
 
-        // Without them, the same two facts still render — as text.
+        // Without them, the same two facts still render — as text, with no actionable link anywhere in the feed.
         $this->authenticateAs($customer, array_values(array_diff($this->allCustomerPermissions(), ['website', 'view_google_business_profile'])));
         $band = $this->growthActivityHtml($this->home()->assertOk()->getContent());
+        $rows = $this->activityRows($band);
 
         $this->assertStringContainsString('Website version 3 published', $band, 'Publication remains visible as recorded work.');
         $this->assertStringContainsString('Google connected', $band);
-        $this->assertSame(0, preg_match_all('/<li data-role="activity-item"[^>]*>\s*<a href="/', $band), 'Both facts remain plain text when links are forbidden.');
+        $this->assertSame([], array_merge(...array_values($rows)), 'Both facts remain plain text when links are forbidden: not one anchor in any activity row.');
     }
 
     public function test_see_activity_opens_this_businesss_website_and_the_status_wording_is_truthful(): void
@@ -515,6 +520,30 @@ class BusinessHomeRecentWorkTest extends TestCase
     private function hoursAgo(int $hours): string
     {
         return CarbonImmutable::now()->subHours($hours)->setTimezone((string) config('app.timezone', 'UTC'))->format('Y-m-d H:i:s');
+    }
+
+    /**
+     * The Growth activity rows as [title => [href, ...]]. Reads the real structure (a row's title and the anchors inside it), so the
+     * assertions do not depend on a particular tag (<li> or <div>).
+     *
+     * @return array<string, array<int, string>>
+     */
+    private function activityRows(string $band): array
+    {
+        $dom = new \DOMDocument();
+        @$dom->loadHTML('<?xml encoding="utf-8"?><body>' . $band . '</body>');
+        $xpath = new \DOMXPath($dom);
+        $rows = [];
+
+        foreach ($xpath->query('//*[@data-role="activity-item" or @data-role="current-work-item"]') as $row) {
+            $title = trim((string) $xpath->evaluate('string(.//b)', $row));
+            $rows[$title] = [];
+            foreach ($xpath->query('.//a[@href]', $row) as $a) {
+                $rows[$title][] = $a->getAttribute('href');
+            }
+        }
+
+        return $rows;
     }
 
     /** @return array<int, string> */
