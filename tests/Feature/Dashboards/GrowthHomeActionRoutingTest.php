@@ -99,9 +99,9 @@ class GrowthHomeActionRoutingTest extends TestCase
     {
         [$owner, $business, $workspace] = $this->tenant(WorkspacePlanTier::Growth, 'No Website Perm', 'No Website Perm Account');
         $this->recommendation($business, ['worker_key' => 'website', 'type' => 'website.not_published:v1', 'title' => 'Your website is not published', 'priority_score' => 90]);
-        $owner->permissions = array_values(array_diff((array) $owner->permissions, ['website']));
-        $owner->save();
-        $this->authenticateAs($owner->fresh());
+        // This fixture reads permissions from the session, not Customer::permissions.
+        // Deny Website explicitly while keeping the permissions needed to view Growth Home.
+        $this->authenticateAs($owner->fresh(), array_values(array_diff($this->allCustomerPermissions(), ['website'])));
 
         [$href, $label] = $this->cta();
 
