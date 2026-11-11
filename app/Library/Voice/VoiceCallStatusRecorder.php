@@ -22,10 +22,12 @@ final class VoiceCallStatusRecorder
 
     private const RANK = [
         BusinessVoiceCall::STATUS_REQUESTED => 0,
-        BusinessVoiceCall::STATUS_INITIATED => 1,
-        BusinessVoiceCall::STATUS_ANSWERED => 2,
-        BusinessVoiceCall::STATUS_ENDED => 3,
-        BusinessVoiceCall::STATUS_FAILED => 3,
+        // `failed` ranks below real call progress: a transport timeout leaves the outcome unknown, so a later
+        // carrier event for that call may still correct it. A definitive HTTP rejection never gets events.
+        BusinessVoiceCall::STATUS_FAILED => 1,
+        BusinessVoiceCall::STATUS_INITIATED => 2,
+        BusinessVoiceCall::STATUS_ANSWERED => 3,
+        BusinessVoiceCall::STATUS_ENDED => 4,
     ];
 
     private const EVENT_STATUS = [
@@ -34,16 +36,20 @@ final class VoiceCallStatusRecorder
         'call.hangup' => BusinessVoiceCall::STATUS_ENDED,
     ];
 
-    /** @param array<string, mixed> $payload */
-    public function apply(string $eventId, string $eventType, string $callControlId, array $payload): string
+    /**
+     * @param array<string, mixed> $payload     the event's `payload` object
+     * @param string|null          $occurredAt  the event envelope's `occurred_at` (when the event happened)
+     */
+    public function apply(string $eventId, string $eventType, string $callControlId, array $payload, ?string $occurredAt = null): string
     {
         $target = self::EVENT_STATUS[$eventType] ?? null;
         if ($target === null || $callControlId === '') {
             return self::IGNORED;
         }
 
-        return DB::transaction(function () use ($eventId, $eventType, $callControlId, $payload, $target): string {
-            $call = BusinessVoiceCall::query()->where('telnyx_call_control_id', $callControlId)->lockForUpdate()->first();
+        return DB::transaction(function () use ($eventId, $eventType, $callControlId, $payload, $occurredAt, $target): string {
+            $call = BusinessVoiceCall::query()->where('telnyx_call_control_id', $callControlId)->lockForUpdate()->first()
+                ?? $this->adoptByClientState($callControlId, $payload);
             if ($call === null) {
                 return self::IGNORED;
             }
@@ -65,8 +71,15 @@ final class VoiceCallStatusRecorder
                 return self::IGNORED;
             }
 
-            $at = $this->time($payload, $target === BusinessVoiceCall::STATUS_ENDED ? 'end_time' : 'start_time') ?? now();
+            // Telnyx's payload `start_time` is when the CALL began, not when it was answered, so the answer moment
+            // is the event's own `occurred_at`; only hangup carries a distinct `end_time`.
+            $at = match ($target) {
+                BusinessVoiceCall::STATUS_ENDED => $this->parse($payload['end_time'] ?? null) ?? $this->parse($occurredAt),
+                BusinessVoiceCall::STATUS_ANSWERED => $this->parse($occurredAt),
+                default => $this->parse($occurredAt) ?? $this->parse($payload['start_time'] ?? null),
+            } ?? now();
             $call->status = $target;
+            $call->failure_code = null;
 
             if ($target === BusinessVoiceCall::STATUS_INITIATED) {
                 $call->initiated_at ??= $at;
@@ -88,10 +101,30 @@ final class VoiceCallStatusRecorder
         });
     }
 
-    /** @param array<string, mixed> $payload */
-    private function time(array $payload, string $key): ?Carbon
+    /**
+     * An event can outrun our own save of the call id that comes back from POST /calls. The id we sent as
+     * `client_state` (base64 of our row id) is echoed in every event, so a row that has no call id yet adopts it.
+     *
+     * @param array<string, mixed> $payload
+     */
+    private function adoptByClientState(string $callControlId, array $payload): ?BusinessVoiceCall
     {
-        $value = $payload[$key] ?? null;
+        $state = $payload['client_state'] ?? null;
+        $id = is_string($state) ? base64_decode($state, true) : false;
+        if ($id === false || ! ctype_digit($id)) {
+            return null;
+        }
+
+        $call = BusinessVoiceCall::query()->whereKey((int) $id)->whereNull('telnyx_call_control_id')->lockForUpdate()->first();
+        if ($call !== null) {
+            $call->telnyx_call_control_id = $callControlId;
+        }
+
+        return $call;
+    }
+
+    private function parse(mixed $value): ?Carbon
+    {
         if (! is_string($value) || $value === '') {
             return null;
         }

@@ -57,6 +57,11 @@ final class TestCallPlacer
             throw new TestCallRefusedException('destination_not_allowlisted', 'The destination is not on the test-call allowlist.');
         }
 
+        $webhookUrl = (string) (config('messaging.voice.webhook_url') ?: route('webhooks.telnyx_voice'));
+        if (! str_starts_with($webhookUrl, 'https://')) {
+            throw new TestCallRefusedException('webhook_not_https', 'The voice webhook URL must be https.');
+        }
+
         $number = $this->resolveNumber($business);
         $this->assertAssignedToVoiceConnection($apiKey, $number, $connectionId);
 
@@ -72,7 +77,12 @@ final class TestCallPlacer
                 'connection_id' => $connectionId,
                 'to' => $destination,
                 'from' => $number->phone_number,
-                'webhook_url' => (string) (config('messaging.voice.webhook_url') ?: route('webhooks.telnyx_voice')),
+                'webhook_url' => $webhookUrl,
+                // Echoed in every event so a webhook that outruns this response can still find its row.
+                'client_state' => base64_encode((string) $call->id),
+                // Bound a test call's cost: ring at most 30s, talk at most 60s.
+                'timeout_secs' => 30,
+                'time_limit_secs' => 60,
             ]);
         } catch (ConnectionException) {
             // Outcome unknown: Telnyx may still have placed the call. Recorded as failed/unconfirmed, never retried here.
@@ -91,15 +101,14 @@ final class TestCallPlacer
             return $this->fail($call, $response->successful() ? 'no_call_control_id' : 'http_' . $response->status());
         }
 
-        // A webhook may beat this write; apply() only moves forward, so keep any later status.
-        $call->telnyx_call_control_id = $callControlId;
-        if ($call->status === BusinessVoiceCall::STATUS_REQUESTED) {
-            $call->status = BusinessVoiceCall::STATUS_INITIATED;
-            $call->initiated_at = now();
-        }
-        $call->save();
+        // A webhook may already have adopted the row and moved it on, so never write from the stale in-memory model:
+        // set the id only if still empty, and move requested -> initiated only if still requested.
+        BusinessVoiceCall::query()->whereKey($call->id)->whereNull('telnyx_call_control_id')
+            ->update(['telnyx_call_control_id' => $callControlId]);
+        BusinessVoiceCall::query()->whereKey($call->id)->where('status', BusinessVoiceCall::STATUS_REQUESTED)
+            ->update(['status' => BusinessVoiceCall::STATUS_INITIATED, 'initiated_at' => now()]);
 
-        return $call;
+        return $call->refresh();
     }
 
     private function resolveNumber(Business $business): BusinessMessagingNumber
@@ -145,12 +154,11 @@ final class TestCallPlacer
 
     private function fail(BusinessVoiceCall $call, string $code): BusinessVoiceCall
     {
-        $call->status = BusinessVoiceCall::STATUS_FAILED;
-        $call->failure_code = $code;
-        $call->ended_at = now();
-        $call->save();
+        // Only a still-requested row: never overwrite progress a webhook already recorded.
+        BusinessVoiceCall::query()->whereKey($call->id)->where('status', BusinessVoiceCall::STATUS_REQUESTED)
+            ->update(['status' => BusinessVoiceCall::STATUS_FAILED, 'failure_code' => $code, 'ended_at' => now()]);
 
-        return $call;
+        return $call->refresh();
     }
 
     private function client(string $apiKey): PendingRequest

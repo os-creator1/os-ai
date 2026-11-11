@@ -57,6 +57,6 @@ final class TelnyxVoiceWebhookController extends Controller
             return response()->json(['status' => 'rejected'], 400);
         }
 
-        return response()->json(['status' => $this->calls->apply($eventId, $type, $callControlId, $payload)], 200);
+        return response()->json(['status' => $this->calls->apply($eventId, $type, $callControlId, $payload, is_string($data['occurred_at'] ?? null) ? $data['occurred_at'] : null)], 200);
     }
 }

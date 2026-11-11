@@ -31,6 +31,7 @@ class VoiceTestCallCommandTest extends TestCase
             'messaging.voice.test_call_allowlist' => self::DEST,
             'services.telnyx.mode' => 'live',
             'services.telnyx.api_key' => 'fixture_api_key_not_a_real_credential',
+            'messaging.voice.webhook_url' => 'https://app.example.test/webhooks/telnyx-voice',
         ]);
         [$this->business, , $this->number] = $this->managedBusiness();
         $this->number->forceFill(['provider_number_reference' => self::REF])->save();
@@ -69,7 +70,9 @@ class VoiceTestCallCommandTest extends TestCase
                 && $r['connection_id'] === self::CONNECTION
                 && $r['from'] === $this->number->phone_number
                 && $r['to'] === self::DEST
-                && str_ends_with($r['webhook_url'], '/webhooks/telnyx-voice')
+                && $r['webhook_url'] === 'https://app.example.test/webhooks/telnyx-voice'
+                && base64_decode($r['client_state']) === (string) BusinessVoiceCall::firstOrFail()->id
+                && $r['time_limit_secs'] === 60 && $r['timeout_secs'] === 30
                 && $r->hasHeader('Authorization');
         });
 
@@ -92,6 +95,7 @@ class VoiceTestCallCommandTest extends TestCase
             'no api key' => [['services.telnyx.api_key' => ''], null],
             'empty allowlist' => [['messaging.voice.test_call_allowlist' => ''], null],
             'destination not allowlisted' => [[], '+14155552672'],
+            'webhook not https' => [['messaging.voice.webhook_url' => 'http://app.example.test/webhooks/telnyx-voice'], null],
             'prefix is not a match' => [['messaging.voice.test_call_allowlist' => '+1415555267'], null],
         ];
     }

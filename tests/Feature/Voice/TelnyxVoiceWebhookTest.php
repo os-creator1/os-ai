@@ -33,9 +33,9 @@ class TelnyxVoiceWebhookTest extends TestCase
         ]);
     }
 
-    private function send(string $eventId, string $type, array $payload = [], bool $validSignature = true, string $callId = 'v3:cc-1'): \Illuminate\Testing\TestResponse
+    private function send(string $eventId, string $type, array $payload = [], bool $validSignature = true, string $callId = 'v3:cc-1', ?string $occurredAt = null): \Illuminate\Testing\TestResponse
     {
-        $body = json_encode(['data' => ['id' => $eventId, 'event_type' => $type, 'payload' => $payload + ['call_control_id' => $callId]]]);
+        $body = json_encode(['data' => ['id' => $eventId, 'event_type' => $type, 'occurred_at' => $occurredAt, 'payload' => $payload + ['call_control_id' => $callId]]]);
         $ts = (string) time();
         $sig = $validSignature
             ? base64_encode(sodium_crypto_sign_detached($ts . '|' . $body, $this->secret))
@@ -56,12 +56,13 @@ class TelnyxVoiceWebhookTest extends TestCase
 
     public function test_events_move_the_call_forward_and_record_duration(): void
     {
-        $this->send('evt-a', 'call.answered', ['start_time' => '2026-11-12T10:00:00Z'])->assertOk()->assertJson(['status' => 'applied']);
+        // start_time is when the call BEGAN (10:00:00); it must not be mistaken for the answer moment (10:00:08).
+        $this->send('evt-a', 'call.answered', ['start_time' => '2026-11-12T10:00:00Z'], true, 'v3:cc-1', '2026-11-12T10:00:08Z')->assertOk()->assertJson(['status' => 'applied']);
         $this->send('evt-b', 'call.hangup', ['end_time' => '2026-11-12T10:00:42Z', 'hangup_cause' => 'normal_clearing'])->assertOk()->assertJson(['status' => 'applied']);
 
         $call = $this->voiceCall->fresh();
         $this->assertSame('ended', $call->status);
-        $this->assertSame(42, $call->duration_seconds);
+        $this->assertSame(34, $call->duration_seconds);
         $this->assertSame('normal_clearing', $call->hangup_cause);
     }
 
@@ -82,6 +83,18 @@ class TelnyxVoiceWebhookTest extends TestCase
         $this->send('evt-2', 'call.answered', ['start_time' => '2026-11-12T10:00:00Z'])->assertJson(['status' => 'ignored']);
 
         $this->assertSame('ended', $this->voiceCall->fresh()->status);
+    }
+
+    public function test_an_event_that_outruns_the_saved_call_id_is_matched_by_client_state(): void
+    {
+        $this->voiceCall->forceFill(['telnyx_call_control_id' => null, 'status' => 'requested'])->save();
+
+        $this->send('evt-early', 'call.initiated', ['client_state' => base64_encode((string) $this->voiceCall->id)])
+            ->assertOk()->assertJson(['status' => 'applied']);
+
+        $call = $this->voiceCall->fresh();
+        $this->assertSame('initiated', $call->status);
+        $this->assertSame('v3:cc-1', $call->telnyx_call_control_id);
     }
 
     public function test_an_unknown_call_is_ignored_and_creates_nothing(): void
