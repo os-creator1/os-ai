@@ -141,7 +141,12 @@ class GrowthHomeVariantBTest extends TestCase
         // Both layouts post the shown-description hash and share one script with every #596 protection and truthful state.
         foreach ([$growth, $core] as $html) {
             $this->assertStringContainsString('data-base="' . str_repeat('a', 64) . '"', $html);
-            $this->assertStringContainsString("j.state === 'completed'", $html);
+            $this->assertStringContainsString("st === 'completed'", $html);
+            // A lost response or an answer that cannot establish the outcome is UNCONFIRMED (controls stay locked, manual refresh), never "nothing was changed".
+            $this->assertStringContainsString("show('unconfirmed'", $html);
+            $this->assertStringContainsString('}).catch(function () { unconfirmed(); });', $html);
+            $this->assertStringNotContainsString('}).catch(function () { failed(', $html);
+            $this->assertStringContainsString('data-role="description-refresh"', $html);
             $this->assertStringContainsString('prevReadOnly', $html);
             $this->assertStringContainsString('Your text changed while AI was working', $html);
             $this->assertStringContainsString("'pending'", $html);

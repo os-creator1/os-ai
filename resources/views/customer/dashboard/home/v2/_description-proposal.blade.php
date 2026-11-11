@@ -19,7 +19,7 @@
         @if($d['improveUrl'])<button type="button" class="btn btn-outline-secondary hv2-btn" data-role="description-improve"><span class="hv2-spark" aria-hidden="true">✦</span> Improve with AI</button>@endif
     </div>
     <p class="hv2-muted hv2-desc__note mb-0">Saved to your MotionGrove business profile. This does not automatically update Google or publish your website.</p>
-    <p class="hv2-desc__status mb-0" role="status" aria-live="polite" data-role="description-status" data-state="idle" hidden><b data-role="description-status-title"></b> <span data-role="description-status-detail"></span></p>
+    <p class="hv2-desc__status mb-0" role="status" aria-live="polite" data-role="description-status" data-state="idle" hidden><b data-role="description-status-title"></b> <span data-role="description-status-detail"></span> <button type="button" class="hv2-desc__refresh" data-role="description-refresh" hidden>Refresh to check</button></p>
 </div>
 <style>
     .hv2 .hv2-desc { margin-top: .5rem; display: grid; gap: .5rem; }
@@ -31,6 +31,9 @@
     .hv2 .hv2-desc__note, .hv2 .hv2-desc__status { font-size: .8125rem; }
     .hv2 .hv2-desc__status[data-state="completed"] { color: var(--color-status-success, #1E7B3C); }
     .hv2 .hv2-desc__status[data-state="failed"] { color: var(--color-status-danger, #B3261E); }
+    .hv2 .hv2-desc__status[data-state="unconfirmed"] { color: var(--color-status-warning, #8A5A00); }
+    .hv2 .hv2-desc__refresh { background: none; border: 0; padding: 0 .25rem; font: inherit; text-decoration: underline; color: inherit; cursor: pointer; }
+    .hv2 .hv2-desc__refresh[hidden] { display: none; }
     @media (max-width: 575px) { .hv2 .hv2-desc__actions .hv2-btn { flex: 1 1 100%; min-height: 2.75rem; } }
 </style>
 @else
@@ -48,7 +51,7 @@
     </div>
     <div class="gh-desc__result" role="status" aria-live="polite" data-role="description-status" data-state="idle" hidden>
         <span class="gh-desc__badge" aria-hidden="true"></span>
-        <div class="gh-desc__result-text"><b data-role="description-status-title"></b><span data-role="description-status-detail"></span></div>
+        <div class="gh-desc__result-text"><b data-role="description-status-title"></b><span data-role="description-status-detail"></span><button type="button" class="gh-desc__refresh" data-role="description-refresh" hidden>Refresh to check</button></div>
     </div>
     @if($next !== null && ($next['url'] ?? null) !== null)
         <div class="gh-desc__next" data-role="description-next" hidden>
@@ -65,12 +68,14 @@
     if (!root) { return; }
     var q = function (r) { return root.querySelector('[data-role="' + r + '"]'); };
     var text = q('description-text'), box = q('description-status'), title = q('description-status-title'), detail = q('description-status-detail');
-    var approve = q('description-approve'), improve = q('description-improve'), edit = q('description-edit'), actions = q('description-actions'), next = q('description-next');
+    var approve = q('description-approve'), improve = q('description-improve'), edit = q('description-edit'), actions = q('description-actions'), next = q('description-next'), refresh = q('description-refresh');
     var token = document.querySelector('meta[name="csrf-token"]'), saved = text.value, dirty = false, busy = false, prevReadOnly = text.readOnly;
     var grow = root.classList.contains('gh-desc');
     var size = function () { if (!grow) { return; } text.style.height = 'auto'; text.style.height = text.scrollHeight + 'px'; };
-    // state: working | pending | completed | failed. Only `completed` is ever presented as success, and only once the workflow says so.
-    var show = function (state, head, body) { box.hidden = false; box.setAttribute('data-state', state); title.textContent = head; detail.textContent = body || ''; };
+    // state: working | pending | unconfirmed | completed | failed. Only `completed` is ever presented as success, and only once the workflow says so;
+    // only `failed` says nothing was changed, and only when the server itself refused the request or the workflow definitively failed.
+    var show = function (state, head, body) { box.hidden = false; box.setAttribute('data-state', state); title.textContent = head; detail.textContent = body || ''; if (refresh) { refresh.hidden = state !== 'unconfirmed'; } };
+    if (refresh) { refresh.addEventListener('click', function () { window.location.reload(); }); }
     var post = function (url, body) {
         return fetch(url, { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json', 'Accept': 'application/json', 'X-CSRF-TOKEN': token ? token.content : '' }, body: JSON.stringify(body) })
             .then(function (r) { return r.json().catch(function () { return {}; }).then(function (j) { j.http = r.status; return j; }); });
@@ -85,13 +90,18 @@
         if (next) { next.hidden = false; }
     };
     var failed = function (message) { lock(false); show('failed', message, 'Nothing was changed.'); };
+    // The outcome is UNKNOWN (lost response, network error, server error, an answer that cannot say what happened). The approval may already be
+    // received or even saved, so nothing is claimed either way, the controls stay locked (no resubmission) and the customer refreshes to check.
+    var unconfirmed = function (more) { show('unconfirmed', "We couldn't confirm whether your approval was saved.", more || "It may have been received. Refresh to check its status, and don't approve again until you have."); };
     var poll = function (url, tries) {
-        fetch(url, { credentials: 'same-origin', headers: { 'Accept': 'application/json' } }).then(function (r) { return r.json(); }).then(function (j) {
+        fetch(url, { credentials: 'same-origin', headers: { 'Accept': 'application/json' } }).then(function (r) { if (!r.ok) { throw new Error('status ' + r.status); } return r.json(); }).then(function (j) {
             if (j.is_terminal) {
-                if (j.opportunity_status === 'completed') { done(); } else { failed('We could not save the description.'); }
+                if (j.opportunity_status === 'completed') { done(); }
+                else if (j.execution_status === 'failed') { failed('We could not save the description.'); }
+                else { unconfirmed(); }
             } else if (tries > 0) { setTimeout(function () { poll(url, tries - 1); }, 1500); }
             else { show('pending', 'Approval received. Saving has not been confirmed yet.', 'Refresh in a moment to see the result.'); }
-        }).catch(function () { lock(false); show('pending', 'We could not confirm the save.', 'Your approval was received. Refresh to check the result.'); });
+        }).catch(function () { unconfirmed('Your approval was received, but its result could not be read. Refresh to check it.'); });
     };
     approve.addEventListener('click', function () {
         if (busy) { return; }
@@ -99,10 +109,17 @@
         if (v.length < 50) { show('failed', 'Write at least 50 characters before saving.', ''); return; }
         lock(true); show('working', 'Sending your approval…', '');
         post(root.dataset.approveUrl, { value: v, base: root.dataset.base }).then(function (j) {
-            if (j.state === 'completed') { done(); }
-            else if (j.state === 'pending') { show('pending', 'Approval received. Saving to your profile…', 'This is not confirmed until MotionGrove verifies it.'); poll(j.statusUrl, 20); }
-            else { failed(j.message || 'We could not save the description.'); }
-        }).catch(function () { failed('We could not save the description.'); });
+            var st = j.state, http = j.http || 0;
+            if (st === 'completed') { done(); }
+            else if (st === 'pending' && j.statusUrl) { show('pending', 'Approval received. Saving to your profile…', 'This is not confirmed until MotionGrove verifies it.'); poll(j.statusUrl, 20); }
+            else if (st === 'pending') { unconfirmed('Your approval was received, but its status could not be located. Refresh to check it.'); }
+            else if (st === 'failed') { failed(j.message || 'We could not save the description.'); }
+            else if (st === 'busy') { unconfirmed(j.message ? j.message + ' Refresh to check its status.' : ''); }
+            // An explicit refusal: the server answered 4xx (its own rejection states, or middleware such as an expired session). Nothing ran.
+            else if (http >= 400 && http < 500 && http !== 408) { failed(j.message || 'The request was not accepted.'); }
+            // Anything else (5xx, a timeout, a 2xx that says nothing usable) cannot establish what happened.
+            else { unconfirmed(); }
+        }).catch(function () { unconfirmed(); });
     });
     if (improve) {
         improve.addEventListener('click', function () {
