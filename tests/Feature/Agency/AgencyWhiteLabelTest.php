@@ -439,13 +439,16 @@ class AgencyWhiteLabelTest extends TestCase
         $this->assertStringNotContainsString('Northwind Digital', $before);
         $this->assertStringNotContainsString('data-role="agency-brand-mark"', $before);
 
-        $this->enable($agency, $owner);
+        $setting = $this->enable($agency, $owner);
 
         $html = $this->homeHtmlFor($clientOwner);
         $this->assertStringContainsString('Northwind Digital', $html);
         $this->assertStringContainsString('data-role="agency-brand-mark"', $html);
         $this->assertMatchesRegularExpression('#<title>[^<]*- Northwind Digital</title>#', $html);
-        $this->assertStringContainsString('help@northwind.example', $html);
+        // The shared authenticated footer was deliberately removed in #598.
+        // The agency support contact remains configured, but is no longer printed in the app chrome.
+        $this->assertSame('help@northwind.example', $setting->support_email);
+        $this->assertStringNotContainsString('help@northwind.example', $html);
         // The accent is the validated colour, applied to the text mark.
         $this->assertStringContainsString('background-color:#1a73e8', $html);
 
