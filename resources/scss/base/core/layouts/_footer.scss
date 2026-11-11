@@ -60,10 +60,10 @@ footer {
   .app-content {
     padding-bottom: 0.1px !important;
   }
-  // The authenticated app has no footer bar at all: standard pages keep real breathing room under their last card. Full-height pages
+  // The authenticated app has no footer bar at all: standard pages keep a clear gap (32–48px) under their last block. Full-height pages
   // (content-area-wrapper: chat, calendar, kanban) nest their own .content-wrapper and are deliberately not touched.
   .app-content > .content-wrapper {
-    padding-bottom: 1.5rem !important;
+    padding-bottom: 3.25rem !important; // ~45px at the 14px root: a clear gap below the final block, with room for the scroll-to-top button
   }
 }
 // scroll to Top Footer Button
