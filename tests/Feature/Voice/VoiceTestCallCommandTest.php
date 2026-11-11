@@ -71,7 +71,8 @@ class VoiceTestCallCommandTest extends TestCase
                 && $r['from'] === $this->number->phone_number
                 && $r['to'] === self::DEST
                 && $r['webhook_url'] === 'https://app.example.test/webhooks/telnyx-voice'
-                && base64_decode($r['client_state']) === (string) BusinessVoiceCall::firstOrFail()->id
+                && preg_match('/^[a-f0-9]{64}$/', (string) base64_decode($r['client_state'])) === 1
+                && hash('sha256', base64_decode($r['client_state'])) === BusinessVoiceCall::firstOrFail()->client_state_hash
                 && $r['time_limit_secs'] === 60 && $r['timeout_secs'] === 30
                 && $r->hasHeader('Authorization');
         });

@@ -65,7 +65,11 @@ final class TestCallPlacer
         $number = $this->resolveNumber($business);
         $this->assertAssignedToVoiceConnection($apiKey, $number, $connectionId);
 
+        // Unpredictable per-call token, sent to Telnyx (base64) as `client_state`; only its hash is stored.
+        $token = bin2hex(random_bytes(32));
+
         $call = BusinessVoiceCall::create([
+            'client_state_hash' => hash('sha256', $token),
             'business_id' => $business->id,
             'business_messaging_number_id' => $number->id,
             'to_hash' => BusinessVoiceCall::hashDestination($destination),
@@ -79,7 +83,7 @@ final class TestCallPlacer
                 'from' => $number->phone_number,
                 'webhook_url' => $webhookUrl,
                 // Echoed in every event so a webhook that outruns this response can still find its row.
-                'client_state' => base64_encode((string) $call->id),
+                'client_state' => base64_encode($token),
                 // Bound a test call's cost: ring at most 30s, talk at most 60s.
                 'timeout_secs' => 30,
                 'time_limit_secs' => 60,

@@ -21,6 +21,8 @@ return new class extends Migration
             $table->unsignedBigInteger('business_messaging_number_id');
             $table->string('telnyx_call_control_id', 191)->nullable()->unique();
             $table->char('to_hash', 64);
+            // SHA-256 of the random per-call token sent to Telnyx as `client_state`; the token itself is never stored.
+            $table->char('client_state_hash', 64)->nullable()->index();
             $table->string('status', 16)->default('requested'); // requested|initiated|answered|ended|failed
             $table->string('failure_code', 64)->nullable();
             $table->string('hangup_cause', 64)->nullable();

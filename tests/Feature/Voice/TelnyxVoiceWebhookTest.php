@@ -85,16 +85,60 @@ class TelnyxVoiceWebhookTest extends TestCase
         $this->assertSame('ended', $this->voiceCall->fresh()->status);
     }
 
-    public function test_an_event_that_outruns_the_saved_call_id_is_matched_by_client_state(): void
+    private function awaitingId(string $token): void
     {
-        $this->voiceCall->forceFill(['telnyx_call_control_id' => null, 'status' => 'requested'])->save();
+        $this->voiceCall->forceFill([
+            'telnyx_call_control_id' => null, 'status' => 'requested', 'client_state_hash' => hash('sha256', $token),
+        ])->save();
+    }
 
-        $this->send('evt-early', 'call.initiated', ['client_state' => base64_encode((string) $this->voiceCall->id)])
+    public function test_an_event_that_outruns_the_saved_call_id_is_matched_by_its_token(): void
+    {
+        $token = bin2hex(random_bytes(32));
+        $this->awaitingId($token);
+
+        $this->send('evt-early', 'call.initiated', ['client_state' => base64_encode($token)])
             ->assertOk()->assertJson(['status' => 'applied']);
 
         $call = $this->voiceCall->fresh();
         $this->assertSame('initiated', $call->status);
         $this->assertSame('v3:cc-1', $call->telnyx_call_control_id);
+    }
+
+    /** @return array<string, array{0: ?string}> */
+    public static function badStates(): array
+    {
+        return [
+            'row id (the old predictable form)' => [base64_encode('1')],
+            'wrong token' => [base64_encode(str_repeat('a', 64))],
+            'not base64' => ['!!!not-base64!!!'],
+            'empty' => [''],
+            'missing' => [null],
+        ];
+    }
+
+    #[\PHPUnit\Framework\Attributes\DataProvider('badStates')]
+    public function test_a_missing_or_wrong_token_never_associates_a_call(?string $state): void
+    {
+        $this->awaitingId(bin2hex(random_bytes(32)));
+        $payload = $state === null ? [] : ['client_state' => $state];
+
+        $this->send('evt-bad', 'call.initiated', $payload)->assertOk()->assertJson(['status' => 'ignored']);
+
+        $call = $this->voiceCall->fresh();
+        $this->assertNull($call->telnyx_call_control_id);
+        $this->assertSame('requested', $call->status);
+    }
+
+    public function test_a_token_cannot_re_adopt_a_row_that_already_has_a_call_id(): void
+    {
+        $token = bin2hex(random_bytes(32));
+        $this->voiceCall->forceFill(['client_state_hash' => hash('sha256', $token)])->save(); // keeps 'v3:cc-1'
+
+        $this->send('evt-other', 'call.answered', ['client_state' => base64_encode($token)], true, 'v3:another-call')
+            ->assertOk()->assertJson(['status' => 'ignored']);
+
+        $this->assertSame('v3:cc-1', $this->voiceCall->fresh()->telnyx_call_control_id);
     }
 
     public function test_an_unknown_call_is_ignored_and_creates_nothing(): void

@@ -102,20 +102,25 @@ final class VoiceCallStatusRecorder
     }
 
     /**
-     * An event can outrun our own save of the call id that comes back from POST /calls. The id we sent as
-     * `client_state` (base64 of our row id) is echoed in every event, so a row that has no call id yet adopts it.
+     * An event can outrun our own save of the call id that comes back from POST /calls. The random per-call token we
+     * sent as `client_state` (base64) is echoed in every event; only a row whose stored SHA-256 matches AND that has no
+     * call id yet adopts it. A missing, malformed or non-matching token never associates anything.
      *
      * @param array<string, mixed> $payload
      */
     private function adoptByClientState(string $callControlId, array $payload): ?BusinessVoiceCall
     {
         $state = $payload['client_state'] ?? null;
-        $id = is_string($state) ? base64_decode($state, true) : false;
-        if ($id === false || ! ctype_digit($id)) {
+        $token = is_string($state) ? base64_decode($state, true) : false;
+        if ($token === false || ! preg_match('/^[a-f0-9]{64}$/', $token)) {
             return null;
         }
 
-        $call = BusinessVoiceCall::query()->whereKey((int) $id)->whereNull('telnyx_call_control_id')->lockForUpdate()->first();
+        $call = BusinessVoiceCall::query()
+            ->where('client_state_hash', hash('sha256', $token))
+            ->whereNull('telnyx_call_control_id')
+            ->lockForUpdate()
+            ->first();
         if ($call !== null) {
             $call->telnyx_call_control_id = $callControlId;
         }
