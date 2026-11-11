@@ -229,6 +229,10 @@
     Route::post('webhooks/telnyx-porting', 'Messaging\TelnyxPortingWebhookController@handle')
         ->middleware('throttle:120,1')
         ->name('webhooks.telnyx_porting');
+    // Telnyx Call Control voice status events (admin test call). Ed25519-verified, idempotent by event id.
+    Route::post('webhooks/telnyx-voice', 'Voice\TelnyxVoiceWebhookController@handle')
+        ->middleware('throttle:120,1')
+        ->name('webhooks.telnyx_voice');
     Route::any('inbound/teletopiasms/{gateway?}', 'Customer\DLRController@inboundTeletopiasms')->name('inbound.teletopiasms');
     Route::any('inbound/flowroute/{gateway?}', 'Customer\DLRController@inboundFlowRoute')->name('inbound.flowroute');
     Route::any('dlr/easysendsms', 'Customer\DLRController@dlrEasySendSMS')->name('dlr.easysendsms');

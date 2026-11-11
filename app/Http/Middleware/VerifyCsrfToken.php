@@ -52,6 +52,9 @@
             // Ed25519 signature over `timestamp|body`, verified in TelnyxPortingWebhookController BEFORE anything is read
             // or written (bad/missing signature => 403, nothing applied). This exact path only, never a wildcard.
             'webhooks/telnyx-porting',
+            // Telnyx Call Control voice status events (admin test-call slice). Same model as the porting webhook:
+            // Ed25519 signature verified in TelnyxVoiceWebhookController before anything is read or written.
+            'webhooks/telnyx-voice',
         ];
 
         /**

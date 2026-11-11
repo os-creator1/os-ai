@@ -222,4 +222,25 @@ return [
         'reservation_id' => 21,
         'reservation_amount_micro' => 2_100_000,
     ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Telnyx Call Control — admin-only outbound TEST call (voice:test-call)
+    |--------------------------------------------------------------------------
+    |
+    | Off by default. A test call is placed only when ALL of: this switch is on,
+    | services.telnyx.mode is "live", a Voice Connection id is configured, and
+    | the destination is an exact member of the allowlist. No customer-facing
+    | calling, dialer, inbound handling or wallet voice billing exists yet.
+    | Keys only — no phone number or credential is stored in this file.
+    */
+    'voice' => [
+        'test_call_enabled' => env('VOICE_TEST_CALLS_ENABLED', false),
+        // Telnyx Call Control Application (Voice Connection) id the number must be assigned to.
+        'connection_id' => env('TELNYX_VOICE_CONNECTION_ID'),
+        // Comma-separated E.164 numbers; exact match only (no prefixes, no wildcards).
+        'test_call_allowlist' => env('VOICE_TEST_CALL_ALLOWLIST', ''),
+        // Optional override; defaults to route('webhooks.telnyx_voice').
+        'webhook_url' => env('TELNYX_VOICE_WEBHOOK_URL'),
+    ],
 ];
