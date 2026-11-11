@@ -239,8 +239,25 @@ class GoogleBusinessProfileSecurityTest extends TestCase
         );
 
         // Correction item 1 — the OAuth callback moved OUT of this group to
-        // one fixed, tenant-free URI, leaving nine Business-scoped routes.
-        $this->assertCount(9, $gbpRoutes, 'The GBP group must expose exactly the nine contracted Business-scoped routes.');
+        // one fixed, tenant-free URI. Performance Insights V1 added the one
+        // manual, read-only `performance` load. The list is EXPLICIT, so any
+        // further route added to this group fails here until it is reviewed.
+        $expected = [
+            'customer.workspaces.businesses.gbp.index',
+            'customer.workspaces.businesses.gbp.comparison',
+            'customer.workspaces.businesses.gbp.settings',
+            'customer.workspaces.businesses.gbp.connect',
+            'customer.workspaces.businesses.gbp.locations',
+            'customer.workspaces.businesses.gbp.bind',
+            'customer.workspaces.businesses.gbp.unbind',
+            'customer.workspaces.businesses.gbp.disconnect',
+            'customer.workspaces.businesses.gbp.refresh',
+            'customer.workspaces.businesses.gbp.performance',
+        ];
+        $actual = $gbpRoutes->map(fn ($route) => $route->getName())->values()->all();
+        sort($expected);
+        sort($actual);
+        $this->assertSame($expected, $actual, 'The GBP group must expose exactly the contracted Business-scoped routes.');
 
         foreach ($gbpRoutes as $route) {
             $middleware = $route->gatherMiddleware();
@@ -251,6 +268,12 @@ class GoogleBusinessProfileSecurityTest extends TestCase
             $this->assertStringContainsString('{workspaceUid}', $route->uri());
             $this->assertStringContainsString('{businessUid}', $route->uri());
         }
+
+        // The Performance load is a throttled POST (never a GET that a page view or crawler could trigger).
+        $performance = $gbpRoutes->first(fn ($route) => $route->getName() === 'customer.workspaces.businesses.gbp.performance');
+        $this->assertSame(['POST'], $performance->methods());
+        $this->assertContains('throttle:6,1', $performance->gatherMiddleware());
+        $this->assertStringEndsWith('/gbp/performance', $performance->uri());
 
         // The bare chooser is authenticated too.
         $entry = collect(Route::getRoutes())->first(fn ($route) => $route->getName() === 'customer.gbp.index');

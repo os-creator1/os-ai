@@ -27,6 +27,7 @@ use App\Library\GoogleBusinessProfile\GoogleBusinessProfileMirrorService;
 use App\Library\GoogleBusinessProfile\GoogleBusinessProfileOverviewPresenter;
 use App\Library\GoogleBusinessProfile\GoogleBusinessProfileReadMask;
 use App\Library\GoogleBusinessProfile\GoogleOAuthStateSigner;
+use App\Library\GoogleBusinessProfilePerformance\GoogleBusinessProfilePerformanceLoader;
 use App\Library\Workspace\BusinessRouteAccess;
 use App\Library\Workspace\WorkspaceManagementAuthority;
 use App\Library\Workspace\WorkspaceManager;
@@ -94,6 +95,7 @@ class GoogleBusinessProfileController extends CustomerBaseController
         private readonly GoogleBusinessProfileOverviewPresenter $overviewPresenter,
         private readonly GoogleOAuthStateSigner $stateSigner,
         private readonly GoogleBusinessProfileCandidateTokenSigner $candidateTokens,
+        private readonly GoogleBusinessProfilePerformanceLoader $performance,
     ) {
     }
 
@@ -690,6 +692,49 @@ class GoogleBusinessProfileController extends CustomerBaseController
             ->with($failures === []
                 ? ['status' => 'success', 'message' => 'Refreshed all ' . $succeeded . ' linked Google ' . ($succeeded === 1 ? 'location' : 'locations') . '.']
                 : ['status' => 'error', 'message' => 'Refreshed ' . $succeeded . ' of ' . ($succeeded + count($failures)) . ' linked Google locations. ' . $failures[0]['message']]);
+    }
+
+    /**
+     * Performance Insights V1 — a MANUAL, read-only "Load Google performance". Never triggered by a page view.
+     *
+     * Same authority, demo guard, connection and per-Business call budget as refresh(). What Google returns is rendered in
+     * THIS response only: nothing is stored, cached, flashed or logged, so the next GET shows the empty "Load" state.
+     */
+    public function loadPerformance(string $workspaceUid, string $businessUid): View|Factory|Application|RedirectResponse
+    {
+        [, $business] = $this->managed($this->resolveEntitledBusiness($workspaceUid, $businessUid));
+
+        if ($demo = $this->demoGuard($workspaceUid, $businessUid)) {
+            return $demo;
+        }
+
+        $connection = $this->connectionRepository->findForBusiness($business, GoogleConnectionProduct::BusinessProfile);
+
+        if ($connection === null || ! $connection->isActive()) {
+            return $this->redirectWithError($workspaceUid, $businessUid, 'Connect a Google account first.');
+        }
+
+        $bindings = $this->bindingRepository->allForBusiness($business);
+
+        if ($bindings->isEmpty()) {
+            return $this->redirectWithError($workspaceUid, $businessUid, 'Link a Google location first.');
+        }
+
+        $results = [];
+
+        foreach ($bindings as $binding) {
+            $entry = ['location' => $binding->businessLocation?->name, 'data' => null, 'error' => null];
+
+            try {
+                $entry['data'] = $this->performance->load($binding, $connection, (int) Auth::id());
+            } catch (GoogleBusinessProfileProviderException $exception) {
+                $entry['error'] = $exception->userMessage();
+            }
+
+            $results[$binding->uid] = $entry;
+        }
+
+        return view('customer.business.googleBusinessProfile.index', $this->overviewData($workspaceUid, $businessUid, $business) + ['performance' => $results]);
     }
 
     // -----------------------------------------------------------------

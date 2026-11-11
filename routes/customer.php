@@ -1286,6 +1286,8 @@
             Route::post('/unbind', 'Business\GoogleBusinessProfileController@unbind')->name('unbind');
             Route::post('/disconnect', 'Business\GoogleBusinessProfileController@disconnect')->name('disconnect');
             Route::post('/refresh', 'Business\GoogleBusinessProfileController@refresh')->middleware('throttle:10,1')->name('refresh');
+            // Performance Insights V1 — manual and read-only; the result is rendered in the response, never stored.
+            Route::post('/performance', 'Business\GoogleBusinessProfileController@loadPerformance')->middleware('throttle:6,1')->name('performance');
         });
 
         /*

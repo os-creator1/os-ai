@@ -25,6 +25,10 @@ on:
       - 'app/Library/GoogleBusinessProfile/GoogleBusinessProfileReadMask.php'
       - 'app/Http/Controllers/Customer/GoogleOnboardingController.php'
       - 'app/Http/Controllers/Customer/Business/GoogleBusinessProfileController.php'
+      - 'app/Library/GoogleBusinessProfilePerformance/**'
+      - 'resources/views/customer/business/googleBusinessProfile/**'
+      - 'tests/Feature/GoogleBusinessProfile/GoogleBusinessProfilePerformanceTest.php'
+      - 'tests/Feature/Security/GoogleBusinessProfileSecurityTest.php'
       - 'app/Http/Requests/Business/GoogleOnboarding*Request.php'
       - 'routes/customer.php'
       - 'tests/Feature/Business/GoogleQuickOnboardingTest.php'
@@ -185,6 +189,7 @@ jobs:
           tests/Feature/GoogleBusinessProfile/GoogleBusinessProfileReadOnlyTest.php
           tests/Feature/GoogleBusinessProfile/GoogleBusinessProfileConnectionStateTest.php
           tests/Feature/Security/GoogleBusinessProfileSecurityTest.php
+          tests/Feature/GoogleBusinessProfile/GoogleBusinessProfilePerformanceTest.php
       - name: Fail if any acceptance group failed
         if: always()
         env:
