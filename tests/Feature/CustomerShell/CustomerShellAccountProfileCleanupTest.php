@@ -18,7 +18,6 @@ use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Str;
-use Illuminate\Testing\TestResponse;
 use Tests\Feature\Workspace\Concerns\CreatesCustomerContextFixtures;
 use Tests\TestCase;
 
@@ -371,21 +370,22 @@ class CustomerShellAccountProfileCleanupTest extends TestCase
     // 6. Footer
     // =================================================================
 
-    public function test_the_footer_names_the_platform_brand_with_normal_copyright_wording(): void
+    public function test_no_authenticated_page_renders_a_copyright_bar(): void
     {
-        config(['app.name' => 'Northstar Suite', 'app.footer_company_name' => null, 'app.footer_copyright_text' => null]);
+        config(['app.name' => 'Northstar Suite', 'app.footer_company_name' => 'Northstar Labs Ltd', 'app.footer_copyright_text' => 'Made with care.']);
         [$customer] = $this->tenant(WorkspacePlanTier::Growth);
         $this->authenticateAs($customer);
 
-        $this->assertSame('© ' . now()->year . ' Northstar Suite. All rights reserved.', $this->copyrightLine($this->home()->assertOk()));
+        $html = $this->home()->assertOk()->getContent();
 
-        // What the platform owner configured still wins.
-        Cache::forget(BrandingPresenter::CACHE_KEY);
-        config(['app.footer_company_name' => 'Northstar Labs Ltd', 'app.footer_copyright_text' => 'Made with care.']);
-        $this->assertSame('© ' . now()->year . ' Northstar Labs Ltd. Made with care.', $this->copyrightLine($this->home()->assertOk()));
+        $this->assertStringNotContainsString('data-role="copyright-line"', $html);
+        $this->assertStringNotContainsString('Made with care.', $html);
+        $this->assertDoesNotMatchRegularExpression('#<footer\b#', $html);
+        $this->assertMatchesRegularExpression('#<body[^>]*\bfooter-hidden\b#', $html);
+        $this->assertStringContainsString('scroll-top', $html, 'The scroll-to-top control stays.');
     }
 
-    public function test_an_agency_white_label_host_is_the_copyright_holder_never_the_platform_owner(): void
+    public function test_an_agency_white_label_host_also_has_no_copyright_bar_and_keeps_its_brand_logic(): void
     {
         config(['app.name' => 'Northstar Suite', 'app.footer_company_name' => 'Northstar Labs Ltd', 'app.footer_copyright_text' => 'Platform wording.']);
         [$agency, , $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Client One', 'Bluebird Agency');
@@ -401,12 +401,14 @@ class CustomerShellAccountProfileCleanupTest extends TestCase
         });
         $this->authenticateAs($agency);
 
-        $branded = $this->copyrightLine($this->get('http://portal.bluebird.test/dashboard')->assertOk());
-        $this->assertSame('© ' . now()->year . ' Bluebird Marketing. All rights reserved.', $branded);
-        $this->assertStringNotContainsString('Northstar', $branded);
+        foreach (['http://portal.bluebird.test/dashboard', 'http://localhost/dashboard'] as $url) {
+            $html = $this->get($url)->assertOk()->getContent();
+            $this->assertStringNotContainsString('data-role="copyright-line"', $html, $url);
+            $this->assertDoesNotMatchRegularExpression('#<footer\b#', $html, $url);
+        }
 
-        $platform = $this->copyrightLine($this->get('http://localhost/dashboard')->assertOk());
-        $this->assertSame('© ' . now()->year . ' Northstar Labs Ltd. Platform wording.', $platform, 'Another host is not white-labelled.');
+        // The white-label copyright wording itself is unchanged for the public surfaces that still use it.
+        $this->assertSame('© ' . now()->year . ' Bluebird Marketing. All rights reserved.', \App\Library\Branding\BrandingPresenter::copyrightLine('Bluebird Marketing'));
     }
 
     // =================================================================
@@ -473,14 +475,6 @@ class CustomerShellAccountProfileCleanupTest extends TestCase
     private function avatarHtml(string $html): string
     {
         return $this->between($html, 'data-role="user-avatar"', '</button>');
-    }
-
-    private function copyrightLine(TestResponse $response): string
-    {
-        $this->assertMatchesRegularExpression('/data-role="copyright-line">([^<]*)</', $response->getContent());
-        preg_match('/data-role="copyright-line">([^<]*)</', $response->getContent(), $match);
-
-        return html_entity_decode(trim($match[1]));
     }
 
     private function between(string $html, string $start, string $end): string

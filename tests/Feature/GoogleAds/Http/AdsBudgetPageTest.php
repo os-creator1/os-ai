@@ -143,7 +143,7 @@ class AdsBudgetPageTest extends TestCase
     {
         $html = $this->budgetHtml();
         $start = (int) strpos($html, 'data-role="ads-title"');
-        $end = strpos($html, '<footer', $start);
+        $end = strpos($html, '<!-- BEGIN: Footer-->', $start); // the page content ends where the shared footer partial (scripts only) begins
         $content = substr($html, $start, ($end === false ? strlen($html) : $end) - $start);
 
         $this->assertDoesNotMatchRegularExpression('/\bAI\b/', strip_tags($content));

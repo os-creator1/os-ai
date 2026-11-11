@@ -179,7 +179,8 @@
                 'navbarColor'            => $data['navbarColor'],
                 'horizontalMenuType'     => $allOptions['horizontalMenuType'][$data['horizontalMenuType']],
                 'horizontalMenuClass'    => $allOptions['horizontalMenuClass'][$data['horizontalMenuType']],
-                'footerType'             => $allOptions['footerType'][$data['footerType']],
+                // The authenticated app has no footer bar: every layout master gets `footer-hidden`, which reclaims the space (see panels/footer.blade.php).
+                'footerType'             => $allOptions['footerType']['hidden'],
                 'sidebarClass'           => '',
                 'bodyClass'              => $data['bodyClass'],
                 'pageClass'              => $data['pageClass'],

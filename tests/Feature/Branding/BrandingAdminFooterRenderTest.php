@@ -35,38 +35,26 @@ class BrandingAdminFooterRenderTest extends TestCase
         parent::tearDown();
     }
 
-    public function test_admin_footer_renders_the_company_name_exactly_once_with_no_login_link(): void
+    public function test_the_authenticated_admin_shell_renders_no_copyright_footer_bar(): void
     {
         $this->actingAsAdmin(['access backend', 'manage theme']);
 
         $html = $this->followingRedirects()->get(route('admin.home'))->assertOk()->getContent();
 
-        $this->assertMatchesRegularExpression('#<footer\b.*?</footer>#s', $html, 'Expected a <footer> element in the response.');
-        preg_match('#<footer\b.*?</footer>#s', $html, $matches);
-        $footerHtml = $matches[0];
-
-        $this->assertSame(
-            1,
-            substr_count($footerHtml, 'AI Business OS'),
-            'The footer company name must appear exactly once, not duplicated.'
-        );
-        $this->assertDoesNotMatchRegularExpression(
-            '#<a[^>]*href="[^"]*/login"[^>]*>#',
-            $footerHtml,
-            'The footer must not contain a spurious link back to /login.'
-        );
+        $this->assertDoesNotMatchRegularExpression('#<footer\b#', $html, 'The authenticated app has no footer element.');
+        $this->assertStringNotContainsString('data-role="copyright-line"', $html);
+        $this->assertStringNotContainsString('All rights reserved', $html);
+        $this->assertMatchesRegularExpression('#<body[^>]*\bfooter-hidden\b#', $html, 'The layout reclaims the footer space through the shared footer-hidden mode.');
+        $this->assertStringNotContainsString('footer-fixed', $html);
+        // What the footer partial still provides: the scroll-to-top control.
+        $this->assertStringContainsString('class="btn btn-primary btn-icon scroll-top', $html);
     }
 
     /**
-     * Remediation exception (DESIGN-SYSTEM-M2-PLATFORM-BRANDING-REMEDIATION-EXCEPTION.md):
-     * panels/footer.blade.php previously appended a hardcoded, unconditional
-     * legacy "All rights reserved." fragment after <x-branding-footer />,
-     * so an owner-configured footer_copyright_text rendered doubled, e.g.
-     * "All rights reserved worldwide All rights reserved.". <x-branding-footer />
-     * must be the sole rendered copyright/company/wording line, with no
-     * second, legacy suffix appended after it.
+     * An owner-configured company name / wording is not rendered anywhere in the authenticated shell any more (it only ever appeared in the
+     * removed footer bar); <x-branding-footer /> and the presenters remain for the public surfaces and the Appearance preview.
      */
-    public function test_admin_footer_does_not_append_a_legacy_rights_reserved_suffix_after_the_configured_wording(): void
+    public function test_configured_footer_wording_is_not_rendered_in_the_authenticated_shell(): void
     {
         config([
             'app.footer_company_name' => 'Acme Test Co',
@@ -78,26 +66,8 @@ class BrandingAdminFooterRenderTest extends TestCase
 
         $html = $this->followingRedirects()->get(route('admin.home'))->assertOk()->getContent();
 
-        $this->assertMatchesRegularExpression('#<footer\b.*?</footer>#s', $html, 'Expected a <footer> element in the response.');
-        preg_match('#<footer\b.*?</footer>#s', $html, $matches);
-        $footerHtml = $matches[0];
-
-        $this->assertStringContainsString('All rights reserved worldwide', $footerHtml);
-        $this->assertSame(
-            1,
-            substr_count($footerHtml, 'Acme Test Co'),
-            'The footer company name must appear exactly once, not duplicated.'
-        );
-        $this->assertDoesNotMatchRegularExpression(
-            '#All rights reserved worldwide\s*All rights reserved\.#',
-            $footerHtml,
-            'The configured wording must not be followed by a second, legacy "All rights reserved." suffix.'
-        );
-        $this->assertSame(
-            0,
-            substr_count($footerHtml, __('locale.labels.all_rights_reserved')),
-            'The legacy locale.labels.all_rights_reserved string must not render in the footer at all — <x-branding-footer /> is the sole copyright line.'
-        );
+        $this->assertStringNotContainsString('All rights reserved worldwide', $html);
+        $this->assertDoesNotMatchRegularExpression('#<footer\b#', $html);
     }
 
     private function ensureRequiredAppConfigRowsExist(): void
