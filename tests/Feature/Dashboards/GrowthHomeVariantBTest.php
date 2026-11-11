@@ -3,7 +3,6 @@
 namespace Tests\Feature\Dashboards;
 
 use App\Enums\Entitlement\WorkspacePlanTier;
-use App\Library\Ai\AiGateway;
 use App\Library\Dashboard\DashboardSnapshot;
 use App\Library\Opportunity\OpportunityActionHash;
 use App\Models\Business;
@@ -11,7 +10,7 @@ use App\Repositories\Contracts\BusinessLocationRepository;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
-use Mockery\MockInterface;
+use Tests\Feature\Assistant\Concerns\AssistantTestSupport;
 use Tests\Feature\Dashboards\Concerns\CreatesDashboardFixtures;
 use Tests\TestCase;
 
@@ -23,18 +22,21 @@ class GrowthHomeVariantBTest extends TestCase
 {
     use RefreshDatabase;
     use CreatesDashboardFixtures;
+    use AssistantTestSupport; // fake AI completion client + stray-HTTP guard (no live AI)
 
     protected function setUp(): void
     {
         parent::setUp();
 
+        $this->bootAssistant();
         $this->freezeClock();
         config(['business.onboarding.enabled' => true, 'opportunity.enabled' => true]);
     }
 
+    /** An ordinary Home GET never reaches the AI provider: the fake completion client recorded no request. */
     private function noAi(): void
     {
-        $this->mock(AiGateway::class, fn (MockInterface $m) => $m->shouldNotReceive('complete'));
+        $this->assertSame(0, $this->aiCalls(), 'Home GET must not call the AI provider.');
     }
 
     /** A Growth Business whose Best Next Move is the missing description, with a working enquiry path so reach does not outrank it. */
@@ -67,8 +69,8 @@ class GrowthHomeVariantBTest extends TestCase
     {
         [$customer] = $this->tenant(WorkspacePlanTier::Growth, 'Variant B Order', 'Variant B Order Account');
         $this->authenticateAs($customer);
-        $this->noAi();
         $html = $this->html();
+        $this->noAi();
 
         $order = ['data-role="home-greeting"', 'data-role="growth-performance"', 'data-role="growth-next"', 'data-role="home-ask"', 'data-role="growth-activity"', 'data-role="recent-chats"'];
         $last = -1;
@@ -86,8 +88,8 @@ class GrowthHomeVariantBTest extends TestCase
     public function test_the_description_move_shows_the_proposal_in_the_red_card_with_truthful_wording_and_no_undo(): void
     {
         $this->withDescriptionMove();
-        $this->noAi();
         $html = $this->html();
+        $this->noAi();
 
         $this->assertStringContainsString('data-move="opportunity"', $html);
         $this->assertStringContainsString('data-role="description-proposal"', $html);
@@ -102,6 +104,10 @@ class GrowthHomeVariantBTest extends TestCase
         // Success is only ever written by the script after the workflow reports `completed`; the markup itself starts hidden and idle.
         $this->assertMatchesRegularExpression('/data-role="description-status" data-state="idle" hidden/', $html);
         $this->assertStringContainsString("j.state === 'completed'", $html);
+        // The #596 protections survive the redesign: the text is locked while a request is in flight, and newer edits are never overwritten.
+        $this->assertStringContainsString('prevReadOnly', $html);
+        $this->assertStringContainsString('Your text changed while AI was working', $html);
+        $this->assertStringContainsString('data-base=', $html, 'The shown-description hash the server checks at execution time is still posted.');
     }
 
     public function test_work_feed_invents_nothing_for_a_new_business_and_never_claims_running_or_verified(): void
@@ -109,6 +115,7 @@ class GrowthHomeVariantBTest extends TestCase
         [$customer] = $this->tenant(WorkspacePlanTier::Growth, 'Variant B Quiet', 'Variant B Quiet Account');
         $this->authenticateAs($customer);
         $html = $this->html();
+        $this->noAi();
 
         $this->assertStringContainsString('data-role="growth-activity"', $html);
         $this->assertStringNotContainsString('data-role="activity-item"', $html);
@@ -122,6 +129,7 @@ class GrowthHomeVariantBTest extends TestCase
         [$customer] = $this->tenant(WorkspacePlanTier::Growth, 'Variant B Side', 'Variant B Side Account');
         $this->authenticateAs($customer);
         $html = $this->html();
+        $this->noAi();
 
         // Chats are filled from the customer's own saved conversations (the existing history endpoint); the server renders none.
         $this->assertStringContainsString('data-role="recent-chats-list"></div>', $html);
