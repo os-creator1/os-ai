@@ -97,9 +97,7 @@ mix.then(() => {
 
 // Cache-busting: every asset URL gets a content hash (`mix()` reads it from public/mix-manifest.json), so a changed core.css or app-menu.js
 // can never be served from a browser or CDN cache under its old, unchanged URL.
-if (mix.inProduction()) {
-  mix.version()
-}
+mix.version()
 
 // if (mix.inProduction()) {
 //   mix.webpackConfig({
