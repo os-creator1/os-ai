@@ -52,9 +52,36 @@
             suppressScrollX: true,
             wheelPropagation: false
           });
+          this.watch();
         } else {
           $('.main-menu').addClass('menu-native-scroll');
         }
+      },
+
+      // PerfectScrollbar only knows the content height it last measured. Re-measure whenever the menu or its list changes size: a submenu
+      // opening or closing, navigation items changing, the viewport resizing or rotating.
+      watch: function () {
+        var self = this,
+          content = document.querySelector('.main-menu-content');
+        if (!content || content.getAttribute('data-ps-watch') === '1') {
+          return;
+        }
+        content.setAttribute('data-ps-watch', '1');
+        var refresh = function () {
+          if (self.obj) {
+            self.obj.update();
+          }
+        };
+        if (window.ResizeObserver) {
+          var observer = new ResizeObserver(refresh);
+          observer.observe(content);
+          var list = content.querySelector('.navigation-main');
+          if (list) {
+            observer.observe(list);
+          }
+        }
+        window.addEventListener('resize', refresh);
+        window.addEventListener('orientationchange', refresh);
       },
 
       update: function () {

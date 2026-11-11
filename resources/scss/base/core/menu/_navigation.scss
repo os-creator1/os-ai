@@ -29,6 +29,19 @@
 
   &.menu-fixed {
     position: fixed;
+    // Column layout: the logo header and the account/business context keep their natural height and the navigation takes
+    // whatever is left, whatever sits above it (a calc() on the nav that only knew about the logo clipped the last items).
+    display: flex;
+    flex-direction: column;
+    > .navbar-header,
+    > .customer-context-current {
+      flex: 0 0 auto;
+    }
+    .main-menu-content {
+      flex: 1 1 auto;
+      min-height: 0;
+      height: auto !important;
+    }
   }
   &.menu-static {
     height: 100%;
@@ -114,7 +127,8 @@
 
     &.navigation-main {
       overflow-x: hidden;
-      padding-bottom: 0.75rem;
+      // Room under the last item (including a device's bottom safe area) so it can be scrolled fully into view.
+      padding-bottom: calc(1.5rem + env(safe-area-inset-bottom, 0px));
       > li:first-child {
         margin-top: 0.5rem;
       }

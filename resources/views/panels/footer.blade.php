@@ -1,35 +1,20 @@
+{{--
+    Shared authenticated-app footer partial (vertical, horizontal and detached masters all include it).
+
+    The visible copyright bar (company line, Terms / Privacy links) is intentionally NOT rendered anywhere in the authenticated app: it cost
+    vertical space on every page. Layout space is reclaimed by forcing the `footer-hidden` body class in Helper::applClasses(), so there is no
+    page-specific CSS. What this partial still provides, unchanged:
+      - the owner-configured custom script (injected here since the original template), now emitted without a visible bar;
+      - the scroll-to-top button (fixed position, shown by core/app.js on scroll).
+    Public marketing pages, customer-generated websites, emails and legal documents do not use this partial and are unaffected;
+    <x-branding-footer /> and the branding presenters remain available to them (and to the admin appearance preview).
+--}}
+@php
+    $hasCustomScript = \App\Helpers\Helper::app_config('custom_script') ? \App\Helpers\Helper::app_config('custom_script') : null;
+@endphp
 <!-- BEGIN: Footer-->
-<footer
-        class="footer footer-light transition-base {{ $configData['footerType'] === 'footer-hidden' ? 'd-none' : '' }} {{ $configData['footerType'] }}">
-    <p class="clearfix mb-0">
-        <span class="float-md-left d-block d-md-inline-block mt-25"> <x-branding-footer />
-        </span>
-
-
-        @php
-            $hasPrivacyPolicy = !empty(config('app.privacy_policy'));
-            $hasTermsOfUse = !empty(config('app.terms_of_use'));
-            $hasCustomScript = \App\Helpers\Helper::app_config('custom_script') ? \App\Helpers\Helper::app_config('custom_script') : null;
-        @endphp
-        @if($hasPrivacyPolicy || $hasTermsOfUse)
-
-            <span class="float-md-end text-capitalize">
-                @if($hasTermsOfUse)
-                    <a class="ms-25 text-success" target="_blank"
-                       href="{{ route('terms-of-use') }}">{{ __('locale.labels.terms_of_use') }}</a>
-                @endif
-
-                @if($hasPrivacyPolicy)
-                    <a class="ms-25 text-info" target="_blank"
-                       href="{{ route('privacy-policy') }}">{{ __('locale.labels.privacy_policy') }}</a>
-                @endif
-        </span>
-        @endif
-
-        @if($hasCustomScript !== null)
-            {!! $hasCustomScript !!}
-        @endif
-    </p>
-</footer>
-<button class="btn btn-primary btn-icon scroll-top transition-fast" type="button"><x-ds-icon name="arrow-up" /></button>
+@if($hasCustomScript !== null)
+    {!! $hasCustomScript !!}
+@endif
+<button class="btn btn-primary btn-icon scroll-top transition-fast" type="button" aria-label="Back to top"><x-ds-icon name="arrow-up" /></button>
 <!-- END: Footer-->
