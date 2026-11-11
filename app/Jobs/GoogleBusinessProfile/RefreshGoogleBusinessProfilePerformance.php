@@ -14,6 +14,7 @@ use App\Library\GoogleBusinessProfilePerformance\GoogleBusinessProfilePerformanc
 use App\Models\Business;
 use App\Models\BusinessGoogleLocation;
 use App\Models\Workspace;
+use Carbon\CarbonImmutable;
 
 /**
  * Refreshes ONE linked location's Google performance (the page's cached, 24-hour read). Like the mirror refresh job it has no
@@ -38,8 +39,10 @@ class RefreshGoogleBusinessProfilePerformance extends Base
             return;
         }
 
-        // Another read for this connection is in flight, or this location was refreshed by a visit in the meantime.
-        if ($performance->isFresh($binding) || ! $connections->claimRefresh($binding->connection)) {
+        // Another read for this connection is in flight, or the held result will still be there at this location's next scheduled read.
+        $nextRead = CarbonImmutable::now('UTC')->addDay()->addSeconds(SweepGoogleBusinessProfilePerformance::LATE_WORKER_MARGIN);
+
+        if ($performance->remainsAvailableThrough($binding, $nextRead) || ! $connections->claimRefresh($binding->connection)) {
             return;
         }
 

@@ -725,9 +725,17 @@ class GoogleBusinessProfileController extends CustomerBaseController
         $force = $request->boolean('refresh');
         $claimed = $this->connections->claimRefresh($connection);
         $results = [];
+        $revoked = false;
 
         try {
             foreach ($bindings as $binding) {
+                if ($revoked) {
+                    // The shared connection was just revoked: nothing more is read, and nothing cached is shown.
+                    $results[$binding->uid] = ['location' => $binding->businessLocation?->name, 'data' => null, 'error' => null, 'failed_at' => null];
+
+                    continue;
+                }
+
                 $entry = ['location' => $binding->businessLocation?->name, 'data' => $this->performance->cached($binding), 'error' => null, 'failed_at' => null];
                 $failure = $this->performance->recentFailure($binding);
 
@@ -741,6 +749,7 @@ class GoogleBusinessProfileController extends CustomerBaseController
                         // A failed refresh never marks the older result current: it is shown as older, beside the error.
                         $entry['error'] = $exception->userMessage();
                         $entry['failed_at'] = now();
+                        $revoked = $exception->isRevocation();
                     }
                 } else {
                     $entry['error'] = 'A Google read is already running; try again in a moment.';
@@ -751,6 +760,16 @@ class GoogleBusinessProfileController extends CustomerBaseController
         } finally {
             if ($claimed) {
                 $this->connections->releaseRefreshClaim($connection);
+            }
+        }
+
+        if ($revoked) {
+            // Google rejected the authorization: the connection is revoked and its cache purged. No locations' numbers or search
+            // terms from it may be shown (only a transient failure keeps the older numbers, labelled as not current).
+            $message = GoogleBusinessProfileProviderException::invalidGrant()->userMessage();
+
+            foreach ($results as $uid => $entry) {
+                $results[$uid] = ['location' => $entry['location'], 'data' => null, 'error' => $message, 'failed_at' => now()];
             }
         }
 

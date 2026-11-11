@@ -111,12 +111,16 @@ final class GoogleBusinessProfilePerformanceLoader
         return $stored === null ? null : $this->present($stored['fetched_at'], $stored);
     }
 
-    /** True when this location already holds a result read within the last 20 hours: the daily sweep and its jobs leave it alone. */
-    public function isFresh(BusinessGoogleLocation $binding): bool
+    /**
+     * True only when the result this location already holds will still be there at $until (the next moment a scheduled refresh
+     * can replace it). The cache never lives longer than 24 hours, so a result read at 10:00 expires at 10:00 the next day:
+     * if the next scheduled read of this location is after that, skipping now would leave a gap with no numbers at all.
+     */
+    public function remainsAvailableThrough(BusinessGoogleLocation $binding, CarbonImmutable $until): bool
     {
         $cached = $this->cached($binding);
 
-        return $cached !== null && $cached['fetched_at']->greaterThan(CarbonImmutable::now('UTC')->subHours(20));
+        return $cached !== null && $cached['fetched_at']->addHours($this->store->ttlHours())->greaterThan($until);
     }
 
     /** @return array{at: CarbonImmutable, message: string}|null */

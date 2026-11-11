@@ -534,7 +534,7 @@ class GoogleBusinessProfilePerformanceTest extends TestCase
         $this->assertNull(Cache::get($this->cacheKey($this->business->id, $this->binding()->id)));
     }
 
-    public function test_the_daily_sweep_is_staggered_skips_fresh_locations_and_the_job_rechecks_everything(): void
+    public function test_the_daily_sweep_is_staggered_and_the_job_reads_and_stores_once(): void
     {
         Queue::fake();
         $this->fakeGoogleApi($this->dailyResponse($this->fullValues()));
@@ -547,24 +547,66 @@ class GoogleBusinessProfilePerformanceTest extends TestCase
         $this->assertGreaterThanOrEqual(0, $delay);
         $this->assertLessThan(3600, $delay);
 
-        // The job reads once, stores, and a second run (or a visit) does not read again.
         $manager = app(\App\Library\GoogleBusinessProfile\GoogleBusinessProfileConnectionManager::class);
         $entitlements = app(\App\Library\Entitlement\EntitlementManager::class);
         (new RefreshGoogleBusinessProfilePerformance($this->binding()->id))->handle($manager, $loader, $entitlements);
-        $reads = count(Http::recorded());
-        $this->assertGreaterThan(0, $reads);
+        $this->assertGreaterThan(0, count(Http::recorded()));
         $this->assertNotNull($loader->cached($this->binding()));
-        (new RefreshGoogleBusinessProfilePerformance($this->binding()->id))->handle($manager, $loader, $entitlements);
-        $this->assertSame($reads, count(Http::recorded()));
+    }
 
+    /**
+     * The scenario that must not leave a gap: read at 10:00; the next sweep is 03:30 (17.5 hours later), the cache (24 hours) would
+     * expire at 10:00 — before the sweep after that — so the 03:30 sweep must refresh, not skip.
+     */
+    public function test_the_sweep_refreshes_a_result_that_would_expire_before_the_next_scheduled_read(): void
+    {
+        $this->fakeGoogleApi($this->dailyResponse($this->fullValues()));
+        $loader = app(GoogleBusinessProfilePerformanceLoader::class);
+        $this->autoLoad()->assertOk(); // 10 Nov, 10:00
+        $firstRead = $loader->cached($this->binding())['fetched_at'];
+
+        $this->travelTo(CarbonImmutable::parse('2026-11-11 03:30:00'));
+        $this->assertFalse($loader->remainsAvailableThrough($this->binding(), CarbonImmutable::now('UTC')->addDay()), 'It would be gone before the next read.');
         Queue::fake();
         (new SweepGoogleBusinessProfilePerformance())->handle($loader);
-        Queue::assertNothingPushed();
-
-        // 21 hours later the result is due again (the sweep refreshes daily).
-        $this->travel(21)->hours();
-        (new SweepGoogleBusinessProfilePerformance())->handle($loader);
         Queue::assertPushed(RefreshGoogleBusinessProfilePerformance::class, 1);
+
+        // The job runs (inside the stagger window) and replaces the result BEFORE the old one expires at 10:00.
+        $this->travelTo(CarbonImmutable::parse('2026-11-11 03:45:00'));
+        $this->fakeGoogleApi($this->dailyResponse($this->fullValues()));
+        (new RefreshGoogleBusinessProfilePerformance($this->binding()->id))->handle(
+            app(\App\Library\GoogleBusinessProfile\GoogleBusinessProfileConnectionManager::class), $loader, app(\App\Library\Entitlement\EntitlementManager::class)
+        );
+        $second = $loader->cached($this->binding())['fetched_at'];
+        $this->assertTrue($second->greaterThan($firstRead));
+
+        // Past the ORIGINAL expiry, including for someone who may only view, the numbers are still there.
+        $this->travelTo(CarbonImmutable::parse('2026-11-11 10:05:00'));
+        $this->viewOnlyMember();
+        $this->page()->assertOk()->assertSee('data-kpi="visibility"', false)->assertSee('Updated today')->assertDontSee('Loading your Google performance');
+    }
+
+    public function test_a_second_read_while_one_is_running_is_not_started(): void
+    {
+        Http::fake();
+        $binding = $this->binding();
+        $manager = app(\App\Library\GoogleBusinessProfile\GoogleBusinessProfileConnectionManager::class);
+        $this->assertTrue($manager->claimRefresh($binding->connection));
+
+        (new RefreshGoogleBusinessProfilePerformance($binding->id))->handle($manager, app(GoogleBusinessProfilePerformanceLoader::class), app(\App\Library\Entitlement\EntitlementManager::class));
+
+        Http::assertNothingSent();
+    }
+
+    public function test_a_result_that_outlasts_the_next_scheduled_read_may_be_left_alone(): void
+    {
+        $this->fakeGoogleApi($this->dailyResponse($this->fullValues()));
+        $this->autoLoad()->assertOk();
+        $loader = app(GoogleBusinessProfilePerformanceLoader::class);
+
+        // With a 24-hour cache nothing read now can outlast a read 24 hours away, but the rule itself is exact.
+        $this->assertTrue($loader->remainsAvailableThrough($this->binding(), CarbonImmutable::now('UTC')->addHours(23)));
+        $this->assertFalse($loader->remainsAvailableThrough($this->binding(), CarbonImmutable::now('UTC')->addHours(25)));
     }
 
     public function test_the_job_makes_no_call_for_an_inactive_connection_or_a_downgraded_business(): void
@@ -855,5 +897,50 @@ class GoogleBusinessProfilePerformanceTest extends TestCase
         $this->fakeGoogleWhileSomethingHappens(fn () => null);
         $this->autoLoad()->assertOk();
         $this->assertNotNull(Cache::get($key));
+    }
+
+    // ------------------------------------------------------------------ revocation during a manual refresh
+
+    public function test_revocation_during_a_manual_refresh_shows_no_old_google_numbers_or_terms(): void
+    {
+        $this->fakeGoogleApi($this->dailyResponse($this->fullValues()), ['2026-10' => [['searchKeyword' => 'photo booth rental', 'insightsValue' => ['value' => '9']]]]);
+        $this->autoLoad()->assertOk()->assertSee('photo booth rental');
+
+        $this->fakeGoogle->failRefreshWith = \App\Exceptions\GoogleBusinessProfile\GoogleBusinessProfileProviderException::invalidGrant();
+        $response = $this->post(route('customer.workspaces.businesses.gbp.performance', [$this->workspace->uid, $this->business->uid]), ['refresh' => 1], ['X-Requested-With' => 'XMLHttpRequest']);
+
+        $response->assertOk()->assertSee('revoked this connection')->assertSee('Reconnect');
+        $response->assertDontSee('data-kpi', false)->assertDontSee('photo booth rental')->assertDontSee('Last successful refresh');
+        $this->assertNull(Cache::get($this->cacheKey($this->business->id, $this->binding()->id)));
+    }
+
+    public function test_a_transient_failure_still_keeps_the_older_numbers_labelled_as_not_current(): void
+    {
+        $this->fakeGoogleApi($this->dailyResponse($this->fullValues()));
+        $this->autoLoad()->assertOk();
+
+        $this->fakeGoogle->failRefreshWith = \App\Exceptions\GoogleBusinessProfile\GoogleBusinessProfileProviderException::providerUnavailable();
+        $this->post(route('customer.workspaces.businesses.gbp.performance', [$this->workspace->uid, $this->business->uid]), ['refresh' => 1], ['X-Requested-With' => 'XMLHttpRequest'])
+            ->assertOk()->assertSee('data-kpi="visibility"', false)->assertSee('not current');
+    }
+
+    public function test_revocation_leaks_no_other_locations_numbers_either(): void
+    {
+        $second = $this->createLocation($this->business, false, overrides: ['name' => 'Second Studio']);
+        BusinessGoogleLocation::create([
+            'business_google_connection_id' => $this->binding()->business_google_connection_id, 'business_id' => $this->business->id, 'business_location_id' => $second->id,
+            'provider_account_resource_name' => 'accounts/A1', 'provider_location_resource_name' => 'locations/L2',
+        ]);
+        $this->fakeGoogleApi($this->dailyResponse($this->fullValues()));
+        $this->autoLoad()->assertOk()->assertSee('Second Studio');
+        $this->assertCount(2, array_filter(BusinessGoogleLocation::query()->pluck('id')->map(fn ($id) => Cache::get($this->cacheKey($this->business->id, $id)))->all()));
+
+        $this->fakeGoogle->failRefreshWith = \App\Exceptions\GoogleBusinessProfile\GoogleBusinessProfileProviderException::invalidGrant();
+        $response = $this->post(route('customer.workspaces.businesses.gbp.performance', [$this->workspace->uid, $this->business->uid]), ['refresh' => 1], ['X-Requested-With' => 'XMLHttpRequest']);
+
+        $response->assertOk()->assertSee('revoked this connection')->assertDontSee('data-kpi', false);
+        foreach (BusinessGoogleLocation::query()->pluck('id') as $id) {
+            $this->assertNull(Cache::get($this->cacheKey($this->business->id, $id)));
+        }
     }
 }
