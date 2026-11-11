@@ -8,7 +8,13 @@ use Carbon\CarbonImmutable;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\Client\Request;
 use Illuminate\Log\Events\MessageLogged;
+use App\Enums\GoogleBusinessProfile\GoogleConnectionState;
+use App\Jobs\GoogleBusinessProfile\RefreshGoogleBusinessProfilePerformance;
+use App\Jobs\GoogleBusinessProfile\SweepGoogleBusinessProfilePerformance;
+use App\Library\GoogleBusinessProfilePerformance\GoogleBusinessProfilePerformanceLoader;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Event;
+use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Facades\Http;
 use Tests\Feature\GoogleBusinessProfile\Concerns\CreatesGoogleBusinessProfileFixtures;
 use Tests\TestCase;
@@ -57,9 +63,39 @@ class GoogleBusinessProfilePerformanceTest extends TestCase
         parent::tearDown();
     }
 
+    /** The Refresh button (a forced read), as a full page. */
     private function load(): \Illuminate\Testing\TestResponse
     {
-        return $this->post(route('customer.workspaces.businesses.gbp.performance', [$this->workspace->uid, $this->business->uid]));
+        return $this->post(route('customer.workspaces.businesses.gbp.performance', [$this->workspace->uid, $this->business->uid]), ['refresh' => 1]);
+    }
+
+    /** What the page itself sends after it has loaded, when no result exists yet (no click, no refresh flag). */
+    private function autoLoad(): \Illuminate\Testing\TestResponse
+    {
+        return $this->post(route('customer.workspaces.businesses.gbp.performance', [$this->workspace->uid, $this->business->uid]), [], ['X-Requested-With' => 'XMLHttpRequest']);
+    }
+
+    private function page(): \Illuminate\Testing\TestResponse
+    {
+        return $this->get(route('customer.workspaces.businesses.gbp.index', [$this->workspace->uid, $this->business->uid]));
+    }
+
+    private function binding(): BusinessGoogleLocation
+    {
+        return BusinessGoogleLocation::query()->where('business_id', $this->business->id)->orderBy('id')->firstOrFail();
+    }
+
+    /** A workspace member who may view Google Business Profile but not manage it. */
+    private function viewOnlyMember(): void
+    {
+        $member = $this->createCustomer()->user;
+        $this->addMember($this->workspace, $member, \App\Enums\Workspace\WorkspaceMembershipRole::Admin);
+        $this->authenticateAsUser($member, ['view_google_business_profile']);
+    }
+
+    private function cacheKey(int $businessId, int $bindingId): string
+    {
+        return 'gbp-performance:v1:b' . $businessId . ':l' . $bindingId;
     }
 
     /**
@@ -117,14 +153,13 @@ class GoogleBusinessProfilePerformanceTest extends TestCase
         });
     }
 
-    public function test_an_ordinary_page_view_makes_no_google_request_and_offers_a_manual_load(): void
+    public function test_a_page_view_never_calls_google_itself_and_asks_for_a_first_read_after_it_loads(): void
     {
         Http::fake();
         $this->fakeGoogle->clearCalls();
 
-        $response = $this->get(route('customer.workspaces.businesses.gbp.index', [$this->workspace->uid, $this->business->uid]));
+        $this->page()->assertOk()->assertSee('Loading your Google performance')->assertSee('data-auto="1"', false)->assertSee('Refresh Google performance');
 
-        $response->assertOk()->assertSee('Load Google performance')->assertSee('Not loaded yet');
         Http::assertNothingSent();
         $this->assertSame(0, $this->fakeGoogle->callCount('exchangeRefreshToken'));
     }
@@ -168,7 +203,8 @@ class GoogleBusinessProfilePerformanceTest extends TestCase
         $this->assertMatchesRegularExpression('/data-kpi="directions".*?>0<.*?▼ −56 \(-100%\)/s', $html);
         $this->assertStringContainsString('11 Oct 2026', $html);
         $this->assertStringContainsString('7 Nov 2026', $html);
-        $this->assertStringContainsString('Loaded 10 Nov 2026', $html);
+        $this->assertStringContainsString('Last successful refresh: <strong>10 Nov 2026, 10:00 UTC</strong>', $html);
+        $this->assertStringContainsString('Updated today', $html);
     }
 
     public function test_an_incomplete_period_or_missing_metric_is_not_available_and_never_zero_or_compared(): void
@@ -272,15 +308,6 @@ class GoogleBusinessProfilePerformanceTest extends TestCase
         $this->assertSame(1, \DB::table('business_google_operations')->where('operation_type', 'metrics_synced')->count(), 'The read is recorded in the operations ledger, by name only.');
     }
 
-    public function test_nothing_is_stored_so_the_next_page_view_is_empty_again(): void
-    {
-        $this->fakeGoogleApi($this->dailyResponse($this->fullValues()));
-        $this->load()->assertOk();
-
-        $this->get(route('customer.workspaces.businesses.gbp.index', [$this->workspace->uid, $this->business->uid]))
-            ->assertOk()->assertSee('Not loaded yet')->assertDontSee('data-kpi="visibility"', false);
-    }
-
     public function test_the_hourly_call_budget_still_applies(): void
     {
         config(['google_business_profile.sync.max_calls_per_business_per_hour' => 1]);
@@ -289,12 +316,13 @@ class GoogleBusinessProfilePerformanceTest extends TestCase
         $this->load()->assertOk()->assertSee('hourly limit');
 
         $this->assertCount(0, Http::recorded(), 'The token exchange used the only allowed call, so Google was never contacted.');
+        $this->assertNull(Cache::get($this->cacheKey($this->business->id, $this->binding()->id)), 'A failed read stores no Google content.');
     }
 
     public function test_the_existing_profile_comparison_section_is_still_on_the_page(): void
     {
         $this->get(route('customer.workspaces.businesses.gbp.index', [$this->workspace->uid, $this->business->uid]))
-            ->assertOk()->assertSee('Refresh from Google')->assertSee('Google performance');
+            ->assertOk()->assertSee('Refresh from Google')->assertSee('Google performance')->assertSee('Refresh required', false);
     }
 
     public function test_summary_periods_and_totals_are_exact(): void
@@ -315,5 +343,275 @@ class GoogleBusinessProfilePerformanceTest extends TestCase
         }
         preg_match_all('/https:\/\/([a-z0-9.\-]+)/i', $source, $hosts);
         $this->assertSame([self::HOST], array_values(array_unique($hosts[1])));
+    }
+
+    // ------------------------------------------------------------------ automatic loading, cache, daily refresh
+
+    public function test_the_first_visit_loads_automatically_then_later_visits_show_the_recent_result_without_calling_google(): void
+    {
+        $this->fakeGoogleApi($this->dailyResponse($this->fullValues()), ['2026-10' => [['searchKeyword' => 'photo booth', 'insightsValue' => ['value' => '9']]]]);
+
+        $this->page()->assertSee('Loading your Google performance');
+        $this->autoLoad()->assertOk()->assertSee('data-kpi="visibility"', false)->assertSee('Updated today')->assertSee('photo booth');
+        $callsAfterFirstRead = count(Http::recorded());
+
+        $this->page()->assertOk()->assertSee('data-kpi="visibility"', false)->assertSee('Updated today')->assertSee('Last successful refresh')
+            ->assertDontSee('Loading your Google performance')->assertDontSee('data-auto="1"', false);
+        $this->autoLoad()->assertOk()->assertSee('data-kpi="visibility"', false);
+
+        $this->assertSame($callsAfterFirstRead, count(Http::recorded()), 'Visits and repeated automatic requests make no further Google call.');
+    }
+
+    public function test_the_stored_copy_is_encrypted_scoped_short_lived_and_not_an_archive(): void
+    {
+        $this->fakeGoogleApi($this->dailyResponse($this->fullValues()), ['2026-10' => [['searchKeyword' => 'very private search phrase', 'insightsValue' => ['value' => '9']]]]);
+        $this->autoLoad()->assertOk();
+
+        $key = $this->cacheKey($this->business->id, $this->binding()->id);
+        $raw = Cache::get($key);
+        $this->assertIsString($raw);
+        $this->assertStringNotContainsString('very private search phrase', $raw, 'Encrypted at rest.');
+        $this->assertStringNotContainsString('BUSINESS_IMPRESSIONS', $raw);
+
+        $payload = json_decode(\Illuminate\Support\Facades\Crypt::decryptString($raw), true);
+        $this->assertSame(['fetched_at', 'series', 'keywords'], array_keys($payload), 'Only what Google returned: no totals, comparisons or scores are stored.');
+
+        $this->travel(25)->hours();
+        $this->assertNull(app(GoogleBusinessProfilePerformanceLoader::class)->cached($this->binding()), 'Nothing older than 24 hours is ever shown.');
+    }
+
+    public function test_data_from_an_earlier_day_is_labelled_older_and_expired_data_loads_again(): void
+    {
+        $this->fakeGoogleApi($this->dailyResponse($this->fullValues()));
+        $this->autoLoad()->assertOk();
+
+        $this->travel(14)->hours(); // next day, still inside the 24-hour window
+        $this->page()->assertSee('Older data')->assertDontSee('Updated today');
+
+        $this->travel(11)->hours(); // 25 hours after the read
+        $this->page()->assertDontSee('data-kpi="visibility"', false)->assertSee('Loading your Google performance');
+    }
+
+    public function test_a_failed_refresh_keeps_the_old_numbers_labelled_as_not_current(): void
+    {
+        $this->fakeGoogleApi($this->dailyResponse($this->fullValues()));
+        $this->autoLoad()->assertOk();
+
+        Http::swap(new \Illuminate\Http\Client\Factory());
+        $this->fakeGoogleApi([], [], 429);
+        $this->travel(2)->hours();
+
+        $this->load()->assertOk()->assertSee('The latest refresh failed')->assertSee('not current')->assertSee('Google is rate limiting')
+            ->assertSee('Last successful refresh: <strong>10 Nov 2026, 10:00 UTC</strong>', false);
+    }
+
+    public function test_a_failed_first_read_is_shown_honestly_and_is_not_retried_by_every_visit(): void
+    {
+        $this->fakeGoogleApi([], [], 500);
+
+        $this->autoLoad()->assertOk()->assertSee('could not be loaded')->assertSee('temporarily unavailable');
+        $calls = count(Http::recorded());
+
+        $this->page()->assertOk()->assertSee('could not be loaded')->assertDontSee('data-auto="1"', false);
+        $this->autoLoad()->assertOk()->assertSee('could not be loaded');
+        $this->assertSame($calls, count(Http::recorded()), 'The back-off stops automatic retries; only Refresh tries again.');
+        $this->assertNull(Cache::get($this->cacheKey($this->business->id, $this->binding()->id)));
+    }
+
+    public function test_two_requests_for_one_connection_do_not_read_google_twice(): void
+    {
+        $this->fakeGoogleApi($this->dailyResponse($this->fullValues()));
+        $this->assertTrue(app(\App\Library\GoogleBusinessProfile\GoogleBusinessProfileConnectionManager::class)->claimRefresh($this->binding()->connection));
+
+        $this->autoLoad()->assertOk()->assertSee('already running');
+
+        Http::assertNothingSent();
+    }
+
+    public function test_a_revoked_or_disconnected_account_shows_and_keeps_nothing(): void
+    {
+        $this->fakeGoogleApi($this->dailyResponse($this->fullValues()));
+        $this->autoLoad()->assertOk();
+        $key = $this->cacheKey($this->business->id, $this->binding()->id);
+        $this->assertNotNull(Cache::get($key));
+
+        $this->binding()->connection->forceFill(['state' => GoogleConnectionState::Revoked])->save();
+
+        $this->page()->assertOk()->assertDontSee('data-kpi="visibility"', false);
+        $this->assertNull(Cache::get($key), 'A revoked connection deletes what was read from Google.');
+
+        $this->binding()->connection->forceFill(['state' => GoogleConnectionState::Active])->save();
+        $this->fakeGoogleApi($this->dailyResponse($this->fullValues()));
+        $this->autoLoad()->assertOk();
+        $this->assertNotNull(Cache::get($key));
+
+        $this->post(route('customer.workspaces.businesses.gbp.disconnect', [$this->workspace->uid, $this->business->uid]));
+        $this->assertNull(Cache::get($key), 'Disconnecting deletes it too.');
+    }
+
+    public function test_unlinking_a_location_deletes_its_stored_performance(): void
+    {
+        $this->fakeGoogleApi($this->dailyResponse($this->fullValues()));
+        $this->autoLoad()->assertOk();
+        $binding = $this->binding();
+        $key = $this->cacheKey($this->business->id, $binding->id);
+
+        $this->post(route('customer.workspaces.businesses.gbp.unbind', [$this->workspace->uid, $this->business->uid]), ['binding_uid' => $binding->uid]);
+
+        $this->assertNull(Cache::get($key));
+    }
+
+    public function test_locations_and_tenants_are_stored_and_shown_separately(): void
+    {
+        // A second linked location of the SAME business, with different numbers.
+        $second = $this->createLocation($this->business, false, overrides: ['name' => 'Second Studio']);
+        BusinessGoogleLocation::create([
+            'business_google_connection_id' => $this->binding()->business_google_connection_id, 'business_id' => $this->business->id, 'business_location_id' => $second->id,
+            'provider_account_resource_name' => 'accounts/A1', 'provider_location_resource_name' => 'locations/L2',
+        ]);
+        Http::fake(function (Request $request) {
+            if (str_contains($request->url(), ':fetchMultiDailyMetricsTimeSeries')) {
+                return Http::response($this->dailyResponse($this->fullValues(str_contains($request->url(), 'locations/L2') ? ['WEBSITE_CLICKS' => [7, 7]] : [])));
+            }
+
+            return Http::response(['searchKeywordsCounts' => []]);
+        });
+
+        $html = $this->autoLoad()->assertOk()->getContent();
+
+        $this->assertMatchesRegularExpression('/Primary Location.*?data-kpi="website".*?>84<.*?Second Studio.*?data-kpi="website".*?>196</s', $html, 'Each location shows its own numbers (3 x 28 and 7 x 28 website clicks).');
+        $keys = BusinessGoogleLocation::query()->where('business_id', $this->business->id)->pluck('id')->map(fn ($id) => $this->cacheKey($this->business->id, $id));
+        $this->assertCount(2, $keys);
+        foreach ($keys as $key) {
+            $this->assertNotNull(Cache::get($key));
+        }
+
+        // Another business has nothing, and cannot see or trigger this one's.
+        [$otherCustomer] = $this->entitledTenant();
+        $this->authenticateAsCustomer($otherCustomer);
+        $this->page()->assertNotFound();
+        $this->assertNull(app(\App\Library\GoogleBusinessProfilePerformance\GoogleBusinessProfilePerformanceStore::class)->get($this->business->id + 1000, $this->binding()->id));
+    }
+
+    public function test_someone_who_may_only_view_sees_the_result_but_cannot_start_or_refresh_a_read(): void
+    {
+        $this->fakeGoogleApi($this->dailyResponse($this->fullValues()));
+        $this->autoLoad()->assertOk();
+        $calls = count(Http::recorded());
+
+        $this->viewOnlyMember();
+
+        $this->page()->assertOk()->assertSee('data-kpi="visibility"', false)->assertDontSee('Refresh Google performance')->assertDontSee('data-auto="1"', false);
+        $this->load()->assertStatus(401);
+        $this->autoLoad()->assertStatus(401);
+        $this->assertSame($calls, count(Http::recorded()));
+    }
+
+    public function test_a_view_only_visit_with_nothing_loaded_calls_nothing(): void
+    {
+        Http::fake();
+        $this->viewOnlyMember();
+
+        $this->page()->assertOk()->assertSee('No Google performance has been read yet')->assertDontSee('data-auto="1"', false);
+
+        Http::assertNothingSent();
+    }
+
+    public function test_the_cache_window_is_never_longer_than_24_hours_and_zero_stores_nothing(): void
+    {
+        $store = app(\App\Library\GoogleBusinessProfilePerformance\GoogleBusinessProfilePerformanceStore::class);
+
+        foreach ([100, 'x', -3, 25, null] as $bad) {
+            config(['google_business_profile.performance.cache_hours' => $bad]);
+            $this->assertSame(24, $store->ttlHours(), json_encode($bad));
+        }
+        config(['google_business_profile.performance.cache_hours' => 6]);
+        $this->assertSame(6, $store->ttlHours());
+
+        config(['google_business_profile.performance.cache_hours' => 0]);
+        $this->fakeGoogleApi($this->dailyResponse($this->fullValues()));
+        $this->autoLoad()->assertOk()->assertSee('data-kpi="visibility"', false);
+        $this->assertNull(Cache::get($this->cacheKey($this->business->id, $this->binding()->id)));
+    }
+
+    public function test_the_daily_sweep_is_staggered_skips_fresh_locations_and_the_job_rechecks_everything(): void
+    {
+        Queue::fake();
+        $this->fakeGoogleApi($this->dailyResponse($this->fullValues()));
+        $loader = app(GoogleBusinessProfilePerformanceLoader::class);
+
+        (new SweepGoogleBusinessProfilePerformance())->handle($loader);
+        Queue::assertPushed(RefreshGoogleBusinessProfilePerformance::class, 1);
+        $pushed = Queue::pushed(RefreshGoogleBusinessProfilePerformance::class)->first();
+        $delay = now()->diffInSeconds($pushed->delay, false);
+        $this->assertGreaterThanOrEqual(0, $delay);
+        $this->assertLessThan(3600, $delay);
+
+        // The job reads once, stores, and a second run (or a visit) does not read again.
+        $manager = app(\App\Library\GoogleBusinessProfile\GoogleBusinessProfileConnectionManager::class);
+        $entitlements = app(\App\Library\Entitlement\EntitlementManager::class);
+        (new RefreshGoogleBusinessProfilePerformance($this->binding()->id))->handle($manager, $loader, $entitlements);
+        $reads = count(Http::recorded());
+        $this->assertGreaterThan(0, $reads);
+        $this->assertNotNull($loader->cached($this->binding()));
+        (new RefreshGoogleBusinessProfilePerformance($this->binding()->id))->handle($manager, $loader, $entitlements);
+        $this->assertSame($reads, count(Http::recorded()));
+
+        Queue::fake();
+        (new SweepGoogleBusinessProfilePerformance())->handle($loader);
+        Queue::assertNothingPushed();
+
+        // 21 hours later the result is due again (the sweep refreshes daily).
+        $this->travel(21)->hours();
+        (new SweepGoogleBusinessProfilePerformance())->handle($loader);
+        Queue::assertPushed(RefreshGoogleBusinessProfilePerformance::class, 1);
+    }
+
+    public function test_the_job_makes_no_call_for_an_inactive_connection_or_a_downgraded_business(): void
+    {
+        Http::fake();
+        $loader = app(GoogleBusinessProfilePerformanceLoader::class);
+        $manager = app(\App\Library\GoogleBusinessProfile\GoogleBusinessProfileConnectionManager::class);
+        $entitlements = app(\App\Library\Entitlement\EntitlementManager::class);
+
+        $this->binding()->connection->forceFill(['state' => GoogleConnectionState::Revoked])->save();
+        (new RefreshGoogleBusinessProfilePerformance($this->binding()->id))->handle($manager, $loader, $entitlements);
+
+        $this->binding()->connection->forceFill(['state' => GoogleConnectionState::Active])->save();
+        \DB::table('businesses')->where('id', $this->business->id)->update(['status' => \App\Enums\Business\BusinessStatus::Draft->value]);
+        (new RefreshGoogleBusinessProfilePerformance($this->binding()->id))->handle($manager, $loader, $entitlements);
+
+        Http::assertNothingSent();
+        $this->assertNull($loader->cached($this->binding()));
+    }
+
+    public function test_a_stale_profile_mirror_keeps_its_own_state_when_performance_loads(): void
+    {
+        $this->fakeGoogleApi($this->dailyResponse($this->fullValues()));
+        $this->autoLoad()->assertOk();
+
+        $this->page()->assertSee('Updated today')->assertSee('Refresh required', false);
+        $this->assertNull($this->binding()->mirror_fetched_at, 'Loading performance does not touch the profile mirror.');
+    }
+
+    public function test_view_as_never_starts_a_google_read(): void
+    {
+        Http::fake();
+        app(\App\Library\ViewAs\ViewAsManager::class)->start($this->customer->user, $this->workspace->uid, $this->business->uid);
+
+        $this->autoLoad();
+        $this->load();
+
+        Http::assertNothingSent();
+        $this->assertNull(Cache::get($this->cacheKey($this->business->id, $this->binding()->id)));
+    }
+
+    public function test_the_performance_sweep_is_scheduled_once_a_day(): void
+    {
+        $events = collect(app(\Illuminate\Console\Scheduling\Schedule::class)->events())
+            ->filter(fn ($event) => str_contains((string) $event->description, 'SweepGoogleBusinessProfilePerformance'));
+
+        $this->assertCount(1, $events);
+        $this->assertSame('30 3 * * *', $events->first()->expression);
     }
 }

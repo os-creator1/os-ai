@@ -98,7 +98,7 @@ class SweepGoogleBusinessProfileRefreshes extends Base
      * cross-request cache (contract §31, test T-CACHE-1), and the ledger
      * already records exactly these outcomes.
      */
-    private function breakerTripped(): bool
+    public function breakerTripped(): bool
     {
         $threshold = $this->positiveConfig('google_business_profile.sync.breaker_threshold', 20);
         $cooldown = $this->positiveConfig('google_business_profile.sync.breaker_cooldown_minutes', 30);

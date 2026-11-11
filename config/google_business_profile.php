@@ -63,6 +63,18 @@ return [
         'breaker_cooldown_minutes' => env('GOOGLE_BUSINESS_PROFILE_BREAKER_COOLDOWN_MINUTES', 30),
     ],
 
+    'performance' => [
+        // Performance Insights: how long the last successful read (Google's own daily series and search terms, exactly as
+        // returned) may be kept to make the page fast. Google's API policy allows storing Content temporarily, securely, only to
+        // improve performance, for at most 30 calendar days, and without manipulating or aggregating it. This module keeps it
+        // for AT MOST 24 hours, encrypted, scoped to one Business and one linked location, and deletes it on disconnect/unlink.
+        // 1..24; anything else uses 24; 0 stores nothing (the page then reads from Google on each visit that has no result).
+        'cache_hours' => env('GOOGLE_BUSINESS_PROFILE_PERFORMANCE_CACHE_HOURS', 24),
+
+        // After a failed read, the page does not try again on its own for this long (the Refresh button always can).
+        'failure_backoff_minutes' => env('GOOGLE_BUSINESS_PROFILE_PERFORMANCE_FAILURE_BACKOFF_MINUTES', 15),
+    ],
+
     'ledger' => [
         // Contract §13.6 — unset means RETAIN. No ledger purge job is
         // scheduled in Slice A; this exists so a later operations pass has
