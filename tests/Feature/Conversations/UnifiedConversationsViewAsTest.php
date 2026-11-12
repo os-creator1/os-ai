@@ -40,7 +40,7 @@ class UnifiedConversationsViewAsTest extends TestCase
         $other = $this->createAgencyManagedClient($agencyWorkspace, 'Other Client', 'Other Client Workspace');
         $this->assignTier($other['clientWorkspace'], WorkspacePlanTier::Growth);
 
-        $location = BusinessLocation::query()->where('business_id', $business->id)->firstOrFail();
+        $location = BusinessLocation::query()->where('business_id', $business->id)->first() ?? $this->makeLocation($business, 'Main');
         $inbound = BusinessEmailMessage::create([
             'business_id' => $business->id, 'location_id' => $location->id, 'direction' => 'inbound', 'operation_key' => 'seed-' . Str::uuid(),
             'provider' => 'google', 'provider_message_id' => 'pm-1', 'provider_thread_id' => 't-1', 'internet_message_id' => '<one@example.com>',
