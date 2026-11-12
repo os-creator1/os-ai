@@ -89,8 +89,11 @@
                     @if ($item->body !== null)
                         <p class="timeline-message-body">{{ $item->body }}</p>
                     @endif
+                </div>
 
-                    <p class="chat-time timeline-message-meta mt-1">
+                {{-- Time, channel and delivery state sit under the bubble, not inside it. --}}
+                <div class="timeline-message-foot">
+                    <p class="chat-time timeline-message-meta">
                         <span class="timeline-channel timeline-channel-{{ $item->channel }}" data-role="timeline-channel">{{ $item->channel === 'email' ? 'Email' : 'SMS' }}</span>
                         <span>{{ $local->format(config('app.time_format')) }}</span>
                         @if ($item->via !== null)

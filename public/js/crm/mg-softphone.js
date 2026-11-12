@@ -343,6 +343,7 @@
 
         if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || !window.TelnyxWebRTC) {
             fail('This browser cannot make calls. Use a current version of Chrome, Edge, Firefox or Safari.');
+            starting = false; // nothing is on the network: a later attempt (another contact) must not be blocked as "still starting"
             return;
         }
 
@@ -640,6 +641,24 @@
             e.returnValue = '';
         }
     });
+
+    // Pages with many contacts (Conversations) have no single contact baked into the page: they hand the softphone the ONE
+    // contact the user chose, at click time. This is the same start() sequence and the same server checks as the profile's
+    // Call button; nothing is dialled here. A call that is already live or still starting is never re-targeted, so its popup
+    // keeps showing who is really on the line; otherwise the previous contact's identity is fully replaced.
+    window.MGSoftphone = {
+        callContact: function (contact) {
+            if (!contact || typeof contact.uid !== 'string' || contact.uid === '') { return false; }
+            if (!active && !starting) {
+                cfg.contactUid = contact.uid;
+                cfg.contactLabel = String(contact.label || '');
+                cfg.contactPhone = String(contact.phone || '');
+                cfg.contactInitials = String(contact.initials || '#');
+            }
+            start();
+            return true;
+        }
+    };
 
     if (inboundCfg) { connectShared(); }
 })();
