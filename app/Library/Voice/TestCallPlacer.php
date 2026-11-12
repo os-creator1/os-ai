@@ -8,10 +8,8 @@ use App\Library\Messaging\E164Normalizer;
 use App\Models\Business;
 use App\Models\BusinessMessagingNumber;
 use App\Models\BusinessVoiceCall;
-use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Http\Client\PendingRequest;
 use Illuminate\Support\Facades\Http;
-use Illuminate\Support\Facades\Log;
 
 /**
  * Places ONE admin-initiated Telnyx Call Control test call from a Business's own active local number.
@@ -78,43 +76,11 @@ final class TestCallPlacer
             'status' => BusinessVoiceCall::STATUS_REQUESTED,
         ]);
 
-        try {
-            $response = $this->client($apiKey)->post(self::API_BASE . '/calls', [
-                'connection_id' => $connectionId,
-                'to' => $destination,
-                'from' => $number->phone_number,
-                'webhook_url' => $webhookUrl,
-                // Echoed in every event so a webhook that outruns this response can still find its row.
-                'client_state' => base64_encode($token),
-                // Bound a test call's cost: ring at most 30s, talk at most 60s.
-                'timeout_secs' => 30,
-                'time_limit_secs' => 60,
-            ]);
-        } catch (ConnectionException) {
-            // Outcome unknown: Telnyx may still have placed the call. Recorded as failed/unconfirmed, never retried here.
-            return $this->fail($call, 'transport_error');
-        }
-
-        $callControlId = (string) $response->json('data.call_control_id', '');
-        if (! $response->successful() || $callControlId === '') {
-            Log::warning('Telnyx outbound test call rejected', [
-                'business_id' => $business->id,
-                'voice_call_id' => $call->id,
-                'http_status' => $response->status(),
-                'provider_code' => $response->json('errors.0.code'),
-            ]);
-
-            return $this->fail($call, $response->successful() ? 'no_call_control_id' : 'http_' . $response->status());
-        }
-
-        // A webhook may already have adopted the row and moved it on, so never write from the stale in-memory model:
-        // set the id only if still empty, and move requested -> initiated only if still requested.
-        BusinessVoiceCall::query()->whereKey($call->id)->whereNull('telnyx_call_control_id')
-            ->update(['telnyx_call_control_id' => $callControlId]);
-        BusinessVoiceCall::query()->whereKey($call->id)->where('status', BusinessVoiceCall::STATUS_REQUESTED)
-            ->update(['status' => BusinessVoiceCall::STATUS_INITIATED, 'initiated_at' => now()]);
-
-        return $call->refresh();
+        return app(TelnyxCallDialer::class)->dial(
+            $call, $apiKey, $connectionId, $number->phone_number, $destination, $webhookUrl, $token,
+            ringTimeoutSecs: 30, // bound a test call's cost: ring at most 30s,
+            timeLimitSecs: 60,   // talk at most 60s.
+        );
     }
 
     private function resolveNumber(Business $business): BusinessMessagingNumber
@@ -156,15 +122,6 @@ final class TestCallPlacer
         if ((string) $response->json('data.connection_id') !== $connectionId) {
             throw new TestCallRefusedException('number_not_voice_assigned', 'The number is not assigned to the configured Voice Connection.');
         }
-    }
-
-    private function fail(BusinessVoiceCall $call, string $code): BusinessVoiceCall
-    {
-        // Only a still-requested row: never overwrite progress a webhook already recorded.
-        BusinessVoiceCall::query()->whereKey($call->id)->where('status', BusinessVoiceCall::STATUS_REQUESTED)
-            ->update(['status' => BusinessVoiceCall::STATUS_FAILED, 'failure_code' => $code, 'ended_at' => now()]);
-
-        return $call->refresh();
     }
 
     private function client(string $apiKey): PendingRequest

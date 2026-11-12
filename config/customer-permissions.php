@@ -408,6 +408,12 @@
             'category'     => 'Voice',
             'default'      => false,
         ],
+        // Place an outbound call to a CRM contact from the Business's own number. Off unless granted.
+        'place_voice_calls'         => [
+            'display_name' => 'place_voice_calls',
+            'category'     => 'Voice',
+            'default'      => false,
+        ],
         'voice_bulk_messages'       => [
             'display_name' => 'bulk_messages',
             'category'     => 'Voice',

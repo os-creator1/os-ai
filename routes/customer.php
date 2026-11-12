@@ -2374,6 +2374,10 @@
         // A Business's Settings hub — the sidebar's one Settings destination.
         Route::get('{workspaceUid}/businesses/{businessUid}/settings', 'Business\BusinessSettingsController@show')->name('businesses.settings.show');
 
+        // Customer outbound calling backend (JSON; no browser audio yet). See VoiceCallController.
+        Route::post('{workspaceUid}/businesses/{businessUid}/calls', 'Business\VoiceCallController@store')->middleware('throttle:30,1')->name('businesses.calls.store');
+        Route::get('{workspaceUid}/businesses/{businessUid}/calls/{callUid}', 'Business\VoiceCallController@show')->name('businesses.calls.show');
+
         Route::prefix('{workspaceUid}/businesses/{businessUid}/settings/text-messaging')->name('businesses.text-messaging.')->group(function () {
             Route::get('/', 'Business\TextMessagingController@show')->name('show');
 
