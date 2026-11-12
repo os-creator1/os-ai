@@ -93,7 +93,11 @@ class VoiceCallController extends CustomerBaseController
 
         $call = $this->callFor($business, $callUid);
         $contact = $call?->contact_id !== null ? Contacts::query()->find($call->contact_id) : null;
-        if ($call === null || ($contact !== null && ! $this->locationAccessible($contact))) {
+        // Outbound keeps its Location rule. An inbound participant keeps their controls (contact details are redacted in
+        // present()), but ONLY the user who answered may end an answered call: another employee whose browser also rang may not.
+        $isInbound = $call?->kind === 'inbound';
+        if ($call === null || ($isInbound && (int) $call->answered_by_user_id !== (int) Auth::id())
+            || (! $isInbound && $contact !== null && ! $this->locationAccessible($contact))) {
             return $this->error('call_not_found', 'Call not found.', 404);
         }
 
@@ -113,7 +117,7 @@ class VoiceCallController extends CustomerBaseController
         }
 
         $contact = $call->contact_id !== null ? Contacts::query()->find($call->contact_id) : null;
-        if ($contact !== null && ! $this->locationAccessible($contact)) {
+        if ($call->kind !== 'inbound' && $contact !== null && ! $this->locationAccessible($contact)) {
             return $this->error('call_not_found', 'Call not found.', 404);
         }
 

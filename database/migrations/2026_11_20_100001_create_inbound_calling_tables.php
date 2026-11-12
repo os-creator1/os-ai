@@ -25,6 +25,7 @@ return new class extends Migration
             $table->char('verify_code_hash', 64)->nullable();
             $table->text('verify_code')->nullable();               // encrypted, cleared on success/expiry; read only to speak it
             $table->timestamp('verify_expires_at')->nullable();
+            $table->unsignedBigInteger('verify_call_id')->nullable(); // the ONE verification call allowed to speak the current code
             $table->unsignedTinyInteger('verify_attempts')->default(0);
             $table->unsignedBigInteger('updated_by_user_id')->nullable();
             $table->timestamps();

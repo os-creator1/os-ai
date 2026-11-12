@@ -396,26 +396,30 @@
     // ------------------------------------------------------------------ inbound calls
 
     var answering = false;
+    var identifyGen = 0; // invalidates an identification (and its late responses) once its ring has ended
 
     function onInboundRing(call) {
         // Already on / handling a call: this ring is not shown. (The server does not ring a busy user; this covers the race.)
         if (active || inboundBusy) { try { call.hangup(); } catch (e) {} return; }
         inboundBusy = true;
         pendingSdk = call;
-        identifyInbound(0);
+        identifyInbound(0, ++identifyGen, call);
     }
 
     // The SDK knows a leg is ringing; only the server knows WHO is calling and which call it is.
-    function identifyInbound(tries) {
-        if (!pendingSdk) { return; }
+    function identifyInbound(tries, gen, call) {
+        var current = function () { return gen === identifyGen && pendingSdk === call; };
+        if (!current()) { return; }
         var retry = function () {
-            if (tries < 3) { setTimeout(function () { identifyInbound(tries + 1); }, 1000); return; }
+            if (!current()) { return; }
+            if (tries < 3) { setTimeout(function () { identifyInbound(tries + 1, gen, call); }, 1000); return; }
             // Not a call the server says is ringing for this user: never show it and never answer it.
             try { if (pendingSdk) { pendingSdk.hangup(); } } catch (e) {}
             pendingSdk = null;
             inboundBusy = false;
         };
         api('GET', inboundCfg.incomingUrl).then(function (r) {
+            if (!current()) { return; } // the ring ended while we were asking: never reopen it
             var list = r.ok && r.json && Array.isArray(r.json.data) ? r.json.data : [];
             if (list.length) { showIncoming(list[0]); } else { retry(); }
         }).catch(retry);
@@ -440,7 +444,9 @@
     // The ringing leg ended before we answered it: the caller gave up, it timed out, or someone else took it.
     function onPendingEnded() {
         pendingSdk = null;
-        if (root.getAttribute('data-state') !== 'incoming' || finished) { return; }
+        identifyGen++;
+        // Still being identified (no popup yet): just free the slot so the next ring is handled.
+        if (root.getAttribute('data-state') !== 'incoming' || finished) { if (!active) { inboundBusy = false; } return; }
         var uid = callUid, mine = attempt;
         api('GET', cfg.statusUrl.replace('__CALL__', encodeURIComponent(uid))).then(function (r) {
             if (mine !== attempt || finished) { return; }

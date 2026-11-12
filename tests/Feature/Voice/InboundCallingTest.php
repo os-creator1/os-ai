@@ -411,6 +411,71 @@ class InboundCallingTest extends TestCase
         $this->assertSame('missed', BusinessVoiceCall::query()->where('telnyx_call_control_id', 'caller-2')->firstOrFail()->outcome);
     }
 
+    public function test_a_superseded_verification_call_never_speaks_or_validates_a_newer_code(): void
+    {
+        // A -> B -> A: three verification calls; the first (and second) are superseded by the third.
+        $this->post($this->calling('forward.verify'), ['phone' => '(650) 555-0142'])->assertSessionHasNoErrors();
+        $callA1 = 'phone-' . $this->seq;
+        $this->post($this->calling('forward.verify'), ['phone' => '(650) 555-0177'])->assertSessionHasNoErrors();
+        $callB = 'phone-' . $this->seq;
+        $codeB = BusinessInboundCallSetting::firstOrFail()->verify_code;
+        $this->post($this->calling('forward.verify'), ['phone' => '(650) 555-0142'])->assertSessionHasNoErrors();
+        $codeA2 = BusinessInboundCallSetting::firstOrFail()->verify_code;
+
+        // A late answer from the first call (and from B) must not hear ANY code.
+        $this->hook('late-a1', 'call.answered', $callA1)->assertOk();
+        $this->hook('late-b', 'call.answered', $callB)->assertOk();
+        $this->assertSame([], $this->actions('speak'), 'A superseded call never speaks a challenge.');
+
+        // Only the current call speaks, and it speaks its own code.
+        $this->hook('cur', 'call.answered', 'phone-' . $this->seq)->assertOk();
+        $speak = $this->actions('speak');
+        $this->assertCount(1, $speak);
+        $this->assertStringContainsString(implode(', ', str_split($codeA2)), $speak[0]['payload']);
+        if ($codeB !== $codeA2) {
+            $this->assertStringNotContainsString(implode(', ', str_split($codeB)), $speak[0]['payload']);
+            $this->post($this->calling('forward.confirm'), ['code' => $codeB])->assertSessionHasErrors('code');
+        }
+        $this->assertFalse(BusinessInboundCallSetting::firstOrFail()->forwardVerified());
+    }
+
+    public function test_an_inbound_participant_keeps_status_and_controls_but_restricted_contact_details_are_redacted(): void
+    {
+        $this->setting('browser');
+        $this->online();
+        $this->ring();
+        $call = $this->inboundCall();
+        // The matched Contact sits at a Location this user holds no grant for.
+        $location = \App\Models\BusinessLocation::create(['business_id' => $this->business->id, 'name' => 'Restricted', 'service_mode' => 'storefront', 'country_code' => 'US']);
+        $this->contact->forceFill(['location_id' => $location->id])->saveQuietly();
+        $this->mock(\App\Library\Workspace\LocationAccessGuard::class, fn ($m) => $m->shouldReceive('userCanAccessLocation')->andReturn(false));
+        $this->postJson($this->url('answer', [$call->uid]))->assertOk();
+
+        $show = $this->getJson($this->url('show', [$call->uid]))->assertOk();
+        $show->assertJsonPath('data.contact_uid', null)->assertJsonPath('data.caller.name', null);
+        $this->assertStringNotContainsString($this->contact->uid, $show->getContent());
+
+        $this->postJson($this->url('hangup', [$call->uid]))->assertOk();
+    }
+
+    public function test_only_the_answering_user_can_end_an_answered_inbound_call(): void
+    {
+        $this->setting('browser');
+        $this->online();
+        $this->ring();
+        $call = $this->inboundCall();
+        // Another employee (user B) also rang; user A (someone else) answered.
+        $call->forceFill(['answered_by_user_id' => 999999, 'claimed_leg_id' => 1])->save();
+
+        $this->postJson($this->url('hangup', [$call->uid]))->assertStatus(404);
+        $this->assertSame(BusinessVoiceCall::STATUS_INITIATED, $call->refresh()->status);
+        $this->assertSame([], $this->actions('hangup'), 'No leg was hung up by the non-answering user.');
+
+        // Declining their own ring is still allowed for a participant who has not answered.
+        $call->forceFill(['answered_by_user_id' => null, 'claimed_leg_id' => null])->save();
+        $this->postJson($this->url('decline', [$call->uid]))->assertOk();
+    }
+
     // ------------------------------------------------------------------ safety
 
     public function test_loops_limits_and_replays_are_handled(): void

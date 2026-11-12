@@ -75,12 +75,17 @@ final class ForwardVerifier
                 'updated_by_user_id' => $userId,
             ]);
 
-            return BusinessVoiceCall::create([
+            $verifyCall = BusinessVoiceCall::create([
                 'uid' => (string) Str::uuid(), 'kind' => 'forward_verify', 'channel' => 'server', 'direction' => 'outbound',
                 'client_state_hash' => hash('sha256', $token), 'business_id' => $business->id,
                 'business_messaging_number_id' => $number->id, 'initiated_by_user_id' => $userId,
                 'to_hash' => $hash, 'status' => BusinessVoiceCall::STATUS_REQUESTED,
             ]);
+
+            // Bind the challenge to THIS call: any earlier verification call is superseded and can never speak it.
+            BusinessInboundCallSetting::query()->where('business_id', $business->id)->update(['verify_call_id' => $verifyCall->id]);
+
+            return $verifyCall;
         });
 
         if ($call === null) {
@@ -116,6 +121,7 @@ final class ForwardVerifier
             $setting->forward_verified_hash = $setting->forward_number_hash;
             $setting->forward_verified_at = now();
             $setting->verify_code = null;
+            $setting->verify_call_id = null;
             $setting->verify_code_hash = null;
             $setting->verify_expires_at = null;
             $setting->verify_attempts = 0;
@@ -154,7 +160,7 @@ final class ForwardVerifier
             $call->status = BusinessVoiceCall::STATUS_ANSWERED;
             $call->answered_at = $at;
             $setting = BusinessInboundCallSetting::query()->where('business_id', $call->business_id)->first();
-            $code = $setting !== null && $setting->verify_expires_at?->isFuture() ? (string) $setting->verify_code : '';
+            $code = $setting !== null && (int) $setting->verify_call_id === (int) $call->id && $setting->verify_expires_at?->isFuture() ? (string) $setting->verify_code : '';
             if (! preg_match('/^\d{6}$/', $code)) {
                 return fn () => $this->commands->send($leg, 'hangup', [], 'nocode');
             }
