@@ -1125,33 +1125,58 @@
       // Nothing here ever resubmits on its own.
       var emailSendsInFlight = {};
 
-      function emailIntentKey(chatId, c, subject, body, location) {
-        return [chatId, c.url, c.contact_uid || "", location || "", subject, body].join("\u0001");
+      // A pending send is remembered BY CONTENT (conversation + location + subject + body) together with the endpoint, Contact and key it
+      // was FIRST submitted with. A timeline refresh after an ambiguous outcome can legitimately change the composer's own endpoint
+      // (a new-email /send becomes a /reply once the message exists); the retry must still go to the ORIGINAL endpoint with the ORIGINAL
+      // key, because the sender's idempotency is per endpoint+key — a /reply with the old key would be a different operation.
+      function emailIntentKey(chatId, subject, body, location) {
+        return [chatId, location || "", subject, body].join("\u0001");
       }
 
       function emailTokenStore() {
         try { return window.sessionStorage; } catch (e) { return null; }
       }
 
-      function emailTokenFor(intent) {
+      function pendingEmailFor(intent, c, locationUid) {
         const store = emailTokenStore();
-        const name = "mg.emailToken." + intent;
-        let token = pendingEmailTokens[intent] || (store && store.getItem(name)) || m5UuidV4();
-        pendingEmailTokens[intent] = token;
-        if (store) { try { store.setItem(name, token); } catch (e) { /* storage unavailable: the in-memory key still holds */ } }
-        return token;
+        const name = "mg.emailPending." + intent;
+        let pending = pendingEmailTokens[intent];
+        if (!pending && store) {
+          try { pending = JSON.parse(store.getItem(name) || "null"); } catch (e) { pending = null; }
+        }
+        if (!pending || !pending.token || !pending.url) {
+          pending = { token: m5UuidV4(), url: c.url, contact_uid: c.contact_uid || "" };
+        }
+        pendingEmailTokens[intent] = pending;
+        if (store) { try { store.setItem(name, JSON.stringify(pending)); } catch (e) { /* storage unavailable: the in-memory record still holds */ } }
+        return pending;
       }
 
       function forgetEmailToken(intent) {
         delete pendingEmailTokens[intent];
         const store = emailTokenStore();
-        if (store) { try { store.removeItem("mg.emailToken." + intent); } catch (e) { /* nothing to remove */ } }
+        if (store) { try { store.removeItem("mg.emailPending." + intent); } catch (e) { /* nothing to remove */ } }
+      }
+
+      // The configuration in composerState belongs to ONE conversation. The moment the selection changes it is stale: nothing may be sent
+      // from it, and nothing may be sent at all until a timeline load for the NEW selection has applied its own configuration
+      // (a failed load leaves the composer disabled).
+      function invalidateComposer() {
+        composerState.cfg = null;
+        composerState.forId = null;
+        $("[data-role=composer-guidance]").prop("hidden", true).empty();
+        syncSendAvailability();
+      }
+
+      function composerReadyForCurrentConversation() {
+        return composerState.cfg !== null && composerState.forId === String($(".chat_id").val());
       }
 
       // Send/typing availability for the conversation that is open NOW and its selected channel (never a stale in-flight one).
       function syncSendAvailability() {
         const c = composerState.cfg || {};
-        const usable = composerState.channel === "email" ? !!c.email : !!c.sms;
+        const ready = composerReadyForCurrentConversation();
+        const usable = ready && (composerState.channel === "email" ? !!c.email : !!c.sms);
         const busy = !!emailSendsInFlight[String($(".chat_id").val())];
         $("#message").prop("disabled", !usable);
         $(".send").prop("disabled", !usable || busy);
@@ -1161,32 +1186,38 @@
         const c = composerState.cfg || {};
         const sendId = String($(".chat_id").val());   // the conversation this send belongs to
         const stillHere = function() { return String($(".chat_id").val()) === sendId; };
-        const body = ($("#message").val() || "").trim();
+        const rawDraft = $("#message").val() || "";    // the exact draft being submitted
+        const body = rawDraft.trim();
         const subject = ($("#email-subject").val() || "").trim();
         const warn = function(text) {
           toastr["warning"](text, "{{ __('locale.labels.attention') }}", { closeButton: true, positionClass: "toast-top-right", progressBar: true, newestOnTop: true, rtl: isRtl });
         };
 
-        if (!c.email || !c.url) { warn("Email can't be sent from here right now."); return; }
+        if (!composerReadyForCurrentConversation() || !c.email || !c.url) { warn("Email can't be sent from here right now."); return; }
         if (subject === "" || body === "") { warn("Add a subject and a message."); return; }
         if ((c.locations || []).length && !$("#email-location").val()) { warn("Choose which location this is for."); return; }
         if (emailSendsInFlight[sendId]) { return; }
 
         const location = $("#email-location").val() || "";
-        const intent = emailIntentKey(sendId, c, subject, body, location);
-        const data = { _token: "{{ csrf_token() }}", subject: subject, body: body, send_token: emailTokenFor(intent) };
+        const intent = emailIntentKey(sendId, subject, body, location);
+        const pending = pendingEmailFor(intent, c, location);
+        const data = { _token: "{{ csrf_token() }}", subject: subject, body: body, send_token: pending.token };
         if (location) { data.location_uid = location; }
-        if (c.contact_uid) { data.contact_uid = c.contact_uid; }
+        if (pending.contact_uid) { data.contact_uid = pending.contact_uid; }
 
         emailSendsInFlight[sendId] = true;
         syncSendAvailability();
 
-        $.ajax({ url: c.url, type: "POST", data: data, dataType: "json", headers: { Accept: "application/json" } })
+        $.ajax({ url: pending.url, type: "POST", data: data, dataType: "json", headers: { Accept: "application/json" } })
           .done(function(response) {
             forgetEmailToken(intent);
             toastr["success"](response.message || "Sent.", "{{ __('locale.labels.success') }}", { closeButton: true, positionClass: "toast-top-right", progressBar: true, newestOnTop: true, rtl: isRtl });
             if (stillHere()) {
-              $("#message").val("");
+              // Clear only the draft that was submitted: same conversation, still on Email, and the text untouched since. A newer
+              // draft (typed while the request was in flight) is never erased.
+              if (composerState.channel === "email" && ($("#message").val() || "") === rawDraft) {
+                $("#message").val("");
+              }
               loadTimeline(sendId);
             }
           })
@@ -1303,6 +1334,7 @@
           $(this).addClass("active");
 
           $(".chat_id").val(chat_id);
+          invalidateComposer();
 
           loadTimeline(chat_id).done(function() {
             setTimeout(() => {
@@ -1343,6 +1375,11 @@
       }
 
       function enter_chat() {
+        // Nothing is sent, on either channel, from a composer that is not configured for the conversation that is open now.
+        if (!composerReadyForCurrentConversation()) {
+          return;
+        }
+
         if (composerState.channel === "email") {
           sendEmail();
           return;
@@ -1890,6 +1927,7 @@
           const thread = homeScope.get("thread");
           if (!thread) { return; }
           $(".chat_id").val("email:" + thread);
+          invalidateComposer();
           loadTimeline("email:" + thread);
         })();
 
