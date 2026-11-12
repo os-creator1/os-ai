@@ -561,6 +561,13 @@
 
     function hangUp() {
         if (finished || !active) { return; }
+        // Cancel on an incoming call that has not been claimed yet (e.g. the microphone prompt is still open): this is a
+        // decline, not a hangup. Bumping the attempt invalidates the pending microphone operation.
+        if (direction === 'inbound' && pendingSdk && !sdkCall) {
+            attempt++;
+            declineInbound();
+            return;
+        }
         var uid = callUid, issuedAttempt = attempt;
         try { if (sdkCall) { sdkCall.hangup(); } } catch (e) {}
         if (uid) {

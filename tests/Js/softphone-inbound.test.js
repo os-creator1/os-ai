@@ -194,3 +194,41 @@ test('a genuine microphone refusal on the current call still declines it and rep
   assert.equal(h.root.getAttribute('data-state'), 'failed');
   assert.match(h.root.querySelector('[data-role="softphone-detail"]').textContent, /Microphone access was blocked/);
 });
+
+test('Cancel while the microphone prompt is pending declines the ringing leg, frees the slot and ignores the late prompt result', async () => {
+  const h = boot();
+  await tick(); await tick(); await tick();
+  const rtc = h.clients[0];
+
+  const callA = ringAndIdentify(h, rtc, 'call-a', 'Caller A');
+  await tick(); await tick();
+  let resolveMic;
+  h.state.mic = () => new Promise((resolve) => { resolveMic = resolve; });
+  h.click('softphone-answer');
+  await tick();
+  assert.equal(h.root.getAttribute('data-state'), 'connecting');
+
+  h.click('softphone-hangup'); // Cancel
+  await tick(); await tick();
+
+  const urls = h.requests.map((r) => r.join(' '));
+  assert.ok(urls.includes('POST /decline/call-a'), 'the unclaimed call was declined, not hung up through the server hangup endpoint');
+  assert.ok(!urls.some((u) => u.startsWith('POST /hangup/')), 'the server hangup endpoint was not used');
+  assert.equal(callA.hangups, 1, 'the pending ringing leg was released');
+
+  // The next incoming call is handled normally.
+  h.state.mic = null;
+  const callB = ringAndIdentify(h, rtc, 'call-b', 'Caller B');
+  await tick(); await tick();
+  assert.equal(h.root.getAttribute('data-state'), 'incoming');
+  assert.equal(h.nameOf(), 'Caller B');
+  const before = h.requests.length;
+
+  // A's microphone prompt finally resolves: it must not claim, answer or otherwise touch B.
+  resolveMic({ getTracks: () => [] });
+  await tick(); await tick(); await tick();
+  assert.deepEqual(h.requests.slice(before), [], 'no request was made on B\'s behalf');
+  assert.equal(callB.hangups, 0);
+  assert.equal(h.root.getAttribute('data-state'), 'incoming');
+  assert.equal(h.nameOf(), 'Caller B');
+});
