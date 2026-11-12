@@ -217,4 +217,28 @@ class CustomerOutboundCallTest extends TestCase
         $this->getJson(route('customer.workspaces.businesses.calls.show', [$otherWorkspace->uid, $otherBusiness->uid, $call->uid]))
             ->assertNotFound();
     }
+
+    public function test_do_not_contact_is_scoped_to_this_business_only(): void
+    {
+        // Another tenant opted this number out: it must not block this Business.
+        ['business' => $otherBusiness] = $this->createIndependentWorkspaceBusiness();
+        \App\Models\Blacklists::create(['user_id' => $this->customer->user_id, 'business_id' => $otherBusiness->id, 'number' => self::PHONE, 'reason' => 'x']);
+        $this->place()->assertStatus(202);
+
+        // This Business's own opt-out does block it.
+        $other = $this->makeContact($this->business->id, '14155552672');
+        \App\Models\Blacklists::create(['user_id' => $this->customer->user_id, 'business_id' => $this->business->id, 'number' => '14155552672', 'reason' => 'x']);
+        $this->place($other->uid, 'req-key-0010')->assertStatus(403)->assertJsonPath('error.code', 'contact_blocked');
+    }
+
+    public function test_a_call_with_an_unknown_transport_outcome_still_reserves_its_slot(): void
+    {
+        Http::swap(new \Illuminate\Http\Client\Factory());
+        Http::fake(['api.telnyx.com/v2/calls' => fn () => throw new \Illuminate\Http\Client\ConnectionException('timeout')]);
+        $this->place()->assertStatus(502)->assertJsonPath('data.failure_code', 'transport_error');
+
+        // A new idempotency key must not dial the same contact again while that outcome is unknown.
+        $this->place($this->contact->uid, 'req-key-0011')->assertStatus(409)->assertJsonPath('error.code', 'contact_call_in_progress');
+        $this->assertSame(1, BusinessVoiceCall::count(), 'The second request must not create or dial another call.');
+    }
 }

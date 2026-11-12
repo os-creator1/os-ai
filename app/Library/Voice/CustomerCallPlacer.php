@@ -7,6 +7,7 @@ use App\Library\Messaging\BusinessMessagingIdentityResolver;
 use App\Library\Messaging\E164Normalizer;
 use App\Models\Business;
 use App\Models\BusinessMessagingNumber;
+use App\Models\Blacklists;
 use App\Models\BusinessVoiceCall;
 use App\Models\Contacts;
 use Illuminate\Support\Facades\DB;
@@ -57,7 +58,8 @@ final class CustomerCallPlacer
         if ($destination === null) {
             throw new CustomerCallRefusedException('invalid_destination', 'This contact does not have a valid phone number.');
         }
-        if ($contact->isListedInBlacklist()) {
+        // Business-scoped, like managed messaging's own opt-out lookups: another tenant's opt-out must never block this one.
+        if (Blacklists::query()->where('business_id', $business->id)->where('number', $contact->phone)->exists()) {
             throw new CustomerCallRefusedException('contact_blocked', 'This number is on the do-not-contact list.', 403);
         }
 
@@ -79,8 +81,12 @@ final class CustomerCallPlacer
                 return [$existing, true];
             }
 
+            // A transport timeout leaves the outcome unknown (the call may be live), so it stays reserved for the
+            // bounded window: it cannot be re-dialled to the same contact or slip past the concurrency cap.
             $active = BusinessVoiceCall::query()->where('business_id', $business->id)
-                ->whereIn('status', [BusinessVoiceCall::STATUS_REQUESTED, BusinessVoiceCall::STATUS_INITIATED, BusinessVoiceCall::STATUS_ANSWERED])
+                ->where(fn ($q) => $q
+                    ->whereIn('status', [BusinessVoiceCall::STATUS_REQUESTED, BusinessVoiceCall::STATUS_INITIATED, BusinessVoiceCall::STATUS_ANSWERED])
+                    ->orWhere(fn ($u) => $u->where('status', BusinessVoiceCall::STATUS_FAILED)->where('failure_code', 'transport_error')))
                 ->where('created_at', '>', $window);
 
             if ((clone $active)->where('to_hash', $toHash)->exists()) {
