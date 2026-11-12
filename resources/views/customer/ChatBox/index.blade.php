@@ -755,6 +755,187 @@
             background-color: var(--color-chat-bubble-in);
         }
 
+        /* ── Email: reads like an email client (list rows, reading pane, reply box). SMS rows and bubbles are untouched. ── */
+        .chat-application .sidebar-content .chat-user-list-wrapper li.email-row {
+            align-items: flex-start;
+            border-radius: 0;
+            border-bottom: 1px solid var(--color-border-subtle);
+            gap: var(--space-3);
+            margin: 0;
+            padding: var(--space-3) var(--space-4);
+            width: 100%;
+        }
+
+        .chat-application .sidebar-content .chat-user-list-wrapper li.email-row.active {
+            box-shadow: inset 3px 0 0 var(--color-primary);
+        }
+
+        .email-row-avatar {
+            flex: 0 0 auto;
+            font-size: 0.75rem;
+            height: 28px;
+            width: 28px;
+        }
+
+        .email-row-main {
+            flex: 1 1 auto;
+            min-width: 0;
+        }
+
+        .email-row-top {
+            align-items: baseline;
+            display: flex;
+            gap: var(--space-2);
+            justify-content: space-between;
+        }
+
+        .email-row-sender {
+            font-weight: 600;
+            min-width: 0;
+        }
+
+        .email-row-time {
+            color: var(--color-text-muted);
+            flex: 0 0 auto;
+            font-size: 0.6875rem;
+        }
+
+        .email-row-subject {
+            color: var(--color-text-primary);
+            font-size: 0.8125rem;
+            font-weight: 500;
+        }
+
+        .email-row-preview {
+            color: var(--color-text-muted);
+            font-size: 0.75rem;
+        }
+
+        .email-row-count {
+            background: var(--color-surface-secondary);
+            border-radius: var(--radius-full);
+            color: var(--color-text-secondary);
+            font-size: 0.6875rem;
+            margin-left: var(--space-1);
+            padding: 0 var(--space-2);
+        }
+
+        .email-message {
+            border-bottom: 1px solid var(--color-border-subtle);
+            margin: 0 auto;
+            max-width: 760px;
+            padding: var(--space-4) var(--space-2);
+        }
+
+        .email-message-head {
+            align-items: center;
+            display: flex;
+            gap: var(--space-3);
+        }
+
+        .email-message-avatar {
+            flex: 0 0 auto;
+            height: 32px;
+            width: 32px;
+        }
+
+        .email-message-from {
+            flex: 1 1 auto;
+            min-width: 0;
+        }
+
+        .email-message-sender {
+            color: var(--color-text-primary);
+            display: block;
+            overflow-wrap: anywhere;
+        }
+
+        .email-message-direction,
+        .email-message-time,
+        .email-message-status {
+            color: var(--color-text-muted);
+            font-size: 0.75rem;
+        }
+
+        .email-message-time {
+            flex: 0 0 auto;
+            white-space: nowrap;
+        }
+
+        .email-message-subject {
+            color: var(--color-text-primary);
+            font-size: 1.0625rem;
+            font-weight: 600;
+            margin: var(--space-3) 0 var(--space-2);
+        }
+
+        .email-message-body {
+            color: var(--color-text-primary);
+            font-size: 0.9375rem;
+            line-height: 1.6;
+            margin: 0;
+            overflow-wrap: anywhere;
+            white-space: pre-wrap;
+        }
+
+        .email-message-status {
+            margin: var(--space-2) 0 0;
+        }
+
+        .email-message.timeline-message-warning .email-message-status {
+            color: var(--color-status-warning-text);
+        }
+
+        /* Reply box: subject on top, a roomy writing area, Send at the end. */
+        .chat-app-form.is-email-channel {
+            align-items: flex-start;
+        }
+
+        .chat-app-form.is-email-channel .form-send-message {
+            flex: 1 1 100%;
+            order: 1;
+        }
+
+        .chat-app-form.is-email-channel .form-send-message textarea {
+            min-height: 110px;
+            resize: vertical;
+        }
+
+        .chat-app-form.is-email-channel .conversation-channel-switch {
+            order: 0;
+        }
+
+        .chat-app-form.is-email-channel .send {
+            margin-left: auto;
+            order: 2;
+        }
+
+        .chat-app-form.is-email-channel .composer-email-fields {
+            border-bottom: 1px solid var(--color-border-subtle);
+            padding-bottom: var(--space-2);
+        }
+
+        /* Calmer context panel for an email thread. */
+        .conversation-context [data-context="email"] .conversation-context-name {
+            font-size: 0.9375rem;
+        }
+
+        .conversation-context [data-context="email"] .conversation-context-details dt {
+            color: var(--color-text-muted);
+            font-size: 0.6875rem;
+            font-weight: 600;
+            letter-spacing: 0.04em;
+            margin-top: var(--space-3);
+            text-transform: uppercase;
+        }
+
+        .conversation-context [data-context="email"] .conversation-context-details dd {
+            color: var(--color-text-primary);
+            font-size: 0.8125rem;
+            margin: 0;
+            overflow-wrap: anywhere;
+        }
+
     </style>
 
 @endsection

@@ -36,7 +36,32 @@
         @endphp
     @endif
 
-    @if ($item->isMessage())
+    @if ($item->isMessage() && $item->channel === 'email')
+        {{-- An email reads like an email: a header (who, when), the subject, the body on the page — not a chat bubble. --}}
+        @php
+            $emailFrom = $item->isInbound() ? ($item->via ?: 'Unknown sender') : 'You';
+            $emailInitial = mb_strtoupper(mb_substr(trim((string) $emailFrom) !== '' ? (string) $emailFrom : '?', 0, 1));
+        @endphp
+        <article class="email-message email-message-{{ $item->isInbound() ? 'inbound' : 'outbound' }} {{ $item->tone->value === 'warning' ? 'timeline-message-warning' : '' }}" data-role="timeline-message" data-direction="{{ $item->direction?->value }}" data-channel="email">
+            <header class="email-message-head">
+                <span class="avatar email-message-avatar" aria-hidden="true">{{ $emailInitial }}</span>
+                <div class="email-message-from">
+                    <strong class="email-message-sender">{{ $emailFrom }}</strong>
+                    <span class="email-message-direction">{{ $item->isInbound() ? 'to you' : 'sent from ' . $item->via }}</span>
+                </div>
+                <time class="email-message-time" datetime="{{ $local->toIso8601String() }}">{{ $local->format('M j, ' . config('app.time_format')) }}</time>
+            </header>
+            @if ($item->title !== '')
+                <h3 class="email-message-subject timeline-email-subject" data-role="timeline-email-subject">{{ $item->title }}</h3>
+            @endif
+            @if ($item->body !== null)
+                <div class="email-message-body timeline-message-body">{{ $item->body }}</div>
+            @endif
+            @if ($item->detail !== null)
+                <p class="email-message-status" data-role="timeline-detail">{{ $item->detail }}</p>
+            @endif
+        </article>
+    @elseif ($item->isMessage())
         <div class="chat {{ $item->isInbound() ? 'chat-left' : '' }} timeline-message {{ $item->tone->value === 'warning' ? 'timeline-message-warning' : '' }}" data-role="timeline-message" data-direction="{{ $item->direction?->value }}" data-channel="{{ $item->channel }}">
             <div class="chat-body">
                 <div class="chat-content">
