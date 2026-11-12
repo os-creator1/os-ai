@@ -333,14 +333,15 @@ class BrowserCallingTest extends TestCase
             ->assertSee('data-role="softphone-summary"', false)
             ->assertSee('data-role="softphone-mute"', false)
             ->assertSee('data-role="softphone-hangup"', false)
+            ->assertSee('data-role="softphone-answer"', false)
             ->assertSee('data-role="softphone-again"', false)
             ->assertSee('html.dark-layout .mg-softphone', false);
         // Unsupported functions are present only as hidden hooks that the script keeps hidden (capability flags off).
-        foreach (['keypad', 'hold', 'record', 'transfer', 'note', 'incoming'] as $capability) {
+        foreach (['keypad', 'hold', 'record', 'transfer', 'note'] as $capability) {
             $page->assertSee('data-capability="'.$capability.'"', false);
         }
         $js = file_get_contents(public_path('js/crm/mg-softphone.js'));
-        $this->assertStringContainsString('keypad: false, hold: false, record: false, transfer: false, note: false, incoming: false', $js);
+        $this->assertStringContainsString('keypad: false, hold: false, record: false, transfer: false, note: false', $js);
 
         config(['messaging.voice.browser.enabled' => false]);
         $this->get($url)->assertOk()->assertDontSee('data-role="contact-call"', false)->assertDontSee('id="mg-softphone"', false);

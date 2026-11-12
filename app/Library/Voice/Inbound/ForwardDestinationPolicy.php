@@ -15,7 +15,17 @@ final class ForwardDestinationPolicy
     /** @return array{0: string|null, 1: string|null} [canonical E.164, null] or [null, reason] */
     public function check(string $raw): array
     {
-        $e164 = E164Normalizer::normalize(trim($raw));
+        $raw = trim($raw);
+        if (! str_starts_with($raw, '+')) {
+            // A US/Canada number typed the way people type it: (650) 555-0142, 650-555-0142 or 1 650 555 0142.
+            $digits = preg_replace('/\D/', '', $raw) ?? '';
+            if (strlen($digits) === 10) {
+                $raw = '+1' . $digits;
+            } elseif (strlen($digits) === 11 && $digits[0] === '1') {
+                $raw = '+' . $digits;
+            }
+        }
+        $e164 = E164Normalizer::normalize($raw);
         if ($e164 === null) {
             return [null, 'invalid_number'];
         }

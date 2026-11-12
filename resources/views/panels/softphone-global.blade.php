@@ -7,9 +7,13 @@
         if ((bool) config('messaging.voice.inbound.enabled')) {
             try {
                 $mgCtx = app(\App\Library\Navigation\CustomerShellComposer::class)->currentContext(auth()->user());
-                if ($mgCtx->selectedWorkspace !== null && $mgCtx->selectedBusiness !== null) {
+                $mgBusinessRef = $mgCtx->selectedBusiness;
+                $mgBusiness = $mgBusinessRef !== null && $mgBusinessRef->accessible && $mgBusinessRef->isActive()
+                    ? \App\Models\Business::query()->find($mgBusinessRef->id)
+                    : null;
+                if ($mgBusiness !== null) {
                     $mgInboundCalling = app(\App\Library\Voice\Inbound\InboundCallingSurface::class)
-                        ->browserCalling((string) $mgCtx->selectedWorkspace->uid, $mgCtx->selectedBusiness, auth()->user());
+                        ->browserCalling((string) $mgBusinessRef->workspaceUid, $mgBusiness, auth()->user());
                 }
             } catch (\Throwable) {
                 $mgInboundCalling = null;
