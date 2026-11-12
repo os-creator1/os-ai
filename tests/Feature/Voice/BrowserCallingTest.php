@@ -327,6 +327,21 @@ class BrowserCallingTest extends TestCase
         $page->assertSee('data-role="contact-call"', false)->assertSee('id="mg-softphone"', false)->assertSee('webrtc-2.28.2.js', false);
         $this->assertStringNotContainsString('fixture_api_key', $page->getContent());
 
+        // The redesigned popup: real contact identity, every supported state's hooks, and no fake controls enabled.
+        $page->assertSee('data-role="softphone-minimize"', false)
+            ->assertSee('data-role="pill-expand"', false)
+            ->assertSee('data-role="softphone-summary"', false)
+            ->assertSee('data-role="softphone-mute"', false)
+            ->assertSee('data-role="softphone-hangup"', false)
+            ->assertSee('data-role="softphone-again"', false)
+            ->assertSee('html.dark-layout .mg-softphone', false);
+        // Unsupported functions are present only as hidden hooks that the script keeps hidden (capability flags off).
+        foreach (['keypad', 'hold', 'record', 'transfer', 'note', 'incoming'] as $capability) {
+            $page->assertSee('data-capability="'.$capability.'"', false);
+        }
+        $js = file_get_contents(public_path('js/crm/mg-softphone.js'));
+        $this->assertStringContainsString('keypad: false, hold: false, record: false, transfer: false, note: false, incoming: false', $js);
+
         config(['messaging.voice.browser.enabled' => false]);
         $this->get($url)->assertOk()->assertDontSee('data-role="contact-call"', false)->assertDontSee('id="mg-softphone"', false);
     }

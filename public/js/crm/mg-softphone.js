@@ -20,13 +20,35 @@
     var cfg;
     try { cfg = JSON.parse(root.getAttribute('data-config') || '{}'); } catch (e) { return; }
 
-    var $ = function (role) { return root.querySelector('[data-role="' + role + '"]'); };
+    var $ = function (role) {
+        var sel = '[data-role="' + role + '"]';
+        return root.querySelector(sel) || document.querySelector('[data-role="softphone-pill"] ' + sel) || document.querySelector('[data-role="softphone-pill"]' + sel);
+    };
     var statusEl = $('softphone-status');
     var detailEl = $('softphone-detail');
     var timerEl = $('softphone-timer');
     var muteBtn = $('softphone-mute');
+    var muteLabelEl = $('softphone-mute-label');
     var hangBtn = $('softphone-hangup');
+    var hangLabelEl = $('softphone-hangup-label');
     var closeBtn = $('softphone-close');
+    var minBtn = $('softphone-minimize');
+    var controlsEl = $('softphone-controls');
+    var hangRow = $('softphone-hangup-row');
+    var doneRow = $('softphone-done-row');
+    var summaryEl = $('softphone-summary');
+    var subEl = $('softphone-sub');
+    var pill = $('softphone-pill');
+    var pillTimer = $('pill-timer');
+    var pillMute = $('pill-mute');
+
+    // Functions that are NOT implemented yet. Their controls exist in the markup as hidden hooks
+    // ([data-capability]) and stay hidden until a real implementation sets the flag to true.
+    var capabilities = { keypad: false, hold: false, record: false, transfer: false, note: false, incoming: false };
+    root.querySelectorAll('[data-capability]').forEach(function (el) {
+        el.hidden = !capabilities[el.getAttribute('data-capability')];
+    });
+    var minimized = false;
     var audioEl = document.getElementById('mg-remote-audio');
 
     var client = null;
@@ -68,30 +90,61 @@
         return fallback || 'Something went wrong. Please try again.';
     }
 
-    function show() { root.hidden = false; root.classList.add('is-open'); }
+    function show() { root.classList.add('is-open'); applyMinimized(); }
+
+    function isLive(state) { return state === 'connecting' || state === 'ringing' || state === 'connected'; }
+
+    // Minimize swaps the card for the pill; it never touches the call itself. Only a live call can be minimized.
+    function applyMinimized() {
+        var open = root.classList.contains('is-open');
+        var min = open && minimized && isLive(root.getAttribute('data-state'));
+        root.hidden = !open || min;
+        pill.hidden = !min;
+        root.setAttribute('data-minimized', min ? '1' : '0');
+    }
 
     function setState(state, text, detail) {
         root.setAttribute('data-state', state);
         statusEl.textContent = text;
         detailEl.textContent = detail || '';
-        var live = state === 'connecting' || state === 'ringing' || state === 'connected';
-        hangBtn.hidden = !live;
-        muteBtn.hidden = state !== 'connected';
+        detailEl.hidden = !detail;
+        var live = isLive(state);
+        if (!live) { minimized = false; }
+        hangRow.hidden = !live;
+        hangLabelEl.textContent = state === 'connected' ? 'End call' : 'Cancel';
+        controlsEl.hidden = !live;
+        muteBtn.disabled = state !== 'connected';
+        pillMute.disabled = state !== 'connected';
+        minBtn.hidden = !live;
         closeBtn.hidden = live;
+        doneRow.hidden = live;
+        summaryEl.hidden = state !== 'ended' && state !== 'failed';
         timerEl.hidden = state !== 'connected' && state !== 'ended';
+        subEl.textContent = (state === 'ended' || state === 'failed') ? 'Outgoing call' : (cfg.contactPhone || '') + ' \u00b7 Outgoing';
+        applyMinimized();
     }
 
     function fmt(seconds) {
         seconds = Math.max(0, Math.round(seconds));
         var m = Math.floor(seconds / 60), s = seconds % 60;
-        return m + ':' + (s < 10 ? '0' : '') + s;
+        return (m < 10 ? '0' : '') + m + ':' + (s < 10 ? '0' : '') + s;
+    }
+
+    function showTime(text) { timerEl.textContent = text; pillTimer.textContent = text; }
+
+    function showSummary(outcome, label, seconds) {
+        var out = $('summary-outcome');
+        out.textContent = label;
+        out.setAttribute('data-outcome', outcome);
+        $('summary-duration').textContent = fmt(seconds || 0);
+        $('summary-direction').textContent = 'Outgoing';
     }
 
     function startTimer() {
         if (tickTimer) { return; }
         connectedAt = Date.now();
-        tickTimer = setInterval(function () { timerEl.textContent = fmt((Date.now() - connectedAt) / 1000); }, 500);
-        timerEl.textContent = '0:00';
+        tickTimer = setInterval(function () { showTime(fmt((Date.now() - connectedAt) / 1000)); }, 500);
+        showTime('00:00');
     }
 
     function api(method, url, body, keepalive) {
@@ -127,8 +180,7 @@
         client = null;
         active = false;
         muted = false;
-        muteBtn.textContent = muteBtn.getAttribute('data-label-mute');
-        muteBtn.setAttribute('aria-pressed', 'false');
+        renderMute();
     }
 
     function fail(message) {
@@ -136,6 +188,7 @@
         finished = true;
         cleanup();
         show();
+        showSummary('failed', 'Failed', 0);
         setState('failed', 'Call failed', message);
     }
 
@@ -145,12 +198,16 @@
         var seconds = call.duration_seconds;
         cleanup();
         if (call.status === 'failed') {
+            showSummary('failed', 'Failed', seconds || 0);
             setState('failed', 'Call failed', say(call.failure_code));
+            refreshHistory();
             return;
         }
         var connected = call.answered_at !== null;
-        setState('ended', 'Call ended', connected ? 'Duration ' + fmt(seconds || 0) + '. Saved to this contact.' : 'The call was not answered. Saved to this contact.');
-        if (connected) { timerEl.textContent = fmt(seconds || 0); }
+        showSummary(connected ? 'connected' : 'unanswered', connected ? 'Connected' : 'Not answered', connected ? seconds || 0 : 0);
+        setState('ended', 'Call ended', '');
+        showTime(fmt(connected ? seconds || 0 : 0));
+        timerEl.hidden = !connected;
         refreshHistory();
     }
 
@@ -228,7 +285,8 @@
         var rtc = null; // this attempt's SDK instance: a stale step may only ever tear down its own
         callUid = null;
         connectedAt = null;
-        timerEl.textContent = '0:00';
+        showTime('00:00');
+        minimized = false;
         show();
         setState('connecting', 'Allow microphone access', 'Your browser will ask to use the microphone.');
 
@@ -299,7 +357,9 @@
             finished = true;
             attempt++; // abandon the start sequence still waiting on the microphone prompt or the network
             cleanup();
+            showSummary('unanswered', 'Cancelled', 0);
             setState('ended', 'Call cancelled', '');
+            timerEl.hidden = true;
         }
     }
 
@@ -309,8 +369,17 @@
             if (muted) { sdkCall.unmuteAudio(); } else { sdkCall.muteAudio(); }
             muted = !muted;
         } catch (e) { return; }
-        muteBtn.textContent = muted ? muteBtn.getAttribute('data-label-unmute') : muteBtn.getAttribute('data-label-mute');
+        renderMute();
+    }
+
+    function renderMute() {
+        var label = muted ? muteBtn.getAttribute('data-label-unmute') : muteBtn.getAttribute('data-label-mute');
+        muteLabelEl.textContent = label;
+        muteBtn.classList.toggle('on', muted);
         muteBtn.setAttribute('aria-pressed', muted ? 'true' : 'false');
+        pillMute.classList.toggle('on', muted);
+        pillMute.setAttribute('aria-pressed', muted ? 'true' : 'false');
+        pillMute.setAttribute('aria-label', label);
     }
 
     document.querySelectorAll('[data-role="contact-call"]').forEach(function (button) {
@@ -318,7 +387,15 @@
     });
     muteBtn.addEventListener('click', toggleMute);
     hangBtn.addEventListener('click', hangUp);
-    closeBtn.addEventListener('click', function () { root.hidden = true; root.classList.remove('is-open'); });
+    pillMute.addEventListener('click', toggleMute);
+    $('pill-hangup').addEventListener('click', hangUp);
+    $('pill-expand').addEventListener('click', function () { minimized = false; applyMinimized(); });
+    minBtn.addEventListener('click', function () { minimized = true; applyMinimized(); });
+    function closePopup() { minimized = false; root.classList.remove('is-open'); applyMinimized(); }
+    closeBtn.addEventListener('click', closePopup);
+    $('softphone-done').addEventListener('click', closePopup);
+    // "Call again" reuses the exact same start sequence (and its server checks) as the contact's call button.
+    $('softphone-again').addEventListener('click', start);
 
     // Leaving the page must not leave a call (or a charge) running on the server.
     window.addEventListener('pagehide', function () {
