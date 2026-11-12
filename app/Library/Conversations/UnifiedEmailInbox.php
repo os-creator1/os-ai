@@ -158,12 +158,16 @@ class UnifiedEmailInbox
     }
 
     /**
-     * "First Last" for a set of Contacts, from the same two tags the SMS list reads.
+     * "First Last" for a set of Contacts the ACTOR may see, in a bounded number of queries (never one per Contact).
+     *
+     * Visibility is BusinessEmailLocationScope::contactAccessible() applied in bulk: a Contact with no Location is visible; one with a
+     * Location only when that Location belongs to this Business and the actor may access it. A restricted Contact's name is never read,
+     * so the caller shows the permitted email counterpart instead. The email ROW stays visible under its own Location scope.
      *
      * @param  array<int, int>  $contactIds
-     * @return array<int, string> contact id => name (absent when the Contact has none)
+     * @return array<int, string> contact id => name (absent when the Contact is hidden or has none)
      */
-    public function contactNames(Business $business, array $contactIds): array
+    public function contactNames(Business $business, int $userId, array $contactIds): array
     {
         $contactIds = array_values(array_unique(array_filter($contactIds)));
 
@@ -171,7 +175,14 @@ class UnifiedEmailInbox
             return [];
         }
 
-        $owned = Contacts::query()->where('business_id', $business->id)->whereIn('id', $contactIds)->pluck('id')->all();
+        $contacts = Contacts::query()->where('business_id', $business->id)->whereIn('id', $contactIds)->get(['id', 'location_id']);
+        $reachable = array_flip($this->locations->accessibleLocationIds($userId, $business));
+
+        // contactAccessible(): the Location must exist in THIS Business and be reachable (accessibleLocationIds is already Business-scoped).
+        $owned = $contacts
+            ->filter(fn (Contacts $contact) => $contact->location_id === null || isset($reachable[(int) $contact->location_id]))
+            ->pluck('id')
+            ->all();
 
         if ($owned === []) {
             return [];

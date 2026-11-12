@@ -46,7 +46,7 @@ class UnifiedConversationList
 
         if ($channel === 'email') {
             $slice = $threads->slice(max(0, $page - 1) * UnifiedConversationList::PER_PAGE, UnifiedConversationList::PER_PAGE);
-            $names = $this->inbox->contactNames($business, $slice->pluck('contact_id')->all());
+            $names = $this->inbox->contactNames($business, $userId, $slice->pluck('contact_id')->all());
 
             return $slice->map(fn (array $thread) => ['type' => 'email', 'thread' => $thread, 'name' => $names[$thread['contact_id']] ?? null, 'at' => $thread['at']])->values()->all();
         }
@@ -62,7 +62,7 @@ class UnifiedConversationList
         }
 
         $boxes = $this->inbox->boxesByContact($business, $userId, $threads->pluck('contact_id')->all());
-        $names = $this->inbox->contactNames($business, $threads->pluck('contact_id')->all());
+        $names = $this->inbox->contactNames($business, $userId, $threads->pluck('contact_id')->all());
 
         $newestByBox = [];
         $emailRows = [];

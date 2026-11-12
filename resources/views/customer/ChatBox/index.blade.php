@@ -1129,26 +1129,33 @@
       // was FIRST submitted with. A timeline refresh after an ambiguous outcome can legitimately change the composer's own endpoint
       // (a new-email /send becomes a /reply once the message exists); the retry must still go to the ORIGINAL endpoint with the ORIGINAL
       // key, because the sender's idempotency is per endpoint+key — a /reply with the old key would be a different operation.
-      function emailIntentKey(chatId, subject, body, location) {
-        return [chatId, location || "", subject, body].join("\u0001");
+      // The Location is part of the pending record, NOT of the key: the selector is cleared by the refresh that follows an ambiguous send,
+      // and the retry must still carry the Location the original was submitted with.
+      function emailIntentKey(chatId, subject, body) {
+        return [chatId, subject, body].join("\u0001");
       }
 
       function emailTokenStore() {
         try { return window.sessionStorage; } catch (e) { return null; }
       }
 
-      function pendingEmailFor(intent, c, locationUid) {
-        const store = emailTokenStore();
-        const name = "mg.emailPending." + intent;
+      function peekPendingEmail(intent) {
         let pending = pendingEmailTokens[intent];
+        const store = emailTokenStore();
         if (!pending && store) {
-          try { pending = JSON.parse(store.getItem(name) || "null"); } catch (e) { pending = null; }
+          try { pending = JSON.parse(store.getItem("mg.emailPending." + intent) || "null"); } catch (e) { pending = null; }
         }
-        if (!pending || !pending.token || !pending.url) {
-          pending = { token: m5UuidV4(), url: c.url, contact_uid: c.contact_uid || "" };
+        return pending && pending.token && pending.url ? pending : null;
+      }
+
+      function pendingEmailFor(intent, c, locationUid) {
+        let pending = peekPendingEmail(intent);
+        if (!pending) {
+          pending = { token: m5UuidV4(), url: c.url, contact_uid: c.contact_uid || "", location: locationUid || "" };
         }
         pendingEmailTokens[intent] = pending;
-        if (store) { try { store.setItem(name, JSON.stringify(pending)); } catch (e) { /* storage unavailable: the in-memory record still holds */ } }
+        const store = emailTokenStore();
+        if (store) { try { store.setItem("mg.emailPending." + intent, JSON.stringify(pending)); } catch (e) { /* storage unavailable: the in-memory record still holds */ } }
         return pending;
       }
 
@@ -1195,14 +1202,14 @@
 
         if (!composerReadyForCurrentConversation() || !c.email || !c.url) { warn("Email can't be sent from here right now."); return; }
         if (subject === "" || body === "") { warn("Add a subject and a message."); return; }
-        if ((c.locations || []).length && !$("#email-location").val()) { warn("Choose which location this is for."); return; }
+        const intent = emailIntentKey(sendId, subject, body);
+        // A pending (ambiguous) send of this exact content already carries its Location: the selector needs no second choice.
+        if (!peekPendingEmail(intent) && (c.locations || []).length && !$("#email-location").val()) { warn("Choose which location this is for."); return; }
         if (emailSendsInFlight[sendId]) { return; }
 
-        const location = $("#email-location").val() || "";
-        const intent = emailIntentKey(sendId, subject, body, location);
-        const pending = pendingEmailFor(intent, c, location);
+        const pending = pendingEmailFor(intent, c, $("#email-location").val() || "");
         const data = { _token: "{{ csrf_token() }}", subject: subject, body: body, send_token: pending.token };
-        if (location) { data.location_uid = location; }
+        if (pending.location) { data.location_uid = pending.location; }
         if (pending.contact_uid) { data.contact_uid = pending.contact_uid; }
 
         emailSendsInFlight[sendId] = true;

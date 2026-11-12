@@ -42,7 +42,7 @@ async function scenario(name, fn) {
     const kind = url.includes('/reply') ? 'reply' : 'send';
     const key = kind + ':' + params.get('send_token');   // the sender's idempotency is per endpoint kind + key
     const already = server.seen.has(key);
-    server.requests.push({ url, kind, token: params.get('send_token'), contact_uid: params.get('contact_uid') });
+    server.requests.push({ url, kind, token: params.get('send_token'), contact_uid: params.get('contact_uid'), location_uid: params.get('location_uid') });
     if (!already) { server.seen.add(key); server.sent += 1; }
     if (server.hold) { await server.hold; }
     if (server.mode === 'accept-then-drop' && server.requests.length === 1) { return route.abort('connectionreset'); }
@@ -105,6 +105,49 @@ const answer = (page, id, extra = {}) => page.evaluate(({ id, cfg }) => { if ($(
     assert.equal(server.requests[1].token, server.requests[0].token, 'with the original key');
     assert.equal(server.requests[1].contact_uid, 'contact-1', 'and the original Contact');
     assert.equal(server.sent, 1, 'exactly one email was accepted');
+  });
+
+  await scenario('(P1) a multi-Location send with a lost response retries with the ORIGINAL Location, endpoint, contact and key — after refresh and after storage restoration', async (page, server) => {
+    const L = [{ uid: 'L1', name: 'One' }, { uid: 'L2', name: 'Two' }];
+    await open(page, 'A', { url: 'http://conv.test/email/send', contact_uid: 'contact-1', locations: L });
+    await compose(page, 'Hello there');
+    await page.evaluate(() => { $('#email-location').val('L2'); });
+    await page.evaluate(() => sendEmail()); await tick(page, 500);
+    assert.equal(server.requests.length, 1, 'sent once, never automatically again');
+    assert.equal(server.requests[0].location_uid, 'L2');
+    // Refresh: the message now exists, so the composer becomes a reply with NO Location selector.
+    await page.evaluate((cfg) => { applyComposer(cfg); }, cfgFor('A', { url: 'http://conv.test/email/reply/m1', contact_uid: null, locations: [] }));
+    assert.equal(await page.evaluate(() => $('#email-location').val() || ''), '', 'the selector is cleared by the refresh');
+    await page.evaluate(() => { $('#email-subject').val('Re: Hi'); sendEmail(); }); await tick(page, 500);
+    assert.equal(server.requests.length, 2);
+    assert.equal(server.requests[1].kind, 'send');
+    assert.equal(server.requests[1].token, server.requests[0].token);
+    assert.equal(server.requests[1].contact_uid, 'contact-1');
+    assert.equal(server.requests[1].location_uid, 'L2', 'the original Location, not a blank one');
+    assert.equal(server.sent, 1, 'exactly one actual send');
+  });
+
+  await scenario('(P1) the pending Location also survives a reload (sessionStorage) and a refresh that still shows an empty selector', async (page, server) => {
+    server.mode = 'always-drop';
+    const L = [{ uid: 'L1', name: 'One' }, { uid: 'L2', name: 'Two' }];
+    await open(page, 'A', { url: 'http://conv.test/email/send', contact_uid: 'contact-1', locations: L });
+    await compose(page, 'Hello there');
+    await page.evaluate(() => { $('#email-location').val('L2'); sendEmail(); }); await tick(page, 400);
+    await page.evaluate(() => { pendingEmailTokens = {}; });                    // a reload: only sessionStorage remains
+    await open(page, 'A', { url: 'http://conv.test/email/send', contact_uid: 'contact-1', locations: L });   // selector comes back blank
+    await compose(page, 'Hello there');
+    assert.equal(await page.evaluate(() => $('#email-location').val() || ''), '');
+    await page.evaluate(() => sendEmail()); await tick(page, 400);
+    assert.equal(server.requests.length, 2, 'the unchanged pending send is not blocked by the blank selector');
+    assert.equal(server.requests[1].token, server.requests[0].token);
+    assert.equal(server.requests[1].location_uid, 'L2');
+    // Changed content is a NEW intent: it needs its own Location choice and gets its own key.
+    await compose(page, 'A different message');
+    await page.evaluate(() => sendEmail()); await tick(page, 300);
+    assert.equal(server.requests.length, 2, 'a new intent with no Location chosen is refused client-side');
+    await page.evaluate(() => { $('#email-location').val('L1'); sendEmail(); }); await tick(page, 400);
+    assert.notEqual(server.requests[2].token, server.requests[0].token);
+    assert.equal(server.requests[2].location_uid, 'L1');
   });
 
   await scenario('edited content is a new intent and gets a new key', async (page, server) => {

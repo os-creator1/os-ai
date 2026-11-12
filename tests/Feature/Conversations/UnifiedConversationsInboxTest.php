@@ -378,4 +378,37 @@ class UnifiedConversationsInboxTest extends TestCase
         // SMS-only pagination is unchanged: its own 50-row pages.
         $this->assertCount(30, $this->rowIds($this->list('sms')));
     }
+
+    public function test_a_contact_in_an_inaccessible_location_is_not_named_in_email_lists_but_the_visible_email_still_is(): void
+    {
+        $this->activeAccount($this->business);
+        $locB = $this->makeLocation($this->business, 'Location B');
+        $staff = $this->createCustomer();
+        $membership = $this->member($this->workspace, $staff->user, WorkspaceMembershipRole::Staff);
+        $membership->forceFill(['location_access_scope' => LocationAccessScope::Selected])->save();
+        app(WorkspaceMembershipLocationRepository::class)->assign($membership, $this->locA);
+
+        $restricted = $this->contactWithEmails($this->business, ['secret@example.com'], $locB->id, 'Restricted');
+        $allowed = $this->contactWithEmails($this->business, ['open@example.com'], $this->locA->id, 'Allowed');
+        $unplaced = $this->contactWithEmails($this->business, ['free@example.com'], null, 'Unplaced');
+        // The EMAIL rows are in Location A (visible to this staff member); one references a Contact assigned to Location B.
+        $this->email('About a quote', 't-r', now()->subMinutes(1), 'secret@example.com', contactId: $restricted->id);
+        $this->email('Opening hours', 't-a', now()->subMinutes(2), 'open@example.com', contactId: $allowed->id);
+        $this->email('A question', 't-u', now()->subMinutes(3), 'free@example.com', contactId: $unplaced->id);
+
+        $this->authenticateAs($staff, ['chat_box', 'view_contact']);
+
+        foreach (['email', 'all'] as $channel) {
+            $html = $this->list($channel);
+            $this->assertStringContainsString('About a quote', $html, "$channel: the visible email stays visible");
+            $this->assertStringContainsString('secret@example.com', $html, "$channel: shown by its permitted address");
+            $this->assertStringNotContainsString('Restricted', $html, "$channel: the restricted Contact's name is never disclosed");
+            $this->assertStringContainsString('Allowed', $html, "$channel: an accessible Contact is named");
+            $this->assertStringContainsString('Unplaced', $html, "$channel: a Location-less Contact is named");
+        }
+
+        // A full-reach owner still sees the name.
+        $this->authenticateAs($this->owner);
+        $this->assertStringContainsString('Restricted', $this->list('email'));
+    }
 }

@@ -737,7 +737,7 @@
             $replyTo = $messages->reverse()->first(fn ($m) => $m->direction === 'inbound' && $m->status->value !== 'failed')
                 ?? $messages->reverse()->first(fn ($m) => $m->status->value !== 'failed');
             $counterpart = (string) ($messages->first(fn ($m) => $m->direction === 'inbound')?->from_email ?? $messages->first()->to_email);
-            $name = $contact === null ? null : ($inbox->contactNames($business, [(int) $contact->id])[(int) $contact->id] ?? null);
+            $name = $contact === null ? null : ($inbox->contactNames($business, $userId, [(int) $contact->id])[(int) $contact->id] ?? null);
 
             return response()->json([
                 'status'   => 'success',
