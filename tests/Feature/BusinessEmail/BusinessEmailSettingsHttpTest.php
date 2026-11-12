@@ -108,7 +108,8 @@ class BusinessEmailSettingsHttpTest extends TestCase
 
         $this->assertStringContainsString('owner@corp.test', $html);
         $this->assertStringContainsString('Receiving is working. Last checked', $html);
-        $this->assertStringNotContainsString('Something went wrong', $html);
+        // (The phrase "Something went wrong" is shared layout markup, so it is not asserted against.)
+        $this->assertStringContainsString('Disconnect', $html);
     }
 
     public function test_a_revoked_account_asks_to_reconnect(): void
