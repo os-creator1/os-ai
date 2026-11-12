@@ -589,6 +589,172 @@
             margin: 0 0 var(--space-3) var(--space-4);
         }
 
+        /* ── Unified inbox: channel filter, channel badges, channel-aware composer ── */
+        .sidebar-content .channel-group.btn-group {
+            background-color: var(--color-surface-secondary);
+            border-radius: var(--radius-md);
+            display: flex;
+            gap: 0;
+            padding: var(--space-1);
+            width: 100%;
+        }
+
+        .sidebar-content .channel-group .channel-button {
+            border: 0 !important;
+            border-radius: var(--radius-sm) !important;
+            box-shadow: none !important;
+            flex: 1 1 0;
+            font-size: var(--type-caption-size);
+            justify-content: center;
+            padding: var(--space-1) var(--space-2) !important;
+        }
+
+        .sidebar-content .channel-group .channel-button.btn-outline-primary {
+            background-color: transparent !important;
+            color: var(--color-text-secondary) !important;
+        }
+
+        .conversation-channel-badge {
+            color: var(--color-text-muted);
+            font-size: 0.6875rem;
+            font-weight: 600;
+            letter-spacing: 0.04em;
+            text-transform: uppercase;
+        }
+
+        .conversation-channel-badge-email {
+            color: var(--color-primary);
+        }
+
+        .timeline-channel {
+            font-size: 0.6875rem;
+            font-weight: 600;
+            letter-spacing: 0.04em;
+            text-transform: uppercase;
+        }
+
+        .timeline-email-subject {
+            font-weight: 600;
+            margin-bottom: var(--space-1);
+        }
+
+        .timeline-message[data-channel="email"] .timeline-message-body {
+            white-space: pre-wrap;
+            overflow-wrap: anywhere;
+        }
+
+        .conversation-channel-switch {
+            display: inline-flex;
+            gap: 2px;
+            margin-right: var(--space-2);
+        }
+
+        .conversation-channel-option {
+            background: transparent;
+            border: 1px solid var(--color-border-subtle);
+            border-radius: var(--radius-full);
+            color: var(--color-text-secondary);
+            font-size: 0.75rem;
+            font-weight: 600;
+            letter-spacing: 0.04em;
+            padding: var(--space-1) var(--space-2);
+        }
+
+        .conversation-channel-option.is-active {
+            background: var(--color-primary-soft-bg);
+            border-color: var(--color-primary-border);
+            color: var(--color-text-primary);
+        }
+
+        .conversation-channel-switch[data-single="1"] .conversation-channel-option {
+            cursor: default;
+        }
+
+        .composer-email-fields {
+            display: flex;
+            flex: 1 1 100%;
+            gap: var(--space-2);
+            order: -1;
+        }
+
+        .composer-email-fields[hidden],
+        .conversation-channel-option[hidden],
+        .composer-guidance[hidden] {
+            display: none;
+        }
+
+        .composer-email-fields .form-control {
+            flex: 1 1 auto;
+        }
+
+        .composer-guidance {
+            color: var(--color-text-muted);
+            flex: 1 1 100%;
+        }
+
+        .chat-app-form.is-email-channel .attachment-icon,
+        .chat-app-form.is-email-channel .composer-template-select {
+            display: none;
+        }
+
+        .active-chat.is-email-thread .add-to-blacklist,
+        .active-chat.is-email-thread .remove-btn,
+        .active-chat.is-email-thread .add-to-pin {
+            display: none !important;
+        }
+
+        /*
+         * Dark mode: ONE continuous workspace surface.
+         *
+         * Why there were three: the list pane (.sidebar-content) and the contact panel used --color-surface (#262625); the
+         * conversation panes were meant to use --color-chat-canvas (#1a1a19) via the rule above, but the theme's
+         * `.dark-layout .chat-application .content-right .chat-app-window .start-chat-area, .user-chats { background-color: #1e1e1d }`
+         * is MORE specific, so the panel actually rendered #1e1e1d; and the wrapper behind them kept the page canvas (#1a1a19).
+         * Three parents, three hex values. Every pane is now painted with the same canvas token (selectors at least as specific as
+         * the theme's own), and the panes are told apart by hairline borders only. The nav sidebar and header are not touched.
+         * Everything here is under html.dark-layout, so light mode is unchanged.
+         */
+        html.dark-layout .chat-application,
+        html.dark-layout .chat-application .content-area-wrapper,
+        html.dark-layout .chat-application .content-wrapper,
+        html.dark-layout .chat-application .content-body,
+        html.dark-layout .chat-application .sidebar,
+        html.dark-layout .chat-application .sidebar .sidebar-content,
+        html.dark-layout .chat-application .sidebar .sidebar-content .chat-fixed-search,
+        html.dark-layout .chat-application .sidebar .sidebar-content .chat-user-list-wrapper,
+        html.dark-layout .chat-application .conversation-context,
+        html.dark-layout .chat-application .content-right,
+        html.dark-layout .chat-application .content-right .chat-app-window,
+        html.dark-layout .chat-application .content-right .chat-app-window .start-chat-area,
+        html.dark-layout .chat-application .content-right .chat-app-window .user-chats,
+        html.dark-layout .chat-application .content-right .chat-app-window .active-chat,
+        html.dark-layout .chat-application .content-right .chat-app-window .active-chat .chat-header,
+        html.dark-layout .chat-application .content-right .chat-app-window .active-chat .chat-app-form,
+        html.dark-layout .chat-application .content-right .chat-app-window .active-chat .conversation-main {
+            background-color: var(--color-chat-canvas);
+        }
+
+        /* Panes are separated by hairlines, not by shade. */
+        html.dark-layout .chat-application .sidebar .sidebar-content,
+        html.dark-layout .chat-application .conversation-context,
+        html.dark-layout .chat-application .content-right .chat-app-window .active-chat .chat-header,
+        html.dark-layout .chat-application .content-right .chat-app-window .active-chat .chat-app-form {
+            border-color: var(--color-border);
+        }
+
+        /* Controls keep their own raised surface so they stay readable on the canvas. */
+        html.dark-layout .chat-application .chat-app-form .form-control,
+        html.dark-layout .chat-application .chat-app-form .form-select,
+        html.dark-layout .chat-application .chat-app-form .input-group-text {
+            background-color: var(--color-input-bg);
+            border-color: var(--color-input-border);
+            color: var(--color-text-primary);
+        }
+
+        html.dark-layout .chat-application .content-right .chat-app-window .active-chat .chats .chat-left .chat-content {
+            background-color: var(--color-chat-bubble-in);
+        }
+
     </style>
 
 @endsection
@@ -668,8 +834,17 @@
                     <form class="chat-app-form" action="javascript:void(0);" onsubmit="enter_chat();" autocomplete="off">
                         <input type="hidden" value="" name="chat_id" class="chat_id">
 
-                        {{-- Replies go out as SMS — the only channel this conversation has today. --}}
-                        <span class="conversation-channel-chip" data-role="composer-channel">SMS</span>
+                        {{-- The channels this person can actually be reached on (set per conversation from the server's composer options):
+                             one option when only one is usable, both when both are. Never switched silently. --}}
+                        <div class="conversation-channel-switch" data-role="composer-channel" role="group" aria-label="Send as">
+                            <button type="button" class="conversation-channel-option is-active" data-channel="sms" aria-pressed="true">SMS</button>
+                            <button type="button" class="conversation-channel-option" data-channel="email" aria-pressed="false" hidden>Email</button>
+                        </div>
+                        <div class="composer-email-fields" data-role="composer-email-fields" hidden>
+                            <input type="text" id="email-subject" class="form-control form-control-sm" maxlength="200" placeholder="Subject" aria-label="Email subject" autocomplete="off">
+                            <select id="email-location" class="form-select form-select-sm" aria-label="Which location is this for?" hidden></select>
+                        </div>
+                        <p class="composer-guidance text-caption mb-0" data-role="composer-guidance" hidden></p>
 
                         <div class="input-group input-group-merge me-1 form-send-message">
                             <textarea type="text" id="message" class="form-control message" placeholder="..." autocomplete="off"></textarea>
@@ -782,6 +957,7 @@
         block: "{{ route('customer.workspaces.businesses.conversations.block', [$workspaceUid, $businessUid, '__UID__']) }}",
         pin: "{{ route('customer.workspaces.businesses.conversations.pin', [$workspaceUid, $businessUid, '__UID__']) }}",
         load: "{{ route('customer.workspaces.businesses.conversations.load', [$workspaceUid, $businessUid]) }}",
+        emailThread: "{{ route('customer.workspaces.businesses.conversations.email_thread', [$workspaceUid, $businessUid]) }}",
       };
       const conversationUrl = (name, uid) => conversationRoutes[name].replace('__UID__', encodeURIComponent(uid));
 
@@ -867,6 +1043,235 @@
       });
 
 
+      // ── Unified inbox composer: SMS and Email on the same conversation ──────────────────────────────────────────────
+      // The server says which channels are usable (composer options); this only shows them. Email posts to the EXISTING
+      // Settings → Email send/reply endpoints, SMS to the existing reply endpoint. A channel is never switched silently.
+      var composerState = { sms: true, email: false, channel: "sms", cfg: null };
+      var pendingEmailTokens = {};
+
+      function applyComposer(c, defaultChannel) {
+        c = c || { sms: true, email: false, default: "sms" };
+        // A refresh of the SAME open conversation (e.g. a new message arrived) keeps the channel and the typed subject.
+        const sameConversation = composerState.forId === String($(".chat_id").val());
+        const keepChannel = sameConversation && ((composerState.channel === "email" && c.email) || (composerState.channel === "sms" && c.sms)) ? composerState.channel : null;
+        composerState.forId = String($(".chat_id").val());
+        if (!sameConversation) { $("#email-subject").val(""); }
+        composerState.cfg = c;
+        const $switch = $("[data-role=composer-channel]");
+        $switch.find("[data-channel=sms]").prop("hidden", !c.sms);
+        $switch.find("[data-channel=email]").prop("hidden", !c.email);
+        $switch.attr("data-single", c.sms && c.email ? "0" : "1");
+        $switch.prop("hidden", !c.sms && !c.email);
+
+        const $locations = $("#email-location").empty();
+        (c.locations || []).forEach(function(l) {
+          $locations.append($("<option></option>").val(l.uid).text(l.name));
+        });
+        if ((c.locations || []).length) {
+          $locations.prepend($("<option></option>").val("").text("Which location is this for?")).val("");
+        }
+        $locations.prop("hidden", !(c.locations || []).length);
+
+        setComposerChannel(keepChannel || c.default || defaultChannel || "sms");
+      }
+
+      function setComposerChannel(channel) {
+        const c = composerState.cfg || {};
+        composerState.channel = channel;
+        const email = channel === "email";
+        const usable = email ? !!c.email : !!c.sms;
+
+        $("[data-role=composer-channel] .conversation-channel-option").each(function() {
+          const on = $(this).data("channel") === channel;
+          $(this).toggleClass("is-active", on).attr("aria-pressed", on ? "true" : "false");
+        });
+        $(".chat-app-form").toggleClass("is-email-channel", email);
+        $("[data-role=composer-email-fields]").prop("hidden", !(email && usable));
+        if (email && usable && !$("#email-subject").val()) {
+          $("#email-subject").val(c.subject || "");
+        }
+
+        // Guidance instead of a silent switch: an unusable selected channel is disabled and explained.
+        let guidance = "";
+        if (!usable) {
+          guidance = email
+            ? (c.email_connected ? "A reply isn't possible for this message." : "Email isn't connected. Connect your mailbox in Settings → Email to reply by email.")
+            : "";
+        } else if (!email && c.email_guidance) {
+          guidance = "Email isn't connected. Connect your mailbox in Settings → Email to also reach this person by email.";
+        }
+        const $guide = $("[data-role=composer-guidance]").prop("hidden", guidance === "").empty();
+        if (guidance !== "") {
+          $guide.text(guidance + " ");
+          if (c.settings_url) {
+            $guide.append($("<a></a>").attr("href", c.settings_url).text("Open Email settings"));
+          }
+        }
+        syncSendAvailability();
+        $("#message").attr("placeholder", email ? "Write your email…" : "...");
+      }
+
+      $(document).on("click", "[data-role=composer-channel] .conversation-channel-option", function() {
+        if ($("[data-role=composer-channel]").attr("data-single") === "1") {
+          return;
+        }
+        setComposerChannel($(this).data("channel"));
+      });
+
+      // The idempotency key of an email send belongs to ONE intent (conversation + endpoint + exact content), never to the wording
+      // of an outcome. It is kept until the server says "sent" (HTTP 200); after ANY other outcome — including a dropped connection,
+      // where the provider may well have accepted the mail — a manual retry of the same content re-sends the SAME key, which the
+      // existing sender turns into "already sent" instead of a second email. Edited content is a new intent and gets a new key.
+      // Nothing here ever resubmits on its own.
+      var emailSendsInFlight = {};
+
+      // A pending send is remembered BY CONTENT (conversation + location + subject + body) together with the endpoint, Contact and key it
+      // was FIRST submitted with. A timeline refresh after an ambiguous outcome can legitimately change the composer's own endpoint
+      // (a new-email /send becomes a /reply once the message exists); the retry must still go to the ORIGINAL endpoint with the ORIGINAL
+      // key, because the sender's idempotency is per endpoint+key — a /reply with the old key would be a different operation.
+      // The Location is part of the pending record, NOT of the key: the selector is cleared by the refresh that follows an ambiguous send,
+      // and the retry must still carry the Location the original was submitted with.
+      // The intent is scoped to the Workspace and Business this page serves: provider thread ids (IMAP ones derive from the root Message-ID)
+      // can repeat across Businesses, and a pending record carries an endpoint, Contact, Location and token that must never be reused
+      // for another Business. The endpoint itself is NOT part of the identity (it changes from /send to /reply on refresh).
+      const emailIntentScope = ["{{ $workspaceUid }}", "{{ $businessUid }}"];
+      const emailPendingPrefix = "mg.emailPending.v2.";
+
+      function emailIntentKey(chatId, subject, body) {
+        return JSON.stringify([emailIntentScope[0], emailIntentScope[1], String(chatId), subject, body]);
+      }
+
+      function emailTokenStore() {
+        try { return window.sessionStorage; } catch (e) { return null; }
+      }
+
+      // Records written before pending sends were Business-scoped (the old "mg.emailPending." keys) cannot be attributed to a Business,
+      // so they are never trusted: dropped, never restored.
+      (function dropUnscopedPendingEmails() {
+        const store = emailTokenStore();
+        if (!store) { return; }
+        try {
+          Object.keys(store).forEach(function(k) {
+            if (k.indexOf("mg.emailPending.") === 0 && k.indexOf(emailPendingPrefix) !== 0) { store.removeItem(k); }
+          });
+        } catch (e) { /* storage unavailable */ }
+      })();
+
+      function peekPendingEmail(intent) {
+        let pending = pendingEmailTokens[intent];
+        const store = emailTokenStore();
+        if (!pending && store) {
+          try { pending = JSON.parse(store.getItem(emailPendingPrefix + intent) || "null"); } catch (e) { pending = null; }
+        }
+        return pending && pending.token && pending.url ? pending : null;
+      }
+
+      function pendingEmailFor(intent, c, locationUid) {
+        let pending = peekPendingEmail(intent);
+        if (!pending) {
+          pending = { token: m5UuidV4(), url: c.url, contact_uid: c.contact_uid || "", location: locationUid || "" };
+        }
+        pendingEmailTokens[intent] = pending;
+        const store = emailTokenStore();
+        if (store) { try { store.setItem(emailPendingPrefix + intent, JSON.stringify(pending)); } catch (e) { /* storage unavailable: the in-memory record still holds */ } }
+        return pending;
+      }
+
+      function forgetEmailToken(intent) {
+        delete pendingEmailTokens[intent];
+        const store = emailTokenStore();
+        if (store) { try { store.removeItem(emailPendingPrefix + intent); } catch (e) { /* nothing to remove */ } }
+      }
+
+      // The configuration in composerState belongs to ONE conversation. The moment the selection changes it is stale: nothing may be sent
+      // from it, and nothing may be sent at all until a timeline load for the NEW selection has applied its own configuration
+      // (a failed load leaves the composer disabled).
+      function invalidateComposer() {
+        composerState.cfg = null;
+        composerState.forId = null;
+        $("[data-role=composer-guidance]").prop("hidden", true).empty();
+        syncSendAvailability();
+      }
+
+      function composerReadyForCurrentConversation() {
+        return composerState.cfg !== null && composerState.forId === String($(".chat_id").val());
+      }
+
+      // Send/typing availability for the conversation that is open NOW and its selected channel (never a stale in-flight one).
+      function syncSendAvailability() {
+        const c = composerState.cfg || {};
+        const ready = composerReadyForCurrentConversation();
+        const usable = ready && (composerState.channel === "email" ? !!c.email : !!c.sms);
+        const busy = !!emailSendsInFlight[String($(".chat_id").val())];
+        $("#message").prop("disabled", !usable);
+        $(".send").prop("disabled", !usable || busy);
+      }
+
+      function sendEmail() {
+        const c = composerState.cfg || {};
+        const sendId = String($(".chat_id").val());   // the conversation this send belongs to
+        const stillHere = function() { return String($(".chat_id").val()) === sendId; };
+        const rawDraft = $("#message").val() || "";    // the exact draft being submitted
+        const body = rawDraft.trim();
+        const subject = ($("#email-subject").val() || "").trim();
+        const warn = function(text) {
+          toastr["warning"](text, "{{ __('locale.labels.attention') }}", { closeButton: true, positionClass: "toast-top-right", progressBar: true, newestOnTop: true, rtl: isRtl });
+        };
+
+        if (!composerReadyForCurrentConversation() || !c.email || !c.url) { warn("Email can't be sent from here right now."); return; }
+        if (subject === "" || body === "") { warn("Add a subject and a message."); return; }
+        const intent = emailIntentKey(sendId, subject, body);
+        // A pending (ambiguous) send of this exact content already carries its Location: the selector needs no second choice.
+        if (!peekPendingEmail(intent) && (c.locations || []).length && !$("#email-location").val()) { warn("Choose which location this is for."); return; }
+        if (emailSendsInFlight[sendId]) { return; }
+
+        const pending = pendingEmailFor(intent, c, $("#email-location").val() || "");
+        const data = { _token: "{{ csrf_token() }}", subject: subject, body: body, send_token: pending.token };
+        if (pending.location) { data.location_uid = pending.location; }
+        if (pending.contact_uid) { data.contact_uid = pending.contact_uid; }
+
+        emailSendsInFlight[sendId] = true;
+        syncSendAvailability();
+
+        $.ajax({ url: pending.url, type: "POST", data: data, dataType: "json", headers: { Accept: "application/json" } })
+          .done(function(response) {
+            // A 200 can also mean "a send under this key is still running": that is NOT confirmation. Keep the key and the draft.
+            if (response.outcome === "in_progress") {
+              toastr["warning"](response.message || "This email is already being sent.", "{{ __('locale.labels.attention') }}", { closeButton: true, positionClass: "toast-top-right", progressBar: true, newestOnTop: true, rtl: isRtl });
+              if (stillHere()) { loadTimeline(sendId); }
+              return;
+            }
+            forgetEmailToken(intent);
+            toastr["success"](response.message || "Sent.", "{{ __('locale.labels.success') }}", { closeButton: true, positionClass: "toast-top-right", progressBar: true, newestOnTop: true, rtl: isRtl });
+            if (stillHere()) {
+              // Clear only the draft that was submitted: same conversation, still on Email, and the text untouched since. A newer
+              // draft (typed while the request was in flight) is never erased.
+              if (composerState.channel === "email" && ($("#message").val() || "") === rawDraft) {
+                $("#message").val("");
+              }
+              loadTimeline(sendId);
+            }
+          })
+          .fail(function(xhr) {
+            const json = xhr.responseJSON || {};
+            const first = json.errors ? Object.values(json.errors)[0][0] : null;
+            // Keep the key. When no server answer arrived (dropped connection, timeout, 5xx) the outcome is UNKNOWN: say so, and
+            // never claim it failed or retry by ourselves.
+            const answered = xhr.status >= 200 && xhr.status < 500 && xhr.status !== 0;
+            // ONLY the server's machine-readable disposition may release the key: "failed_terminal" means definitively not sent AND the
+            // sender will never retry this key (e.g. the connection expired), so a manual retry of the same text needs a fresh key (the
+            // sender re-validates the connection, authorization and Location on it). Never inferred from the status code or the wording;
+            // unconfirmed, in-progress, retryable and unknown outcomes keep the original key, endpoint, contact and Location.
+            if (json.outcome === "failed_terminal") { forgetEmailToken(intent); }
+            warn(first || (answered ? json.message : null) || "We couldn't confirm whether this email was sent. Check your sent mail; sending the same message again will not duplicate it.");
+            if (!answered && stillHere()) { loadTimeline(sendId); }
+          })
+          .always(function() {
+            delete emailSendsInFlight[sendId];
+            syncSendAvailability();
+          });
+      }
+
       /**
        * Load the person's activity timeline and contact panel for one
        * conversation. Both arrive rendered and escaped by the server; nothing
@@ -874,14 +1279,25 @@
        * viewer has since left is ignored.
        */
       function loadTimeline(chat_id) {
-        return $.post(
-          conversationUrl('timeline', chat_id),
-          { _token: "{{ csrf_token() }}" }
-        )
+        // An email thread (id "email:<thread key>") opens through the unified inbox endpoint; everything else is an SMS conversation.
+        const isEmailThread = String(chat_id).indexOf("email:") === 0;
+        const request = isEmailThread
+          ? $.post(conversationRoutes.emailThread, { _token: "{{ csrf_token() }}", thread: String(chat_id).slice(6) })
+          : $.post(conversationUrl('timeline', chat_id), { _token: "{{ csrf_token() }}" });
+
+        return request
           .done(function(response) {
             if ($(".chat_id").val() !== String(chat_id)) {
               return;
             }
+
+            // A thread that provably belongs to a person with an SMS conversation opens as that ONE conversation.
+            if (response.conversation_uid) {
+              $(".chat_id").val(response.conversation_uid);
+            }
+
+            $(".active-chat").toggleClass("is-email-thread", response.channel === "email");
+            applyComposer(response.composer, response.channel === "email" ? "email" : "sms");
 
             let addToPin = $(".add-to-pin");
 
@@ -954,6 +1370,7 @@
           $(this).addClass("active");
 
           $(".chat_id").val(chat_id);
+          invalidateComposer();
 
           loadTimeline(chat_id).done(function() {
             setTimeout(() => {
@@ -994,6 +1411,16 @@
       }
 
       function enter_chat() {
+        // Nothing is sent, on either channel, from a composer that is not configured for the conversation that is open now.
+        if (!composerReadyForCurrentConversation()) {
+          return;
+        }
+
+        if (composerState.channel === "email") {
+          sendEmail();
+          return;
+        }
+
         let message = $(".message"),
           chatBoxId = $(".chat_id").val(),
           messageValue = message.val(),
@@ -1452,6 +1879,22 @@
         $(".tab-button").removeClass("btn-primary").addClass("btn-outline-primary");
         $(".tab-button").filter(function () { return $(this).data("filter") === filter; }).removeClass("btn-outline-primary").addClass("btn-primary");
         let search = "";     // Default search value
+        // Unified inbox channel (All / SMS / Email): an in-page filter, never a navigation. The URL may open it ("?channel=email",
+        // which is also where the former standalone Email page now redirects).
+        const knownChannels = ["all", "sms", "email"];
+        let channel = knownChannels.indexOf(homeScope.get("channel")) !== -1 ? homeScope.get("channel") : "all";
+        // Unread / Read / Waiting are SMS notions: email has no read state, so those views list SMS only. Whenever one of them is in effect
+        // the Email channel cannot be (it would be an empty list), so the channel becomes SMS — in the URL path and in the UI alike.
+        const smsOnlyFilters = ["unread", "read", "waiting"];
+        function coerceChannel(ch, f) { return ch === "email" && smsOnlyFilters.indexOf(f) !== -1 ? "sms" : ch; }
+        channel = coerceChannel(channel, filter);
+        function paintChannel() {
+          $(".channel-button").each(function() {
+            const on = $(this).data("channel") === channel;
+            $(this).toggleClass("btn-primary", on).toggleClass("btn-outline-primary", !on).attr("aria-pressed", on ? "true" : "false");
+          });
+        }
+        paintChannel();
 
         // Function to load chat users
         function loadChatUsers(page, filter, search, append = false) {
@@ -1466,7 +1909,8 @@
               filter: filter,
               search: search,
               created_from: createdFrom,
-              created_to: createdTo
+              created_to: createdTo,
+              channel: channel
             },
             beforeSend: function() {
               $("#loader").show();  // Show the loader before the request
@@ -1474,7 +1918,15 @@
             success: function(response) {
               $("#loader").hide();  // Hide the loader after data is loaded
               if (append) {
-                $(".chat-users-list").append(response); // Append new data
+                // A person can be reachable through two windows of the merged list: never show the same row twice.
+                const $incoming = $("<ul></ul>").html(response);
+                $incoming.children("li").each(function() {
+                  const id = String($(this).attr("data-id"));
+                  if ($(".chat-users-list > li").filter(function() { return String($(this).attr("data-id")) === id; }).length) {
+                    $(this).remove();
+                  }
+                });
+                $(".chat-users-list").append($incoming.children()); // Append new data
               } else {
                 $(".chat-users-list").html(response);   // Replace data
               }
@@ -1511,6 +1963,15 @@
           }, 250);
         })();
 
+        // Deep link to one email thread inside Conversations (?channel=email&thread=<key>): saved links from the former Email page.
+        (function () {
+          const thread = homeScope.get("thread");
+          if (!thread) { return; }
+          $(".chat_id").val("email:" + thread);
+          invalidateComposer();
+          loadTimeline("email:" + thread);
+        })();
+
 // Add debounce function to delay the search request
         function debounce(func, delay) {
           let timeout;
@@ -1520,6 +1981,20 @@
           };
         }
 
+// Channel filter: All / SMS / Email, in place.
+        $(".channel-button").on("click", function() {
+          channel = $(this).data("channel");
+          paintChannel();
+          // Unread / Read / Waiting are SMS notions; an Email-only view always lists everything.
+          if (channel === "email" && filter !== "recents" && filter !== "all") {
+            filter = "recents";
+            $(".tab-button").removeClass("btn-primary").addClass("btn-outline-primary");
+            $(".tab-button").filter(function () { return $(this).data("filter") === filter; }).removeClass("btn-outline-primary").addClass("btn-primary");
+          }
+          page = 1;
+          loadChatUsers(page, filter, search);
+        });
+
 // Filter data by tab
         $(".tab-button").on("click", function() {
           // Change the color of the clicked button to primary and reset others
@@ -1528,16 +2003,22 @@
 
           // Leaving the "waiting" view: the server-rendered pinned rows and banner must follow, so reload on the chosen tab
           // (an explicit created-date range in the URL is kept).
+          const chosen = $(this).data("filter");
+          channel = coerceChannel(channel, chosen);
+          paintChannel();
+
           if (filter === "waiting") {
             const next = new URL(window.location.href);
-            next.searchParams.set("filter", $(this).data("filter"));
+            next.searchParams.set("filter", chosen);
+            // Keep the channel consistent with the new tab (Home date-scope parameters are untouched).
+            if (channel === "all") { next.searchParams.delete("channel"); } else { next.searchParams.set("channel", channel); }
             window.location.assign(next.toString());
             return;
           }
 
           // Get filter value and reset page
           page = 1;
-          filter = $(this).data("filter");
+          filter = chosen;
           loadChatUsers(page, filter, search);
         });
 

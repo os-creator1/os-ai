@@ -4,11 +4,14 @@
         <x-ds-icon name="x" />
     </span>
 
-    @if (request()->route('workspaceUid') && request()->route('businessUid'))
-        <div class="text-center pt-1" data-role="conversation-channels">
-            <a class="btn btn-sm btn-outline-primary" href="{{ route('customer.workspaces.businesses.conversations.email', [request()->route('workspaceUid'), request()->route('businessUid')]) }}">Email</a>
+    {{-- Unified inbox: one list for SMS and Email. Switching is an in-page filter (no navigation). --}}
+    <div class="text-center pt-1" data-role="conversation-channels">
+        <div role="group" class="channel-group btn-group" aria-label="Channel">
+            <x-button variant="primary" size="sm" class="channel-button" data-channel="all" aria-pressed="true">All</x-button>
+            <x-button variant="outline" size="sm" class="channel-button" data-channel="sms" aria-pressed="false">SMS</x-button>
+            <x-button variant="outline" size="sm" class="channel-button" data-channel="email" aria-pressed="false">Email</x-button>
         </div>
-    @endif
+    </div>
 
     <div class="text-center pt-1 pb-1">
         <div role="group" class="tab-group btn-group">

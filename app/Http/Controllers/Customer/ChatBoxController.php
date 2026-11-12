@@ -659,9 +659,19 @@
             $contact = $box->resolveDisplayContact($business);
             $context = $contextReader->read($business, $box, $contact);
 
+            // Unified inbox: an email reply from this conversation answers the person's latest email thread (same Contact only).
+            $replyTo = $contact === null ? null : app(\App\Library\Conversations\UnifiedEmailInbox::class)
+                ->visible($business, (int) Auth::id())
+                ->where('contact_id', $contact->id)
+                ->where('status', '!=', 'failed')
+                ->orderByDesc('id')
+                ->first();
+
             return response()->json([
                 'status'   => 'success',
                 'pinned'   => $box->pinned ?? 0,
+                'composer' => app(\App\Library\Conversations\ConversationComposerOptions::class)
+                    ->for($business, $workspaceUid, $businessUid, (int) Auth::id(), true, $contact, $replyTo),
                 'title'    => $context->title(),
                 'timeline' => view('customer.ChatBox.partials._timeline', [
                     'page' => $timeline->forConversation($business, $box, $contact),
@@ -670,6 +680,72 @@
                     'context'    => $context,
                     'profileUrl' => $context->hasContact() && Gate::allows('view_contact')
                         ? route('customer.workspaces.businesses.people.show', [$workspaceUid, $businessUid, $context->contactUid])
+                        : null,
+                ])->render(),
+            ]);
+        }
+
+        /**
+         * Unified inbox — one EMAIL thread opened inside Conversations.
+         *
+         * A thread opens as its own timeline with its own reply target. When the ledger linked it to an accessible Contact the panel
+         * names them; a thread that cannot be safely matched gets a deliberately limited panel: no Contact is invented and no other
+         * Contact's details are shown.
+         */
+        public function emailThread(ContactActivityTimeline $timeline, ConversationContextReader $contextReader, Request $request, string $workspaceUid, string $businessUid): JsonResponse
+        {
+            $resolved = $this->resolveBusiness($workspaceUid, $businessUid);
+
+            if ($resolved === null) {
+                return $this->notFound();
+            }
+
+            [, $business] = $resolved;
+            $userId = (int) Auth::id();
+            $inbox = app(\App\Library\Conversations\UnifiedEmailInbox::class);
+
+            $key = (string) $request->input('thread', '');
+            $messages = $key === '' || strlen($key) > 255 ? collect() : $inbox->thread($business, $userId, $key);
+
+            if ($messages->isEmpty()) {
+                return $this->notFound();
+            }
+
+            $contactId = $messages->pluck('contact_id')->filter()->first();
+            $contact = $contactId === null ? null : Contacts::query()->where('business_id', $business->id)->find($contactId);
+
+            if ($contact !== null && ! app(\App\Library\BusinessEmail\BusinessEmailLocationScope::class)->contactAccessible($userId, $contact)) {
+                $contact = null;
+            }
+
+            // The REQUESTED thread always opens as its own email timeline — every authorized message of that thread (including earlier ones
+            // the ledger never linked to a Contact), and the reply target, subject and provider threading of THAT thread. It is never
+            // delegated to the Contact's SMS timeline, whose reply target is the Contact's latest email and would silently change on refresh.
+            // The person's combined SMS + email view stays one row away (their merged row in All).
+
+            $items = $messages->map(fn ($m) => \App\Library\Timeline\Sources\BusinessEmailMessagesSource::item($m))->sortBy(fn ($i) => [$i->at->getTimestamp(), $i->sequence])->values()->all();
+            $page = new \App\Library\Timeline\TimelinePage(new \App\Library\Timeline\TimelineSubject($business, '', null, $contact), $items, false);
+
+            $replyTo = $messages->reverse()->first(fn ($m) => $m->direction === 'inbound' && $m->status->value !== 'failed')
+                ?? $messages->reverse()->first(fn ($m) => $m->status->value !== 'failed');
+            $counterpart = (string) ($messages->first(fn ($m) => $m->direction === 'inbound')?->from_email ?? $messages->first()->to_email);
+            $name = $contact === null ? null : ($inbox->contactNames($business, $userId, [(int) $contact->id])[(int) $contact->id] ?? null);
+
+            return response()->json([
+                'status'   => 'success',
+                'pinned'   => 0,
+                'channel'  => 'email',
+                'title'    => $name ?? $counterpart,
+                'composer' => app(\App\Library\Conversations\ConversationComposerOptions::class)
+                    ->for($business, $workspaceUid, $businessUid, $userId, false, $contact, $replyTo),
+                'timeline' => view('customer.ChatBox.partials._timeline', ['page' => $page])->render(),
+                'context'  => view('customer.ChatBox.partials._email_context', [
+                    'counterpart' => $counterpart,
+                    'subject'     => (string) $messages->last()->subject,
+                    'name'        => $name,
+                    'matched'     => $contact !== null,
+                    'profileUrl'  => $contact !== null && Gate::allows('view_contact')
+                        ? route('customer.workspaces.businesses.people.show', [$workspaceUid, $businessUid, $contact->uid])
                         : null,
                 ])->render(),
             ]);
@@ -1642,11 +1718,28 @@
                 });
             }
 
-            $chat_box = $query->with('latestMessage')->paginate(50, ['*'], 'page', $page);
+            // Unified inbox: All (default) / SMS / Email. Email has no read state or "waiting" notion, and a Home date scope is an SMS
+            // notion, so those narrower views stay SMS-only rather than mixing in rows that cannot honour the filter.
+            $channel = in_array($request->get('channel'), ['sms', 'email'], true) ? $request->get('channel') : 'all';
+            // Email has no Unread/Read/Waiting: those views are SMS-only, never an empty Email list.
+            if ($channel === 'email' && ! in_array($filter, ['recents', 'all'], true)) {
+                $channel = 'sms';
+            }
+            $emailEligible = $channel !== 'sms' && in_array($filter, ['recents', 'all'], true) && $created === null;
+            // Email-only and the merged All list page themselves (UnifiedConversationList); SMS-only and the narrower SMS views paginate as ever.
+            $chat_box = ($channel === 'email' || ($channel === 'all' && $emailEligible)) ? null : $query->with('latestMessage')->paginate(50, ['*'], 'page', $page);
+
+            $items = app(\App\Library\Conversations\UnifiedConversationList::class)
+                ->items($business, (int) Auth::id(), $channel, $emailEligible, $query, $chat_box, (int) $page, $search);
+
+            $chatBoxes = collect($items)->where('type', 'sms')->pluck('chat');
 
             return view('customer.ChatBox.partials._chat_list', [
-                'chat_box'        => $chat_box,
-                'displayNames'    => ChatBox::displayNamesFor($business, $chat_box->getCollection()),
+                'items'           => $items,
+                'channel'         => $channel,
+                'emailConnected'  => app(\App\Library\BusinessEmail\BusinessEmailAccountManager::class)->findForBusiness($business)?->isActive() === true,
+                'emailSettingsUrl' => route('customer.workspaces.businesses.email.show', [$workspaceUid, $businessUid]),
+                'displayNames'    => ChatBox::displayNamesFor($business, $chatBoxes),
                 'showEmptyState'  => (int) $page <= 1,
                 'emptyReason'     => $search !== '' ? 'search' : ($filter === 'unread' || $filter === 'read' || $filter === 'waiting' || $created !== null ? 'filtered' : null),
             ])->render();

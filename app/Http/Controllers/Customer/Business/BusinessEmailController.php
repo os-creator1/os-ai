@@ -34,6 +34,7 @@ use App\Models\Contacts;
 use App\Models\Workspace;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Contracts\View\View;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
@@ -378,7 +379,7 @@ class BusinessEmailController extends CustomerBaseController
         return $this->back($workspaceUid, $businessUid, 'success', 'Email account disconnected and its stored authorization destroyed.');
     }
 
-    public function send(SendBusinessEmailRequest $request, string $workspaceUid, string $businessUid): RedirectResponse
+    public function send(SendBusinessEmailRequest $request, string $workspaceUid, string $businessUid): RedirectResponse|JsonResponse
     {
         $this->authorize('chat_box');
         $this->authorize('view_contact');
@@ -419,14 +420,16 @@ class BusinessEmailController extends CustomerBaseController
                 sentByUserId: (int) Auth::id(),
             ));
         } catch (BusinessEmailSendRefusedException $exception) {
-            return $this->back($workspaceUid, $businessUid, 'error', $exception->userMessage());
+            return $this->backOrJson($workspaceUid, $businessUid, 'error', $exception->userMessage(), 'refused');
         }
 
+        $outcome = $this->outcomeOf($message);
+
         return match ($message->status) {
-            BusinessEmailMessageStatus::Accepted => $this->back($workspaceUid, $businessUid, 'success', 'Email sent. Your email provider accepted it for delivery.'),
-            BusinessEmailMessageStatus::Failed => $this->back($workspaceUid, $businessUid, 'error', $message->failure_category?->customerMessage() ?? 'The email could not be sent.'),
-            BusinessEmailMessageStatus::Unconfirmed => $this->back($workspaceUid, $businessUid, 'error', 'We could not confirm whether this email was sent. Check your sent mail before trying again.'),
-            default => $this->back($workspaceUid, $businessUid, 'success', 'This email is already being sent.'),
+            BusinessEmailMessageStatus::Accepted => $this->backOrJson($workspaceUid, $businessUid, 'success', 'Email sent. Your email provider accepted it for delivery.', $outcome),
+            BusinessEmailMessageStatus::Failed => $this->backOrJson($workspaceUid, $businessUid, 'error', $message->failure_category?->customerMessage() ?? 'The email could not be sent.', $outcome),
+            BusinessEmailMessageStatus::Unconfirmed => $this->backOrJson($workspaceUid, $businessUid, 'error', 'We could not confirm whether this email was sent. Check your sent mail before trying again.', $outcome),
+            default => $this->backOrJson($workspaceUid, $businessUid, 'success', 'This email is already being sent.', $outcome),
         };
     }
 
@@ -435,7 +438,7 @@ class BusinessEmailController extends CustomerBaseController
      * The message is resolved THROUGH the Business and the actor's Location
      * ACL; anything else is the same 404 with no row and no provider call.
      */
-    public function reply(ReplyBusinessEmailRequest $request, string $workspaceUid, string $businessUid, string $messageUid): RedirectResponse
+    public function reply(ReplyBusinessEmailRequest $request, string $workspaceUid, string $businessUid, string $messageUid): RedirectResponse|JsonResponse
     {
         $this->authorize('chat_box');
         [, $business] = $this->resolveBusinessTenancy($workspaceUid, $businessUid, true);
@@ -471,10 +474,10 @@ class BusinessEmailController extends CustomerBaseController
             abort_if($location === null, 404);
         }
 
-        $back = fn (string $status, string $message) => $request->validated('return_to') === 'conversations'
-            ? redirect()->route('customer.workspaces.businesses.conversations.email', [$workspaceUid, $businessUid, 'thread' => $original->provider_thread_id ?? $original->uid])
+        $back = fn (string $status, string $message, ?string $outcome = null) => $request->validated('return_to') === 'conversations' && ! $request->expectsJson()
+            ? redirect()->route('customer.workspaces.businesses.conversations.index', [$workspaceUid, $businessUid, 'channel' => 'email', 'thread' => $original->provider_thread_id ?? $original->uid])
                 ->with(['status' => $status, 'message' => $message])
-            : $this->back($workspaceUid, $businessUid, $status, $message);
+            : $this->backOrJson($workspaceUid, $businessUid, $status, $message, $outcome);
 
         try {
             $message = $this->sender->send(new BusinessEmailSendRequest(
@@ -489,12 +492,14 @@ class BusinessEmailController extends CustomerBaseController
                 inResponseTo: $original,
             ));
         } catch (BusinessEmailSendRefusedException $exception) {
-            return $back('error', $exception->userMessage());
+            return $back('error', $exception->userMessage(), 'refused');
         }
 
+        $outcome = $this->outcomeOf($message);
+
         return $message->status === BusinessEmailMessageStatus::Accepted
-            ? $back('success', 'Reply sent.')
-            : $back('error', $message->failure_category?->customerMessage() ?? 'The reply could not be sent.');
+            ? $back('success', 'Reply sent.', $outcome)
+            : $back('error', $message->failure_category?->customerMessage() ?? ($outcome === 'unconfirmed' ? 'We could not confirm whether this reply was sent. Check your sent mail before trying again.' : 'The reply could not be sent.'), $outcome);
     }
 
     /** Same 401 a missing permission has always been on the tenant-addressed routes. */
@@ -503,6 +508,42 @@ class BusinessEmailController extends CustomerBaseController
         if (! $this->authority->mayManage($workspace, 'manage_business_email')) {
             throw new AuthorizationException();
         }
+    }
+
+    /** send()/reply(): the Conversations composer posts with Accept: application/json and stays on the page. */
+    private function backOrJson(string $workspaceUid, string $businessUid, string $status, string $message, ?string $outcome = null): RedirectResponse|JsonResponse
+    {
+        if (request()->expectsJson()) {
+            // `outcome` is the machine-readable disposition the composer acts on (never the status code or the wording).
+            return response()->json(['status' => $status, 'message' => $message, 'outcome' => $outcome], $status === 'success' ? 200 : 422);
+        }
+
+        return $this->back($workspaceUid, $businessUid, $status, $message);
+    }
+
+    /**
+     * What happened to THIS operation, for the Conversations composer's idempotency decision:
+     *  accepted         the provider took it.
+     *  unconfirmed      it may or may not have been sent — the key must be kept and nothing resent.
+     *  in_progress      a send under this key is still running — the key must be kept.
+     *  failed_retryable failed for a reason the sender itself may retry under the SAME key.
+     *  failed_terminal  definitively NOT sent and the sender will never retry this key: a fresh manual attempt needs a fresh key.
+     *  refused          rejected before any send was recorded (nothing to preserve).
+     */
+    private function outcomeOf(BusinessEmailMessage $message): string
+    {
+        return match ($message->status) {
+            BusinessEmailMessageStatus::Accepted, BusinessEmailMessageStatus::Received => 'accepted',
+            BusinessEmailMessageStatus::Unconfirmed => 'unconfirmed',
+            // Terminal when the category is not retryable OR the sender's attempt budget is spent (BusinessEmailSender::mayRetry() refuses
+            // any further attempt on that key). Retryable only while a same-key retry remains possible, backoff included. A failure with no
+            // category is not assumed terminal.
+            BusinessEmailMessageStatus::Failed => $message->failure_category !== null
+                && (! $message->failure_category->isRetryable() || (int) $message->attempts >= (int) config('business_email.send.max_attempts', 3))
+                    ? 'failed_terminal'
+                    : 'failed_retryable',
+            default => 'in_progress',
+        };
     }
 
     private function back(string $workspaceUid, string $businessUid, string $status, string $message): RedirectResponse

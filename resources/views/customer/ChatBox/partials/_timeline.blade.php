@@ -57,11 +57,16 @@
                         @endif
                     @endforeach
 
+                    @if ($item->channel === 'email' && $item->title !== '')
+                        <p class="timeline-email-subject" data-role="timeline-email-subject">{{ $item->title }}</p>
+                    @endif
+
                     @if ($item->body !== null)
                         <p class="timeline-message-body">{{ $item->body }}</p>
                     @endif
 
                     <p class="chat-time timeline-message-meta mt-1">
+                        <span class="timeline-channel timeline-channel-{{ $item->channel }}" data-role="timeline-channel">{{ $item->channel === 'email' ? 'Email' : 'SMS' }}</span>
                         <span>{{ $local->format(config('app.time_format')) }}</span>
                         @if ($item->via !== null)
                             <span data-role="timeline-via">· {{ $item->via }}</span>
