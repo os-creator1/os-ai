@@ -119,6 +119,17 @@ class TelnyxMessagingAdapter implements MessagingProviderAdapter
             return OutboundMessageResult::rejected(ProviderErrorCategory::Unknown);
         }
 
+        // The category alone is all that is stored on the operation row, so record the
+        // HTTP status and Telnyx's own error codes (never the body text, numbers or key)
+        // — otherwise a rejection can never be diagnosed after the fact.
+        \Illuminate\Support\Facades\Log::warning('telnyx.send_rejected', [
+            'http_status' => $response->status(),
+            'telnyx_error_codes' => collect((array) $response->json('errors', []))
+                ->map(fn ($e) => is_array($e) ? ($e['code'] ?? null) : null)
+                ->filter()->values()->all(),
+            'operation_key_hash' => hash('sha256', $request->operationKey),
+        ]);
+
         return OutboundMessageResult::rejected(self::categorizeStatus($response->status()));
     }
 

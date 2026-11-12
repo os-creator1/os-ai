@@ -142,6 +142,33 @@ class V1ManagedNewConversationTest extends TestCase
         $this->assertSame(0, PlansCoverageCountries::query()->count());
     }
 
+    public function test_a_provider_rejected_new_conversation_shows_a_translated_customer_safe_reason_never_the_raw_key(): void
+    {
+        $tenant = $this->v1ManagedTenant();
+        $this->authenticateAs($tenant['customer']);
+        $country = $this->usCountry();
+        $this->fakeAdapter->rejections['*'] = \App\Enums\Messaging\ProviderErrorCategory::Terminal;
+
+        $this->post(
+            route('customer.workspaces.businesses.conversations.sent', [$tenant['workspace']->uid, $tenant['business']->uid]),
+            [
+                'sms_type' => 'plain',
+                'country_code' => (string) $country->id,
+                'recipient' => '4155559999',
+                'message' => 'Rejected by the provider',
+                'idempotency_token' => (string) Str::uuid(),
+            ],
+        )->assertRedirect();
+
+        $this->assertSame('error', session('status'));
+        $this->assertSame(
+            \App\Library\Conversations\ConversationSendFailureReason::SendFailed->customerMessage(),
+            session('message'),
+        );
+        $this->assertStringNotContainsString('locale.campaigns', (string) session('message'));
+        $this->assertNotSame('locale.campaigns.campaign_sending_failed', __('locale.campaigns.campaign_sending_failed'));
+    }
+
     public function test_a_managed_business_with_a_legacy_connection_still_uses_managed_transport_without_a_submitted_server(): void
     {
         $tenant = $this->v1ManagedTenant();
