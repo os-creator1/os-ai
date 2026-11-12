@@ -8,6 +8,7 @@ use App\Http\Controllers\Controller;
 use App\Library\Messaging\MessagingWebhookRejectionRecorder;
 use App\Library\Messaging\TelnyxMessagingAdapter;
 use App\Library\Voice\BrowserCallOrchestrator;
+use App\Library\Voice\Inbound\InboundCallRouter;
 use App\Library\Voice\VoiceCallStatusRecorder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -22,6 +23,7 @@ final class TelnyxVoiceWebhookController extends Controller
     public function __construct(
         private readonly VoiceCallStatusRecorder $calls,
         private readonly BrowserCallOrchestrator $browserCalls,
+        private readonly InboundCallRouter $inboundCalls,
         private readonly MessagingWebhookRejectionRecorder $rejections,
     ) {
     }
@@ -62,6 +64,12 @@ final class TelnyxVoiceWebhookController extends Controller
         // Browser (WebRTC) calls have two legs and need commands (dial contact, bridge): their rows are handled by the
         // orchestrator; every other event is untouched and goes to the ordinary recorder below.
         $occurredAt = is_string($data['occurred_at'] ?? null) ? $data['occurred_at'] : null;
+        // Inbound calls and forwarding verification (flag-gated; a no-op returning null while inbound calling is off).
+        $inbound = $this->inboundCalls->apply($eventId, $type, $callControlId, $payload, $occurredAt);
+        if ($inbound !== null) {
+            return response()->json(['status' => $inbound], 200);
+        }
+
         $browser = $this->browserCalls->apply($eventId, $type, $callControlId, $payload, $occurredAt);
         if ($browser !== null) {
             return response()->json(['status' => $browser], 200);

@@ -109,7 +109,7 @@ class ContactDirectoryController extends CustomerBaseController
         return view('customer.people.show', [
             'contactUid' => (string) $contact->uid,
             'profile' => $profile,
-            'browserCalling' => $this->browserCalling($workspaceUid, $businessUid),
+            'browserCalling' => $this->browserCalling($workspaceUid, $businessUid, $business),
             'callHistory' => $this->callHistory($business, $contact),
             'actions' => $this->profileActions($workspace, $business, $contact, $profile, $canConverse),
             // Business-defined Custom Fields: only shown for a Contact whose
@@ -151,7 +151,7 @@ class ContactDirectoryController extends CustomerBaseController
      *
      * @return array{sessionUrl: string, placeUrl: string, statusUrl: string, hangupUrl: string}|null
      */
-    private function browserCalling(string $workspaceUid, string $businessUid): ?array
+    private function browserCalling(string $workspaceUid, string $businessUid, Business $business): ?array
     {
         if (! (bool) config('messaging.voice.customer_calls.enabled')
             || ! (bool) config('messaging.voice.browser.enabled')
@@ -162,7 +162,10 @@ class ContactDirectoryController extends CustomerBaseController
 
         $scope = [$workspaceUid, $businessUid];
 
+        $inbound = app(\App\Library\Voice\Inbound\InboundCallingSurface::class)->inboundUrls($workspaceUid, $business, auth()->user());
+
         return [
+            'inbound' => $inbound,
             'sessionUrl' => route('customer.workspaces.businesses.calls.browser-session', $scope),
             'placeUrl' => route('customer.workspaces.businesses.calls.store', $scope),
             'statusUrl' => route('customer.workspaces.businesses.calls.show', [...$scope, '__CALL__']),
@@ -179,16 +182,24 @@ class ContactDirectoryController extends CustomerBaseController
     private function callHistory(Business $business, Contacts $contact): array
     {
         return \App\Models\BusinessVoiceCall::query()
-            ->where('business_id', $business->id)->where('kind', 'customer')->where('contact_id', $contact->id)
+            ->where('business_id', $business->id)->whereIn('kind', ['customer', 'inbound'])->where('contact_id', $contact->id)
             ->whereIn('status', [\App\Models\BusinessVoiceCall::STATUS_ENDED, \App\Models\BusinessVoiceCall::STATUS_FAILED])
             ->latest('id')->limit(10)->get()
             ->map(function ($call): array {
                 $seconds = $call->duration_seconds;
 
                 return [
-                    'outcome' => $call->status === \App\Models\BusinessVoiceCall::STATUS_FAILED
-                        ? 'Failed'
-                        : ($call->answered_at !== null ? 'Connected' : 'Not answered'),
+                    'outcome' => $call->kind === 'inbound'
+                        ? match ($call->outcome) {
+                            'answered' => 'Incoming · Answered',
+                            'forwarded' => 'Incoming · Forwarded to phone',
+                            'declined' => 'Incoming · Declined',
+                            'failed' => 'Incoming · Failed',
+                            default => 'Incoming · Missed',
+                        }
+                        : ($call->status === \App\Models\BusinessVoiceCall::STATUS_FAILED
+                            ? 'Failed'
+                            : ($call->answered_at !== null ? 'Connected' : 'Not answered')),
                     'duration' => $seconds !== null ? intdiv($seconds, 60) . ':' . str_pad((string) ($seconds % 60), 2, '0', STR_PAD_LEFT) : null,
                     'when' => $call->created_at?->diffForHumans() ?? '',
                 ];

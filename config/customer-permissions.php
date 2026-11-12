@@ -408,6 +408,14 @@
             'category'     => 'Voice',
             'default'      => false,
         ],
+        // Choose how a Business's inbound calls are routed (browser / forward to a verified personal phone). Routing sends
+        // calls — and talk-time cost — to people and numbers, so, like the credential-class keys, it defaults FALSE and a
+        // Workspace owner holds the authority implicitly (WorkspaceManagementAuthority). Never available during View-As.
+        'manage_inbound_calling'    => [
+            'display_name' => 'manage_inbound_calling',
+            'category'     => 'Voice',
+            'default'      => false,
+        ],
         // Place an outbound call to a CRM contact from the Business's own number. Off unless granted.
         'place_voice_calls'         => [
             'display_name' => 'place_voice_calls',

@@ -262,6 +262,41 @@ return [
             'agent_ring_timeout_secs' => 25,
             'credential_ttl_days' => 30,
         ],
+        // Inbound calls: ring workspace users' browsers and/or forward to one verified personal phone. OFF by default and
+        // pilot-only: voice-minute billing is not finished, so even with the flag on, a Business takes inbound calls only
+        // when an operator lists its id in VOICE_INBOUND_PILOT_BUSINESS_IDS. Every limit below is enforced server-side.
+        'inbound' => [
+            'enabled' => env('VOICE_INBOUND_CALLS_ENABLED', false),
+            // Comma-separated Business ids an operator has approved for the pilot. Empty = nobody.
+            'pilot_business_ids' => array_values(array_filter(array_map('intval', explode(',', (string) env('VOICE_INBOUND_PILOT_BUSINESS_IDS', ''))))),
+            'max_concurrent_per_business' => (int) env('VOICE_INBOUND_MAX_CONCURRENT', 2),
+            'max_per_hour_per_business' => (int) env('VOICE_INBOUND_MAX_PER_HOUR', 40),
+            'max_duration_secs' => (int) env('VOICE_INBOUND_MAX_SECS', 900),
+            // Forwarding places a SECOND paid leg: separately capped per Business per day (seconds of forwarded talk time
+            // and number of forwarded attempts).
+            'max_forward_secs_per_day' => (int) env('VOICE_INBOUND_MAX_FORWARD_SECS_PER_DAY', 3600),
+            'max_forward_attempts_per_day' => (int) env('VOICE_INBOUND_MAX_FORWARD_ATTEMPTS_PER_DAY', 40),
+            'forward_ring_secs' => 25,
+            'browser_ring_secs_min' => 10,
+            'browser_ring_secs_max' => 45,
+            'browser_ring_secs_default' => 20,
+            'max_browser_fanout' => 5,
+            // A browser is "available" while its page has checked in this recently.
+            'presence_ttl_secs' => 75,
+            // Calls that outlive their bound are closed by voice:expire-inbound-calls (backstop for lost webhooks).
+            'stale_after_secs' => 150,
+            // Toll-fraud guard for forwarding destinations: only these country calling codes, and never these prefixes.
+            'forward_allowed_country_codes' => array_values(array_filter(explode(',', (string) env('VOICE_INBOUND_FORWARD_COUNTRY_CODES', '1')))),
+            'forward_denied_prefixes' => [
+                // NANP toll-free, premium-rate and the Caribbean/Pacific area codes used in toll-fraud schemes.
+                '1800', '1833', '1844', '1855', '1866', '1877', '1888', '1900', '1976', '1500', '1521', '1522', '1523', '1524', '1525', '1526', '1527', '1528', '1529', '1533', '1544', '1566', '1577', '1588',
+                '1242', '1246', '1264', '1268', '1284', '1340', '1345', '1441', '1473', '1649', '1658', '1664', '1670', '1671', '1684', '1721', '1758', '1767', '1784', '1787', '1809', '1829', '1849', '1868', '1869', '1876', '1939',
+            ],
+            'verify_max_per_day_per_business' => 5,
+            'verify_max_per_day_per_destination' => 3,
+            'verify_max_attempts' => 5,
+            'verify_ttl_minutes' => 10,
+        ],
         // Automatic recovery of failed/unconfirmed local-number voice assignments (voice:retry-number-assignments).
         // Attempts include the first one made at purchase; backoff doubles from the base, capped.
         'assignment_retry' => [

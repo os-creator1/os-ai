@@ -2380,6 +2380,22 @@
         // Customer outbound calling backend (JSON; no browser audio yet). See VoiceCallController.
         Route::post('{workspaceUid}/businesses/{businessUid}/calls', 'Business\VoiceCallController@store')->middleware('throttle:30,1')->name('businesses.calls.store');
         Route::post('{workspaceUid}/businesses/{businessUid}/calls/browser-session', 'Business\VoiceCallController@browserSession')->middleware('throttle:20,1')->name('businesses.calls.browser-session');
+        // Inbound browser calls (flag-gated + pilot-gated server-side): availability heartbeat, ringing calls for THIS user,
+        // and the one-winner answer / decline. Declared before calls/{callUid} so 'incoming' is never read as a call uid.
+        Route::post('{workspaceUid}/businesses/{businessUid}/calls/presence', 'Business\VoiceCallController@presence')->middleware('throttle:6,1')->name('businesses.calls.presence');
+        Route::get('{workspaceUid}/businesses/{businessUid}/calls/incoming', 'Business\VoiceCallController@incoming')->middleware('throttle:60,1')->name('businesses.calls.incoming');
+        Route::post('{workspaceUid}/businesses/{businessUid}/calls/{callUid}/answer', 'Business\VoiceCallController@answer')->middleware('throttle:30,1')->name('businesses.calls.answer');
+        Route::post('{workspaceUid}/businesses/{businessUid}/calls/{callUid}/decline', 'Business\VoiceCallController@decline')->middleware('throttle:30,1')->name('businesses.calls.decline');
+
+        // Settings -> Calling: how a Business's inbound calls are routed. Mutations need the manage_inbound_calling authority.
+        Route::prefix('{workspaceUid}/businesses/{businessUid}/settings/calling')->name('businesses.calling.')->group(function () {
+            Route::get('/', 'Business\BusinessCallingSettingsController@show')->name('show');
+            Route::put('/', 'Business\BusinessCallingSettingsController@update')->name('update');
+            Route::post('/forward/verify', 'Business\BusinessCallingSettingsController@sendVerification')->middleware('throttle:5,10')->name('forward.verify');
+            Route::post('/forward/confirm', 'Business\BusinessCallingSettingsController@confirmVerification')->middleware('throttle:10,10')->name('forward.confirm');
+            Route::delete('/forward', 'Business\BusinessCallingSettingsController@removeForward')->name('forward.remove');
+        });
+
         Route::get('{workspaceUid}/businesses/{businessUid}/calls/{callUid}', 'Business\VoiceCallController@show')->name('businesses.calls.show');
         Route::post('{workspaceUid}/businesses/{businessUid}/calls/{callUid}/hangup', 'Business\VoiceCallController@hangup')->middleware('throttle:60,1')->name('businesses.calls.hangup');
 

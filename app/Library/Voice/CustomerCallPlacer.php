@@ -101,6 +101,7 @@ final class CustomerCallPlacer
             // A transport timeout leaves the outcome unknown (the call may be live), so it stays reserved for the
             // bounded window: it cannot be re-dialled to the same contact or slip past the concurrency cap.
             $active = BusinessVoiceCall::query()->where('business_id', $business->id)
+                ->whereNotIn('kind', ['inbound', 'forward_verify']) // inbound calls and verification calls have their own caps
                 ->where(fn ($q) => $q
                     ->whereIn('status', [BusinessVoiceCall::STATUS_REQUESTED, BusinessVoiceCall::STATUS_INITIATED, BusinessVoiceCall::STATUS_ANSWERED])
                     ->orWhere(fn ($u) => $u->where('status', BusinessVoiceCall::STATUS_FAILED)->where('failure_code', 'transport_error')))

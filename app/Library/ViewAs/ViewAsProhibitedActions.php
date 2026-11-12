@@ -69,6 +69,11 @@ final class ViewAsProhibitedActions
         'customer.workspaces.businesses.email.disconnect',
         'customer.workspaces.businesses.email.send',
         'customer.email.oauth.callback',
+        // inbound-call routing and forwarding numbers: where a client's calls (and talk-time cost) go is the client's own decision
+        'customer.workspaces.businesses.calling.update',
+        'customer.workspaces.businesses.calling.forward.verify',
+        'customer.workspaces.businesses.calling.forward.confirm',
+        'customer.workspaces.businesses.calling.forward.remove',
         // Zoom (native meetings): authorizing, disconnecting or retrying a client's Zoom host is the client's own act.
         // An Agency never connects its own Zoom for a client Business.
         'customer.workspaces.businesses.calendar.integrations.zoom.connect',
