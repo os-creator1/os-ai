@@ -45,6 +45,7 @@ async function scenario(name, fn) {
     server.requests.push({ url, kind, token: params.get('send_token'), contact_uid: params.get('contact_uid'), location_uid: params.get('location_uid') });
     if (!already) { server.seen.add(key); server.sent += 1; }
     if (server.hold) { await server.hold; }
+    if (server.reply) { return route.fulfill({ status: server.reply.status, contentType: 'application/json', body: JSON.stringify(server.reply.body) }); }
     if (server.mode === 'accept-then-drop' && server.requests.length === 1) { return route.abort('connectionreset'); }
     if (server.mode === 'always-drop') { return route.abort('connectionreset'); }
     return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ status: 'success', message: already ? 'Already sent.' : 'Reply sent.' }) });
@@ -149,6 +150,37 @@ const answer = (page, id, extra = {}) => page.evaluate(({ id, cfg }) => { if ($(
     assert.notEqual(server.requests[2].token, server.requests[0].token);
     assert.equal(server.requests[2].location_uid, 'L1');
   });
+
+  // The server's machine-readable `outcome` is the ONLY thing that may release a pending key.
+  const dispositions = [
+    ['failed_terminal', { status: 422, body: { status: 'error', outcome: 'failed_terminal', message: 'Your email connection expired. Reconnect your email account and try again.' } }, 'fresh'],
+    ['unconfirmed', { status: 422, body: { status: 'error', outcome: 'unconfirmed', message: 'We could not confirm whether this email was sent.' } }, 'same'],
+    ['failed_retryable', { status: 422, body: { status: 'error', outcome: 'failed_retryable', message: 'Your email provider had a temporary problem.' } }, 'same'],
+    ['in_progress (HTTP 200)', { status: 200, body: { status: 'success', outcome: 'in_progress', message: 'This email is already being sent.' } }, 'same'],
+    ['no outcome, wording says expired (never inferred)', { status: 422, body: { status: 'error', message: 'Your email connection expired. Reconnect your email account and try again.' } }, 'same'],
+    ['refused (nothing was recorded)', { status: 422, body: { status: 'error', outcome: 'refused', message: 'Connect an email account before sending email.' } }, 'same'],
+  ];
+  for (const [outcome, reply, expectation] of dispositions) {
+    await scenario(`(P2) ${outcome}: an unchanged manual retry uses the ${expectation === 'fresh' ? 'FRESH key' : 'ORIGINAL key'}, never automatically`, async (page, server) => {
+      server.mode = 'ok'; server.reply = reply;
+      await open(page, 'A', { url: 'http://conv.test/email/send', contact_uid: 'contact-1' }); await compose(page, 'Hello there');
+      await page.evaluate(() => sendEmail()); await tick(page, 400);
+      assert.equal(server.requests.length, 1, 'no automatic resend');
+      assert.equal(await page.evaluate(() => $('#message').val()), 'Hello there', 'the draft is kept');
+      server.reply = null;                                   // the connection is repaired / the provider recovers
+      await page.evaluate(() => sendEmail()); await tick(page, 400);
+      assert.equal(server.requests.length, 2);
+      if (expectation === 'fresh') {
+        assert.notEqual(server.requests[1].token, server.requests[0].token, 'definitively not sent: a new operation');
+        assert.equal(server.sent, 2, 'the first operation never reached the provider; the second is the one real send');
+      } else {
+        assert.equal(server.requests[1].token, server.requests[0].token, 'ambiguous / retryable / unknown: the original key');
+        assert.equal(server.requests[1].contact_uid, 'contact-1');
+        assert.equal(server.sent, 1, 'no second provider operation for the same key');
+      }
+      assert.equal(await page.evaluate(() => $('#message').val()), '', 'cleared once the server confirmed');
+    });
+  }
 
   await scenario('edited content is a new intent and gets a new key', async (page, server) => {
     server.mode = 'always-drop';

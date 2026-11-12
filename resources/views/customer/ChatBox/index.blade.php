@@ -1217,6 +1217,12 @@
 
         $.ajax({ url: pending.url, type: "POST", data: data, dataType: "json", headers: { Accept: "application/json" } })
           .done(function(response) {
+            // A 200 can also mean "a send under this key is still running": that is NOT confirmation. Keep the key and the draft.
+            if (response.outcome === "in_progress") {
+              toastr["warning"](response.message || "This email is already being sent.", "{{ __('locale.labels.attention') }}", { closeButton: true, positionClass: "toast-top-right", progressBar: true, newestOnTop: true, rtl: isRtl });
+              if (stillHere()) { loadTimeline(sendId); }
+              return;
+            }
             forgetEmailToken(intent);
             toastr["success"](response.message || "Sent.", "{{ __('locale.labels.success') }}", { closeButton: true, positionClass: "toast-top-right", progressBar: true, newestOnTop: true, rtl: isRtl });
             if (stillHere()) {
@@ -1234,6 +1240,11 @@
             // Keep the key. When no server answer arrived (dropped connection, timeout, 5xx) the outcome is UNKNOWN: say so, and
             // never claim it failed or retry by ourselves.
             const answered = xhr.status >= 200 && xhr.status < 500 && xhr.status !== 0;
+            // ONLY the server's machine-readable disposition may release the key: "failed_terminal" means definitively not sent AND the
+            // sender will never retry this key (e.g. the connection expired), so a manual retry of the same text needs a fresh key (the
+            // sender re-validates the connection, authorization and Location on it). Never inferred from the status code or the wording;
+            // unconfirmed, in-progress, retryable and unknown outcomes keep the original key, endpoint, contact and Location.
+            if (json.outcome === "failed_terminal") { forgetEmailToken(intent); }
             warn(first || (answered ? json.message : null) || "We couldn't confirm whether this email was sent. Check your sent mail; sending the same message again will not duplicate it.");
             if (!answered && stillHere()) { loadTimeline(sendId); }
           })

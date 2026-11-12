@@ -411,4 +411,66 @@ class UnifiedConversationsInboxTest extends TestCase
         $this->authenticateAs($this->owner);
         $this->assertStringContainsString('Restricted', $this->list('email'));
     }
+
+    private function sendJson(string $contactUid, string $token): \Illuminate\Testing\TestResponse
+    {
+        return $this->postJson(
+            route('customer.workspaces.businesses.email.send', [$this->workspace->uid, $this->business->uid]),
+            ['contact_uid' => $contactUid, 'subject' => 'Hello', 'body' => 'Unchanged body', 'send_token' => $token],
+        );
+    }
+
+    public function test_an_expired_connection_is_a_definitive_failure_and_a_fresh_key_sends_after_reconnecting(): void
+    {
+        $account = $this->activeAccount($this->business);
+        $contact = $this->contactWithEmails($this->business, ['pat@example.com'], $this->locA->id, 'Pat');
+        $this->authenticateAs($this->owner);
+        $this->fakeGoogle->refreshFailure = new \App\Exceptions\BusinessEmail\BusinessEmailProviderException(\App\Enums\BusinessEmail\BusinessEmailFailureCategory::AuthenticationExpired, 'invalid_grant', revocation: true);
+
+        $first = (string) Str::uuid();
+        $this->sendJson($contact->uid, $first)->assertStatus(422)->assertJson(['status' => 'error', 'outcome' => 'failed_terminal']);
+        $this->assertSame(0, $this->fakeGoogle->callCount('send'), 'the expired credential never reached the provider');
+
+        // The customer reconnects.
+        $this->fakeGoogle->refreshFailure = null;
+        DB::table('business_email_accounts')->where('id', $account->id)->update([
+            'state' => \App\Enums\BusinessEmail\BusinessEmailAccountState::Active->value,
+            'refresh_token_encrypted' => \Illuminate\Support\Facades\Crypt::encryptString('new-refresh-token'),
+            'lock_version' => DB::raw('lock_version + 1'),
+        ]);
+
+        // The terminal key stays terminal (the sender never re-attempts it)...
+        $this->sendJson($contact->uid, $first)->assertStatus(422)->assertJson(['outcome' => 'failed_terminal']);
+        $this->assertSame(0, $this->fakeGoogle->callCount('send'));
+
+        // ...so the composer's fresh key for the identical content is a new, fully re-validated operation.
+        $this->sendJson($contact->uid, (string) Str::uuid())->assertOk()->assertJson(['status' => 'success', 'outcome' => 'accepted']);
+        $this->assertSame(1, $this->fakeGoogle->callCount('send'));
+    }
+
+    public function test_an_unconfirmed_send_is_reported_as_such_and_never_reaches_the_provider_twice(): void
+    {
+        $this->activeAccount($this->business);
+        $contact = $this->contactWithEmails($this->business, ['pat@example.com'], $this->locA->id, 'Pat');
+        $this->authenticateAs($this->owner);
+        $this->fakeGoogle->sendScript = [new \App\Exceptions\BusinessEmail\BusinessEmailProviderException(\App\Enums\BusinessEmail\BusinessEmailFailureCategory::TemporaryProviderFailure, 'transport', ambiguous: true)];
+
+        $token = (string) Str::uuid();
+        $this->sendJson($contact->uid, $token)->assertStatus(422)->assertJson(['outcome' => 'unconfirmed']);
+        $this->assertSame(1, $this->fakeGoogle->callCount('send'));
+
+        // The manual retry carries the original key: reported again, and NO second provider call.
+        $this->sendJson($contact->uid, $token)->assertStatus(422)->assertJson(['outcome' => 'unconfirmed']);
+        $this->assertSame(1, $this->fakeGoogle->callCount('send'), 'an ambiguous outcome can never become a duplicate send');
+    }
+
+    public function test_a_retryable_failure_is_reported_as_retryable_not_terminal(): void
+    {
+        $this->activeAccount($this->business);
+        $contact = $this->contactWithEmails($this->business, ['pat@example.com'], $this->locA->id, 'Pat');
+        $this->authenticateAs($this->owner);
+        $this->fakeGoogle->sendScript = [new \App\Exceptions\BusinessEmail\BusinessEmailProviderException(\App\Enums\BusinessEmail\BusinessEmailFailureCategory::TemporaryProviderFailure, '503')];
+
+        $this->sendJson($contact->uid, (string) Str::uuid())->assertStatus(422)->assertJson(['outcome' => 'failed_retryable']);
+    }
 }
