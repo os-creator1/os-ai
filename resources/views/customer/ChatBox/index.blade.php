@@ -755,137 +755,7 @@
             background-color: var(--color-chat-bubble-in);
         }
 
-        /* ── Email: reads like an email client (list rows, reading pane, reply box). SMS rows and bubbles are untouched. ── */
-        .chat-application .sidebar-content .chat-user-list-wrapper li.email-row {
-            align-items: flex-start;
-            border-radius: 0;
-            border-bottom: 1px solid var(--color-border-subtle);
-            gap: var(--space-3);
-            margin: 0;
-            padding: var(--space-3) var(--space-4);
-            width: 100%;
-        }
-
-        .chat-application .sidebar-content .chat-user-list-wrapper li.email-row.active {
-            box-shadow: inset 3px 0 0 var(--color-primary);
-        }
-
-        .email-row-avatar {
-            flex: 0 0 auto;
-            font-size: 0.75rem;
-            height: 28px;
-            width: 28px;
-        }
-
-        .email-row-main {
-            flex: 1 1 auto;
-            min-width: 0;
-        }
-
-        .email-row-top {
-            align-items: baseline;
-            display: flex;
-            gap: var(--space-2);
-            justify-content: space-between;
-        }
-
-        .email-row-sender {
-            font-weight: 600;
-            min-width: 0;
-        }
-
-        .email-row-time {
-            color: var(--color-text-muted);
-            flex: 0 0 auto;
-            font-size: 0.6875rem;
-        }
-
-        .email-row-subject {
-            color: var(--color-text-primary);
-            font-size: 0.8125rem;
-            font-weight: 500;
-        }
-
-        .email-row-preview {
-            color: var(--color-text-muted);
-            font-size: 0.75rem;
-        }
-
-        .email-row-count {
-            background: var(--color-surface-secondary);
-            border-radius: var(--radius-full);
-            color: var(--color-text-secondary);
-            font-size: 0.6875rem;
-            margin-left: var(--space-1);
-            padding: 0 var(--space-2);
-        }
-
-        .email-message {
-            border-bottom: 1px solid var(--color-border-subtle);
-            margin: 0 auto;
-            max-width: 760px;
-            padding: var(--space-4) var(--space-2);
-        }
-
-        .email-message-head {
-            align-items: center;
-            display: flex;
-            gap: var(--space-3);
-        }
-
-        .email-message-avatar {
-            flex: 0 0 auto;
-            height: 32px;
-            width: 32px;
-        }
-
-        .email-message-from {
-            flex: 1 1 auto;
-            min-width: 0;
-        }
-
-        .email-message-sender {
-            color: var(--color-text-primary);
-            display: block;
-            overflow-wrap: anywhere;
-        }
-
-        .email-message-direction,
-        .email-message-time,
-        .email-message-status {
-            color: var(--color-text-muted);
-            font-size: 0.75rem;
-        }
-
-        .email-message-time {
-            flex: 0 0 auto;
-            white-space: nowrap;
-        }
-
-        .email-message-subject {
-            color: var(--color-text-primary);
-            font-size: 1.0625rem;
-            font-weight: 600;
-            margin: var(--space-3) 0 var(--space-2);
-        }
-
-        .email-message-body {
-            color: var(--color-text-primary);
-            font-size: 0.9375rem;
-            line-height: 1.6;
-            margin: 0;
-            overflow-wrap: anywhere;
-            white-space: pre-wrap;
-        }
-
-        .email-message-status {
-            margin: var(--space-2) 0 0;
-        }
-
-        .email-message.timeline-message-warning .email-message-status {
-            color: var(--color-status-warning-text);
-        }
-
+        /* ── Email: reads like an email client (reading pane, reply box). List rows share .conv-row, below. ── */
         /* Reply box: subject on top, a roomy writing area, Send at the end. */
         .chat-app-form.is-email-channel {
             align-items: flex-start;
@@ -936,6 +806,796 @@
             overflow-wrap: anywhere;
         }
 
+
+        /* ═══════════════════════════════════════════════════════════════════════════════════════════════════════════════
+         * Conversations redesign — compact list, calmer filters, message timeline, email cards, composer, contact panel.
+         * Theme tokens only: colour, radius, spacing and shadow come from the active preset (light and dark); text inherits
+         * the active font (nothing here names a typeface). Every rule below is presentation — no behaviour hook is renamed.
+         * ═══════════════════════════════════════════════════════════════════════════════════════════════════════════════ */
+
+        /* ── List pane ── */
+        @media (min-width: 576px) {
+            .chat-application .sidebar-content {
+                width: 340px;
+            }
+        }
+
+        .chat-application .sidebar-content .channel-group.btn-group {
+            background-color: var(--color-surface-secondary);
+            border-radius: var(--radius-md);
+            margin: var(--space-4) var(--space-4) 0;
+            padding: var(--space-1);
+            width: auto;
+        }
+
+        .chat-application .sidebar-content [data-role="conversation-channels"] {
+            padding-top: 0 !important;
+        }
+
+        .sidebar-content .channel-group .channel-button {
+            font-size: var(--type-label-size);
+            font-weight: 600;
+            min-height: 34px;
+        }
+
+        .sidebar-content .channel-group .channel-button.btn-primary {
+            background-color: var(--color-surface) !important;
+            box-shadow: var(--shadow-sm) !important;
+            color: var(--color-text-primary) !important;
+        }
+
+        .chat-application .sidebar-content .chat-fixed-search {
+            padding: var(--space-3) var(--space-4);
+        }
+
+        .chat-application .sidebar-content .chat-fixed-search .ms-1 {
+            margin-left: 0 !important;
+        }
+
+        /* Filter tabs: quiet underline tabs, not a second segmented control. */
+        .chat-application .sidebar-content .tab-group.btn-group {
+            background-color: transparent;
+            border-bottom: 1px solid var(--color-border-subtle);
+            border-radius: 0;
+            gap: var(--space-4);
+            padding: 0 var(--space-4);
+        }
+
+        .chat-application .sidebar-content .tab-group.btn-group .tab-button {
+            background-color: transparent !important;
+            border-bottom: 2px solid transparent !important;
+            border-radius: 0 !important;
+            color: var(--color-text-muted) !important;
+            flex: 0 0 auto;
+            font-size: var(--type-label-size);
+            font-weight: 500;
+            margin-bottom: -1px;
+            min-height: 40px;
+            padding: 0 !important;
+        }
+
+        .chat-application .sidebar-content .tab-group.btn-group .tab-button.btn-outline-primary {
+            border-bottom-color: transparent !important;
+            color: var(--color-text-muted) !important;
+        }
+
+        .chat-application .sidebar-content .tab-group.btn-group .tab-button.btn-outline-primary:hover {
+            color: var(--color-text-primary) !important;
+        }
+
+        /* The dark theme paints outline buttons in the accent; the inactive tabs and segments stay quiet there too. */
+        html.dark-layout .chat-application .sidebar-content .tab-group.btn-group .tab-button.btn-outline-primary,
+        html.dark-layout .chat-application .sidebar-content .channel-group .channel-button.btn-outline-primary {
+            background-color: transparent !important;
+            border-bottom-color: transparent !important;
+            color: var(--color-text-muted) !important;
+        }
+
+        html.dark-layout .chat-application .sidebar-content .channel-group .channel-button.btn-primary {
+            background-color: var(--color-surface-secondary) !important;
+            color: var(--color-text-primary) !important;
+        }
+
+        html.dark-layout .chat-application .sidebar-content .tab-group.btn-group .tab-button.btn-primary {
+            background-color: transparent !important;
+            border-bottom-color: var(--color-primary) !important;
+            color: var(--color-primary) !important;
+        }
+
+        .chat-application .sidebar-content .tab-group.btn-group .tab-button:hover {
+            color: var(--color-text-primary) !important;
+        }
+
+        .chat-application .sidebar-content .tab-group.btn-group .tab-button.btn-primary {
+            border-bottom-color: var(--color-primary) !important;
+            color: var(--color-primary) !important;
+            font-weight: 600;
+        }
+
+        .chat-application .sidebar-content > .pt-1.pb-1 {
+            padding-bottom: 0 !important;
+            padding-top: 0 !important;
+        }
+
+        /* Rows: 40px avatar, name + time, one preview line. */
+        .chat-application .sidebar-content .chat-user-list-wrapper li.conv-row {
+            align-items: center;
+            border-bottom: 0;
+            border-radius: var(--radius-lg);
+            gap: var(--space-3);
+            margin: 2px var(--space-2);
+            padding: var(--space-3) var(--space-3);
+            width: calc(100% - (var(--space-2) * 2));
+        }
+
+        .chat-application .sidebar-content .chat-user-list-wrapper li.conv-row.active {
+            box-shadow: none;
+        }
+
+        .chat-application .sidebar-content .chat-user-list-wrapper li.conv-row .chat-info,
+        .chat-application .sidebar-content .chat-user-list-wrapper li.conv-row .email-row-main {
+            display: flex;
+            flex: 1 1 auto;
+            flex-direction: column;
+            gap: 2px;
+            min-width: 0;
+            padding: 0;
+        }
+
+        .conv-row-top,
+        .email-row-top,
+        .conv-row-bottom {
+            align-items: baseline;
+            display: flex;
+            gap: var(--space-2);
+            min-width: 0;
+        }
+
+        .conv-row-bottom {
+            align-items: center;
+        }
+
+        .conv-row-top h6,
+        .email-row-top h6 {
+            color: var(--color-text-primary);
+            flex: 1 1 auto;
+            font-size: 0.9063rem;
+            font-weight: 600;
+            min-width: 0;
+        }
+
+        .conv-row .chat-time {
+            color: var(--color-text-muted);
+            flex: 0 0 auto;
+            font-size: 0.75rem;
+        }
+
+        .chat-application .sidebar-content .chat-user-list-wrapper li.conv-row .conv-row-bottom .card-text,
+        .chat-application .sidebar-content .chat-user-list-wrapper li.conv-row .email-row-preview {
+            color: var(--color-text-secondary);
+            flex: 1 1 auto;
+            font-size: 0.8125rem;
+            min-width: 0;
+        }
+
+        .chat-application .sidebar-content .chat-user-list-wrapper li.conv-row .conv-row-top h6,
+        .chat-application .sidebar-content .chat-user-list-wrapper li.conv-row .email-row-top h6,
+        .chat-application .sidebar-content .chat-user-list-wrapper li.conv-row .email-row-subject {
+            color: var(--color-text-primary);
+        }
+
+        .chat-application .sidebar-content .chat-user-list-wrapper li.conv-row .chat-time {
+            color: var(--color-text-muted);
+        }
+
+        /* The selected row is one soft surface: no per-element tint bands inside it. */
+        .chat-application .sidebar-content .chat-user-list-wrapper li.conv-row.active h6,
+        .chat-application .sidebar-content .chat-user-list-wrapper li.conv-row.active .card-text,
+        .chat-application .sidebar-content .chat-user-list-wrapper li.conv-row.active .chat-time {
+            background: transparent !important;
+        }
+
+        .conv-row-bottom .conversation-channel-badge {
+            flex: 0 0 auto;
+        }
+
+        .conv-row-bottom .chat-meta {
+            flex: 0 0 auto;
+        }
+
+        .chat-application .sidebar-content .chat-user-list-wrapper li.conv-row.conv-unread h6,
+        .chat-application .sidebar-content .chat-user-list-wrapper li.conv-row.conv-unread .card-text {
+            color: var(--color-text-primary);
+            font-weight: 700;
+        }
+
+        .conv-row .conversation-row-avatar {
+            background: var(--color-primary-soft-bg);
+            color: var(--color-primary);
+            font-size: 0.8125rem;
+            font-weight: 700;
+        }
+
+        .chat-application .sidebar-content .chat-user-list-wrapper li.conv-row.active .conversation-row-avatar {
+            background: var(--color-surface) !important;
+        }
+
+        .email-row-subject {
+            color: var(--color-text-primary);
+            font-size: 0.8125rem;
+            font-weight: 600;
+        }
+
+        .email-row-preview {
+            color: var(--color-text-secondary);
+            font-size: 0.8125rem;
+        }
+
+        .email-row-count {
+            background: var(--color-surface-secondary);
+            border-radius: var(--radius-full);
+            color: var(--color-text-secondary);
+            font-size: 0.6875rem;
+            font-weight: 600;
+            margin-left: var(--space-1);
+            padding: 0 var(--space-2);
+        }
+
+        /* ── Conversation header ── */
+        .chat-application .chat-app-window .active-chat .chat-header {
+            gap: var(--space-3);
+            min-height: 65px;
+            padding: var(--space-3) var(--space-5);
+        }
+
+        .conversation-header-text {
+            flex: 1 1 auto;
+            gap: var(--space-3);
+        }
+
+        .conversation-header-avatar {
+            align-items: center;
+            color: var(--color-primary);
+            display: inline-flex;
+            flex: 0 0 auto;
+            font-size: 0.8125rem;
+            font-weight: 700;
+            height: 40px;
+            justify-content: center;
+            width: 40px;
+        }
+
+        .conversation-header-avatar:empty {
+            display: none;
+        }
+
+        .conversation-header-id {
+            display: flex;
+            flex-direction: column;
+            min-width: 0;
+        }
+
+        .conversation-header-id h6 {
+            color: var(--color-text-primary);
+            font-size: 1.0313rem;
+            font-weight: 700;
+        }
+
+        .conversation-header-sub {
+            color: var(--color-text-muted);
+            font-size: 0.78rem;
+        }
+
+        .conversation-header-sub:empty {
+            display: none;
+        }
+
+        .conversation-header-actions {
+            flex: 0 0 auto;
+            gap: var(--space-2);
+        }
+
+        .conv-hb,
+        .chat-header .add-to-blacklist,
+        .chat-header .remove-btn,
+        .chat-header .add-to-pin {
+            align-items: center;
+            background: var(--color-surface);
+            border: 1px solid var(--color-border);
+            border-radius: var(--radius-md);
+            color: var(--color-text-primary);
+            display: inline-flex;
+            height: 40px;
+            justify-content: center;
+            padding: 0;
+            width: 40px;
+        }
+
+        .conv-hb[hidden] {
+            display: none;
+        }
+
+        .conv-hb:hover,
+        .chat-header .add-to-blacklist:hover,
+        .chat-header .remove-btn:hover,
+        .chat-header .add-to-pin:hover {
+            background: var(--color-row-hover);
+        }
+
+        .chat-header .add-to-pin:empty {
+            display: none;
+        }
+
+        .chat-application .chat-app-window .active-chat .chat-header .cursor-pointer,
+        .chat-header .conv-hb svg {
+            height: 19px;
+            margin: 0 !important;
+            padding: 0;
+            width: 19px;
+        }
+
+        /* ── Timeline: one native scroll container ── */
+        .chat-application .chat-app-window .conversation-main .user-chats {
+            overflow-x: hidden !important;
+            overflow-y: auto !important;
+            padding: var(--space-5) var(--space-6);
+            scrollbar-gutter: stable;
+        }
+
+        .user-chats .ps__rail-x,
+        .user-chats .ps__rail-y {
+            display: none !important;
+        }
+
+        .timeline-divider {
+            color: var(--color-text-muted);
+            font-size: 0.75rem;
+            font-weight: 600;
+            justify-content: center;
+            margin: var(--space-3) 0;
+        }
+
+        .timeline-divider::before,
+        .timeline-divider::after {
+            display: none;
+        }
+
+        /* SMS: familiar left/right bubbles, time and delivery state beneath. */
+        .chat-application .chat-app-window .chats .timeline-message.chat {
+            display: flex;
+            margin: 0 0 var(--space-3);
+        }
+
+        .chat-application .chat-app-window .chats .timeline-message.chat .chat-body {
+            align-items: flex-end;
+            display: flex;
+            flex-direction: column;
+            margin: 0 0 0 auto;
+            max-width: 70%;
+            overflow: visible;
+        }
+
+        .chat-application .chat-app-window .chats .timeline-message.chat-left .chat-body {
+            align-items: flex-start;
+            margin: 0 auto 0 0;
+        }
+
+        .chat-application .chat-app-window .chats .timeline-message .chat-body .chat-content {
+            border-radius: var(--radius-xl) var(--radius-xl) 6px var(--radius-xl);
+            float: none;
+            font-size: 0.9063rem;
+            line-height: 1.45;
+            margin: 0;
+            max-width: 100%;
+            overflow-wrap: anywhere;
+            padding: 10px 14px;
+        }
+
+        .chat-application .chat-app-window .chats .timeline-message.chat-left .chat-body .chat-content {
+            background: var(--color-surface);
+            border: 1px solid var(--color-border);
+            border-radius: var(--radius-xl) var(--radius-xl) var(--radius-xl) 6px;
+        }
+
+        .chat-application .chat-app-window .chats .timeline-message .chat-content p {
+            margin: 0;
+        }
+
+        .chat-application .chat-app-window .chats .timeline-message .chat-content p + p {
+            margin-top: var(--space-2);
+        }
+
+        .timeline-message-foot {
+            align-items: center;
+            display: flex;
+            flex-wrap: wrap;
+            gap: var(--space-2);
+            margin-top: 4px;
+        }
+
+        .chat-application .chat-app-window .chats .timeline-message .timeline-message-foot .timeline-message-meta {
+            color: var(--color-text-muted);
+            font-size: 0.72rem;
+            margin: 0;
+            opacity: 1;
+        }
+
+        .timeline-message-warning .timeline-message-foot .timeline-message-meta {
+            color: var(--color-status-warning-text);
+        }
+
+        /* Email: a card per message — sender header, subject, body that wraps and uses the whole width. */
+        .email-message {
+            background: var(--color-surface);
+            border: 1px solid var(--color-border);
+            border-radius: var(--radius-lg);
+            clear: both;
+            margin: 0 0 var(--space-3);
+            max-width: none;
+            overflow: hidden;
+            padding: 0 0 var(--space-4);
+        }
+
+        .email-message-head {
+            align-items: center;
+            display: flex;
+            gap: var(--space-3);
+            padding: 14px 18px 10px;
+        }
+
+        .email-message-avatar {
+            align-items: center;
+            background: var(--color-primary-soft-bg);
+            border-radius: var(--radius-full);
+            color: var(--color-primary);
+            display: inline-flex;
+            flex: 0 0 auto;
+            font-size: 0.78rem;
+            font-weight: 700;
+            height: 36px;
+            justify-content: center;
+            width: 36px;
+        }
+
+        .email-message-outbound .email-message-avatar {
+            background: var(--color-primary);
+            color: var(--color-button-text);
+        }
+
+        .email-message-from {
+            display: flex;
+            flex: 1 1 auto;
+            flex-direction: column;
+            min-width: 0;
+        }
+
+        .email-message-sender {
+            color: var(--color-text-primary);
+            font-size: 0.875rem;
+            overflow-wrap: anywhere;
+        }
+
+        .email-message-direction,
+        .email-message-time {
+            color: var(--color-text-muted);
+            font-size: 0.75rem;
+        }
+
+        .email-message-time {
+            flex: 0 0 auto;
+            white-space: nowrap;
+        }
+
+        .email-message-subject,
+        .email-message-body,
+        .email-message-status {
+            margin-left: 66px;
+            margin-right: 18px;
+        }
+
+        .email-message-subject {
+            color: var(--color-text-primary);
+            font-size: 0.9375rem;
+            font-weight: 600;
+            margin-bottom: var(--space-2);
+            margin-top: 0;
+            overflow-wrap: anywhere;
+        }
+
+        .email-message-body {
+            color: var(--color-text-primary);
+            font-size: 0.9063rem;
+            line-height: 1.55;
+            margin-bottom: 0;
+            margin-top: 0;
+            max-width: none;
+            overflow-wrap: anywhere;
+            white-space: pre-wrap;
+            word-break: break-word;
+        }
+
+        .email-message-status {
+            color: var(--color-text-muted);
+            font-size: 0.78rem;
+            margin-bottom: 0;
+            margin-top: var(--space-3);
+        }
+
+        .email-message.timeline-message-warning .email-message-status {
+            background: var(--color-status-warning-soft-bg);
+            border-radius: var(--radius-md);
+            color: var(--color-status-warning-text);
+            padding: 10px 12px;
+        }
+
+        @media (max-width: 575.98px) {
+            .email-message-subject,
+            .email-message-body,
+            .email-message-status {
+                margin-left: 18px;
+            }
+
+            .chat-application .chat-app-window .conversation-main .user-chats {
+                padding: var(--space-4);
+            }
+
+            .chat-application .chat-app-window .chats .timeline-message.chat .chat-body {
+                max-width: 88%;
+            }
+        }
+
+        /* ── Composer ── */
+        .chat-application .chat-app-window .chat-app-form {
+            align-items: flex-end;
+            background: var(--color-surface);
+            border-top: 1px solid var(--color-border-subtle);
+            gap: var(--space-3);
+            padding: var(--space-3) var(--space-5) var(--space-4);
+        }
+
+        .chat-application .chat-app-window .chat-app-form .form-send-message {
+            border-radius: var(--radius-lg);
+        }
+
+        .chat-app-form .input-group-merge .form-control,
+        .chat-app-form .input-group-merge .input-group-text {
+            background: transparent;
+            border-color: var(--color-input-border);
+        }
+
+        .chat-app-form .input-group-merge {
+            border: 1px solid var(--color-input-border);
+            border-radius: var(--radius-lg);
+            min-height: 48px;
+            overflow: hidden;
+        }
+
+        .chat-app-form .input-group-merge .form-control,
+        .chat-app-form .input-group-merge .input-group-text {
+            border: 0;
+        }
+
+        .chat-app-form .input-group-merge:focus-within {
+            border-color: var(--color-focus-border);
+            box-shadow: 0 0 0 0.2rem var(--focus-ring-color);
+        }
+
+        textarea.message {
+            border: 0;
+            box-shadow: none !important;
+            height: 46px;
+            overflow-y: auto;
+            white-space: pre-wrap;
+        }
+
+        .chat-app-form .send {
+            border-radius: var(--radius-md);
+            min-height: 48px;
+            padding: 0 var(--space-5);
+        }
+
+        /* Email reply: To / Subject rows, a roomy writing area, Send at the end. */
+        .composer-email-fields {
+            background: var(--color-surface);
+            border: 1px solid var(--color-input-border);
+            border-bottom: 0;
+            border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+            flex-direction: column;
+            gap: 0;
+            padding: 0 var(--space-4);
+        }
+
+        .composer-email-fields[hidden],
+        .composer-email-to[hidden] {
+            display: none;
+        }
+
+        .composer-email-to {
+            align-items: center;
+            border-bottom: 1px solid var(--color-border-subtle);
+            display: flex;
+            gap: var(--space-3);
+            min-height: 40px;
+        }
+
+        .composer-email-label {
+            color: var(--color-text-muted);
+            flex: 0 0 56px;
+            font-size: 0.8125rem;
+        }
+
+        .composer-email-recipient {
+            background: var(--color-surface-secondary);
+            border: 1px solid var(--color-border);
+            border-radius: var(--radius-md);
+            font-size: 0.78rem;
+            max-width: 100%;
+            overflow-wrap: anywhere;
+            padding: 3px 10px;
+        }
+
+        .composer-email-fields .form-control,
+        .composer-email-fields .form-select {
+            background: transparent;
+            border: 0;
+            border-bottom: 1px solid var(--color-border-subtle);
+            border-radius: 0;
+            box-shadow: none;
+            min-height: 40px;
+            padding-left: 0;
+            padding-right: 0;
+        }
+
+        .composer-email-fields .form-control:last-child {
+            border-bottom: 0;
+        }
+
+        .chat-app-form.is-email-channel .composer-email-fields {
+            border-bottom: 0;
+            padding-bottom: 0;
+        }
+
+        .chat-app-form.is-email-channel .conversation-channel-switch {
+            flex: 0 0 100%;
+            margin: 0;
+            order: -2;
+        }
+
+        .chat-app-form.is-email-channel .composer-email-fields {
+            order: -1;
+        }
+
+        .chat-app-form.is-email-channel .form-send-message.input-group-merge {
+            border-radius: 0 0 var(--radius-lg) var(--radius-lg);
+            flex: 0 0 100%;
+            margin-right: 0 !important;
+            margin-top: calc(var(--space-3) * -1) !important;
+            max-width: 100%;
+        }
+
+        .chat-app-form.is-email-channel textarea.message {
+            height: auto;
+            min-height: 96px;
+            resize: vertical;
+        }
+
+        .chat-app-form.is-email-channel .send {
+            margin-left: auto;
+        }
+
+        .chat-app-form.is-email-channel .attachment-icon {
+            display: none;
+        }
+
+        /* ── Contact panel ── */
+        .conversation-context {
+            flex: 0 0 300px;
+            padding: var(--space-6) var(--space-5);
+            width: 300px;
+        }
+
+        .conversation-context-person {
+            align-items: center;
+            border-bottom: 0;
+            display: flex;
+            flex-direction: column;
+            gap: var(--space-2);
+            margin-bottom: var(--space-4);
+            padding-bottom: 0;
+        }
+
+        .conversation-context-person h5,
+        .conversation-context-person h6 {
+            color: var(--color-text-primary);
+            font-size: 1.0625rem;
+            font-weight: 700;
+            margin: var(--space-1) 0 0 !important;
+            overflow-wrap: anywhere;
+        }
+
+        .conversation-context-avatar {
+            background: var(--color-primary-soft-bg);
+            color: var(--color-primary);
+            font-size: 1.375rem;
+            font-weight: 700;
+            height: 72px;
+            width: 72px;
+        }
+
+        .conversation-context-avatar .avatar-content {
+            font-size: inherit;
+            height: 100%;
+            width: 100%;
+        }
+
+        .conversation-context-actions {
+            display: flex;
+            flex-wrap: wrap;
+            gap: var(--space-2);
+            margin-bottom: var(--space-4);
+        }
+
+        .conversation-context-actions > * {
+            align-items: center;
+            display: inline-flex;
+            flex: 1 1 0;
+            justify-content: center;
+            min-height: 40px;
+            white-space: nowrap;
+        }
+
+        .conv-btn {
+            align-items: center;
+            border-radius: var(--radius-md);
+            display: inline-flex;
+            font-size: 0.875rem;
+            font-weight: 600;
+            gap: var(--space-2);
+            justify-content: center;
+            padding: 0 var(--space-4);
+        }
+
+        .conv-btn[hidden] {
+            display: none;
+        }
+
+        .conv-btn-outline {
+            background: var(--color-surface);
+            border: 1px solid var(--color-border);
+            color: var(--color-text-primary);
+        }
+
+        .conv-btn-outline:hover {
+            background: var(--color-row-hover);
+        }
+
+        .conversation-context-facts {
+            column-gap: var(--space-3);
+            row-gap: 0;
+        }
+
+        .conversation-context-facts dt,
+        .conversation-context-facts dd {
+            align-items: center;
+            border-top: 1px solid var(--color-border-subtle);
+            display: flex;
+            min-height: 38px;
+        }
+
+        .conversation-context-facts dt:first-of-type,
+        .conversation-context-facts dt:first-of-type + dd {
+            border-top: 0;
+        }
+
+        .conversation-context-facts dd {
+            font-weight: 600;
+            justify-content: flex-end;
+            text-align: right;
+        }
+
+        .conversation-context [data-context="email"] .conversation-context-details dt {
+            margin-top: var(--space-3);
+        }
     </style>
 
 @endsection
@@ -977,10 +1637,20 @@
                         <div class="sidebar-toggle d-block d-lg-none me-1">
                             <x-ds-icon name="menu" class="font-medium-5" />
                         </div>
-                        <h6 class="mb-0 text-truncate" data-role="conversation-title"></h6>
+                        <span class="avatar bg-light-primary conversation-header-avatar" data-role="conversation-avatar" aria-hidden="true"></span>
+                        <div class="conversation-header-id">
+                            <h6 class="mb-0 text-truncate" data-role="conversation-title"></h6>
+                            <span class="conversation-header-sub text-truncate" data-role="conversation-subtitle"></span>
+                        </div>
                         <span class="add-to-pin"> </span>
                     </div>
-                    <div class="d-flex align-items-center">
+                    <div class="d-flex align-items-center conversation-header-actions">
+
+                        {{-- Shown only when the open conversation resolved to a verified contact this user may call AND the existing
+                             browser softphone is on the page; its identity is set per conversation by JS and cleared on every switch. --}}
+                        <button type="button" class="conv-hb conversation-call-btn" data-role="conversation-call" aria-label="Call" title="Call" hidden>
+                            <x-ds-icon name="phone" aria-hidden="true" />
+                        </button>
 
                         <x-tooltip text="{{ __('locale.labels.block') }}" placement="top" class="add-to-blacklist">
                             <x-ds-icon name="shield" class="cursor-pointer font-medium-2 mx-1 text-primary" />
@@ -1022,6 +1692,7 @@
                             <button type="button" class="conversation-channel-option" data-channel="email" aria-pressed="false" hidden>Email</button>
                         </div>
                         <div class="composer-email-fields" data-role="composer-email-fields" hidden>
+                            <div class="composer-email-to" data-role="composer-email-to"><span class="composer-email-label">To</span><span class="composer-email-recipient" data-role="composer-email-recipient"></span></div>
                             <input type="text" id="email-subject" class="form-control form-control-sm" maxlength="200" placeholder="Subject" aria-label="Email subject" autocomplete="off">
                             <select id="email-location" class="form-select form-select-sm" aria-label="Which location is this for?" hidden></select>
                         </div>
@@ -1066,6 +1737,9 @@
         <!--/ Active Chat -->
     </section>
     <!--/ Main chat area -->
+
+    {{-- The existing CRM browser softphone (popup + SDK), only when this user may place browser calls here. No second calling system. --}}
+    @includeWhen(! empty($browserCalling), 'customer.people._softphone')
 @endsection
 
 @section('vendor-script')
@@ -1268,6 +1942,8 @@
         });
         $(".chat-app-form").toggleClass("is-email-channel", email);
         $("[data-role=composer-email-fields]").prop("hidden", !(email && usable));
+        $("[data-role=composer-email-recipient]").text(c.recipient || "");
+        $("[data-role=composer-email-to]").prop("hidden", !c.recipient);
         if (email && usable && !$("#email-subject").val()) {
           $("#email-subject").val(c.subject || "");
         }
@@ -1453,6 +2129,65 @@
           });
       }
 
+      // ── Conversation header and Call ────────────────────────────────────────────────────────────────────────────────
+      // The Call controls are driven by ONE server decision per loaded conversation (response.call: a verified contact this user
+      // may call, or null). The identity is stamped with the conversation it was loaded for and discarded the moment the selection
+      // changes, so a click can never dial the previously selected contact. The softphone itself (existing mg-softphone.js) places
+      // nothing until the server re-checks the contact on its own endpoint. A control is shown only when that softphone is present.
+      function softphoneAvailable() {
+        return !!(window.MGSoftphone && typeof window.MGSoftphone.callContact === "function");
+      }
+
+      function resetConversationHeader() {
+        $("[data-role=conversation-avatar]").text("");
+        $("[data-role=conversation-subtitle]").text("");
+        $(".conversation-call-btn").prop("hidden", true).removeAttr("data-call-uid data-call-label data-call-phone data-call-initials data-call-for");
+      }
+
+      function applyConversationHeader(response) {
+        const $panel = $("#conversation-context [data-role=contact-panel]");
+        const title = String(response.title || "");
+        const initials = String($panel.attr("data-header-initials") || "") || title.replace(/[^\p{L}\p{N}]/gu, "").slice(0, 1).toUpperCase();
+        $("[data-role=conversation-avatar]").text(initials);
+        $("[data-role=conversation-subtitle]").text(String($panel.attr("data-header-subtitle") || ""));
+
+        const forId = String($(".chat_id").val());
+        const call = response.call || null;
+        const usable = !!call && softphoneAvailable();
+
+        const $header = $(".conversation-call-btn");
+        if (usable) {
+          $header.attr({ "data-call-uid": call.uid, "data-call-label": call.label, "data-call-phone": call.phone, "data-call-initials": call.initials, "data-call-for": forId, "aria-label": "Call " + call.label }).prop("hidden", false);
+        } else {
+          $header.prop("hidden", true).removeAttr("data-call-uid data-call-label data-call-phone data-call-initials data-call-for");
+        }
+
+        // The panel's own Call button was rendered by the server for this contact; keep it only when it can work.
+        $("#conversation-context [data-role=conversation-call]").each(function() {
+          if (usable) {
+            $(this).attr("data-call-for", forId).prop("hidden", false);
+          } else {
+            $(this).remove();
+          }
+        });
+      }
+
+      $(document).on("click", "[data-role=conversation-call]", function() {
+        const $btn = $(this);
+        const uid = String($btn.attr("data-call-uid") || "");
+        // A stale or unstamped control (the selection moved on) never dials.
+        if (uid === "" || String($btn.attr("data-call-for") || "") !== String($(".chat_id").val()) || !softphoneAvailable()) {
+          $btn.prop("hidden", true);
+          return;
+        }
+        window.MGSoftphone.callContact({
+          uid: uid,
+          label: String($btn.attr("data-call-label") || ""),
+          phone: String($btn.attr("data-call-phone") || ""),
+          initials: String($btn.attr("data-call-initials") || "")
+        });
+      });
+
       /**
        * Load the person's activity timeline and contact panel for one
        * conversation. Both arrive rendered and escaped by the server; nothing
@@ -1513,6 +2248,7 @@
             $("[data-role=conversation-title]").text(response.title);
             $(".chat_history").html(response.timeline);
             $("#conversation-context").html(response.context);
+            applyConversationHeader(response);
 
             // Show the active chat area
             $(".start-chat-area").addClass("d-none");  // Hide the initial "Start chat" screen
@@ -1542,8 +2278,10 @@
 
           $(".chat_history").empty();  // Clear the previous person's timeline
           $("#conversation-context").empty();
+          resetConversationHeader();    // and the previous person's name, avatar and Call identity
 
           $(this).find(".notification_count").remove();
+          $(this).removeClass("conv-unread");
 
           const chat_id = $(this).data("id");  // Get the clicked chat ID
 

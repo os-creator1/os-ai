@@ -5,7 +5,7 @@
     section a registered domain supplies. No placeholder for a domain that
     does not exist yet.
 --}}
-<div class="conversation-context-inner" data-role="contact-panel">
+<div class="conversation-context-inner" data-role="contact-panel" data-header-initials="{{ $context->initials() }}" data-header-subtitle="{{ $context->name !== null ? $context->phone : '' }}{{ $context->group !== null ? ' · ' . $context->group : '' }}">
     <div class="conversation-context-person">
         <span class="avatar bg-light-primary conversation-context-avatar" aria-hidden="true">
             <span class="avatar-content">
@@ -24,6 +24,20 @@
             <x-badge :variant="$context->consentVariant()" data-role="contact-panel-consent">{{ $context->consentLabel() }}</x-badge>
         </div>
     </div>
+
+    @if (! empty($call) || $profileUrl !== null)
+        <div class="conversation-context-actions">
+        @if (! empty($call))
+            {{-- Hidden until the page confirms the existing browser softphone is present; the server already verified this contact. --}}
+            <button type="button" class="conv-btn conv-btn-outline" data-role="conversation-call" data-call-uid="{{ $call['uid'] }}" data-call-label="{{ $call['label'] }}" data-call-phone="{{ $call['phone'] }}" data-call-initials="{{ $call['initials'] }}" aria-label="Call {{ $call['label'] }}" hidden>
+                <x-ds-icon name="phone" size="16" aria-hidden="true" />Call
+            </button>
+        @endif
+            @if ($profileUrl !== null)
+                <x-button variant="outline" size="sm" :href="$profileUrl" data-role="contact-panel-profile">Open contact</x-button>
+            @endif
+        </div>
+    @endif
 
     <dl class="conversation-context-facts" data-role="contact-panel-identity">
         <dt>Phone</dt>
@@ -81,11 +95,7 @@
         @endforeach
     @endforeach
 
-    @if ($profileUrl !== null)
-        <div class="mt-2">
-            <x-button variant="outline" size="sm" :href="$profileUrl" data-role="contact-panel-profile">Open contact</x-button>
-        </div>
-    @elseif (! $context->hasContact())
+    @if ($profileUrl === null && ! $context->hasContact())
         <p class="text-caption mt-2 mb-0" data-role="contact-panel-unlinked">This number is not linked to a contact.</p>
     @endif
 </div>

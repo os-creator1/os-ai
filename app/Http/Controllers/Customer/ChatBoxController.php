@@ -168,7 +168,7 @@
                 return $this->notFound();
             }
 
-            [, $business] = $resolved;
+            [$workspace, $business] = $resolved;
 
             $pageConfigs = [
                 'pageHeader'    => false,
@@ -206,6 +206,8 @@
                 'templates'       => $templates,
                 'pinnedChats'     => $pinnedChats,
                 'homeScopeRange'  => $created,
+                // The existing CRM softphone's endpoints, or null when this user cannot place browser calls here.
+                'browserCalling'  => app(\App\Library\Voice\ConversationCalling::class)->config($workspace, $business),
                 'displayNames'    => ChatBox::displayNamesFor($business, $pinnedChats),
                 'workspaceUid'    => $workspaceUid,
                 'businessUid'     => $businessUid,
@@ -658,6 +660,7 @@
             // contacts has the number. Everything contact-keyed hangs off it.
             $contact = $box->resolveDisplayContact($business);
             $context = $contextReader->read($business, $box, $contact);
+            $call = $this->callTarget($workspaceUid, $business, $contact, $context->title());
 
             // Unified inbox: an email reply from this conversation answers the person's latest email thread (same Contact only).
             $replyTo = $contact === null ? null : app(\App\Library\Conversations\UnifiedEmailInbox::class)
@@ -673,11 +676,13 @@
                 'composer' => app(\App\Library\Conversations\ConversationComposerOptions::class)
                     ->for($business, $workspaceUid, $businessUid, (int) Auth::id(), true, $contact, $replyTo),
                 'title'    => $context->title(),
+                'call'     => $call,
                 'timeline' => view('customer.ChatBox.partials._timeline', [
                     'page' => $timeline->forConversation($business, $box, $contact),
                 ])->render(),
                 'context'  => view('customer.ChatBox.partials._context', [
                     'context'    => $context,
+                    'call'       => $call,
                     'profileUrl' => $context->hasContact() && Gate::allows('view_contact')
                         ? route('customer.workspaces.businesses.people.show', [$workspaceUid, $businessUid, $context->contactUid])
                         : null,
@@ -730,16 +735,20 @@
                 ?? $messages->reverse()->first(fn ($m) => $m->status->value !== 'failed');
             $counterpart = (string) ($messages->first(fn ($m) => $m->direction === 'inbound')?->from_email ?? $messages->first()->to_email);
             $name = $contact === null ? null : ($inbox->contactNames($business, $userId, [(int) $contact->id])[(int) $contact->id] ?? null);
+            $call = $this->callTarget($workspaceUid, $business, $contact, $name ?? $counterpart);
 
             return response()->json([
                 'status'   => 'success',
                 'pinned'   => 0,
                 'channel'  => 'email',
                 'title'    => $name ?? $counterpart,
+                'call'     => $call,
                 'composer' => app(\App\Library\Conversations\ConversationComposerOptions::class)
                     ->for($business, $workspaceUid, $businessUid, $userId, false, $contact, $replyTo),
                 'timeline' => view('customer.ChatBox.partials._timeline', ['page' => $page])->render(),
                 'context'  => view('customer.ChatBox.partials._email_context', [
+                    'call'        => $call,
+                    'count'       => $messages->count(),
                     'counterpart' => $counterpart,
                     'subject'     => (string) $messages->last()->subject,
                     'name'        => $name,
@@ -749,6 +758,29 @@
                         : null,
                 ])->render(),
             ]);
+        }
+
+        /**
+         * The contact the open conversation may be called on, for the existing browser softphone — or null, in which case no Call
+         * control is rendered at all. Only a Contact the conversation was already verified against is considered.
+         *
+         * @return array{uid: string, label: string, phone: string, initials: string}|null
+         */
+        private function callTarget(string $workspaceUid, Business $business, ?Contacts $contact, string $label): ?array
+        {
+            if ($contact === null) {
+                return null;
+            }
+
+            $workspace = $this->workspaceRepository->findByUid($workspaceUid);
+
+            if ($workspace === null) {
+                return null;
+            }
+
+            $calling = app(\App\Library\Voice\ConversationCalling::class);
+
+            return $calling->target($calling->config($workspace, $business), $business, $contact, $label);
         }
 
         /**

@@ -17,33 +17,35 @@
         }
     }
 @endphp
-<li data-id="{{$chat->uid}}" data-box-id="{{$chat->id}}" data-channel="sms" class="{{ $chat->pinned ? 'pinned-row' : '' }}">
+<li data-id="{{$chat->uid}}" data-box-id="{{$chat->id}}" data-channel="sms" class="conv-row {{ $chat->pinned ? 'pinned-row' : '' }} {{ $chat->notification ? 'conv-unread' : '' }}">
     <span class="avatar bg-light-primary conversation-row-avatar" aria-hidden="true">
         {{ $rowInitials !== '' ? $rowInitials : mb_substr((string) $chat->to, -2) }}
     </span>
     <div class="chat-info flex-grow-1">
-        <h6 class="mb-0 text-truncate" data-role="conversation-row-title">{{ !empty($displayName) ? $displayName : $chat->to }}</h6>
-        <span class="conversation-channel-badge" data-role="conversation-row-channel">{{ ! empty($withEmail) ? 'SMS · Email' : 'SMS' }}</span>
-        @if(!empty($displayName))
-            <p class="card-text mb-0 text-truncate text-numeric">{{ $chat->to }}</p>
-        @endif
-
-        @if(! empty($emailPreview))
-            <p class="card-text mb-0 text-truncate" data-role="conversation-row-preview">{{ str_limit($emailPreview, 60) }}</p>
-        @elseif($chat->latestMessage !== null && ! empty($chat->latestMessage->message))
-            <p class="card-text mb-0 text-truncate" data-role="conversation-row-preview">
-                {{ str_limit($chat->latestMessage->message, 60) }}
-            </p>
-        @endif
-    </div>
-    <div class="chat-meta text-nowrap">
-        <small class="float-end mb-25 chat-time">{{ \App\Library\Tool::customerDateTime($activityAt ?? $chat->updated_at) }}</small>
-        @if($chat->notification)
-            <span class="badge bg-primary rounded-pill float-end notification_count">{{ $chat->notification }}</span>
-        @else
-            <div class="counter" hidden>
-                <span class="badge bg-primary rounded-pill float-end notification_count"></span>
+        <div class="conv-row-top">
+            <h6 class="mb-0 text-truncate" data-role="conversation-row-title">{{ !empty($displayName) ? $displayName : $chat->to }}</h6>
+            <small class="chat-time">{{ \App\Library\Tool::customerDateTime($activityAt ?? $chat->updated_at) }}</small>
+        </div>
+        <div class="conv-row-bottom">
+            @if(! empty($emailPreview))
+                <p class="card-text mb-0 text-truncate" data-role="conversation-row-preview">{{ str_limit($emailPreview, 60) }}</p>
+            @elseif($chat->latestMessage !== null && ! empty($chat->latestMessage->message))
+                <p class="card-text mb-0 text-truncate" data-role="conversation-row-preview">{{ str_limit($chat->latestMessage->message, 60) }}</p>
+            @elseif(!empty($displayName))
+                <p class="card-text mb-0 text-truncate text-numeric">{{ $chat->to }}</p>
+            @else
+                <p class="card-text mb-0 text-truncate">No messages yet</p>
+            @endif
+            <span class="conversation-channel-badge" data-role="conversation-row-channel">{{ ! empty($withEmail) ? 'SMS · Email' : 'SMS' }}</span>
+            <div class="chat-meta text-nowrap">
+                @if($chat->notification)
+                    <span class="badge bg-primary rounded-pill float-end notification_count">{{ $chat->notification }}</span>
+                @else
+                    <div class="counter" hidden>
+                        <span class="badge bg-primary rounded-pill float-end notification_count"></span>
+                    </div>
+                @endif
             </div>
-        @endif
+        </div>
     </div>
 </li>
