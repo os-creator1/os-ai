@@ -487,6 +487,8 @@
             poll();
         }).catch(function (e) {
             if (e === CANCELLED) { return; }
+            // A completion that outlived its call (ended/dismissed, or replaced by a newer one) must touch nothing.
+            if (mine !== attempt || finished) { return; }
             var blocked = e && e.name === 'NotAllowedError';
             declineInbound();
             finished = false;

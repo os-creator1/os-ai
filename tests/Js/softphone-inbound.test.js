@@ -22,7 +22,9 @@ function element(attrs) {
     classList: { add: (c) => classes.add(c), remove: (c) => classes.delete(c), contains: (c) => classes.has(c), toggle: (c, on) => (on ? classes.add(c) : classes.delete(c)) },
     getAttribute: (k) => (k in a ? a[k] : null),
     setAttribute: (k, v) => { a[k] = String(v); },
-    addEventListener() {},
+    handlers: {},
+    addEventListener(type, fn) { (this.handlers[type] = this.handlers[type] || []).push(fn); },
+    click() { (this.handlers.click || []).forEach((f) => f({})); },
     querySelectorAll: () => [],
     querySelector(sel) { if (!children.has(sel)) { children.set(sel, element()); } return children.get(sel); },
   };
@@ -37,6 +39,8 @@ function boot() {
   const root = element({ 'data-config': JSON.stringify(cfg), 'data-state': 'idle' });
   const incomingQueue = []; // each GET /incoming pops one scripted responder
   const clients = [];
+  const requests = []; // every fetch the script made: [method, url]
+  const state = { mic: null }; // test hook: replaces getUserMedia
 
   function FakeRTC() {
     this.handlers = {};
@@ -54,8 +58,9 @@ function boot() {
       querySelector: () => element(), querySelectorAll: () => [], addEventListener() {},
     },
     window: { TelnyxWebRTC: { TelnyxRTC: FakeRTC }, addEventListener() {} },
-    navigator: { mediaDevices: { getUserMedia: () => Promise.resolve({ getTracks: () => [] }) } },
+    navigator: { mediaDevices: { getUserMedia: () => (state.mic ? state.mic() : Promise.resolve({ getTracks: () => [] })) } },
     fetch: (url, options) => {
+      requests.push([(options && options.method) || 'GET', url]);
       if (url === '/session') { return respond({ data: { login_token: 'a.b.c' } }); }
       if (url === '/presence') { return respond({ data: { available: true } }); }
       if (url === '/incoming') { return (incomingQueue.shift() || (() => respond({ data: [] })))(); }
@@ -71,7 +76,8 @@ function boot() {
   const sdkCall = () => ({ state: 'ringing', hangups: 0, hangup() { this.hangups++; this.state = 'hangup'; }, answer() {} });
   const nameOf = () => root.querySelector('[data-role="softphone-name"]').textContent;
 
-  return { root, clients, incomingQueue, sdkCall, nameOf, respond };
+  const click = (role) => root.querySelector('[data-role="' + role + '"]').click();
+  return { root, clients, incomingQueue, sdkCall, nameOf, respond, requests, state, click };
 }
 
 test('an early caller hangup during identification frees the slot, and a stale answer never reopens the call', async () => {
@@ -126,4 +132,65 @@ test('an ended ring whose late response arrives alone does not open a popup', as
   await tick(); await tick();
 
   assert.notEqual(h.root.getAttribute('data-state'), 'incoming');
+});
+
+function ringAndIdentify(h, rtc, id, name) {
+  h.incomingQueue.push(() => h.respond({ data: [{ id, caller: { name, number: '+1 (415) 555-0000' } }] }));
+  const call = h.sdkCall();
+  rtc.emit(call);
+  return call;
+}
+
+test('a stale microphone rejection for an ended call cannot decline or hang up the next call', async () => {
+  const h = boot();
+  await tick(); await tick(); await tick();
+  const rtc = h.clients[0];
+
+  const callA = ringAndIdentify(h, rtc, 'call-a', 'Caller A');
+  await tick(); await tick();
+  assert.equal(h.nameOf(), 'Caller A');
+
+  // Answer A: the microphone prompt stays pending.
+  let rejectMic;
+  h.state.mic = () => new Promise((resolve, reject) => { rejectMic = reject; });
+  h.click('softphone-answer');
+  await tick();
+
+  // A ends (caller hung up) and its popup is dismissed; then B rings and is identified.
+  callA.state = 'hangup';
+  rtc.emit(callA);
+  h.incomingQueue.length = 0;
+  await tick(); await tick(); await tick();
+  const callB = ringAndIdentify(h, rtc, 'call-b', 'Caller B');
+  await tick(); await tick();
+  assert.equal(h.nameOf(), 'Caller B');
+  assert.equal(h.root.getAttribute('data-state'), 'incoming');
+  const before = h.requests.length;
+
+  // A's microphone request now rejects, late.
+  rejectMic({ name: 'NotAllowedError' });
+  await tick(); await tick(); await tick();
+
+  const after = h.requests.slice(before).map((r) => r.join(' '));
+  assert.deepEqual(after.filter((r) => /decline|hangup/.test(r)), [], 'nothing was declined or hung up');
+  assert.equal(callB.hangups, 0, "B's ringing leg was not hung up");
+  assert.equal(h.root.getAttribute('data-state'), 'incoming', "B's popup is intact");
+  assert.equal(h.nameOf(), 'Caller B');
+});
+
+test('a genuine microphone refusal on the current call still declines it and reports the problem', async () => {
+  const h = boot();
+  await tick(); await tick(); await tick();
+  const rtc = h.clients[0];
+
+  const call = ringAndIdentify(h, rtc, 'call-c', 'Caller C');
+  await tick(); await tick();
+  h.state.mic = () => Promise.reject({ name: 'NotAllowedError' });
+  h.click('softphone-answer');
+  await tick(); await tick(); await tick();
+
+  assert.ok(h.requests.some((r) => r[0] === 'POST' && r[1] === '/decline/call-c'), 'the call was declined on the server');
+  assert.equal(call.hangups, 1, 'the ringing leg was hung up');
+  assert.equal(h.root.getAttribute('data-state'), 'failed');
+  assert.match(h.root.querySelector('[data-role="softphone-detail"]').textContent, /Microphone access was blocked/);
 });
