@@ -19,6 +19,12 @@
             : 'Get a phone number so this Business can send and receive text messages. Pick the kind of number that suits you.',
     ])
 
+    @if(! empty($refundNotice))
+        <x-alert variant="info" icon="check-circle" class="mb-2" data-role="number-order-refunded">
+            {{ $refundNotice }}
+        </x-alert>
+    @endif
+
     @if(request('focus') === 'toll_free')
         <x-alert variant="success" icon="check-circle" class="mb-2" data-role="toll-free-focus-banner">
             <strong class="d-block">Let's get your toll-free number</strong>

@@ -211,7 +211,7 @@ class RecoverPendingNumberCommandTest extends TestCase
         $this->run_(true, null, $this->incidentId + 50)->assertExitCode(1);
         DB::table('business_messaging_provisioning_incidents')->where('id', $this->incidentId)->update(['stage' => 'number_attach_failed_after_provider_success']);
         $this->run_()->assertExitCode(1);
-        DB::table('business_messaging_provisioning_incidents')->where('id', $this->incidentId)->update(['stage' => 'number_order_outcome_unknown', 'number_type' => 'local']);
+        DB::table('business_messaging_provisioning_incidents')->where('id', $this->incidentId)->update(['stage' => 'number_order_outcome_unknown', 'number_type' => 'international']);
         $this->run_()->assertExitCode(1);
         $this->artisan('messaging:recover-pending-number', ['--execute' => true])->assertExitCode(1);
         $this->artisan('messaging:recover-pending-number', ['--business' => $this->business->id, '--incident' => $this->incidentId, '--execute' => true, '--dry-run' => true])->assertExitCode(1);

@@ -340,12 +340,15 @@ class TextMessagingPaidOnboardingFlowsTest extends TestCase
         $this->telnyx();
 
         $search = $this->search('toll_free');
+        // The carrier did not confirm the order: the customer is sent to the activating status, not shown an error, and
+        // the charge is kept (never described as "no charge").
         $first = $this->order($search);
-        $first->assertSessionHas('status', 'error');
-        $text = (string) session('message');
-        $this->assertStringContainsString('awaiting confirmation from the carrier', $text);
-        $this->assertStringNotContainsString('have not been charged', $text, 'A kept charge must never be described as no charge.');
-        $this->order($search)->assertSessionHas('status', 'error');
+        $first->assertRedirect($this->url('show'));
+        $this->assertNull(session('status'), 'An unconfirmed order is not presented as a purchase error.');
+        $page = $this->get($this->url('show'))->assertOk()->assertSee('Activating your number')->assertSee('data-state="confirming"', false);
+        $this->assertStringNotContainsString('have not been charged', $page->getContent(), 'A kept charge must never be described as no charge.');
+        // A second purchase is refused while it is pending: it lands on the same status, with no second order.
+        $this->order($search)->assertRedirect($this->url('show'));
 
         $this->assertSame(1, $this->posted('/number_orders'));
         $this->assertSame(10_000_000 - self::PURCHASE, $this->balance(), 'an unconfirmed order may be billing: the charge is kept, not absorbed');

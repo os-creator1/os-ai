@@ -17,6 +17,28 @@
         });
         syncPanels(document.getElementById('number-order-form'));
 
+        // Buy: show the processing state the instant the form is submitted and block a second submit. The purchase
+        // itself is finished server-side whatever the browser does, so leaving the page is safe.
+        document.addEventListener('submit', function (e) {
+            var form = e.target;
+            if (!form || form.id !== 'number-order-form') { return; }
+            if (form.getAttribute('data-submitting') === '1') { e.preventDefault(); return; }
+            form.setAttribute('data-submitting', '1');
+            form.querySelectorAll('button[type="submit"], input[type="submit"]').forEach(function (b) {
+                b.setAttribute('aria-disabled', 'true');
+                b.classList.add('disabled');
+                if (b.tagName === 'BUTTON') { b.textContent = 'Activating your number…'; }
+            });
+            form.querySelectorAll('input[name="candidate_token"]').forEach(function (r) { if (!r.checked) { r.disabled = true; } });
+            var note = document.createElement('div');
+            note.setAttribute('role', 'status');
+            note.setAttribute('data-role', 'activating-note');
+            note.className = 'sr-callout';
+            note.textContent = 'Activating your number… this can take a minute. You can leave this page; setup finishes on its own and your number appears in Phone & messaging.';
+            var panel = form.querySelector('.pm-summarybox') || form;
+            panel.appendChild(note);
+        });
+
         var flow = document.querySelector('[data-role="number-flow"]');
         if (!flow || !window.fetch || !window.DOMParser) { return; }
         var choose = flow.querySelector('.pm-flow__choose');

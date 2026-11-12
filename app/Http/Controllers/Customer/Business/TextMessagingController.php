@@ -107,6 +107,17 @@ class TextMessagingController extends CustomerBaseController
 
         $situation = $this->situation($business);
 
+        // An order the carrier accepted but has not confirmed yet is not an error and not "no number": say so, and
+        // never offer a second purchase while it is unresolved.
+        if (($situation['phoneNumber'] ?? null) === null && ($pending = $this->pendingNumberOrder($business)) !== null) {
+            return view('customer.settings.text-messaging.states.confirming-number', [
+                'workspaceUid' => $workspaceUid,
+                'businessUid' => $businessUid,
+                'pending' => $pending,
+                'statusUrl' => route('customer.workspaces.businesses.text-messaging.number-order.status', [$workspaceUid, $businessUid]),
+            ]);
+        }
+
         return match ($situation['state']) {
             'ready' => $this->renderReady($workspaceUid, $businessUid, $situation),
             'registration_required' => $this->renderRegistration($workspaceUid, $businessUid, $situation, $business),
@@ -137,6 +148,11 @@ class TextMessagingController extends CustomerBaseController
 
         [, $business] = $this->resolveBusinessTenancy($workspaceUid, $businessUid);
         $this->guardNoExistingNumber($business);
+
+        // An order is already being activated: show it, never offer (or reserve funds for) a second purchase.
+        if ($this->pendingNumberOrder($business) !== null) {
+            return redirect()->route('customer.workspaces.businesses.text-messaging.show', [$workspaceUid, $businessUid]);
+        }
 
         $validated = $request->validate([
             'number_type' => ['required', 'in:local,toll_free'],
@@ -247,6 +263,14 @@ class TextMessagingController extends CustomerBaseController
         [, $business] = $this->resolveBusinessTenancy($workspaceUid, $businessUid);
         $this->guardNoExistingNumber($business);
 
+        // Closing the tab must not abandon an order halfway: the purchase is finished server-side whatever the browser does.
+        ignore_user_abort(true);
+
+        // A second click, a second tab or a retry while an order is activating lands on its status, with no second purchase.
+        if ($this->pendingNumberOrder($business) !== null) {
+            return redirect()->route('customer.workspaces.businesses.text-messaging.show', [$workspaceUid, $businessUid]);
+        }
+
         if (! $this->provisioningOpenFor($business)) {
             return $this->textMessagingError($workspaceUid, $businessUid, 'Number setup is not available for this Business yet.');
         }
@@ -273,9 +297,16 @@ class TextMessagingController extends CustomerBaseController
         } catch (MessagingProviderNotConfiguredException) {
             return $this->textMessagingError($workspaceUid, $businessUid, 'Number setup is not available in this environment yet.');
         } catch (MessagingIdentityConflictException) {
+            // A concurrent request is already activating this Business's number: show that, not an error.
+            if ($this->pendingNumberOrder($business) !== null) {
+                return redirect()->route('customer.workspaces.businesses.text-messaging.show', [$workspaceUid, $businessUid]);
+            }
+
             return $this->textMessagingError($workspaceUid, $businessUid, 'This Business already has a number set up.');
         } catch (MessagingRegistrationRecoveryRequiredException) {
-            return $this->textMessagingError($workspaceUid, $businessUid, 'We couldn\'t confirm this number order with our carrier partner. Please don\'t try again; our team has been alerted and will follow up. The charge for this order is awaiting confirmation from the carrier: if the carrier confirms no number was bought it is refunded in full, and you will not be charged twice.');
+            // The carrier accepted the order but has not confirmed it yet (or an earlier one is still unconfirmed). The
+            // charge is held, nothing is lost and nothing may be bought twice: show the confirming state, not an error.
+            return redirect()->route('customer.workspaces.businesses.text-messaging.show', [$workspaceUid, $businessUid]);
         } catch (MessagingFundingUnavailableException $e) {
             \Illuminate\Support\Facades\Log::warning('Messaging number funding unavailable.', ['business_id' => $business->id, 'reason' => $e->reason]);
 
@@ -959,6 +990,78 @@ class TextMessagingController extends CustomerBaseController
         return ProvisioningPilot::allows($business) && $this->provisioning->isAvailable();
     }
 
+    /**
+     * The Business's number order that is not finished yet, shaped for the customer. Persisted (an in-flight identity or
+     * an open incident), so it shows the same after a refresh, a closed tab or a new login:
+     *  - activating: the purchase request is still running right now;
+     *  - confirming: the carrier accepted the order but has not confirmed it (reconciled automatically);
+     *  - escalated: unresolved past the window; operators were alerted automatically;
+     *  - failed: the carrier failed the order and the payment is being returned automatically;
+     *  - failed_review: failed, and an operator is handling the payment.
+     * Null when there is nothing in progress.
+     *
+     * @return array{phone: string, state: string, since: ?string}|null
+     */
+    private function pendingNumberOrder(Business $business): ?array
+    {
+        $incident = \Illuminate\Support\Facades\DB::table('business_messaging_provisioning_incidents')
+            ->where('business_id', $business->id)
+            ->where('stage', \App\Library\Messaging\TelnyxProvisioningAdapter::INCIDENT_NUMBER_ORDER_UNKNOWN)
+            ->whereNull('resolved_at')
+            ->orderByDesc('id')
+            ->first();
+
+        if ($incident === null) {
+            // A purchase whose request is still in flight: its identity slot is held as Pending for a few seconds.
+            $inFlight = \App\Models\BusinessMessagingIdentity::query()
+                ->where('business_id', $business->id)
+                ->where('status', \App\Enums\Messaging\BusinessMessagingIdentityStatus::Pending->value)
+                ->where('created_at', '>', now()->subMinutes(10))
+                ->exists();
+
+            return $inFlight ? ['phone' => '', 'state' => 'activating', 'since' => null] : null;
+        }
+
+        $tooOld = \Illuminate\Support\Carbon::parse($incident->created_at)->diffInHours(now())
+            >= (int) config('messaging.order_reconciliation.escalate_after_hours');
+
+        $state = $incident->reconcile_outcome === 'failed'
+            ? ($incident->escalated_at !== null ? 'failed_review' : 'failed')
+            : ($incident->escalated_at !== null || $tooOld ? 'escalated' : 'confirming');
+
+        return ['phone' => (string) $incident->phone_number, 'state' => $state, 'since' => \Illuminate\Support\Carbon::parse($incident->created_at)->diffForHumans()];
+    }
+
+    /**
+     * When an order the carrier failed has been refunded automatically, say so on the purchase page for a while, with
+     * the one thing the customer can do next. Null otherwise.
+     */
+    private function refundNotice(Business $business): ?string
+    {
+        $note = \Illuminate\Support\Facades\DB::table('business_messaging_provisioning_incidents')
+            ->where('business_id', $business->id)
+            ->where('stage', \App\Library\Messaging\TelnyxProvisioningAdapter::INCIDENT_NUMBER_ORDER_UNKNOWN)
+            ->where('resolution_note', 'like', '[auto-refunded]%')
+            ->where('resolved_at', '>', now()->subDays(14))
+            ->orderByDesc('id')
+            ->first();
+
+        return $note === null ? null : 'The carrier could not complete your last number order, so no number was bought and the payment for it has been returned to your balance. You can choose another number below.';
+    }
+
+    /** Live status for the activation page: it polls this, so a finished order replaces the status without a manual refresh. */
+    public function numberOrderStatus(string $workspaceUid, string $businessUid): \Illuminate\Http\JsonResponse
+    {
+        $this->authorize('view_numbers');
+
+        [, $business] = $this->resolveBusinessTenancy($workspaceUid, $businessUid);
+        $pending = $this->pendingNumberOrder($business);
+
+        $state = $pending['state'] ?? (($this->situation($business)['phoneNumber'] ?? null) !== null ? 'confirmed' : 'none');
+
+        return response()->json(['state' => $state])->header('Cache-Control', 'no-store');
+    }
+
     private function renderNoNumber(string $workspaceUid, string $businessUid, array $situation, ?PhoneNumberType $numberTypeLocked = null): View
     {
         [, $business] = $this->resolveBusinessTenancy($workspaceUid, $businessUid);
@@ -981,6 +1084,7 @@ class TextMessagingController extends CustomerBaseController
             // number" render: the view hides the toll-free/local choice
             // entirely and shows a verified banner instead.
             'numberTypeLocked' => $numberTypeLocked,
+            'refundNotice' => $this->refundNotice($business),
             'registration' => $situation['registration'] ?? $this->registrationFor($business),
             // Review correction — a Business can land in this "no active
             // number" classification while still retaining a Suspended

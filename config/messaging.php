@@ -272,4 +272,31 @@ return [
             'lease_minutes' => 15,
         ],
     ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Automatic reconciliation of unconfirmed number orders
+    |--------------------------------------------------------------------------
+    |
+    | `messaging:reconcile-pending-orders` (scheduled) re-verifies LOCAL number orders whose carrier outcome was unknown
+    | ("order accepted but still pending") by running the same fail-closed checks as messaging:recover-pending-number
+    | and, only when every one passes, finishing the setup. It never buys, charges or refunds. OFF unless enabled:
+    | run it with --dry-run first.
+    */
+    'order_reconciliation' => [
+        // ON: every future unconfirmed local purchase completes itself. Hold it off with MESSAGING_AUTO_RECONCILE_ORDERS=false.
+        'enabled' => env('MESSAGING_AUTO_RECONCILE_ORDERS', true),
+        'max_attempts' => (int) env('MESSAGING_RECONCILE_MAX_ATTEMPTS', 12),
+        'base_backoff_minutes' => 2,
+        'max_backoff_minutes' => 30,
+        // A case that is still unresolved after this long is escalated to an operator (and the customer is told so).
+        'escalate_after_hours' => (int) env('MESSAGING_RECONCILE_ESCALATE_HOURS', 6),
+        // An attempt claimed by one run is not handed to another for this long (crash recovery).
+        'lease_minutes' => 10,
+        // A purchase the carrier has DEFINITIVELY failed (seen on two attempts, no number at the carrier, exactly one
+        // committed charge) is credited back to the Business's wallet once, idempotently, by the platform administrator
+        // named in messaging.reconciliation.actor_user_id. Without that actor, or above the cap, it is escalated instead.
+        'auto_refund_failed_orders' => env('MESSAGING_AUTO_REFUND_FAILED_ORDERS', true),
+        'max_auto_refund_micro' => (int) env('MESSAGING_MAX_AUTO_REFUND_MICRO', 25_000_000),
+    ],
 ];

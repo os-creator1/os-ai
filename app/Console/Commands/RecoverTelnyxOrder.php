@@ -75,6 +75,48 @@ class RecoverTelnyxOrder extends Command
     }
 
     /**
+     * Every line this command prints, in order (info/warn/error all route through line()). Lets an in-process caller
+     * (the automatic reconciler) read the outcome without parsing a console stream.
+     *
+     * @var list<string>
+     */
+    public array $transcript = [];
+
+    public function line($string, $style = null, $verbosity = null)
+    {
+        $this->transcript[] = (string) $string;
+
+        parent::line($string, $style, $verbosity);
+    }
+
+    /** The kind of number being reconciled. Toll-free for the original one-off command; subclasses may differ. */
+    protected function numberType(): PhoneNumberType
+    {
+        return PhoneNumberType::TollFree;
+    }
+
+    /**
+     * Marks an abort whose cause is a carrier status the reconciler can classify: `[pending]` (still being provisioned,
+     * try again later) or `[failed]` (the carrier says it did not happen). Anything else is untagged and treated as a
+     * verification mismatch. Only ever a message prefix: it never changes what is verified or written.
+     */
+    protected function statusTag(string $status): string
+    {
+        $status = strtolower(trim($status));
+
+        if (in_array($status, ['pending', 'processing', 'in_progress', 'in-progress', 'purchase_pending', 'created'], true)) {
+            return '[pending] ';
+        }
+
+        return in_array($status, ['failure', 'failed', 'cancelled', 'canceled', 'rejected'], true) ? '[failed] ' : '';
+    }
+
+    /** Runs once, after the reconciliation transaction has committed (never inside it). */
+    protected function afterReconciled(): void
+    {
+    }
+
+    /**
      * When the recovered number's first renewal is due. Null keeps the renewal
      * sweep from charging anything (the Business 3 behaviour, pending a billing
      * decision).
@@ -159,6 +201,7 @@ class RecoverTelnyxOrder extends Command
             });
 
             $this->info('Reconciled: identity + number created, incident resolved. No Telnyx writes, no new charge.');
+            $this->afterReconciled();
 
             return self::SUCCESS;
         } catch (\DomainException $e) {
@@ -207,7 +250,7 @@ class RecoverTelnyxOrder extends Command
 
         if ($number->provider_number_reference !== $this->t('phone_resource_id')
             || $number->status !== BusinessMessagingNumberStatus::Active
-            || $number->number_type !== PhoneNumberType::TollFree
+            || $number->number_type !== $this->numberType()
             || ! $number->is_primary
             || $number->activated_at === null
             || ($this->renewalRequired() && $number->next_renewal_at === null)
@@ -353,13 +396,13 @@ class RecoverTelnyxOrder extends Command
         $order = $get('/number_orders/' . $this->t('order_id'));
 
         if ((string) ($order['id'] ?? '') !== $this->t('order_id') || strtolower((string) ($order['status'] ?? '')) !== 'success') {
-            throw new \DomainException('The Telnyx order is not the expected order in status success.');
+            throw new \DomainException($this->statusTag((string) ($order['status'] ?? '')) . 'The Telnyx order is not the expected order in status success.');
         }
 
         $ordered = array_values(array_filter((array) ($order['phone_numbers'] ?? []), fn ($row): bool => is_array($row) && ($row['phone_number'] ?? null) === $this->t('phone_number')));
 
         if (count($ordered) !== 1 || strtolower((string) ($ordered[0]['status'] ?? '')) !== 'success') {
-            throw new \DomainException('The order does not contain exactly one successful ' . $this->t('phone_number') . '.');
+            throw new \DomainException($this->statusTag((string) ($ordered[0]['status'] ?? '')) . 'The order does not contain exactly one successful ' . $this->t('phone_number') . '.');
         }
 
         if (isset($order['messaging_profile_id']) && $order['messaging_profile_id'] !== $this->t('messaging_profile_id')) {
@@ -372,7 +415,7 @@ class RecoverTelnyxOrder extends Command
             || ($number['phone_number'] ?? null) !== $this->t('phone_number')
             || strtolower((string) ($number['status'] ?? '')) !== 'active'
             || ($number['messaging_profile_id'] ?? null) !== $this->t('messaging_profile_id')) {
-            throw new \DomainException('The Telnyx number resource is not the expected active number on the expected Messaging Profile.');
+            throw new \DomainException($this->statusTag((string) ($number['status'] ?? '')) . 'The Telnyx number resource is not the expected active number on the expected Messaging Profile.');
         }
 
         if (isset($ordered[0]['id']) && (string) $ordered[0]['id'] === $this->t('phone_resource_id')) {
@@ -485,14 +528,20 @@ class RecoverTelnyxOrder extends Command
             }
         }
 
-        if (($row['charge_type'] ?? null) !== 'toll-free-number') {
-            throw new \DomainException('The billing row is not a toll-free-number charge.');
+        $isTollFree = $this->numberType() === PhoneNumberType::TollFree;
+
+        // Toll-free must be the carrier's toll-free charge. A local number's carrier charge-type label is not relied
+        // on (it is not asserted anywhere); it only may not be the toll-free one. The price itself is proven below
+        // from the debit lines, the committed reservation and the proration.
+        if ($isTollFree !== (($row['charge_type'] ?? null) === 'toll-free-number')) {
+            throw new \DomainException($isTollFree ? 'The billing row is not a toll-free-number charge.' : 'The billing row is a toll-free charge, not a local-number charge.');
         }
 
         $services = $row['services'] ?? null;
+        $serviceCounts = $isTollFree ? [3] : [2, 3]; // local: one-time + number rental, plus the SMS add-on when billed
 
-        if (! is_array($services) || count($services) !== 3) {
-            throw new \DomainException('The billing row must carry exactly three service charges.');
+        if (! is_array($services) || ! in_array(count($services), $serviceCounts, true)) {
+            throw new \DomainException('The billing row carries an unexpected number of service charges.');
         }
 
         $found = [];
@@ -518,18 +567,20 @@ class RecoverTelnyxOrder extends Command
         }
 
         $expectedKeys = ['otc/numbers', 'partial-mrc/numbers', 'partial-mrc/sms'];
+        $requiredKeys = $isTollFree ? $expectedKeys : ['otc/numbers', 'partial-mrc/numbers'];
 
-        if (array_diff_key($found, array_flip($expectedKeys)) !== [] || array_diff($expectedKeys, array_keys($found)) !== []) {
+        if (array_diff_key($found, array_flip($expectedKeys)) !== [] || array_diff($requiredKeys, array_keys($found)) !== []) {
             throw new \DomainException('Service charges are missing or unexpected: ' . implode(', ', array_keys($found)) . '.');
         }
 
         $reservation = $this->assertReservation(false);
         $upfront = $found['otc/numbers'] * 10;
-        $smsMonthly = max(0, (int) config('messaging.number_sms_addon_monthly_cost_micro', 0));
+        $hasSms = isset($found['partial-mrc/sms']);
+        $smsMonthly = $hasSms ? max(0, (int) config('messaging.number_sms_addon_monthly_cost_micro', 0)) : 0;
         $numberMonthly = $reservation['quantity_micro'] - $upfront - $smsMonthly;
         $ceiling = (int) config('messaging.number_price_ceiling_micro', 25_000_000);
 
-        if ($upfront < 1 || $smsMonthly < 1 || $numberMonthly < 1 || $upfront > $ceiling || $numberMonthly + $smsMonthly > $ceiling) {
+        if ($upfront < 1 || ($hasSms && $smsMonthly < 1) || $numberMonthly < 1 || $upfront > $ceiling || $numberMonthly + $smsMonthly > $ceiling) {
             throw new \DomainException('Pricing mismatch: the reservation, one-time fee and SMS add-on do not yield a valid monthly rate.');
         }
 
@@ -537,17 +588,17 @@ class RecoverTelnyxOrder extends Command
         $remaining = $daysInMonth - (int) $purchasedAt->day + 1;
 
         if ($this->prorate($numberMonthly, $remaining, $daysInMonth) !== $found['partial-mrc/numbers']
-            || $this->prorate($smsMonthly, $remaining, $daysInMonth) !== $found['partial-mrc/sms']) {
+            || ($hasSms && $this->prorate($smsMonthly, $remaining, $daysInMonth) !== $found['partial-mrc/sms'])) {
             throw new \DomainException(sprintf(
                 'Pricing mismatch: prorated carrier charges (numbers %d, SMS %d) do not match a %s + %s monthly rate for %d of %d days.',
-                $found['partial-mrc/numbers'], $found['partial-mrc/sms'], $this->usd($numberMonthly), $this->usd($smsMonthly), $remaining, $daysInMonth,
+                $found['partial-mrc/numbers'], $found['partial-mrc/sms'] ?? 0, $this->usd($numberMonthly), $this->usd($smsMonthly), $remaining, $daysInMonth,
             ));
         }
 
         return [
             'upfront_micro' => $upfront,
             'monthly_micro' => $numberMonthly + $smsMonthly,
-            'carrier_charged_micro' => ($found['otc/numbers'] + $found['partial-mrc/numbers'] + $found['partial-mrc/sms']) * 10,
+            'carrier_charged_micro' => ($found['otc/numbers'] + $found['partial-mrc/numbers'] + ($found['partial-mrc/sms'] ?? 0)) * 10,
             'wallet_charged_micro' => $reservation['quantity_micro'],
         ];
     }
@@ -616,7 +667,7 @@ class RecoverTelnyxOrder extends Command
             true,
             BusinessMessagingNumberStatus::Active,
             $this->t('phone_resource_id'),
-            PhoneNumberType::TollFree,
+            $this->numberType(),
         );
 
         // attachNumber() stamps "now"; the real activation and renewal clock

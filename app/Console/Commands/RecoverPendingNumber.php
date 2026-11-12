@@ -2,10 +2,12 @@
 
 namespace App\Console\Commands;
 
+use App\Enums\Messaging\PhoneNumberType;
 use App\Enums\Usage\UsageReservationStatus;
 use App\Library\Messaging\BusinessMessagingIdentityResolver;
 use App\Library\Messaging\ProvisioningIncidentRecorder;
 use App\Library\Messaging\TelnyxProvisioningAdapter;
+use App\Models\BusinessMessagingNumber;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
@@ -39,7 +41,7 @@ class RecoverPendingNumber extends RecoverTelnyxOrder
         {--dry-run : Verify and report only; writes nothing (default)}
         {--execute : Perform the reconciliation}';
 
-    protected $description = 'Recover an already-purchased Telnyx toll-free number from a number_order_outcome_unknown incident (GET-only against Telnyx; never buys, charges or refunds).';
+    protected $description = 'Recover an already-purchased Telnyx toll-free or local number from a number_order_outcome_unknown incident (verifies with GET only; never buys, charges or refunds).';
 
     /** Order items scanned when looking for the number's parent order (250 per page). */
     private const MAX_ORDER_ITEM_PAGES = 40;
@@ -79,6 +81,51 @@ class RecoverPendingNumber extends RecoverTelnyxOrder
         return 'messaging:recover-pending-number';
     }
 
+    protected function numberType(): PhoneNumberType
+    {
+        return PhoneNumberType::from((string) ($this->target['number_type'] ?? 'toll_free'));
+    }
+
+    /**
+     * A recovered LOCAL number is finished exactly like a normal purchase: its Messaging Profile is linked to the
+     * Business's already-approved 10DLC campaign (the approved registration is only read, never altered) and the
+     * existing voice-assignment logic runs. Both are idempotent and best-effort: the number and incident are already
+     * committed, so a failure here is reported (and recorded by those services) but never undoes the recovery.
+     */
+    protected function afterReconciled(): void
+    {
+        if ($this->numberType() !== PhoneNumberType::Local) {
+            return;
+        }
+
+        try {
+            $business = \App\Models\Business::query()->find($this->t('business_id'));
+            $number = BusinessMessagingNumber::query()->where('phone_number', $this->t('phone_number'))
+                ->where('status', \App\Enums\Messaging\BusinessMessagingNumberStatus::Active->value)->first();
+
+            if ($business === null || $number === null) {
+                $this->warn('Follow-up skipped: the recovered number could not be re-read.');
+
+                return;
+            }
+
+            $registration = \App\Models\BusinessMessagingRegistration::query()->where('business_id', $business->id)->first();
+
+            if ($registration !== null && $registration->isApproved() && trim((string) $registration->provider_campaign_id) !== '') {
+                $result = app(\App\Library\Messaging\BusinessMessagingProvisioningService::class)
+                    ->assignToApprovedCampaign($business, $number, $registration->provider_campaign_id);
+                $this->line('Campaign link: ' . $result->outcome->value . ' (' . $result->detail . ').');
+            } else {
+                $this->warn('Campaign link skipped: no approved registration with a campaign id was found.');
+            }
+
+            $voice = app(\App\Library\Voice\VoiceNumberAssigner::class)->assign($number->fresh());
+            $this->line('Voice assignment: ' . ($voice->voice_assigned_at !== null ? 'confirmed' : ($voice->voice_assignment_failure_reason ?? 'not applicable / not configured')) . '.');
+        } catch (\Throwable $e) {
+            $this->warn('Follow-up (campaign link / voice assignment) could not complete: ' . get_class($e) . '. The recovery itself is committed.');
+        }
+    }
+
     protected function renewalRequired(): bool
     {
         return true;
@@ -100,7 +147,10 @@ class RecoverPendingNumber extends RecoverTelnyxOrder
     {
         return $renewalAt === null
             ? 'Renewal: none scheduled.'
-            : 'Renewal: the first month was prepaid at purchase, so the first renewal is due ' . $renewalAt->toIso8601String() . ' at the verified full monthly rate (the normal purchase schedule).';
+            : 'Renewal: the first month was prepaid at purchase, so the first renewal is due ' . $renewalAt->toIso8601String() . ' at the verified full monthly rate (the normal purchase schedule).'
+                . ($this->numberType() === PhoneNumberType::Local
+                    ? ' After --execute, the number is also linked to the Business\'s approved 10DLC campaign and voice-assigned (both idempotent; the approved registration is not altered).'
+                    : '');
     }
 
     /**
@@ -128,11 +178,11 @@ class RecoverPendingNumber extends RecoverTelnyxOrder
             throw new \DomainException('The incident does not record a usable phone number and Messaging Profile.');
         }
 
-        if ($incident->number_type !== 'toll_free') {
-            throw new \DomainException('Only toll-free numbers can be recovered (their billing is verified from the carrier records).');
+        if (! in_array($incident->number_type, ['toll_free', 'local'], true)) {
+            throw new \DomainException('Only toll-free and local numbers can be recovered.');
         }
 
-        $base = ['business_id' => $businessId, 'incident_id' => $incidentId, 'phone_number' => $phone, 'messaging_profile_id' => $profile];
+        $base = ['business_id' => $businessId, 'incident_id' => $incidentId, 'phone_number' => $phone, 'messaging_profile_id' => $profile, 'number_type' => (string) $incident->number_type];
 
         // Already finished by this command: rebuild the target from its own audit
         // note and local rows so the idempotent end-state check can confirm it.
@@ -141,8 +191,9 @@ class RecoverPendingNumber extends RecoverTelnyxOrder
         }
 
         $reservation = $this->findReservation($businessId, $incident);
-        $resourceId = $this->findNumberResource($phone);
+        // The order item first: a carrier-failed order has no number resource, and must read as failed, not pending.
         $orderId = $this->findParentOrder($phone);
+        $resourceId = $this->findNumberResource($phone);
 
         return $base + [
             'order_id' => $orderId,
@@ -231,7 +282,8 @@ class RecoverPendingNumber extends RecoverTelnyxOrder
         $matches = array_values(array_filter($found['data'], fn ($row): bool => is_array($row) && ($row['phone_number'] ?? null) === $phone));
 
         if (count($matches) !== 1 || ! is_scalar($matches[0]['id'] ?? null) || trim((string) $matches[0]['id']) === '') {
-            throw new \DomainException(sprintf('Expected exactly one Telnyx number resource for %s; found %d.', $phone, count($matches)));
+            // No resource yet usually means the order is still being provisioned.
+            throw new \DomainException(($matches === [] ? '[pending] ' : '') . sprintf('Expected exactly one Telnyx number resource for %s; found %d.', $phone, count($matches)));
         }
 
         return trim((string) $matches[0]['id']);
@@ -269,7 +321,7 @@ class RecoverPendingNumber extends RecoverTelnyxOrder
             || strtolower((string) ($matches[0]['status'] ?? '')) !== 'success'
             || ! is_scalar($matches[0]['order_request_id'] ?? null)
             || trim((string) $matches[0]['order_request_id']) === '') {
-            throw new \DomainException(sprintf('Expected exactly one successful Telnyx order item for %s naming its parent order; found %d.', $phone, count($matches)));
+            throw new \DomainException(($matches === [] ? '[pending] ' : ($matches !== [] && count($matches) === 1 ? $this->statusTag((string) ($matches[0]['status'] ?? '')) : '')) . sprintf('Expected exactly one successful Telnyx order item for %s naming its parent order; found %d.', $phone, count($matches)));
         }
 
         return trim((string) $matches[0]['order_request_id']);
