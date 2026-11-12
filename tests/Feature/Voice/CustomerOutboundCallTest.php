@@ -258,4 +258,54 @@ class CustomerOutboundCallTest extends TestCase
         $this->noDial();
         $this->assertSame(0, BusinessVoiceCall::count());
     }
+
+    private function selectedScopeStaff(\App\Models\BusinessLocation $grantedLocation): void
+    {
+        $staff = $this->createCustomer();
+        $membership = $this->member($this->workspace, $staff->user, \App\Enums\Workspace\WorkspaceMembershipRole::Staff, \App\Enums\Workspace\WorkspaceBusinessAccessScope::All);
+        $membership->forceFill(['location_access_scope' => \App\Enums\Workspace\LocationAccessScope::Selected])->save();
+        app(\App\Repositories\Contracts\WorkspaceMembershipLocationRepository::class)->assign($membership, $grantedLocation);
+        $this->authenticateAs($staff, ['place_voice_calls']);
+    }
+
+    private function location(): \App\Models\BusinessLocation
+    {
+        return \App\Models\BusinessLocation::create(['business_id' => $this->business->id, 'service_mode' => 'storefront', 'country_code' => 'US']);
+    }
+
+    public function test_a_member_scoped_to_other_locations_cannot_call_a_contact_at_an_ungranted_location(): void
+    {
+        $contactLocation = $this->location();
+        $siblingLocation = $this->location();
+        $this->contact->forceFill(['location_id' => $contactLocation->id])->save();
+        $this->selectedScopeStaff($siblingLocation);
+
+        $this->place()->assertNotFound()->assertJsonPath('error.code', 'contact_not_found');
+
+        $this->noDial();
+        $this->assertSame(0, BusinessVoiceCall::count());
+    }
+
+    public function test_a_member_with_the_matching_location_grant_can_call_and_read_the_call(): void
+    {
+        $contactLocation = $this->location();
+        $this->contact->forceFill(['location_id' => $contactLocation->id])->save();
+        $this->selectedScopeStaff($contactLocation);
+
+        $uid = $this->place()->assertStatus(202)->json('data.id');
+
+        $this->getJson(route('customer.workspaces.businesses.calls.show', [$this->workspace->uid, $this->business->uid, $uid]))->assertOk();
+    }
+
+    public function test_a_call_record_for_an_ungranted_location_is_not_readable(): void
+    {
+        $contactLocation = $this->location();
+        $siblingLocation = $this->location();
+        $this->contact->forceFill(['location_id' => $contactLocation->id])->save();
+        $uid = $this->place()->assertStatus(202)->json('data.id'); // placed by the owner (all locations)
+
+        $this->selectedScopeStaff($siblingLocation);
+
+        $this->getJson(route('customer.workspaces.businesses.calls.show', [$this->workspace->uid, $this->business->uid, $uid]))->assertNotFound();
+    }
 }

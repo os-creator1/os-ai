@@ -7,6 +7,7 @@ use App\Http\Controllers\Customer\Business\Concerns\ResolvesBusinessTenancy;
 use App\Http\Controllers\Customer\CustomerBaseController;
 use App\Library\Voice\CustomerCallPlacer;
 use App\Library\Voice\CustomerCallRefusedException;
+use App\Library\Workspace\LocationAccessGuard;
 use App\Models\BusinessVoiceCall;
 use App\Models\Contacts;
 use Illuminate\Http\JsonResponse;
@@ -37,7 +38,8 @@ class VoiceCallController extends CustomerBaseController
         ]);
 
         $contact = Contacts::query()->where('uid', $data['contact_uid'])->where('business_id', $business->id)->first();
-        if ($contact === null) {
+        // A Contact at a Location this member cannot reach is not found: same rule as the Contacts screens.
+        if ($contact === null || ! $this->locationAccessible($contact)) {
             return $this->error('contact_not_found', 'Contact not found.', 404);
         }
 
@@ -62,9 +64,24 @@ class VoiceCallController extends CustomerBaseController
             return $this->error('call_not_found', 'Call not found.', 404);
         }
 
-        $contactUid = $call->contact_id !== null ? Contacts::query()->whereKey($call->contact_id)->value('uid') : null;
+        $contact = $call->contact_id !== null ? Contacts::query()->find($call->contact_id) : null;
+        if ($contact !== null && ! $this->locationAccessible($contact)) {
+            return $this->error('call_not_found', 'Call not found.', 404);
+        }
 
-        return response()->json(['data' => $this->present($call, $contactUid)]);
+        return response()->json(['data' => $this->present($call, $contact?->uid)]);
+    }
+
+    /** Mirrors ContactsController::locationAccessible(): Location-less Contacts are open; otherwise the actor needs the grant. */
+    private function locationAccessible(Contacts $contact): bool
+    {
+        if ($contact->location_id === null) {
+            return true;
+        }
+
+        $location = $contact->location;
+
+        return $location !== null && app(LocationAccessGuard::class)->userCanAccessLocation((int) Auth::id(), $location);
     }
 
     /** @return array<string, mixed> */
