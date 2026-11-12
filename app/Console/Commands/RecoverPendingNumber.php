@@ -191,8 +191,9 @@ class RecoverPendingNumber extends RecoverTelnyxOrder
         }
 
         $reservation = $this->findReservation($businessId, $incident);
-        $resourceId = $this->findNumberResource($phone);
+        // The order item first: a carrier-failed order has no number resource, and must read as failed, not pending.
         $orderId = $this->findParentOrder($phone);
+        $resourceId = $this->findNumberResource($phone);
 
         return $base + [
             'order_id' => $orderId,

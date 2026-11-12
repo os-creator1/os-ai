@@ -284,7 +284,8 @@ return [
     | run it with --dry-run first.
     */
     'order_reconciliation' => [
-        'enabled' => env('MESSAGING_AUTO_RECONCILE_ORDERS', false),
+        // ON: every future unconfirmed local purchase completes itself. Hold it off with MESSAGING_AUTO_RECONCILE_ORDERS=false.
+        'enabled' => env('MESSAGING_AUTO_RECONCILE_ORDERS', true),
         'max_attempts' => (int) env('MESSAGING_RECONCILE_MAX_ATTEMPTS', 12),
         'base_backoff_minutes' => 2,
         'max_backoff_minutes' => 30,
@@ -292,5 +293,10 @@ return [
         'escalate_after_hours' => (int) env('MESSAGING_RECONCILE_ESCALATE_HOURS', 6),
         // An attempt claimed by one run is not handed to another for this long (crash recovery).
         'lease_minutes' => 10,
+        // A purchase the carrier has DEFINITIVELY failed (seen on two attempts, no number at the carrier, exactly one
+        // committed charge) is credited back to the Business's wallet once, idempotently, by the platform administrator
+        // named in messaging.reconciliation.actor_user_id. Without that actor, or above the cap, it is escalated instead.
+        'auto_refund_failed_orders' => env('MESSAGING_AUTO_REFUND_FAILED_ORDERS', true),
+        'max_auto_refund_micro' => (int) env('MESSAGING_MAX_AUTO_REFUND_MICRO', 25_000_000),
     ],
 ];

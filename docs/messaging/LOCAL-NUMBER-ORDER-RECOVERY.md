@@ -30,19 +30,30 @@ last. Afterwards, outside the transaction: the number's Messaging Profile is lin
 10DLC campaign (the registration is only read) and voice assignment runs (both idempotent, best effort). Re-running is a
 no-op ("Already reconciled").
 
-## 3. Automatic reconciliation (off by default)
-`messaging:reconcile-pending-orders` runs every 5 minutes. When `MESSAGING_AUTO_RECONCILE_ORDERS=true` it runs the same
-guarded recovery for each open **local** incident, with backoff 2, 4, 8, 16, 30 minutes, and escalates (operator alerted,
-`Log::error`, shown in Admin > provisioning incidents, customer told) after `MESSAGING_RECONCILE_MAX_ATTEMPTS` (12) attempts,
-`MESSAGING_RECONCILE_ESCALATE_HOURS` (6) hours, or immediately when Telnyx reports the order failed. Overlapping runs cannot
-double-attempt (atomic lease). Toll-free incidents stay manual.
+## 3. Automatic, self-service reconciliation (ON by default)
+`messaging:reconcile-pending-orders` runs every 5 minutes on the scheduler, so it works with no browser open and for every
+future purchase. For each open **local** incident it runs the same guarded recovery, with backoff 2, 4, 8, 16, 30 minutes.
+Overlapping runs cannot double-attempt (atomic lease), and recovery itself is idempotent, so nothing can be bought, charged,
+attached or campaign-linked twice. Hold it off with `MESSAGING_AUTO_RECONCILE_ORDERS=false`; `--dry-run` always works.
+**Deploying it with incident 6 still open will recover that incident on the first run** (it is verified the same way as the
+manual command). Run the dry run first if you want to look before it does.
 
-## What the customer sees
-"Confirming your number" (page refreshes itself) while pending; once resolved the number appears on the same page. If
-unresolved after the escalation window: "taking longer than usual, our team has been alerted". If Telnyx failed the order:
-"the carrier could not complete the order, our team is reviewing the charge". A genuinely rejected order (no charge) still
-shows the existing "You have not been charged" error.
+| Outcome | What happens |
+|---|---|
+| Carrier confirms | Number attached, approved registration linked to its campaign, voice assigned, incident resolved. The customer's page switches by itself. |
+| Still pending | Retried with backoff. After `MESSAGING_RECONCILE_MAX_ATTEMPTS` (12) or `MESSAGING_RECONCILE_ESCALATE_HOURS` (6) it is **escalated**: error logged, every platform administrator is emailed + notified once, the customer is told it is being handled. |
+| Carrier says failed | Recorded on the first sighting; on a second consecutive sighting the original charge is credited back **once** (idempotent ledger entry, resolved incident `[auto-refunded]`) only if: automatic refunds are on, `MESSAGING_RECONCILIATION_ACTOR_USER_ID` names a platform administrator, Telnyx lists no such number on the account, no local rows exist, exactly one committed purchase reservation matches, and the amount is within `MESSAGING_MAX_AUTO_REFUND_MICRO`. Otherwise it is escalated and nothing is credited. |
+
+## What the customer sees (nothing to do, nothing to contact)
+* Buy: the button turns into "Activating your number…" at once and cannot be double-submitted; the purchase finishes on the
+  server even if they close the tab.
+* Phone & messaging shows **Activating your number…** (persisted: same after refresh, new login or another device), says they
+  can leave, and updates itself when the number is ready. No fake progress, no blocking spinner. A second purchase is refused
+  while one is pending.
+* Taking longer than expected: "our team has been alerted". Carrier failed: "payment is being returned automatically", then
+  after the credit the purchase page says the payment was returned and offers a new number. A genuinely rejected order (no
+  charge) keeps the existing "You have not been charged" message.
 
 ## Not automated
-Refunding the charge of an order the carrier failed (needs a billing decision), and the "attach failed after provider
-success" incident stage.
+The "attach failed after provider success" incident stage, and a failed order whose refund safeguards do not all hold (those
+are escalated to operators).

@@ -328,18 +328,6 @@ class LocalNumberOrderReconciliationTest extends TestCase
         Http::assertNothingSent();
     }
 
-    public function test_a_carrier_failed_order_is_kept_distinct_and_escalated_immediately(): void
-    {
-        $this->fakeTelnyx(['order_status' => 'failed', 'item_status' => 'failure']);
-
-        $this->artisan('messaging:reconcile-pending-orders')->expectsOutputToContain('ESCALATED (failed')->assertExitCode(0);
-
-        $row = $this->incident();
-        $this->assertSame('failed', $row->reconcile_outcome);
-        $this->assertNotNull($row->escalated_at);
-        $this->assertSame(0, BusinessMessagingNumber::query()->count(), 'A failed order is never turned into a number.');
-    }
-
     public function test_the_reconciler_is_off_by_default_and_dry_run_never_writes_or_consumes_attempts(): void
     {
         $this->fakeTelnyx();
@@ -384,14 +372,17 @@ class LocalNumberOrderReconciliationTest extends TestCase
         $incident = app(ProvisioningIncidentRecorder::class)->record($business, 'number_order_outcome_unknown', self::PROFILE, null, self::PHONE, 'local', 'order accepted but still pending')->id;
         $url = route('customer.workspaces.businesses.text-messaging.show', [$workspace->uid, $business->uid]);
 
-        $this->get($url)->assertOk()->assertSee('Confirming your number')->assertSee(self::PHONE)
-            ->assertSee('you will not be charged again')->assertDontSee('Get a texting number')->assertSee('data-state="confirming"', false);
+        $this->get($url)->assertOk()->assertSee('Activating your number')->assertSee(self::PHONE)
+            ->assertSee('you will not be charged again')->assertSee('You can leave this page', false)->assertDontSee('Get a texting number')->assertSee('data-state="confirming"', false);
 
         DB::table('business_messaging_provisioning_incidents')->where('id', $incident)->update(['escalated_at' => now(), 'reconcile_outcome' => 'pending']);
         $this->get($url)->assertOk()->assertSee('taking longer than usual')->assertSee('data-state="escalated"', false);
 
-        DB::table('business_messaging_provisioning_incidents')->where('id', $incident)->update(['reconcile_outcome' => 'failed']);
-        $this->get($url)->assertOk()->assertSee('could not complete the order')->assertSee('data-state="failed"', false);
+        DB::table('business_messaging_provisioning_incidents')->where('id', $incident)->update(['reconcile_outcome' => 'failed', 'escalated_at' => null]);
+        $this->get($url)->assertOk()->assertSee('could not complete the order')->assertSee('returned to your balance automatically', false)->assertSee('data-state="failed"', false);
+
+        DB::table('business_messaging_provisioning_incidents')->where('id', $incident)->update(['escalated_at' => now()]);
+        $this->get($url)->assertOk()->assertSee('returning the payment', false)->assertSee('data-state="failed_review"', false);
     }
 
     public function test_a_resolved_incident_no_longer_shows_the_confirming_state(): void
@@ -402,7 +393,7 @@ class LocalNumberOrderReconciliationTest extends TestCase
         app(ProvisioningIncidentRecorder::class)->resolve($incident, null, 'resolved');
 
         $this->get(route('customer.workspaces.businesses.text-messaging.show', [$workspace->uid, $business->uid]))
-            ->assertOk()->assertDontSee('Confirming your number');
+            ->assertOk()->assertDontSee('data-role="number-order-pending"', false);
     }
 
     public function test_an_order_the_carrier_has_not_confirmed_lands_on_the_confirming_page_not_an_error(): void
@@ -428,7 +419,254 @@ class LocalNumberOrderReconciliationTest extends TestCase
 
         $response->assertRedirect($show);
         $this->assertNull(session('status'), 'The customer is not shown a purchase error.');
-        $this->get($show)->assertOk()->assertSee('Confirming your number')->assertSee('+17206640969');
+        $this->get($show)->assertOk()->assertSee('Activating your number')->assertSee('+17206640969');
         $this->assertSame(0, BusinessMessagingNumber::query()->count());
+    }
+
+    // ------------------------------------------------------------ a carrier-failed order: safe, single, idempotent refund
+
+    private function walletActor(): int
+    {
+        $actor = $this->platformAdminId();
+        if (\App\Models\Currency::query()->where('code', 'USD')->doesntExist()) {
+            \App\Models\Currency::create(['name' => 'US Dollar', 'code' => 'USD', 'format' => '$', 'status' => true]);
+        }
+        app(\App\Library\Usage\UsageWalletManager::class)->initializeWalletForNewBusiness($this->business->id);
+        config(['messaging.reconciliation.actor_user_id' => $actor]);
+
+        return $actor;
+    }
+
+    private function credits(): \Illuminate\Support\Collection
+    {
+        return DB::table('business_usage_ledger_entries')->where('business_id', $this->business->id)->where('entry_type', 'manual_credit')->get();
+    }
+
+    private function failedFake(array $extra = []): void
+    {
+        // The carrier says the order failed and lists no such number on the account.
+        $this->fakeTelnyx($extra + ['order_status' => 'failed', 'item_status' => 'failure', 'list' => []]);
+    }
+
+    public function test_a_carrier_failed_order_is_not_acted_on_from_one_sighting(): void
+    {
+        $this->walletActor();
+        $this->failedFake();
+
+        $this->artisan('messaging:reconcile-pending-orders')->assertExitCode(0);
+
+        $row = $this->incident();
+        $this->assertSame('failed', $row->reconcile_outcome);
+        $this->assertNull($row->escalated_at);
+        $this->assertNull($row->resolved_at);
+        $this->assertSame(0, $this->credits()->count(), 'One sighting never credits.');
+        $this->assertSame(0, BusinessMessagingNumber::query()->count());
+    }
+
+    public function test_a_second_consecutive_carrier_failure_returns_the_charge_once_and_unblocks_the_customer(): void
+    {
+        $this->walletActor();
+        $this->failedFake();
+        $this->artisan('messaging:reconcile-pending-orders')->assertExitCode(0);
+
+        Carbon::setTestNow(now()->addMinutes(3));
+        $this->artisan('messaging:reconcile-pending-orders')->expectsOutputToContain('charge was returned')->assertExitCode(0);
+
+        $credit = $this->credits();
+        $this->assertCount(1, $credit);
+        $this->assertSame(2_000_000, (int) $credit->first()->gross_amount_micro, 'Exactly the original committed charge.');
+        $row = $this->incident();
+        $this->assertNotNull($row->resolved_at);
+        $this->assertStringStartsWith('[auto-refunded]', $row->resolution_note);
+        $this->assertSame(0, BusinessMessagingNumber::query()->count());
+
+        // Re-running (or a repeated/concurrent run) can never credit again.
+        Carbon::setTestNow(now()->addMinutes(10));
+        $this->artisan('messaging:reconcile-pending-orders')->assertExitCode(0);
+        $this->assertCount(1, $this->credits());
+        $this->assertSame(1, DB::table('business_usage_reservations')->count(), 'No new reservation either.');
+    }
+
+    public function test_the_refund_is_idempotent_even_if_the_incident_resolution_is_lost(): void
+    {
+        $actor = $this->walletActor();
+        $this->failedFake();
+        $refunder = app(\App\Library\Messaging\FailedNumberOrderRefunder::class);
+
+        $first = $refunder->refund($this->incident());
+        // Simulate a crash between the credit and the resolution: re-open the incident and refund again.
+        DB::table('business_messaging_provisioning_incidents')->where('id', $this->incidentId)->update(['resolved_at' => null, 'resolution_note' => null]);
+        $second = $refunder->refund($this->incident());
+
+        $this->assertSame('refunded', $first['status']);
+        $this->assertSame('refunded', $second['status']);
+        $this->assertCount(1, $this->credits(), 'The same operation id replays the same single ledger entry.');
+        $this->assertSame($actor, (int) $this->credits()->first()->actor_user_id);
+    }
+
+    /** @return array<string, array{0: string}> */
+    public static function unsafeRefunds(): array
+    {
+        return [
+            'no administrator actor configured' => ['no_actor'],
+            'number exists at the carrier' => ['number_exists'],
+            'charge above the refund limit' => ['over_cap'],
+            'local rows already exist' => ['local_rows'],
+            'automatic refunds switched off' => ['switched_off'],
+        ];
+    }
+
+    #[\PHPUnit\Framework\Attributes\DataProvider('unsafeRefunds')]
+    public function test_an_unsafe_refund_is_never_credited_and_is_escalated_to_operators(string $case): void
+    {
+        \Illuminate\Support\Facades\Notification::fake();
+        \App\Models\User::query()->where('id', $this->platformAdminId())->update(['is_admin' => true]);
+        $this->walletActor();
+        $this->failedFake($case === 'number_exists' ? ['list' => [['id' => self::RESOURCE, 'phone_number' => self::PHONE, 'status' => 'active']]] : []);
+
+        match ($case) {
+            'no_actor' => config(['messaging.reconciliation.actor_user_id' => null]),
+            'over_cap' => config(['messaging.order_reconciliation.max_auto_refund_micro' => 1_000_000]),
+            'local_rows' => $this->attachNumber($this->attachIdentity($this->business), self::PHONE, true),
+            'switched_off' => config(['messaging.order_reconciliation.auto_refund_failed_orders' => false]),
+            default => null,
+        };
+
+        $this->artisan('messaging:reconcile-pending-orders')->assertExitCode(0);
+        Carbon::setTestNow(now()->addMinutes(3));
+        $this->artisan('messaging:reconcile-pending-orders')->expectsOutputToContain('ESCALATED')->assertExitCode(0);
+
+        $this->assertCount(0, $this->credits(), 'Nothing is credited unless every safeguard holds.');
+        $row = $this->incident();
+        $this->assertNotNull($row->escalated_at);
+        $this->assertNull($row->resolved_at);
+        $this->assertStringContainsString('not refunded automatically', (string) $row->reconcile_detail);
+        \Illuminate\Support\Facades\Notification::assertSentTimes(\App\Notifications\Messaging\NumberOrderEscalatedNotification::class, \App\Models\User::query()->where('is_admin', true)->count());
+    }
+
+    public function test_an_ambiguous_reservation_blocks_any_refund_and_is_escalated_by_age(): void
+    {
+        \Illuminate\Support\Facades\Notification::fake();
+        \App\Models\User::query()->where('id', $this->platformAdminId())->update(['is_admin' => true]);
+        $this->walletActor();
+        $this->failedFake();
+        $this->insertReservation($this->business, 'fixture-res-b'); // two committed purchase charges: which one is this order's?
+
+        $this->artisan('messaging:reconcile-pending-orders')->assertExitCode(0);
+        $this->assertSame('blocked', $this->incident()->reconcile_outcome);
+
+        Carbon::setTestNow(now()->addHours(7)); // past the escalation window
+        $this->artisan('messaging:reconcile-pending-orders')->expectsOutputToContain('ESCALATED')->assertExitCode(0);
+
+        $this->assertCount(0, $this->credits());
+        $this->assertNull($this->incident()->resolved_at);
+        $this->assertNotNull($this->incident()->escalated_at);
+        \Illuminate\Support\Facades\Notification::assertSentTimes(\App\Notifications\Messaging\NumberOrderEscalatedNotification::class, \App\Models\User::query()->where('is_admin', true)->count());
+    }
+
+    public function test_operators_are_alerted_automatically_exactly_once_when_a_pending_order_cannot_be_settled(): void
+    {
+        \Illuminate\Support\Facades\Notification::fake();
+        \App\Models\User::query()->where('id', $this->platformAdminId())->update(['is_admin' => true]);
+        $admins = \App\Models\User::query()->where('is_admin', true)->count();
+        config(['messaging.order_reconciliation.max_attempts' => 2]);
+        $this->fakeTelnyx(['order_status' => 'pending', 'item_status' => 'pending', 'list' => [], 'items' => []]);
+
+        $this->artisan('messaging:reconcile-pending-orders')->assertExitCode(0);
+        \Illuminate\Support\Facades\Notification::assertNothingSent();
+
+        Carbon::setTestNow(now()->addMinutes(5));
+        $this->artisan('messaging:reconcile-pending-orders')->expectsOutputToContain('ESCALATED')->assertExitCode(0);
+        \Illuminate\Support\Facades\Notification::assertSentTimes(\App\Notifications\Messaging\NumberOrderEscalatedNotification::class, $admins);
+
+        // Already escalated: automatic runs leave it to the operators and never alert again.
+        Carbon::setTestNow(now()->addHours(2));
+        $this->artisan('messaging:reconcile-pending-orders')->assertExitCode(0);
+        \Illuminate\Support\Facades\Notification::assertSentTimes(\App\Notifications\Messaging\NumberOrderEscalatedNotification::class, $admins);
+    }
+
+    // ------------------------------------------------------------ duplicate purchases, persistence, live status
+
+    public function test_a_second_purchase_is_refused_while_an_order_is_pending_without_any_provider_call_or_charge(): void
+    {
+        $adapter = new FakeProvisioningAdapter();
+        $this->app->instance(MessagingProvisioningAdapter::class, $adapter);
+        config(['messaging.managed_messaging_enabled' => true, 'messaging.managed_messaging_provisioning_enabled' => true]);
+        [$customer, $business, $workspace] = $this->tenant(WorkspacePlanTier::Growth);
+        $this->authenticateAs($customer);
+        app(ProvisioningIncidentRecorder::class)->record($business, 'number_order_outcome_unknown', self::PROFILE, null, self::PHONE, 'local', 'order accepted but still pending');
+        $show = route('customer.workspaces.businesses.text-messaging.show', [$workspace->uid, $business->uid]);
+        $token = \App\Library\Messaging\CandidateToken::encode($business, new \App\Library\Messaging\DTO\AvailableNumberCandidate('+17205550123', \App\Enums\Messaging\PhoneNumberType::TollFree, 'cand-2'));
+
+        $this->post(route('customer.workspaces.businesses.text-messaging.number.order', [$workspace->uid, $business->uid]), ['candidate_token' => $token])->assertRedirect($show);
+        $this->post(route('customer.workspaces.businesses.text-messaging.number.search', [$workspace->uid, $business->uid]), ['number_type' => 'toll_free'])->assertRedirect($show);
+
+        $this->assertCount(0, $adapter->provisionedOrders, 'The provider was never asked to buy anything.');
+        $this->assertCount(0, $adapter->searches);
+        $this->assertSame(0, DB::table('business_usage_reservations')->where('business_id', $business->id)->count());
+    }
+
+    public function test_a_purchase_still_running_shows_activating_and_a_duplicate_submit_is_sent_to_that_status(): void
+    {
+        $adapter = new FakeProvisioningAdapter();
+        $this->app->instance(MessagingProvisioningAdapter::class, $adapter);
+        config(['messaging.managed_messaging_enabled' => true, 'messaging.managed_messaging_provisioning_enabled' => true]);
+        [$customer, $business, $workspace] = $this->tenant(WorkspacePlanTier::Growth);
+        $this->authenticateAs($customer);
+        $this->attachIdentity($business, null, \App\Enums\Messaging\BusinessMessagingIdentityStatus::Pending); // the in-flight request's slot
+        $show = route('customer.workspaces.businesses.text-messaging.show', [$workspace->uid, $business->uid]);
+        $token = \App\Library\Messaging\CandidateToken::encode($business, new \App\Library\Messaging\DTO\AvailableNumberCandidate('+17205550124', \App\Enums\Messaging\PhoneNumberType::TollFree, 'cand-3'));
+
+        $this->get($show)->assertOk()->assertSee('Activating your number')->assertSee('data-state="activating"', false);
+        $this->post(route('customer.workspaces.businesses.text-messaging.number.order', [$workspace->uid, $business->uid]), ['candidate_token' => $token])->assertRedirect($show);
+        $this->assertCount(0, $adapter->provisionedOrders);
+    }
+
+    public function test_the_pending_state_persists_across_a_new_login_and_the_status_endpoint_reports_each_state(): void
+    {
+        [$customer, $business, $workspace] = $this->tenant(WorkspacePlanTier::Growth);
+        $incident = app(ProvisioningIncidentRecorder::class)->record($business, 'number_order_outcome_unknown', self::PROFILE, null, self::PHONE, 'local', 'x')->id;
+        $show = route('customer.workspaces.businesses.text-messaging.show', [$workspace->uid, $business->uid]);
+        $status = route('customer.workspaces.businesses.text-messaging.number-order.status', [$workspace->uid, $business->uid]);
+
+        $this->authenticateAs($customer);
+        $this->getJson($status)->assertOk()->assertJson(['state' => 'confirming']);
+
+        // A brand-new session (new login, other device): same persisted state, no browser memory involved.
+        $this->flushSession();
+        $this->authenticateAs($customer);
+        $this->get($show)->assertOk()->assertSee('Activating your number')->assertSee(self::PHONE);
+
+        DB::table('business_messaging_provisioning_incidents')->where('id', $incident)->update(['escalated_at' => now(), 'reconcile_outcome' => 'pending']);
+        $this->getJson($status)->assertJson(['state' => 'escalated']);
+        DB::table('business_messaging_provisioning_incidents')->where('id', $incident)->update(['reconcile_outcome' => 'failed', 'escalated_at' => null]);
+        $this->getJson($status)->assertJson(['state' => 'failed']);
+
+        // The reconciler finishes the setup (incident resolved + number attached): the same endpoint now says confirmed.
+        app(ProvisioningIncidentRecorder::class)->resolve($incident, null, 'resolved');
+        $this->getJson($status)->assertJson(['state' => 'none']);
+        $identity = $this->attachIdentity($business);
+        $this->attachNumber($identity, self::PHONE, true);
+        $this->getJson($status)->assertJson(['state' => 'confirmed']);
+    }
+
+    public function test_after_an_automatic_refund_the_purchase_page_says_what_happened_and_offers_a_new_number(): void
+    {
+        [$customer, $business, $workspace] = $this->tenant(WorkspacePlanTier::Growth);
+        $this->authenticateAs($customer);
+        $incident = app(ProvisioningIncidentRecorder::class)->record($business, 'number_order_outcome_unknown', self::PROFILE, null, self::PHONE, 'local', 'x')->id;
+        app(ProvisioningIncidentRecorder::class)->resolve($incident, null, '[auto-refunded] credited');
+
+        $this->get(route('customer.workspaces.businesses.text-messaging.show', [$workspace->uid, $business->uid]))
+            ->assertOk()->assertSee('payment for it has been returned to your balance')->assertSee('data-role="number-order-refunded"', false);
+    }
+
+    public function test_the_buy_button_script_shows_the_activating_state_immediately_and_blocks_a_second_submit(): void
+    {
+        $script = view('customer.settings.text-messaging._number-flow-script')->render();
+
+        $this->assertStringContainsString('Activating your number…', $script);
+        $this->assertStringContainsString("data-submitting", $script);
+        $this->assertStringContainsString('You can leave this page', $script);
     }
 }

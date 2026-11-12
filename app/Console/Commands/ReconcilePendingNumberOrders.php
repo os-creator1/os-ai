@@ -2,11 +2,13 @@
 
 namespace App\Console\Commands;
 
+use App\Library\Messaging\FailedNumberOrderRefunder;
 use App\Library\Messaging\ProvisioningIncidentRecorder;
 use App\Library\Messaging\TelnyxProvisioningAdapter;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Notification;
 use Symfony\Component\Console\Input\ArrayInput;
 use Symfony\Component\Console\Output\NullOutput;
 
@@ -83,6 +85,22 @@ class ReconcilePendingNumberOrders extends Command
         return self::SUCCESS;
     }
 
+    /** Tells every platform administrator, once per incident. Best effort: an alert failure never disturbs reconciliation. */
+    private function alertOperators(object $row, string $outcome, string $detail, int $attempts): void
+    {
+        try {
+            $admins = \App\Models\User::query()->where('is_admin', true)->get();
+
+            if ($admins->isNotEmpty()) {
+                Notification::send($admins, new \App\Notifications\Messaging\NumberOrderEscalatedNotification(
+                    (int) $row->id, (int) $row->business_id, (string) $row->phone_number, $outcome, $detail, $attempts,
+                ));
+            }
+        } catch (\Throwable $e) {
+            Log::error('Could not alert operators about an escalated number order', ['incident_id' => $row->id, 'error' => get_class($e)]);
+        }
+    }
+
     /**
      * Runs the guarded recovery command in-process (so its own fail-closed checks are the only logic) and returns its
      * exit code and transcript. Reading the command's own record, not a console stream, keeps this independent of how
@@ -128,15 +146,41 @@ class ReconcilePendingNumberOrders extends Command
         $detail = trim(str_replace(['[pending]', '[failed]'], '', $detail));
 
         $attempts = (int) $row->reconcile_attempts + 1;
+
+        // A carrier "failed" is never acted on from a single sighting. The first one is recorded (the customer is told the
+        // payment is being returned) and re-checked shortly; only a second consecutive one may return the charge, and
+        // only when every refund safeguard holds. Anything short of that is escalated to an operator.
+        $failedTwice = $outcome === 'failed' && $row->reconcile_outcome === 'failed';
+        $refundBlocked = null;
+
+        if ($failedTwice) {
+            $refund = app(FailedNumberOrderRefunder::class)->refund($row);
+
+            if ($refund['status'] === FailedNumberOrderRefunder::REFUNDED) {
+                Log::info('Failed number order refunded automatically', ['incident_id' => $row->id, 'business_id' => $row->business_id]);
+                $this->info('  Carrier failed the order; the charge was returned and the incident resolved.');
+
+                return;
+            }
+
+            $refundBlocked = $refund['detail'];
+            $detail = trim($detail . ' — not refunded automatically: ' . $refundBlocked);
+        }
+
         $ageHours = (int) \Illuminate\Support\Carbon::parse($row->created_at)->diffInHours(now());
-        // A carrier "failed" is final for automation (the charge needs a human decision); otherwise keep trying until the
+        // A failed order escalates only once the safeguarded refund has been tried and could not be applied; every other
+        // outcome keeps trying until the
         // attempt cap or the age limit, then hand it to an operator.
-        $escalate = $outcome === 'failed' || $attempts >= (int) $cfg['max_attempts'] || $ageHours >= (int) $cfg['escalate_after_hours'];
+        $escalate = ($outcome === 'failed' && $failedTwice) || ($outcome !== 'failed' && ($attempts >= (int) $cfg['max_attempts'] || $ageHours >= (int) $cfg['escalate_after_hours']));
         $backoff = (int) min((int) $cfg['max_backoff_minutes'], (int) $cfg['base_backoff_minutes'] * (2 ** max(0, $attempts - 1)));
 
         $incidents->recordReconcileAttempt((int) $row->id, $outcome, $detail, $escalate ? null : now()->addMinutes($backoff), $escalate);
 
         if ($escalate) {
+            if ($row->escalated_at === null) {
+                $this->alertOperators($row, $outcome, $detail, $attempts); // once, on the transition
+            }
+
             Log::error('Number order reconciliation escalated to an operator', [
                 'incident_id' => $row->id, 'business_id' => $row->business_id, 'outcome' => $outcome, 'attempts' => $attempts, 'detail' => $detail,
             ]);
