@@ -242,6 +242,42 @@ class BrowserCallingTest extends TestCase
         $this->assertCount(0, $this->sent(fn (Request $r) => $r->method() === 'POST' && str_ends_with($r->url(), '/calls') && $r['to'] === '+14155552671'));
     }
 
+    public function test_a_contact_leg_that_outlives_a_dropped_browser_is_hung_up(): void
+    {
+        $this->startBrowserSession();
+        $this->placeBrowser();
+        $state = $this->clientStateOfAgentDial();
+
+        // The browser drops before the contact leg's id was ever saved, so the call is already failed...
+        $this->webhook('e1', 'call.hangup', 'agent-1', $state, ['hangup_cause' => 'originator_cancel'])->assertJson(['status' => 'applied']);
+        $this->assertSame('failed', BusinessVoiceCall::firstOrFail()->status);
+
+        // ...when the late contact leg reports in. It is adopted and torn down, never left ringing or answering silence.
+        $this->webhook('e2', 'call.initiated', 'contact-late', $state)->assertOk();
+        $this->assertCount(1, $this->sent(fn (Request $r) => str_ends_with($r->url(), '/calls/contact-late/actions/hangup')));
+        $call = BusinessVoiceCall::firstOrFail();
+        $this->assertSame('contact-late', $call->telnyx_call_control_id);
+        $this->assertSame('failed', $call->status, 'A terminated call is never revived.');
+    }
+
+    public function test_an_answer_reported_after_the_hangup_still_records_the_answer_time_and_duration(): void
+    {
+        $this->startBrowserSession();
+        $this->placeBrowser();
+        $state = $this->clientStateOfAgentDial();
+        $this->webhook('e1', 'call.answered', 'agent-1', $state);
+
+        $this->webhook('e2', 'call.hangup', 'contact-2', $state, ['end_time' => '2026-11-12T10:01:20Z']);
+        $this->assertNull(BusinessVoiceCall::firstOrFail()->duration_seconds);
+
+        $this->webhook('e3', 'call.answered', 'contact-2', $state, [], '2026-11-12T10:00:08Z');
+
+        $call = BusinessVoiceCall::firstOrFail();
+        $this->assertSame('ended', $call->status);
+        $this->assertSame(72, $call->duration_seconds);
+        $this->assertNotNull($call->answered_at);
+    }
+
     public function test_an_event_with_the_wrong_token_never_touches_a_browser_call(): void
     {
         $this->startBrowserSession();

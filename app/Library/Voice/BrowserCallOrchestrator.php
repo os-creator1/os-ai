@@ -150,7 +150,26 @@ final class BrowserCallOrchestrator
             return null;
         }
 
-        if ($leg !== 'contact' || $terminal) {
+        if ($leg !== 'contact') {
+            return null;
+        }
+
+        if ($terminal) {
+            // A contact leg that outlived its call (the browser dropped while it was being dialled) must not ring on or
+            // answer into silence: any non-hangup event for it is cleaned up. Its id was adopted/saved by this event.
+            if ($eventType !== 'call.hangup') {
+                $leg = (string) $call->telnyx_call_control_id;
+
+                // The answer can also be reported after the hangup was: keep the status, but record the answer time
+                // and duration the earlier hangup could not compute (the same ordering the server-call recorder handles).
+                if ($eventType === 'call.answered' && $status === BusinessVoiceCall::STATUS_ENDED && $call->answered_at === null) {
+                    $call->answered_at = $at;
+                    $call->duration_seconds = $call->ended_at !== null ? (int) max(0, $at->diffInSeconds($call->ended_at, false)) : null;
+                }
+
+                return $leg !== '' ? fn () => $this->command($leg, 'hangup') : null;
+            }
+
             return null;
         }
 
@@ -214,8 +233,12 @@ final class BrowserCallOrchestrator
             timeLimitSecs: max(1, min((int) $cfg['max_duration_secs'], 3600)),
         );
 
-        if ($result->status === BusinessVoiceCall::STATUS_FAILED) {
+        // The call may have ended (browser dropped) while the dial was in flight: drop whichever legs now exist.
+        if (in_array($result->status, [BusinessVoiceCall::STATUS_FAILED, BusinessVoiceCall::STATUS_ENDED], true)) {
             $this->command((string) $call->agent_call_control_id, 'hangup');
+            if ($result->telnyx_call_control_id !== null) {
+                $this->command((string) $result->telnyx_call_control_id, 'hangup');
+            }
         }
     }
 

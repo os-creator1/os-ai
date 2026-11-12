@@ -39,6 +39,8 @@
     var active = false;
     var finished = false;
     var muted = false;
+    var attempt = 0;
+    var CANCELLED = { cancelled: true };
 
     var MESSAGES = {
         calling_unavailable: 'Calling is not available for this business right now.',
@@ -203,6 +205,9 @@
         if (active) { show(); return; }
         active = true;
         finished = false;
+        var mine = ++attempt;
+        // A hang-up/cancel (or a newer attempt) invalidates every step of this one still waiting on the network.
+        var stale = function () { return mine !== attempt || finished; };
         callUid = null;
         connectedAt = null;
         timerEl.textContent = '0:00';
@@ -216,9 +221,11 @@
 
         navigator.mediaDevices.getUserMedia({ audio: true }).then(function (stream) {
             stream.getTracks().forEach(function (t) { t.stop(); });
+            if (stale()) { throw CANCELLED; }
             setState('connecting', 'Connecting…', 'Starting your calling session.');
             return api('POST', cfg.sessionUrl);
         }).then(function (r) {
+            if (stale()) { throw CANCELLED; }
             if (!r || !r.ok || !r.json || !r.json.data) {
                 throw { friendly: say(r && r.json && r.json.error && r.json.error.code) };
             }
@@ -229,18 +236,27 @@
             client.connect();
             return ready;
         }).then(function () {
+            if (stale()) { try { client.disconnect(); } catch (e) {} client = null; throw CANCELLED; }
             expecting = true;
             setState('connecting', 'Connecting…', 'Calling ' + cfg.contactLabel + ' from your business number.');
             return api('POST', cfg.placeUrl, { contact_uid: cfg.contactUid, idempotency_key: uuid(), channel: 'browser' });
         }).then(function (r) {
             if (!r.ok || !r.json || !r.json.data) {
+                if (stale()) { throw CANCELLED; }
                 throw { friendly: say(r.json && r.json.error && r.json.error.code, r.json && r.json.error && r.json.error.message) };
+            }
+            if (stale()) {
+                // The user cancelled while the call was being placed: end whatever the server just started.
+                api('POST', cfg.hangupUrl.replace('__CALL__', encodeURIComponent(r.json.data.id))).catch(function () {});
+                throw CANCELLED;
             }
             callUid = r.json.data.id;
             if (r.json.data.ui_state === 'failed') { return finishFromServer(r.json.data); }
             pollTimer = setInterval(poll, 1500);
             poll();
         }).catch(function (e) {
+            if (e === CANCELLED) { return; }
+            if (stale()) { return; }
             if (e && e.name === 'NotAllowedError') { return fail('Microphone access was blocked. Allow it in your browser settings and try again.'); }
             if (e && e.name === 'NotFoundError') { return fail('No microphone was found.'); }
             if (e && e.friendly) { return fail(e.friendly); }
@@ -261,6 +277,7 @@
             });
         } else {
             finished = true;
+            attempt++; // abandon the start sequence still waiting on the microphone prompt or the network
             cleanup();
             setState('ended', 'Call cancelled', '');
         }
