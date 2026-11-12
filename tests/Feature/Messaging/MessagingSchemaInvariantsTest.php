@@ -84,6 +84,8 @@ class MessagingSchemaInvariantsTest extends TestCase
         'database/migrations/2026_10_09_120001_create_business_messaging_number_lifecycle_events_table.php',
         // Automations V1: which Locations a managed number serves (FK onto the numbers table).
         'database/migrations/2026_10_28_090003_create_business_messaging_number_locations_table.php',
+        // Telnyx voice test calls: business_voice_calls has an FK onto the numbers table (PR #602).
+        'database/migrations/2026_11_12_100001_create_business_voice_calls_tables.php',
     ];
 
     private function business(): Business
@@ -749,6 +751,8 @@ class MessagingSchemaInvariantsTest extends TestCase
                 'business_messaging_number_port_out_requests',
                 'business_messaging_number_lifecycle_events',
                 'business_messaging_number_locations',
+                'business_voice_calls',
+                'business_voice_call_events',
             ] as $table) {
                 $this->assertFalse(
                     Schema::connection($target)->hasTable($table),

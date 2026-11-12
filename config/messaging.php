@@ -242,5 +242,14 @@ return [
         'test_call_allowlist' => env('VOICE_TEST_CALL_ALLOWLIST', ''),
         // Optional override; defaults to route('webhooks.telnyx_voice').
         'webhook_url' => env('TELNYX_VOICE_WEBHOOK_URL'),
+        // Automatic recovery of failed/unconfirmed local-number voice assignments (voice:retry-number-assignments).
+        // Attempts include the first one made at purchase; backoff doubles from the base, capped.
+        'assignment_retry' => [
+            'max_attempts' => (int) env('VOICE_ASSIGNMENT_MAX_ATTEMPTS', 6),
+            'base_backoff_minutes' => (int) env('VOICE_ASSIGNMENT_BACKOFF_MINUTES', 5),
+            'max_backoff_minutes' => 360,
+            // An attempt claimed by one worker is not handed to another for this long (crash recovery).
+            'lease_minutes' => 15,
+        ],
     ],
 ];

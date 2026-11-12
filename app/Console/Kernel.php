@@ -113,6 +113,9 @@
             // recordReleaseDecision()'s own explicit, audited, admin-only
             // action, which itself never confirms a real carrier release.
             $schedule->command('messaging:sweep-number-renewals')->daily()->withoutOverlapping();
+            // Telnyx voice: bounded, backed-off retry of local numbers whose Voice Connection assignment failed or
+            // could not be confirmed. A no-op unless TELNYX_VOICE_CONNECTION_ID is configured.
+            $schedule->command('voice:retry-number-assignments')->everyTenMinutes()->withoutOverlapping();
             // Zero-markup message billing: compare billed message charges with
             // Telnyx's final per-message record and settle each to retail base x
             // billable parts + the actual carrier surcharge. Idempotent, bounded
