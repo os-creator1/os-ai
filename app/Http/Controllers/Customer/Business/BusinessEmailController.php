@@ -535,7 +535,13 @@ class BusinessEmailController extends CustomerBaseController
         return match ($message->status) {
             BusinessEmailMessageStatus::Accepted, BusinessEmailMessageStatus::Received => 'accepted',
             BusinessEmailMessageStatus::Unconfirmed => 'unconfirmed',
-            BusinessEmailMessageStatus::Failed => $message->failure_category !== null && ! $message->failure_category->isRetryable() ? 'failed_terminal' : 'failed_retryable',
+            // Terminal when the category is not retryable OR the sender's attempt budget is spent (BusinessEmailSender::mayRetry() refuses
+            // any further attempt on that key). Retryable only while a same-key retry remains possible, backoff included. A failure with no
+            // category is not assumed terminal.
+            BusinessEmailMessageStatus::Failed => $message->failure_category !== null
+                && (! $message->failure_category->isRetryable() || (int) $message->attempts >= (int) config('business_email.send.max_attempts', 3))
+                    ? 'failed_terminal'
+                    : 'failed_retryable',
             default => 'in_progress',
         };
     }

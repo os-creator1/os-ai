@@ -1729,6 +1729,10 @@
             // Unified inbox: All (default) / SMS / Email. Email has no read state or "waiting" notion, and a Home date scope is an SMS
             // notion, so those narrower views stay SMS-only rather than mixing in rows that cannot honour the filter.
             $channel = in_array($request->get('channel'), ['sms', 'email'], true) ? $request->get('channel') : 'all';
+            // Email has no Unread/Read/Waiting: those views are SMS-only, never an empty Email list.
+            if ($channel === 'email' && ! in_array($filter, ['recents', 'all'], true)) {
+                $channel = 'sms';
+            }
             $emailEligible = $channel !== 'sms' && in_array($filter, ['recents', 'all'], true) && $created === null;
             // Email-only and the merged All list page themselves (UnifiedConversationList); SMS-only and the narrower SMS views paginate as ever.
             $chat_box = ($channel === 'email' || ($channel === 'all' && $emailEligible)) ? null : $query->with('latestMessage')->paginate(50, ['*'], 'page', $page);

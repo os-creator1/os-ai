@@ -182,6 +182,52 @@ const answer = (page, id, extra = {}) => page.evaluate(({ id, cfg }) => { if ($(
     });
   }
 
+  // The shipped filter-tab / channel handlers, run in a closure exactly as they sit inside the page's ready block.
+  const filterShell = (initial) => `(function () {
+    let filter = ${JSON.stringify(initial.filter)}, channel = ${JSON.stringify(initial.channel)}, page = 1, search = '';
+    const homeScope = new URLSearchParams('');
+    window.__loads = [];
+    function loadChatUsers(p, f, q) { window.__loads.push({ filter: f, channel: channel }); }
+    ${between('const smsOnlyFilters', '\n        paintChannel();')}
+    paintChannel();   // the page's initial paint
+    ${between('// Channel filter: All / SMS / Email, in place.', '// Load more data when')}
+    window.__state = () => ({ filter, channel });
+  })();`;
+  const shellPage = async (page, initial) => {
+    await page.evaluate(() => {
+      $('body').append('<div class="tab-group"><button class="tab-button btn-primary" data-filter="recents"></button><button class="tab-button btn-outline-primary" data-filter="unread"></button><button class="tab-button btn-outline-primary" data-filter="read"></button><button class="tab-button btn-outline-primary" data-filter="all"></button><button class="tab-button btn-outline-primary" data-filter="waiting"></button></div><div class="channel-group"><button class="channel-button" data-channel="all"></button><button class="channel-button" data-channel="sms"></button><button class="channel-button" data-channel="email"></button></div>');
+    });
+    await page.evaluate((code) => { const s = document.createElement('script'); s.textContent = code; document.body.appendChild(s); }, filterShell(initial).replace(/\{\{[\s\S]*?\}\}/g, 'x'));
+  };
+
+  for (const tab of ['unread', 'read']) {
+    await scenario(`(filters) Email then ${tab} switches to SMS, repaints the channel and loads with channel=sms`, async (page) => {
+      await shellPage(page, { filter: 'recents', channel: 'all' });
+      await page.evaluate(() => { $('.channel-button[data-channel=email]').trigger('click'); });
+      assert.equal((await page.evaluate(() => window.__state())).channel, 'email');
+      await page.evaluate((t) => { $('.tab-button[data-filter=' + t + ']').trigger('click'); }, tab);
+      const st = await page.evaluate(() => window.__state());
+      assert.deepEqual(st, { filter: tab, channel: 'sms' });
+      assert.deepEqual(await page.evaluate(() => window.__loads.at(-1)), { filter: tab, channel: 'sms' });
+      assert.equal(await page.evaluate(() => $('.channel-button[data-channel=sms]').attr('aria-pressed')), 'true');
+      assert.equal(await page.evaluate(() => $('.channel-button[data-channel=email]').attr('aria-pressed')), 'false');
+    });
+  }
+
+  await scenario('(filters) a direct URL state of channel=email with an SMS-only filter starts as SMS; All stays All', async (page) => {
+    await shellPage(page, { filter: 'waiting', channel: 'email' });
+    assert.equal((await page.evaluate(() => window.__state())).channel, 'sms', 'incompatible channel coerced on load');
+    assert.equal(await page.evaluate(() => $('.channel-button[data-channel=sms]').attr('aria-pressed')), 'true');
+  });
+
+  await scenario('(filters) choosing an SMS-only tab keeps All as All, and Email stays selectable for Recents/All', async (page) => {
+    await shellPage(page, { filter: 'recents', channel: 'all' });
+    await page.evaluate(() => { $('.tab-button[data-filter=unread]').trigger('click'); });
+    assert.equal((await page.evaluate(() => window.__state())).channel, 'all');
+    await page.evaluate(() => { $('.tab-button[data-filter=all]').trigger('click'); $('.channel-button[data-channel=email]').trigger('click'); });
+    assert.deepEqual(await page.evaluate(() => window.__state()), { filter: 'all', channel: 'email' });
+  });
+
   await scenario('edited content is a new intent and gets a new key', async (page, server) => {
     server.mode = 'always-drop';
     await open(page, 'A'); await compose(page, 'First wording');

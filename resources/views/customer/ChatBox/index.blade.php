@@ -1865,6 +1865,11 @@
         // which is also where the former standalone Email page now redirects).
         const knownChannels = ["all", "sms", "email"];
         let channel = knownChannels.indexOf(homeScope.get("channel")) !== -1 ? homeScope.get("channel") : "all";
+        // Unread / Read / Waiting are SMS notions: email has no read state, so those views list SMS only. Whenever one of them is in effect
+        // the Email channel cannot be (it would be an empty list), so the channel becomes SMS — in the URL path and in the UI alike.
+        const smsOnlyFilters = ["unread", "read", "waiting"];
+        function coerceChannel(ch, f) { return ch === "email" && smsOnlyFilters.indexOf(f) !== -1 ? "sms" : ch; }
+        channel = coerceChannel(channel, filter);
         function paintChannel() {
           $(".channel-button").each(function() {
             const on = $(this).data("channel") === channel;
@@ -1980,16 +1985,22 @@
 
           // Leaving the "waiting" view: the server-rendered pinned rows and banner must follow, so reload on the chosen tab
           // (an explicit created-date range in the URL is kept).
+          const chosen = $(this).data("filter");
+          channel = coerceChannel(channel, chosen);
+          paintChannel();
+
           if (filter === "waiting") {
             const next = new URL(window.location.href);
-            next.searchParams.set("filter", $(this).data("filter"));
+            next.searchParams.set("filter", chosen);
+            // Keep the channel consistent with the new tab (Home date-scope parameters are untouched).
+            if (channel === "all") { next.searchParams.delete("channel"); } else { next.searchParams.set("channel", channel); }
             window.location.assign(next.toString());
             return;
           }
 
           // Get filter value and reset page
           page = 1;
-          filter = $(this).data("filter");
+          filter = chosen;
           loadChatUsers(page, filter, search);
         });
 

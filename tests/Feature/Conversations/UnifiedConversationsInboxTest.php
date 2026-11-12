@@ -473,4 +473,64 @@ class UnifiedConversationsInboxTest extends TestCase
 
         $this->sendJson($contact->uid, (string) Str::uuid())->assertStatus(422)->assertJson(['outcome' => 'failed_retryable']);
     }
+
+    public function test_sms_only_filters_never_render_an_empty_email_list(): void
+    {
+        $this->activeAccount($this->business);
+        $unread = $this->box('15551110001', 'Unread text', now()->subHour());
+        DB::table('chat_boxes')->where('id', $unread->id)->update(['notification' => 2]);
+        $read = $this->box('15551110002', 'Read text', now()->subHours(2));
+        DB::table('chat_boxes')->where('id', $read->id)->update(['notification' => 0]);
+        $this->email('Some email', 't-e', now());
+        $this->authenticateAs($this->owner);
+
+        // The composer UI moves to SMS on these tabs; a direct request that still says email behaves the same.
+        $u = $this->list('email', ['filter' => 'unread']);
+        $this->assertStringContainsString('Unread text', $u);
+        $this->assertStringNotContainsString('Read text', str_replace('Unread text', '', $u));
+        $this->assertStringNotContainsString('Some email', $u);
+        $this->assertStringNotContainsString('data-channel="email"', $u);
+
+        $r = $this->list('email', ['filter' => 'read']);
+        $this->assertStringContainsString('Read text', str_replace('Unread text', '', $r));
+        $this->assertStringNotContainsString('Unread text', $r);
+
+        $w = $this->list('email', ['filter' => 'waiting']);
+        $this->assertStringNotContainsString("Email isn't connected", $w);
+        $this->assertStringNotContainsString('No email conversations yet', $w);
+        $this->assertStringNotContainsString('Some email', $w);
+
+        // Email and the recents/all views are unchanged.
+        $this->assertStringContainsString('Some email', $this->list('email'));
+    }
+
+    public function test_a_retryable_failure_becomes_terminal_once_attempts_are_exhausted_and_a_fresh_key_then_sends(): void
+    {
+        $this->activeAccount($this->business);
+        $contact = $this->contactWithEmails($this->business, ['pat@example.com'], $this->locA->id, 'Pat');
+        $this->authenticateAs($this->owner);
+        $rate = fn () => new \App\Exceptions\BusinessEmail\BusinessEmailProviderException(\App\Enums\BusinessEmail\BusinessEmailFailureCategory::ProviderRateLimited, '429');
+        $this->fakeGoogle->sendScript = [$rate(), $rate(), $rate()];
+        $max = (int) config('business_email.send.max_attempts', 3);
+        $this->assertSame(3, $max);
+
+        $token = (string) Str::uuid();
+
+        // Attempts below the maximum: the sender can still retry this key.
+        $this->sendJson($contact->uid, $token)->assertStatus(422)->assertJson(['outcome' => 'failed_retryable']);
+        $this->travel(2)->hours();
+        $this->sendJson($contact->uid, $token)->assertStatus(422)->assertJson(['outcome' => 'failed_retryable']);
+        $this->travel(2)->hours();
+        // At the maximum: the sender will never attempt this key again.
+        $this->sendJson($contact->uid, $token)->assertStatus(422)->assertJson(['outcome' => 'failed_terminal']);
+        $this->assertSame(3, $this->fakeGoogle->callCount('send'));
+
+        $this->travel(2)->hours();
+        $this->sendJson($contact->uid, $token)->assertStatus(422)->assertJson(['outcome' => 'failed_terminal']);
+        $this->assertSame(3, $this->fakeGoogle->callCount('send'), 'the exhausted key makes no further provider call');
+
+        // The composer releases the key on failed_terminal, so the unchanged text goes out under a fresh one.
+        $this->sendJson($contact->uid, (string) Str::uuid())->assertOk()->assertJson(['outcome' => 'accepted']);
+        $this->assertSame(4, $this->fakeGoogle->callCount('send'));
+    }
 }
