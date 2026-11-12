@@ -20,7 +20,8 @@ const shipped = [
   between('function m5UuidV4', 'function enter_chat'),
   between('function enter_chat', '// Conversations failed-send/retry — delegated'),
   between('$("#users-list").on("click"', '// The contact panel slides'),
-].join('\n').replace(/\{\{[\s\S]*?\}\}/g, 'x');
+].join('\n');
+const bladeFor = (workspace, business) => shipped.replace('{{ $workspaceUid }}', workspace).replace('{{ $businessUid }}', business).replace(/\{\{[\s\S]*?\}\}/g, 'x');
 
 const html = `<!doctype html><html><body>
 <input class="chat_id"><div class="chat_history"></div><div id="conversation-context"></div><input type="file" id="media_image">
@@ -28,6 +29,18 @@ const html = `<!doctype html><html><body>
 <div class="chat-app-form"><div data-role="composer-channel"><button class="conversation-channel-option" data-channel="sms"></button><button class="conversation-channel-option" data-channel="email"></button></div>
 <div data-role="composer-email-fields"><input id="email-subject"><select id="email-location"></select></div><p data-role="composer-guidance"></p>
 <textarea id="message" class="message"></textarea><button class="send">Send</button></div></body></html>`;
+
+// Load the page and the SHIPPED code, served as the given Workspace/Business (what the Blade view embeds).
+async function install(page, workspace, business) {
+  await page.evaluate((code) => {
+    window.isRtl = false; window.toasts = []; window.reloads = []; window.loads = {};
+    window.conversationUrl = (n, id) => 'http://conv.test/sms/' + id;
+    window.toastr = { warning: (m) => window.toasts.push(['warning', m]), success: (m) => window.toasts.push(['success', m]) };
+    // Timeline loads are controlled by the test: each returns a Deferred that the test resolves (applying a config) or rejects.
+    window.loadTimeline = (id) => { window.reloads.push(String(id)); const d = $.Deferred(); window.loads[id] = d; return d; };
+    const s = document.createElement('script'); s.textContent = code; document.body.appendChild(s);
+  }, bladeFor(workspace, business));
+}
 
 async function scenario(name, fn) {
   if (process.env.ONLY && !name.includes(process.env.ONLY)) { return; }
@@ -52,14 +65,7 @@ async function scenario(name, fn) {
   });
   await page.goto('http://conv.test/');
   await page.addScriptTag({ path: path.join(root, 'public/vendors/js/vendors.min.js') });
-  await page.evaluate((code) => {
-    window.isRtl = false; window.toasts = []; window.reloads = []; window.loads = {};
-    window.conversationUrl = (n, id) => 'http://conv.test/sms/' + id;
-    window.toastr = { warning: (m) => window.toasts.push(['warning', m]), success: (m) => window.toasts.push(['success', m]) };
-    // Timeline loads are controlled by the test: each returns a Deferred that the test resolves (applying a config) or rejects.
-    window.loadTimeline = (id) => { window.reloads.push(String(id)); const d = $.Deferred(); window.loads[id] = d; return d; };
-    const s = document.createElement('script'); s.textContent = code; document.body.appendChild(s);
-  }, shipped);
+  await install(page, 'ws-1', 'biz-A');
   try { await fn(page, server); console.log('ok  -', name); } finally { await browser.close(); }
 }
 
@@ -226,6 +232,56 @@ const answer = (page, id, extra = {}) => page.evaluate(({ id, cfg }) => { if ($(
     assert.equal((await page.evaluate(() => window.__state())).channel, 'all');
     await page.evaluate(() => { $('.tab-button[data-filter=all]').trigger('click'); $('.channel-button[data-channel=email]').trigger('click'); });
     assert.deepEqual(await page.evaluate(() => window.__state()), { filter: 'all', channel: 'email' });
+  });
+
+  await scenario('(Business scope) identical thread id, subject and body in another Business never restore a pending send; the same Business still does', async (page, server) => {
+    // Business A: ambiguous send (lost response) of "Hello there" in thread T-SAME, through A's own endpoint.
+    await open(page, 'email:T-SAME', { url: 'http://conv.test/biz-A/email/send', contact_uid: 'contact-A' });
+    await compose(page, 'Hello there');
+    await page.evaluate(() => sendEmail()); await tick(page, 400);
+    assert.equal(server.requests.length, 1);
+    assert.equal(server.requests[0].url, 'http://conv.test/biz-A/email/send');
+
+    // Open Business B in the same browser session (sessionStorage survives; the page and its in-memory state do not).
+    await page.goto('http://conv.test/');
+    await page.addScriptTag({ path: path.join(root, 'public/vendors/js/vendors.min.js') });
+    await install(page, 'ws-1', 'biz-B');
+    await open(page, 'email:T-SAME', { url: 'http://conv.test/biz-B/email/send', contact_uid: 'contact-B' });
+    await compose(page, 'Hello there');
+    await page.evaluate(() => sendEmail()); await tick(page, 400);
+    assert.equal(server.requests.length, 2);
+    assert.equal(server.requests[1].url, 'http://conv.test/biz-B/email/send', "B sends through B's own endpoint");
+    assert.equal(server.requests[1].contact_uid, 'contact-B', "with B's own Contact");
+    assert.notEqual(server.requests[1].token, server.requests[0].token, 'and a separate token');
+
+    // Back in Business A: the unchanged draft retried manually reuses A's original endpoint, Contact and token — one provider operation.
+    await page.goto('http://conv.test/');
+    await page.addScriptTag({ path: path.join(root, 'public/vendors/js/vendors.min.js') });
+    await install(page, 'ws-1', 'biz-A');
+    await open(page, 'email:T-SAME', { url: 'http://conv.test/biz-A/email/reply/m1', contact_uid: null });
+    await compose(page, 'Hello there');
+    await page.evaluate(() => sendEmail()); await tick(page, 400);
+    assert.equal(server.requests.length, 3);
+    assert.equal(server.requests[2].url, 'http://conv.test/biz-A/email/send');
+    assert.equal(server.requests[2].contact_uid, 'contact-A');
+    assert.equal(server.requests[2].token, server.requests[0].token);
+    assert.equal(server.sent, 2, 'A and B each sent once; the retry in A was an idempotent replay');
+  });
+
+  await scenario('(Business scope) an old unscoped storage record is never trusted or restored', async (page, server) => {
+    server.mode = 'ok';
+    await page.evaluate(() => {
+      sessionStorage.setItem('mg.emailPending.' + JSON.stringify(['email:T-SAME', 'Re: Hi', 'Hello there']), JSON.stringify({ token: 'legacy-token', url: 'http://conv.test/biz-A/email/send', contact_uid: 'legacy', location: '' }));
+    });
+    await page.goto('http://conv.test/');
+    await page.addScriptTag({ path: path.join(root, 'public/vendors/js/vendors.min.js') });
+    await install(page, 'ws-1', 'biz-B');
+    await open(page, 'email:T-SAME', { url: 'http://conv.test/biz-B/email/send', contact_uid: 'contact-B' });
+    await compose(page, 'Hello there');
+    await page.evaluate(() => sendEmail()); await tick(page, 400);
+    assert.equal(server.requests[0].url, 'http://conv.test/biz-B/email/send');
+    assert.notEqual(server.requests[0].token, 'legacy-token');
+    assert.equal(await page.evaluate(() => Object.keys(sessionStorage).filter((k) => k.startsWith('mg.emailPending.') && !k.startsWith('mg.emailPending.v2.')).length), 0, 'unscoped records are dropped');
   });
 
   await scenario('edited content is a new intent and gets a new key', async (page, server) => {

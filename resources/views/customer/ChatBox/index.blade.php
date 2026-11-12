@@ -1131,19 +1131,37 @@
       // key, because the sender's idempotency is per endpoint+key — a /reply with the old key would be a different operation.
       // The Location is part of the pending record, NOT of the key: the selector is cleared by the refresh that follows an ambiguous send,
       // and the retry must still carry the Location the original was submitted with.
+      // The intent is scoped to the Workspace and Business this page serves: provider thread ids (IMAP ones derive from the root Message-ID)
+      // can repeat across Businesses, and a pending record carries an endpoint, Contact, Location and token that must never be reused
+      // for another Business. The endpoint itself is NOT part of the identity (it changes from /send to /reply on refresh).
+      const emailIntentScope = ["{{ $workspaceUid }}", "{{ $businessUid }}"];
+      const emailPendingPrefix = "mg.emailPending.v2.";
+
       function emailIntentKey(chatId, subject, body) {
-        return [chatId, subject, body].join("\u0001");
+        return JSON.stringify([emailIntentScope[0], emailIntentScope[1], String(chatId), subject, body]);
       }
 
       function emailTokenStore() {
         try { return window.sessionStorage; } catch (e) { return null; }
       }
 
+      // Records written before pending sends were Business-scoped (the old "mg.emailPending." keys) cannot be attributed to a Business,
+      // so they are never trusted: dropped, never restored.
+      (function dropUnscopedPendingEmails() {
+        const store = emailTokenStore();
+        if (!store) { return; }
+        try {
+          Object.keys(store).forEach(function(k) {
+            if (k.indexOf("mg.emailPending.") === 0 && k.indexOf(emailPendingPrefix) !== 0) { store.removeItem(k); }
+          });
+        } catch (e) { /* storage unavailable */ }
+      })();
+
       function peekPendingEmail(intent) {
         let pending = pendingEmailTokens[intent];
         const store = emailTokenStore();
         if (!pending && store) {
-          try { pending = JSON.parse(store.getItem("mg.emailPending." + intent) || "null"); } catch (e) { pending = null; }
+          try { pending = JSON.parse(store.getItem(emailPendingPrefix + intent) || "null"); } catch (e) { pending = null; }
         }
         return pending && pending.token && pending.url ? pending : null;
       }
@@ -1155,14 +1173,14 @@
         }
         pendingEmailTokens[intent] = pending;
         const store = emailTokenStore();
-        if (store) { try { store.setItem("mg.emailPending." + intent, JSON.stringify(pending)); } catch (e) { /* storage unavailable: the in-memory record still holds */ } }
+        if (store) { try { store.setItem(emailPendingPrefix + intent, JSON.stringify(pending)); } catch (e) { /* storage unavailable: the in-memory record still holds */ } }
         return pending;
       }
 
       function forgetEmailToken(intent) {
         delete pendingEmailTokens[intent];
         const store = emailTokenStore();
-        if (store) { try { store.removeItem("mg.emailPending." + intent); } catch (e) { /* nothing to remove */ } }
+        if (store) { try { store.removeItem(emailPendingPrefix + intent); } catch (e) { /* nothing to remove */ } }
       }
 
       // The configuration in composerState belongs to ONE conversation. The moment the selection changes it is stale: nothing may be sent
