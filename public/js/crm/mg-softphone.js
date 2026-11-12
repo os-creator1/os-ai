@@ -169,7 +169,10 @@
 
     function poll() {
         if (!callUid || finished) { return; }
+        var issuedAttempt = attempt, issuedUid = callUid;
         api('GET', cfg.statusUrl.replace('__CALL__', encodeURIComponent(callUid))).then(function (r) {
+            // A response that outlived its call must never act on a newer one the user has since started.
+            if (issuedAttempt !== attempt || issuedUid !== callUid) { return; }
             if (r.ok && r.json && r.json.data) { applyServerState(r.json.data); }
         }).catch(function () { /* a missed poll is retried on the next tick */ });
     }
@@ -266,13 +269,15 @@
 
     function hangUp() {
         if (finished || !active) { return; }
-        var uid = callUid;
+        var uid = callUid, issuedAttempt = attempt;
         try { if (sdkCall) { sdkCall.hangup(); } } catch (e) {}
         if (uid) {
             api('POST', cfg.hangupUrl.replace('__CALL__', encodeURIComponent(uid))).then(function (r) {
+                if (issuedAttempt !== attempt) { return; }
                 if (r.ok && r.json && r.json.data) { return finishFromServer(r.json.data); }
                 finishFromServer({ status: 'ended', answered_at: connectedAt ? 'x' : null, duration_seconds: connectedAt ? (Date.now() - connectedAt) / 1000 : 0 });
             }).catch(function () {
+                if (issuedAttempt !== attempt) { return; }
                 finishFromServer({ status: 'ended', answered_at: connectedAt ? 'x' : null, duration_seconds: connectedAt ? (Date.now() - connectedAt) / 1000 : 0 });
             });
         } else {
