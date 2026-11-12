@@ -326,7 +326,7 @@ class UnifiedConversationsInboxTest extends TestCase
     /** @return list<string> row ids in page order */
     private function rowIds(string $html): array
     {
-        preg_match_all('/<li data-id="([^"]+)"/', $html, $m);
+        preg_match_all('/<li\b[^>]*?\sdata-id="([^"]+)"/', $html, $m);   // attribute order is not significant
 
         return $m[1];
     }
