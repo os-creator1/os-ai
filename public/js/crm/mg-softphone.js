@@ -40,6 +40,8 @@
     var finished = false;
     var muted = false;
     var attempt = 0;
+    var starting = false;   // true while a start sequence (microphone -> session -> place) is still on the network
+    var reloadTimer = null;
     var CANCELLED = { cancelled: true };
 
     var MESSAGES = {
@@ -154,7 +156,11 @@
 
     function refreshHistory() {
         var holder = document.querySelector('[data-role="contact-call-history"]');
-        if (holder && holder.getAttribute('data-reload') === '1') { setTimeout(function () { window.location.reload(); }, 1200); }
+        if (holder && holder.getAttribute('data-reload') === '1') {
+            if (reloadTimer) { clearTimeout(reloadTimer); }
+            // Never reload the page out from under a call the user has started in the meantime.
+            reloadTimer = setTimeout(function () { if (!active && !starting) { window.location.reload(); } }, 1200);
+        }
     }
 
     function applyServerState(call) {
@@ -206,11 +212,20 @@
 
     function start() {
         if (active) { show(); return; }
+        if (starting) {
+            // A cancelled attempt is still unwinding (e.g. an open microphone prompt): do not overlap a new one with it.
+            show();
+            setState('idle', 'Please wait', 'Finishing the previous attempt…');
+            return;
+        }
+        if (reloadTimer) { clearTimeout(reloadTimer); reloadTimer = null; }
+        starting = true;
         active = true;
         finished = false;
         var mine = ++attempt;
         // A hang-up/cancel (or a newer attempt) invalidates every step of this one still waiting on the network.
         var stale = function () { return mine !== attempt || finished; };
+        var rtc = null; // this attempt's SDK instance: a stale step may only ever tear down its own
         callUid = null;
         connectedAt = null;
         timerEl.textContent = '0:00';
@@ -232,14 +247,14 @@
             if (!r || !r.ok || !r.json || !r.json.data) {
                 throw { friendly: say(r && r.json && r.json.error && r.json.error.code) };
             }
-            client = new window.TelnyxWebRTC.TelnyxRTC({ login_token: r.json.data.login_token });
+            client = rtc = new window.TelnyxWebRTC.TelnyxRTC({ login_token: r.json.data.login_token });
             client.remoteElement = 'mg-remote-audio'; // the <audio> element id, as the SDK documents
             client.on('telnyx.notification', onNotification);
             var ready = waitForReady(client);
             client.connect();
             return ready;
         }).then(function () {
-            if (stale()) { try { client.disconnect(); } catch (e) {} client = null; throw CANCELLED; }
+            if (stale()) { try { rtc.disconnect(); } catch (e) {} if (client === rtc) { client = null; } throw CANCELLED; }
             expecting = true;
             setState('connecting', 'Connecting…', 'Calling ' + cfg.contactLabel + ' from your business number.');
             return api('POST', cfg.placeUrl, { contact_uid: cfg.contactUid, idempotency_key: uuid(), channel: 'browser' });
@@ -264,7 +279,7 @@
             if (e && e.name === 'NotFoundError') { return fail('No microphone was found.'); }
             if (e && e.friendly) { return fail(e.friendly); }
             fail('Could not start the call. Check your connection and try again.');
-        });
+        }).then(function () { starting = false; });
     }
 
     function hangUp() {
