@@ -84,6 +84,28 @@ final class ProvisioningIncidentRecorder
      * @param  'verified_provider_id'|'confirmed_not_created'  $type
      * @return int rows resolved (0 when already resolved, missing, or invalid for this stage)
      */
+    /**
+     * Single writer of the reconciliation bookkeeping columns. One verified attempt: bumps the count, records what it
+     * found and when the next one is due (null = none, e.g. escalated), and stamps escalated_at once. Never touches a
+     * resolved incident.
+     *
+     * @param string $outcome pending | failed | blocked
+     */
+    public function recordReconcileAttempt(int $incidentId, string $outcome, ?string $detail, ?\Carbon\CarbonInterface $nextAttemptAt, bool $escalate): int
+    {
+        return DB::table('business_messaging_provisioning_incidents')
+            ->where('id', $incidentId)
+            ->whereNull('resolved_at')
+            ->update([
+                'reconcile_attempts' => DB::raw('reconcile_attempts + 1'),
+                'reconcile_outcome' => $outcome,
+                'reconcile_detail' => $detail !== null && $detail !== '' ? mb_substr($detail, 0, 250) : null,
+                'reconcile_next_attempt_at' => $nextAttemptAt,
+                'escalated_at' => $escalate ? DB::raw('COALESCE(escalated_at, ' . DB::getPdo()->quote(now()->toDateTimeString()) . ')') : DB::raw('escalated_at'),
+                'updated_at' => now(),
+            ]);
+    }
+
     public function resolveUnknownOutcome(int $incidentId, int $resolvedByUserId, string $type, ?string $brandId, ?string $campaignId, string $note, ?string $verificationId = null): int
     {
         return DB::transaction(function () use ($incidentId, $resolvedByUserId, $type, $brandId, $campaignId, $note, $verificationId): int {

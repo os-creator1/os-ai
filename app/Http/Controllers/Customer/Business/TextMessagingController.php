@@ -107,6 +107,16 @@ class TextMessagingController extends CustomerBaseController
 
         $situation = $this->situation($business);
 
+        // An order the carrier accepted but has not confirmed yet is not an error and not "no number": say so, and
+        // never offer a second purchase while it is unresolved.
+        if (($situation['phoneNumber'] ?? null) === null && ($pending = $this->pendingNumberOrder($business)) !== null) {
+            return view('customer.settings.text-messaging.states.confirming-number', [
+                'workspaceUid' => $workspaceUid,
+                'businessUid' => $businessUid,
+                'pending' => $pending,
+            ]);
+        }
+
         return match ($situation['state']) {
             'ready' => $this->renderReady($workspaceUid, $businessUid, $situation),
             'registration_required' => $this->renderRegistration($workspaceUid, $businessUid, $situation, $business),
@@ -275,7 +285,9 @@ class TextMessagingController extends CustomerBaseController
         } catch (MessagingIdentityConflictException) {
             return $this->textMessagingError($workspaceUid, $businessUid, 'This Business already has a number set up.');
         } catch (MessagingRegistrationRecoveryRequiredException) {
-            return $this->textMessagingError($workspaceUid, $businessUid, 'We couldn\'t confirm this number order with our carrier partner. Please don\'t try again; our team has been alerted and will follow up. The charge for this order is awaiting confirmation from the carrier: if the carrier confirms no number was bought it is refunded in full, and you will not be charged twice.');
+            // The carrier accepted the order but has not confirmed it yet (or an earlier one is still unconfirmed). The
+            // charge is held, nothing is lost and nothing may be bought twice: show the confirming state, not an error.
+            return redirect()->route('customer.workspaces.businesses.text-messaging.show', [$workspaceUid, $businessUid]);
         } catch (MessagingFundingUnavailableException $e) {
             \Illuminate\Support\Facades\Log::warning('Messaging number funding unavailable.', ['business_id' => $business->id, 'reason' => $e->reason]);
 
@@ -957,6 +969,35 @@ class TextMessagingController extends CustomerBaseController
     private function provisioningOpenFor(Business $business): bool
     {
         return ProvisioningPilot::allows($business) && $this->provisioning->isAvailable();
+    }
+
+    /**
+     * The Business's open, unconfirmed number order, shaped for the customer: still confirming, taking longer than
+     * expected (an operator has been alerted), or refused by the carrier. Null when there is none.
+     *
+     * @return array{phone: string, state: string}|null
+     */
+    private function pendingNumberOrder(Business $business): ?array
+    {
+        $incident = \Illuminate\Support\Facades\DB::table('business_messaging_provisioning_incidents')
+            ->where('business_id', $business->id)
+            ->where('stage', \App\Library\Messaging\TelnyxProvisioningAdapter::INCIDENT_NUMBER_ORDER_UNKNOWN)
+            ->whereNull('resolved_at')
+            ->orderByDesc('id')
+            ->first();
+
+        if ($incident === null) {
+            return null;
+        }
+
+        $tooOld = \Illuminate\Support\Carbon::parse($incident->created_at)->diffInHours(now())
+            >= (int) config('messaging.order_reconciliation.escalate_after_hours');
+
+        $state = $incident->reconcile_outcome === 'failed'
+            ? 'failed'
+            : ($incident->escalated_at !== null || $tooOld ? 'escalated' : 'confirming');
+
+        return ['phone' => (string) $incident->phone_number, 'state' => $state];
     }
 
     private function renderNoNumber(string $workspaceUid, string $businessUid, array $situation, ?PhoneNumberType $numberTypeLocked = null): View

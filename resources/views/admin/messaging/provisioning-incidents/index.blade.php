@@ -30,7 +30,15 @@
                                     <td class="text-caption">{{ $incident->provider_phone_number_id ?? '—' }}</td>
                                     <td class="text-caption">{{ $incident->phone_number ?? '—' }}</td>
                                     <td>{{ $incident->number_type ?? '—' }}</td>
-                                    <td class="text-caption">{{ $incident->error_message ?? '—' }}</td>
+                                    <td class="text-caption">
+                                        {{ $incident->error_message ?? '—' }}
+                                        @if ((int) $incident->reconcile_attempts > 0)
+                                            <div data-role="auto-reconcile">Auto-reconcile: {{ $incident->reconcile_outcome ?? 'attempted' }}, {{ (int) $incident->reconcile_attempts }} attempt(s)@if ($incident->reconcile_detail) — {{ $incident->reconcile_detail }}@endif</div>
+                                        @endif
+                                        @if ($incident->escalated_at)
+                                            <x-badge variant="danger">Escalated {{ \Illuminate\Support\Carbon::parse($incident->escalated_at)->format('Y-m-d H:i') }}</x-badge>
+                                        @endif
+                                    </td>
                                     <td class="text-caption">{{ $incident->created_at?->format('Y-m-d H:i') ?? '—' }}</td>
                                     <td style="min-width: 260px;">
                                         <form method="POST" action="{{ route('admin.messaging-provisioning-incidents.resolve', $incident->id) }}">

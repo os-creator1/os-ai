@@ -113,6 +113,9 @@
             // recordReleaseDecision()'s own explicit, audited, admin-only
             // action, which itself never confirms a real carrier release.
             $schedule->command('messaging:sweep-number-renewals')->daily()->withoutOverlapping();
+            // Local number orders the carrier left "still pending": re-verify (fail-closed, GET-only) and finish the setup.
+            // A no-op unless messaging.order_reconciliation.enabled.
+            $schedule->command('messaging:reconcile-pending-orders')->everyFiveMinutes()->withoutOverlapping();
             // Telnyx voice: bounded, backed-off retry of local numbers whose Voice Connection assignment failed or
             // could not be confirmed. A no-op unless TELNYX_VOICE_CONNECTION_ID is configured.
             $schedule->command('voice:retry-number-assignments')->everyTenMinutes()->withoutOverlapping();
