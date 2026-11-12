@@ -198,6 +198,51 @@
     .hv2 .gh-root .gh-chat__title { font-size: 14px; font-weight: 600; overflow-wrap: anywhere; }
     .hv2 .gh-root .gh-chat__when { font-size: 12.5px; color: var(--gh-muted); }
 
+    /* Dark mode (`html.dark-layout`): neutral surfaces, text and lines follow the app's semantic tokens; the red Best Next Move card stays red.
+       Light mode is untouched — everything below only applies under the dark class. */
+    html.dark-layout .hv2 .hv2-layout.gh-root { --gh-brand-dark: var(--color-link, #E08A84); --gh-text: var(--color-text-primary); --gh-muted: var(--color-text-muted); --gh-line: var(--color-border); }
+    html.dark-layout .hv2 .gh-root .gh-nbm { --gh-brand-dark: #8F3B35; }
+    html.dark-layout .hv2 .gh-root .gh-desc__panel, html.dark-layout .hv2 .gh-root .gh-desc__result { --gh-brand-dark: var(--color-link, #E08A84); }
+    html.dark-layout .hv2 .gh-root .gh-nbm { box-shadow: 0 24px 48px -26px rgba(0, 0, 0, .7); }
+    html.dark-layout .hv2 .gh-root .gh-metrics { background: var(--color-border-subtle); }
+    html.dark-layout .hv2 .gh-root .gh-met, html.dark-layout .hv2 .gh-root .gh-card, html.dark-layout .hv2 .gh-root .gh-quiet { background: var(--color-surface); }
+    html.dark-layout .hv2 .gh-root a.gh-met:hover, html.dark-layout .hv2 .gh-root .gh-more:hover { background: var(--color-row-hover); }
+    html.dark-layout .hv2 .gh-root .gh-met__k, html.dark-layout .hv2 .gh-root .gh-met__state, html.dark-layout .hv2 .gh-root .gh-quiet p, html.dark-layout .hv2 .gh-root .gh-tab, html.dark-layout .hv2 .gh-root .gh-checklist summary, html.dark-layout .hv2 .gh-root .gh-side-head span { color: var(--color-text-secondary); }
+    html.dark-layout .hv2 .gh-root .gh-quiet--warn { background: var(--color-status-warning-soft-bg); border-color: var(--color-status-warning-border); }
+    html.dark-layout .hv2 .gh-root .gh-btn--line { background: var(--color-surface-secondary); color: var(--color-text-primary); border-color: var(--color-input-border); }
+    html.dark-layout .hv2 .gh-root .gh-btn--line:hover { background: var(--color-row-hover); }
+    /* Description proposal panels sit on the red card but are neutral surfaces */
+    html.dark-layout .hv2 .gh-root .gh-desc__panel, html.dark-layout .hv2 .gh-root .gh-desc__result { background: var(--color-surface); color: var(--color-text-primary); box-shadow: 0 12px 28px -18px rgba(0, 0, 0, .7); }
+    html.dark-layout .hv2 .gh-root .gh-desc.is-editing .gh-desc__panel { box-shadow: 0 0 0 3px rgba(255, 255, 255, .45), 0 12px 28px -18px rgba(0, 0, 0, .7); }
+    html.dark-layout .hv2 .gh-root .gh-desc.is-editing .gh-desc__text { border-bottom-color: var(--color-border-strong); }
+    html.dark-layout .hv2 .gh-root .gh-desc__text::placeholder { color: var(--color-text-muted); }
+    html.dark-layout .hv2 .gh-root .gh-desc__result-text span { color: var(--color-text-secondary); }
+    html.dark-layout .hv2 .gh-root .gh-desc__badge { background-color: var(--color-surface-secondary); }
+    html.dark-layout .hv2 .gh-root .gh-desc__result[data-state="pending"] .gh-desc__badge, html.dark-layout .hv2 .gh-root .gh-desc__result[data-state="unconfirmed"] .gh-desc__badge, html.dark-layout .hv2 .gh-root .gh-desc__result[data-state="working"] .gh-desc__badge { background-color: var(--color-status-pending-soft-bg); background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23e6cd9d' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='12' r='8'/%3E%3Cpath d='M12 8v4l3 2'/%3E%3C/svg%3E"); }
+    html.dark-layout .hv2 .gh-root .gh-desc__result[data-state="failed"] .gh-desc__badge { background-color: var(--color-status-danger-soft-bg); background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23f7a1a2' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 6v7M12 17h.01'/%3E%3C/svg%3E"); }
+    /* Ask MotionGrove (collapsed card; the open conversation already reads the tokens) */
+    html.dark-layout .hv2 .gh-root .home-ask:not(.is-conversation-open) .home-ask-card { background: var(--color-surface); border-color: var(--color-border); box-shadow: 0 1px 2px rgba(0, 0, 0, .25), 0 12px 32px -20px rgba(0, 0, 0, .6); }
+    html.dark-layout .hv2 .gh-root .home-ask:not(.is-conversation-open) .home-ask-card:focus-within { border-color: var(--color-primary-border); box-shadow: 0 0 0 4px var(--color-primary-soft-bg); }
+    html.dark-layout .hv2 .gh-root .home-ask-input { color: var(--color-text-primary); }
+    html.dark-layout .hv2 .gh-root .home-ask-input::placeholder { color: var(--color-text-muted); }
+    html.dark-layout .hv2 .gh-root .hv2-ask-chips .home-chip { border-color: var(--color-border); background: var(--color-surface-secondary); color: var(--color-text-primary); }
+    html.dark-layout .hv2 .gh-root .hv2-ask-chips .home-chip:hover { border-color: var(--color-primary-border); background: var(--color-row-hover); }
+    html.dark-layout .hv2 .gh-root .gh-ask-note { color: var(--color-text-muted); }
+    /* MotionGrove at work */
+    html.dark-layout .hv2 .gh-root .gh-tab:hover { background: var(--color-row-hover); }
+    html.dark-layout .hv2 .gh-root .gh-tab[aria-pressed="true"] { background: var(--color-text-primary); color: var(--color-surface); }
+    html.dark-layout .hv2 .gh-root .gh-row, html.dark-layout .hv2 .gh-root .gh-empty--filtered, html.dark-layout .hv2 .gh-root .gh-more, html.dark-layout .hv2 .gh-root .gh-chat { border-top-color: var(--color-border-subtle); }
+    html.dark-layout .hv2 .gh-root .gh-tone-approval { background: var(--color-status-pending-soft-bg); color: var(--color-status-pending-text); }
+    html.dark-layout .hv2 .gh-root .gh-tone-running { background: var(--color-status-info-soft-bg); color: var(--color-status-info-text); }
+    html.dark-layout .hv2 .gh-root .gh-tone-attention { background: var(--color-status-danger-soft-bg); color: var(--color-status-danger-text); }
+    html.dark-layout .hv2 .gh-root .gh-tone-done { background: var(--color-surface-secondary); color: var(--color-text-secondary); }
+    html.dark-layout .hv2 .gh-root .gh-row__ico.gh-tone-done { background: var(--color-surface-secondary); }
+    /* Right column */
+    html.dark-layout .hv2 .gh-root .gh-seg span { background: var(--color-border); }
+    html.dark-layout .hv2 .gh-root .gh-seg span.is-done { background: var(--color-success, #3dcf86); }
+    html.dark-layout .hv2 .gh-root .gh-tick { color: var(--color-success, #3dcf86); }
+    html.dark-layout .hv2 .gh-root .gh-ring { border-color: var(--color-border-strong); }
+
     /* Tablet: the single column keeps the main flow's priority; the two side cards sit next to each other. */
     @media (max-width: 1199.98px) {
         .hv2 .hv2-layout.gh-root { grid-template-columns: minmax(0, 1fr); gap: 30px 0; }
