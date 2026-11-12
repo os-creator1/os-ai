@@ -93,6 +93,24 @@ class BusinessEmailSettingsHttpTest extends TestCase
         $this->assertStringNotContainsString('refresh_token', $html);
     }
 
+    public function test_the_page_loads_for_a_connected_google_account_that_has_synced_inbound_mail(): void
+    {
+        [$customer, $business, $workspace] = $this->emailTenant();
+        $account = $this->activeAccount($business, BusinessEmailProviderType::Google, 'owner@corp.test');
+        // Exactly how the inbound syncer records a successful run: a raw query-builder write.
+        DB::table('business_email_accounts')->where('id', $account->id)->update([
+            'inbound_synced_at' => now(),
+            'inbound_failure' => null,
+        ]);
+        $this->authenticateAs($customer);
+
+        $html = $this->get($this->showUrl($workspace, $business))->assertOk()->getContent();
+
+        $this->assertStringContainsString('owner@corp.test', $html);
+        $this->assertStringContainsString('Receiving is working. Last checked', $html);
+        $this->assertStringNotContainsString('Something went wrong', $html);
+    }
+
     public function test_a_revoked_account_asks_to_reconnect(): void
     {
         [$customer, $business, $workspace] = $this->emailTenant();
