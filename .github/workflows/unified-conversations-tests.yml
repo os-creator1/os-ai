@@ -1,0 +1,81 @@
+name: Unified Conversations Regression
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'app/Library/Conversations/**'
+      - 'app/Library/Timeline/**'
+      - 'app/Http/Controllers/Customer/ChatBoxController.php'
+      - 'app/Http/Controllers/Customer/Business/BusinessEmailController.php'
+      - 'app/Http/Controllers/Customer/Business/EmailConversationsController.php'
+      - 'app/Providers/AppServiceProvider.php'
+      - 'resources/views/customer/ChatBox/**'
+      - 'routes/customer.php'
+      - 'tests/Feature/Conversations/**'
+      - 'tests/Feature/BusinessEmail/BusinessEmailConversationsTest.php'
+      - '.github/workflows/unified-conversations-tests.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: unified-conversations-pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  focused:
+    name: Unified Conversations (PHP + MySQL)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      APP_ENV: testing
+      APP_KEY: base64:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+      DB_CONNECTION: mysql
+      DB_HOST: 127.0.0.1
+      DB_PORT: '3306'
+      DB_DATABASE: ultimatesms_testing
+      DB_USERNAME: ultimatesms_test
+      DB_PASSWORD: Choose-A-Local-Test-Password
+      EXPECTED_TEST_DATABASE: ultimatesms_testing
+      QUEUE_CONNECTION: sync
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_DATABASE: ultimatesms_testing
+          MYSQL_USER: ultimatesms_test
+          MYSQL_PASSWORD: Choose-A-Local-Test-Password
+          MYSQL_ROOT_PASSWORD: root
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=10
+    steps:
+      - name: Check out PR
+        uses: actions/checkout@v4
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.2'
+          extensions: curl, dom, exif, fileinfo, gd, intl, mbstring, pdo_mysql, zip
+          coverage: none
+          tools: composer:v2
+      - name: Install dependencies
+        run: composer install --no-interaction --prefer-dist --no-progress
+      - name: Compile Blade templates
+        run: php artisan view:cache
+      - name: Run new unified inbox and existing email regression
+        run: >-
+          php artisan test
+          tests/Feature/Conversations/UnifiedConversationsInboxTest.php
+          tests/Feature/BusinessEmail/BusinessEmailConversationsTest.php
+          --stop-on-failure
+      - name: Run existing contact timeline regression
+        run: >-
+          php artisan test
+          tests/Feature/Conversations/ContactActivityTimelineTest.php
+          --stop-on-failure
