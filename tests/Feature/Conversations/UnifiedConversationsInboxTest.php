@@ -131,10 +131,10 @@ class UnifiedConversationsInboxTest extends TestCase
         $this->assertTrue($json['composer']['sms']);
         $this->assertTrue($json['composer']['email'], 'both channels are offered when both are usable');
 
-        // The Email filter's row opens the SAME person timeline, on the SMS conversation.
+        // The Email filter's row opens that email thread as its own timeline (the person's combined view is their All row).
         $opened = $this->post($this->route('email_thread'), ['thread' => 't-pat'])->assertOk()->json();
-        $this->assertSame($box->uid, $opened['conversation_uid']);
-        $this->assertStringContainsString('First, a text', $opened['timeline']);
+        $this->assertArrayNotHasKey('conversation_uid', $opened);
+        $this->assertStringContainsString('Then an email', $opened['timeline']);
     }
 
     public function test_an_unmatched_email_stays_its_own_thread_and_never_borrows_a_contacts_identity(): void
@@ -532,5 +532,43 @@ class UnifiedConversationsInboxTest extends TestCase
         // The composer releases the key on failed_terminal, so the unchanged text goes out under a fresh one.
         $this->sendJson($contact->uid, (string) Str::uuid())->assertOk()->assertJson(['outcome' => 'accepted']);
         $this->assertSame(4, $this->fakeGoogle->callCount('send'));
+    }
+
+    public function test_opening_an_older_email_thread_of_a_contact_with_sms_replies_to_that_thread(): void
+    {
+        $this->activeAccount($this->business);
+        $contact = $this->contactWithEmails($this->business, ['pat@example.com'], $this->locA->id, 'Pat');
+        $this->box($contact->phone, 'A text', now()->subHours(3));
+        $older = $this->email('Older topic', 't-older', now()->subHours(2), 'pat@example.com', contactId: $contact->id);
+        $newer = $this->email('Newer topic', 't-newer', now()->subHour(), 'pat@example.com', contactId: $contact->id);
+        $this->authenticateAs($this->owner);
+
+        $composer = $this->post($this->route('email_thread'), ['thread' => 't-older'])->assertOk()->json('composer');
+
+        $this->assertStringEndsWith('/messages/' . $older->uid . '/reply', $composer['url']);
+        $this->assertStringNotContainsString($newer->uid, $composer['url']);
+        $this->assertSame('Re: Older topic', $composer['subject']);
+
+        // A refresh of the same thread keeps the same target; the other thread has its own.
+        $again = $this->post($this->route('email_thread'), ['thread' => 't-older'])->assertOk()->json('composer');
+        $this->assertSame($composer['url'], $again['url']);
+        $other = $this->post($this->route('email_thread'), ['thread' => 't-newer'])->assertOk()->json('composer');
+        $this->assertStringEndsWith('/messages/' . $newer->uid . '/reply', $other['url']);
+    }
+
+    public function test_a_thread_keeps_its_earlier_unlinked_message_when_a_later_one_is_linked_to_a_contact(): void
+    {
+        $this->activeAccount($this->business);
+        $contact = $this->contactWithEmails($this->business, ['pat@example.com'], $this->locA->id, 'Pat');
+        $this->box($contact->phone, 'A text', now()->subHours(3));
+        $this->email('First unlinked', 't-mixed', now()->subHours(2), 'pat@example.com');
+        $this->email('Re: First unlinked', 't-mixed', now()->subHour(), 'pat@example.com', contactId: $contact->id);
+        $this->authenticateAs($this->owner);
+
+        $timeline = $this->post($this->route('email_thread'), ['thread' => 't-mixed'])->assertOk()->json('timeline');
+
+        $this->assertStringContainsString('Body of First unlinked', $timeline);
+        $this->assertStringContainsString('Body of Re: First unlinked', $timeline);
+        $this->assertSame(2, substr_count($timeline, 'data-role="timeline-message"'), 'each message once');
     }
 }

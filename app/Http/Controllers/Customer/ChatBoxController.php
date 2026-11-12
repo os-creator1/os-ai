@@ -688,9 +688,9 @@
         /**
          * Unified inbox — one EMAIL thread opened inside Conversations.
          *
-         * A thread whose Contact provably owns an SMS conversation opens as that person's ONE timeline (SMS and email together,
-         * through timeline()). Any other thread — including one that cannot be safely matched to a Contact — is its own timeline
-         * with a deliberately limited contact panel: no Contact is invented and no other Contact's details are shown.
+         * A thread opens as its own timeline with its own reply target. When the ledger linked it to an accessible Contact the panel
+         * names them; a thread that cannot be safely matched gets a deliberately limited panel: no Contact is invented and no other
+         * Contact's details are shown.
          */
         public function emailThread(ContactActivityTimeline $timeline, ConversationContextReader $contextReader, Request $request, string $workspaceUid, string $businessUid): JsonResponse
         {
@@ -718,18 +718,10 @@
                 $contact = null;
             }
 
-            $box = $contact === null ? null : ($inbox->boxesByContact($business, $userId, [(int) $contact->id])[(int) $contact->id] ?? null);
-
-            // Re-resolved through the same Business + Location chain every other conversation action uses.
-            $box = $box === null ? null : $this->resolveConversation($workspaceUid, $businessUid, $box->uid);
-
-            if ($box !== null) {
-                $response = $this->timeline($timeline, $contextReader, $workspaceUid, $businessUid, $box->uid);
-                $payload = $response->getData(true);
-                $payload['conversation_uid'] = $box->uid;
-
-                return response()->json($payload);
-            }
+            // The REQUESTED thread always opens as its own email timeline — every authorized message of that thread (including earlier ones
+            // the ledger never linked to a Contact), and the reply target, subject and provider threading of THAT thread. It is never
+            // delegated to the Contact's SMS timeline, whose reply target is the Contact's latest email and would silently change on refresh.
+            // The person's combined SMS + email view stays one row away (their merged row in All).
 
             $items = $messages->map(fn ($m) => \App\Library\Timeline\Sources\BusinessEmailMessagesSource::item($m))->sortBy(fn ($i) => [$i->at->getTimestamp(), $i->sequence])->values()->all();
             $page = new \App\Library\Timeline\TimelinePage(new \App\Library\Timeline\TimelineSubject($business, '', null, $contact), $items, false);
