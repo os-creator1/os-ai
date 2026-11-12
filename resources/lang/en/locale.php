@@ -1650,6 +1650,7 @@
             'update_contact'                     => 'Update Contact',
             'delete_contact'                     => 'Delete Contact',
             'read_numbers'                       => 'View Numbers',
+            'place_voice_calls'                  => 'Place Voice Calls',
             'buy_numbers'                        => 'Buy Predefined Numbers',
             'release_numbers'                    => 'Release Numbers',
             'knowledge_bases'                    => 'Knowledge Bases',

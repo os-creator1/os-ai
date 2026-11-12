@@ -242,6 +242,15 @@ return [
         'test_call_allowlist' => env('VOICE_TEST_CALL_ALLOWLIST', ''),
         // Optional override; defaults to route('webhooks.telnyx_voice').
         'webhook_url' => env('TELNYX_VOICE_WEBHOOK_URL'),
+        // Customer (workspace-user) outbound calls to CRM contacts. Off until explicitly enabled; server-enforced bounds.
+        // Call Control dial only: it rings the contact but carries NO browser audio (that needs a WebRTC leg).
+        'customer_calls' => [
+            'enabled' => env('VOICE_CUSTOMER_CALLS_ENABLED', false),
+            'ring_timeout_secs' => 30,
+            'max_duration_secs' => (int) env('VOICE_CUSTOMER_CALL_MAX_SECS', 600),
+            'max_concurrent_per_business' => (int) env('VOICE_CUSTOMER_CALL_MAX_CONCURRENT', 2),
+            'max_per_hour_per_business' => (int) env('VOICE_CUSTOMER_CALL_MAX_PER_HOUR', 30),
+        ],
         // Automatic recovery of failed/unconfirmed local-number voice assignments (voice:retry-number-assignments).
         // Attempts include the first one made at purchase; backoff doubles from the base, capped.
         'assignment_retry' => [
