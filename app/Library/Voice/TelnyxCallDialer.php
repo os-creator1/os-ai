@@ -31,6 +31,7 @@ final class TelnyxCallDialer
         string $token,
         int $ringTimeoutSecs,
         int $timeLimitSecs,
+        string $idColumn = 'telnyx_call_control_id',
     ): BusinessVoiceCall {
         try {
             $response = Http::withToken($apiKey)->timeout(self::TIMEOUT_SECONDS)->acceptJson()->asJson()->post(self::API_BASE . '/calls', [
@@ -62,10 +63,13 @@ final class TelnyxCallDialer
 
         // A webhook may already have adopted the row and moved it on, so never write from the stale in-memory model:
         // set the id only if still empty, and move requested -> initiated only if still requested.
-        BusinessVoiceCall::query()->whereKey($call->id)->whereNull('telnyx_call_control_id')
-            ->update(['telnyx_call_control_id' => $callControlId]);
-        BusinessVoiceCall::query()->whereKey($call->id)->where('status', BusinessVoiceCall::STATUS_REQUESTED)
-            ->update(['status' => BusinessVoiceCall::STATUS_INITIATED, 'initiated_at' => now()]);
+        BusinessVoiceCall::query()->whereKey($call->id)->whereNull($idColumn)->update([$idColumn => $callControlId]);
+
+        // Dialling the browser (agent) leg is not the contact ringing: only the contact/server leg advances the status.
+        if ($idColumn === 'telnyx_call_control_id') {
+            BusinessVoiceCall::query()->whereKey($call->id)->where('status', BusinessVoiceCall::STATUS_REQUESTED)
+                ->update(['status' => BusinessVoiceCall::STATUS_INITIATED, 'initiated_at' => now()]);
+        }
 
         return $call->refresh();
     }

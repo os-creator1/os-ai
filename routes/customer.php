@@ -2376,7 +2376,9 @@
 
         // Customer outbound calling backend (JSON; no browser audio yet). See VoiceCallController.
         Route::post('{workspaceUid}/businesses/{businessUid}/calls', 'Business\VoiceCallController@store')->middleware('throttle:30,1')->name('businesses.calls.store');
+        Route::post('{workspaceUid}/businesses/{businessUid}/calls/browser-session', 'Business\VoiceCallController@browserSession')->middleware('throttle:20,1')->name('businesses.calls.browser-session');
         Route::get('{workspaceUid}/businesses/{businessUid}/calls/{callUid}', 'Business\VoiceCallController@show')->name('businesses.calls.show');
+        Route::post('{workspaceUid}/businesses/{businessUid}/calls/{callUid}/hangup', 'Business\VoiceCallController@hangup')->middleware('throttle:60,1')->name('businesses.calls.hangup');
 
         Route::prefix('{workspaceUid}/businesses/{businessUid}/settings/text-messaging')->name('businesses.text-messaging.')->group(function () {
             Route::get('/', 'Business\TextMessagingController@show')->name('show');

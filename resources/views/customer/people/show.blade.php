@@ -50,6 +50,21 @@
         .mg-cp-empty{display:flex;flex-direction:column;align-items:center;text-align:center;gap:.5rem;padding:1.25rem 0 .5rem}
         .mg-cp-empty-icon{display:inline-flex;align-items:center;justify-content:center;width:3rem;height:3rem;border-radius:999px;background:var(--color-primary-soft-bg,#f4e6e4);color:var(--color-primary,#b5524c)}
         .mg-cp-empty p{margin:0;color:var(--color-text-muted,#6f6d67);font-size:.85rem}
+        .mg-cp-callbtn{color:var(--color-primary,#b5524c)}
+        .mg-softphone{position:fixed;right:1.25rem;bottom:1.25rem;z-index:1080;width:min(21rem,calc(100vw - 2.5rem));padding:1rem 1.1rem;border-radius:.9rem;background:var(--color-surface-primary,#fff);border:1px solid var(--color-border-neutral,#e5e1da);box-shadow:0 12px 32px rgba(0,0,0,.18)}
+        .mg-softphone[hidden]{display:none}
+        .mg-softphone-head{display:flex;align-items:center;gap:.5rem}
+        .mg-softphone-dot{width:.6rem;height:.6rem;border-radius:999px;background:#a09e97}
+        .mg-softphone[data-state="connecting"] .mg-softphone-dot,.mg-softphone[data-state="ringing"] .mg-softphone-dot{background:#d99a2b}
+        .mg-softphone[data-state="connected"] .mg-softphone-dot{background:#2e9b5c}
+        .mg-softphone[data-state="failed"] .mg-softphone-dot{background:#c0453f}
+        .mg-softphone-timer{margin-left:auto;font-weight:600}
+        .mg-softphone-who{margin:.5rem 0 0;font-weight:700;overflow-wrap:anywhere}
+        .mg-softphone-detail{margin:.15rem 0 .75rem;font-size:.85rem;color:var(--color-text-muted,#6f6d67)}
+        .mg-softphone-actions{display:flex;gap:.5rem;justify-content:flex-end}
+        .mg-cp-calls{list-style:none;margin:0;padding:0;display:grid;gap:.6rem}
+        .mg-cp-calls li{display:flex;justify-content:space-between;gap:.75rem;font-size:.85rem}
+        .mg-cp-calls .mg-cp-call-when{color:var(--color-text-muted,#6f6d67)}
         @media (max-width:991.98px){
             .mg-cp-grid{grid-template-columns:minmax(0,1fr)}
         }
@@ -123,6 +138,9 @@
                         <li>
                             <span class="mg-cp-info-icon"><x-ds-icon name="smartphone" size="16" aria-hidden="true" /></span>
                             <span class="mg-cp-info-body"><span class="mg-cp-info-label">Phone</span><span class="mg-cp-info-value text-numeric">{{ $profile['phone'] }}</span></span>
+                            @if (! empty($browserCalling))
+                                <button type="button" class="mg-cp-iconbtn mg-cp-callbtn" data-role="contact-call" aria-label="Call {{ $displayName }}" title="Call"><x-ds-icon name="phone" size="14" aria-hidden="true" /></button>
+                            @endif
                             <button type="button" class="mg-cp-iconbtn" data-copy="{{ $profile['phone'] }}" data-role="contact-copy-phone" aria-label="Copy phone number" title="Copy phone number"><x-ds-icon name="copy" size="14" aria-hidden="true" /></button>
                         </li>
                         @if ($profile['email'] !== null)
@@ -152,6 +170,20 @@
                         @endif
                     </ul>
                 </div>
+                @if (! empty($browserCalling) || ! empty($callHistory))
+                    <div class="mg-cp-card" data-role="contact-call-history" data-reload="{{ ! empty($browserCalling) ? '1' : '0' }}">
+                        <h2 class="mg-cp-card-title">Calls</h2>
+                        @if (empty($callHistory))
+                            <p class="mg-cp-card-sub" style="margin:0">No calls yet. Use the call button beside the phone number.</p>
+                        @else
+                            <ul class="mg-cp-calls">
+                                @foreach ($callHistory as $call)
+                                    <li><span>{{ $call['outcome'] }}@if ($call['duration'] !== null) · {{ $call['duration'] }}@endif</span><span class="mg-cp-call-when">{{ $call['when'] }}</span></li>
+                                @endforeach
+                            </ul>
+                        @endif
+                    </div>
+                @endif
             </div>
 
             <div class="mg-cp-col">
@@ -220,6 +252,10 @@
         </div>
         </div>
     </section>
+
+    @if (! empty($browserCalling))
+        @include('customer.people._softphone')
+    @endif
 
     <script>
         (function () {

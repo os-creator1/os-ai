@@ -251,6 +251,17 @@ return [
             'max_concurrent_per_business' => (int) env('VOICE_CUSTOMER_CALL_MAX_CONCURRENT', 2),
             'max_per_hour_per_business' => (int) env('VOICE_CUSTOMER_CALL_MAX_PER_HOUR', 30),
         ],
+        // Browser (WebRTC) calling for workspace users. Two bridged Call Control legs: the agent's browser (a Telnyx
+        // telephony credential on a credential connection with NO outbound profile, so a browser can never dial out
+        // by itself) and the contact. Off until explicitly enabled; needs customer_calls too.
+        'browser' => [
+            'enabled' => env('VOICE_BROWSER_CALLS_ENABLED', false),
+            // The Telnyx Credential Connection (WebRTC) that telephony credentials are created on.
+            'credential_connection_id' => env('TELNYX_WEBRTC_CONNECTION_ID'),
+            'sip_domain' => 'sip.telnyx.com',
+            'agent_ring_timeout_secs' => 25,
+            'credential_ttl_days' => 30,
+        ],
         // Automatic recovery of failed/unconfirmed local-number voice assignments (voice:retry-number-assignments).
         // Attempts include the first one made at purchase; backoff doubles from the base, capped.
         'assignment_retry' => [
