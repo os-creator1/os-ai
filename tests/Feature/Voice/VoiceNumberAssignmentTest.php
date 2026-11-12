@@ -149,4 +149,90 @@ class VoiceNumberAssignmentTest extends TestCase
         Http::assertNothingSent();
         $this->assertNull($number->voice_assigned_at);
     }
+
+    // -----------------------------------------------------------------
+    // Automatic recovery: voice:retry-number-assignments
+    // -----------------------------------------------------------------
+
+    private function failedNumber(array $overrides = []): BusinessMessagingNumber
+    {
+        $number = $this->number();
+        \DB::table('business_messaging_numbers')->where('id', $number->id)->update($overrides + [
+            'voice_assignment_failure_reason' => 'http_500',
+            'voice_assignment_attempts' => 1,
+            'voice_assignment_next_attempt_at' => now()->subMinute(),
+        ]);
+
+        return $number->fresh();
+    }
+
+    public function test_a_failure_schedules_a_backed_off_retry_and_stops_at_the_attempt_cap(): void
+    {
+        config(['messaging.voice.assignment_retry.max_attempts' => 2, 'messaging.voice.assignment_retry.base_backoff_minutes' => 5]);
+        Http::fake(['api.telnyx.com/v2/phone_numbers/*' => Http::response([], 500)]);
+        $assigner = app(VoiceNumberAssigner::class);
+
+        $number = $assigner->assign($this->number());
+        $this->assertSame(1, (int) $number->voice_assignment_attempts);
+        $this->assertEqualsWithDelta(5, now()->diffInMinutes($number->voice_assignment_next_attempt_at, false), 1);
+
+        $number = $assigner->assign($number);
+        $this->assertSame(2, (int) $number->voice_assignment_attempts);
+        $this->assertNull($number->voice_assignment_next_attempt_at, 'No further retry once attempts are exhausted.');
+        $this->assertSame([5, 10, 20, 40], array_map(fn ($a) => VoiceNumberAssigner::backoffMinutes($a), [1, 2, 3, 4]));
+    }
+
+    public function test_the_command_retries_a_due_failed_number_to_success_once(): void
+    {
+        $number = $this->failedNumber();
+        $this->patched();
+
+        $this->artisan('voice:retry-number-assignments')->assertExitCode(0);
+        $number = $number->fresh();
+        $this->assertNotNull($number->voice_assigned_at);
+        $this->assertNull($number->voice_assignment_next_attempt_at);
+
+        // A confirmed number is never selected or patched again.
+        Http::fake();
+        $this->artisan('voice:retry-number-assignments')->assertExitCode(0);
+        Http::assertNothingSent();
+    }
+
+    public function test_the_command_skips_not_due_exhausted_toll_free_and_never_attempted_numbers(): void
+    {
+        config(['messaging.voice.assignment_retry.max_attempts' => 3]);
+        $this->patched();
+        $this->failedNumber(['voice_assignment_next_attempt_at' => now()->addHour()]);             // not due
+        $this->failedNumber(['voice_assignment_attempts' => 3]);                                   // exhausted
+        $this->failedNumber(['number_type' => PhoneNumberType::TollFree->value]);                  // toll-free
+        $this->failedNumber(['voice_assignment_failure_reason' => null]);                          // never attempted
+
+        $this->artisan('voice:retry-number-assignments')->assertExitCode(0);
+
+        Http::assertNothingSent();
+    }
+
+    public function test_a_number_already_leased_by_another_run_is_not_attempted_twice(): void
+    {
+        $number = $this->failedNumber();
+        $this->patched();
+        // Another worker has claimed it: its lease pushed the next attempt into the future.
+        \DB::table('business_messaging_numbers')->where('id', $number->id)->update(['voice_assignment_next_attempt_at' => now()->addMinutes(10)]);
+
+        $this->artisan('voice:retry-number-assignments')->assertExitCode(0);
+
+        Http::assertNothingSent();
+    }
+
+    public function test_the_command_is_a_safe_no_op_without_a_voice_connection(): void
+    {
+        $number = $this->failedNumber();
+        config(['messaging.voice.connection_id' => '']);
+        Http::fake();
+
+        $this->artisan('voice:retry-number-assignments')->assertExitCode(0);
+
+        Http::assertNothingSent();
+        $this->assertSame(1, (int) $number->fresh()->voice_assignment_attempts);
+    }
 }

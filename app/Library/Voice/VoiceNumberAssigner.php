@@ -79,12 +79,32 @@ final class VoiceNumberAssigner
         return $confirmed ? $this->record($number, $connectionId, null) : $this->record($number, null, 'unconfirmed');
     }
 
+    public static function maxAttempts(): int
+    {
+        return max(1, (int) config('messaging.voice.assignment_retry.max_attempts'));
+    }
+
+    /** Minutes to wait after the given number of failed attempts: base, doubling, capped. */
+    public static function backoffMinutes(int $attempts): int
+    {
+        $base = max(1, (int) config('messaging.voice.assignment_retry.base_backoff_minutes'));
+        $cap = max($base, (int) config('messaging.voice.assignment_retry.max_backoff_minutes'));
+
+        return (int) min($cap, $base * (2 ** max(0, $attempts - 1)));
+    }
+
     private function record(BusinessMessagingNumber $number, ?string $confirmedConnectionId, ?string $failureReason): BusinessMessagingNumber
     {
+        $attempts = (int) $number->voice_assignment_attempts + 1;
+        $confirmed = $confirmedConnectionId !== null;
+
         DB::table('business_messaging_numbers')->where('id', $number->id)->update([
             'voice_connection_id' => $confirmedConnectionId,
-            'voice_assigned_at' => $confirmedConnectionId !== null ? now() : null,
+            'voice_assigned_at' => $confirmed ? now() : null,
             'voice_assignment_failure_reason' => $failureReason,
+            'voice_assignment_attempts' => $attempts,
+            // Success ends retrying; a failure schedules the next try, or none once attempts are exhausted.
+            'voice_assignment_next_attempt_at' => $confirmed || $attempts >= self::maxAttempts() ? null : now()->addMinutes(self::backoffMinutes($attempts)),
             'updated_at' => now(),
         ]);
 
