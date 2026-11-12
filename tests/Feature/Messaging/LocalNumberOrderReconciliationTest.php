@@ -114,6 +114,7 @@ class LocalNumberOrderReconciliationTest extends TestCase
             'messaging_profile_id' => self::PROFILE, 'purchased_at' => self::PURCHASED], $over['number'] ?? []);
         $report = ['user_id' => 'acct-1', 'start_date' => '2026-10-01', 'end_date' => '2026-11-01', 'currency' => 'USD',
             'results' => $over['results'] ?? [['tn' => self::PHONE, 'charge_type' => 'local-number', 'services' => $services]]];
+        $report = array_replace($report, $over['report'] ?? []);
 
         Http::fake(function (Request $request) use ($list, $items, $order, $number, $report) {
             $path = (string) parse_url($request->url(), PHP_URL_PATH);
@@ -668,5 +669,114 @@ class LocalNumberOrderReconciliationTest extends TestCase
         $this->assertStringContainsString('Activating your number…', $script);
         $this->assertStringContainsString("data-submitting", $script);
         $this->assertStringContainsString('You can leave this page', $script);
+    }
+
+    // ------------------------------------------------------------ the real Telnyx local billing row (long-code-number)
+
+    /** Purchased 2026-11-12 in a 30-day month (19 days left): $1.00 one-time, $1.00 rental, $0.10 SMS = $2.10 charged. */
+    private function realBillingSetup(array $services = []): void
+    {
+        Carbon::setTestNow('2026-11-13 12:00:00');
+        DB::table('business_usage_reservations')->update([
+            'final_quantity' => '2.100000', 'estimated_quantity' => '2.100000', 'final_amount_micro' => 2_100_000, 'reserved_amount_micro' => 2_100_000,
+        ]);
+
+        $this->fakeTelnyx([
+            'number' => ['purchased_at' => '2026-11-12T12:00:00Z'],
+            'report' => ['start_date' => '2026-11-01', 'end_date' => '2026-12-01'],
+            'results' => [['tn' => self::PHONE, 'charge_type' => 'long-code-number', 'services' => $services ?: self::realServices()]],
+        ]);
+    }
+
+    /** @return list<array<string, string>> exactly as Telnyx's /charges_breakdown returned it for incident 6 */
+    private static function realServices(): array
+    {
+        return [
+            ['cost_type' => 'otc', 'name' => 'numbers', 'cost' => '-1.00000'],
+            ['cost_type' => 'partial-mrc', 'name' => 'numbers', 'cost' => '-0.63333'],
+            ['cost_type' => 'partial-mrc', 'name' => 'SMS', 'cost' => '-0.06333'],
+            ['cost_type' => 'partial-mrc', 'name' => 'high-definition-voice', 'cost' => '0.00000'],
+        ];
+    }
+
+    public function test_the_real_long_code_billing_row_with_a_free_hd_voice_line_verifies_and_recovers(): void
+    {
+        $this->realBillingSetup();
+
+        $this->recover(false)->expectsOutputToContain('DRY RUN')->assertExitCode(0);
+        $this->assertNothingWritten();
+
+        $this->recover()->assertExitCode(0);
+
+        $number = BusinessMessagingNumber::query()->sole();
+        $this->assertSame(1_000_000, (int) $number->upfront_cost_micro, 'The $1.00 one-time fee is the carrier line, validated against the reservation.');
+        $this->assertSame(1_100_000, (int) $number->monthly_cost_micro, '$1.00 rental + $0.10 SMS add-on.');
+        $this->assertNotNull($this->incident()->resolved_at);
+    }
+
+    /** @return array<string, array{0: list<array<string, mixed>>, 1: string}> */
+    public static function unacceptableHdVoiceBilling(): array
+    {
+        $real = self::realServices();
+        $without = array_slice($real, 0, 3);
+        $withHd = fn (string $cost, string $type = 'partial-mrc', string $name = 'high-definition-voice') => [...$without, ['cost_type' => $type, 'name' => $name, 'cost' => $cost]];
+
+        return [
+            'a charge on hd voice' => [$withHd('-0.00100'), 'must be exactly zero'],
+            'a credit on hd voice' => [$withHd('0.00100'), 'must be exactly zero'],
+            'a malformed hd voice cost' => [$withHd('free'), 'readable cost'],
+            'a missing hd voice cost' => [[...$without, ['cost_type' => 'partial-mrc', 'name' => 'high-definition-voice']], 'readable cost'],
+            'a duplicated hd voice line' => [[$real[0], $real[1], $real[3], $real[3]], 'More than one partial-mrc/high-definition-voice'],
+            'five lines (real four plus a duplicate)' => [[...$real, $real[3]], 'unexpected number of service charges'],
+            'hd voice under another cost type' => [$withHd('0.00000', 'otc'), 'not a debit'],
+            'another free service' => [$withHd('0.00000', 'partial-mrc', 'call-forwarding'), 'not a debit'],
+            'a duplicated number rental' => [[...$real, $real[1]], 'unexpected number of service charges'],
+        ];
+    }
+
+    /** @param list<array<string, mixed>> $services */
+    #[\PHPUnit\Framework\Attributes\DataProvider('unacceptableHdVoiceBilling')]
+    public function test_only_an_exactly_zero_single_hd_voice_line_is_ignored(array $services, string $message): void
+    {
+        $this->realBillingSetup($services);
+
+        $this->recover()->expectsOutputToContain($message)->assertExitCode(1);
+
+        $this->assertNothingWritten();
+    }
+
+    public function test_the_ignored_hd_voice_line_does_not_weaken_the_validation_of_the_real_charges(): void
+    {
+        // Rental billed wrongly for the days left.
+        $wrongRental = self::realServices();
+        $wrongRental[1]['cost'] = '-0.50000';
+        $this->realBillingSetup($wrongRental);
+        $this->recover()->expectsOutputToContain('Pricing mismatch')->assertExitCode(1);
+        $this->assertNothingWritten();
+
+        // SMS billed wrongly.
+        $wrongSms = self::realServices();
+        $wrongSms[2]['cost'] = '-0.10000';
+        $this->realBillingSetup($wrongSms);
+        $this->recover()->expectsOutputToContain('Pricing mismatch')->assertExitCode(1);
+        $this->assertNothingWritten();
+
+        // One-time fee that does not leave a valid rental once checked against the committed $2.10 reservation.
+        $wrongFee = self::realServices();
+        $wrongFee[0]['cost'] = '-2.00000';
+        $this->realBillingSetup($wrongFee);
+        $this->recover()->expectsOutputToContain('Pricing mismatch')->assertExitCode(1);
+        $this->assertNothingWritten();
+
+        // The original wallet charge is what everything is proven against: a different committed amount fails.
+        $this->realBillingSetup();
+        DB::table('business_usage_reservations')->update(['final_quantity' => '2.500000', 'estimated_quantity' => '2.500000', 'final_amount_micro' => 2_500_000, 'reserved_amount_micro' => 2_500_000]);
+        $this->recover()->expectsOutputToContain('Pricing mismatch')->assertExitCode(1);
+        $this->assertNothingWritten();
+
+        // A required line missing (no one-time fee) is still refused.
+        $this->realBillingSetup([self::realServices()[1], self::realServices()[2], self::realServices()[3]]);
+        $this->recover()->assertExitCode(1);
+        $this->assertNothingWritten();
     }
 }

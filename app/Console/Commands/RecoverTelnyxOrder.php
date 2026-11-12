@@ -538,13 +538,15 @@ class RecoverTelnyxOrder extends Command
         }
 
         $services = $row['services'] ?? null;
-        $serviceCounts = $isTollFree ? [3] : [2, 3]; // local: one-time + number rental, plus the SMS add-on when billed
+        // local: one-time + number rental, plus the SMS add-on when billed, plus Telnyx's free high-definition-voice line
+        $serviceCounts = $isTollFree ? [3] : [2, 3, 4];
 
         if (! is_array($services) || ! in_array(count($services), $serviceCounts, true)) {
             throw new \DomainException('The billing row carries an unexpected number of service charges.');
         }
 
         $found = [];
+        $seenFreeHdVoice = false;
 
         foreach ($services as $service) {
             $type = is_array($service) && is_string($service['cost_type'] ?? null) ? strtolower($service['cost_type']) : '';
@@ -553,6 +555,23 @@ class RecoverTelnyxOrder extends Command
 
             if ($type === '' || $name === '' || $units === null) {
                 throw new \DomainException('A service charge is missing its cost_type, name or a readable cost.');
+            }
+
+            // Telnyx lists a free high-definition-voice line on local numbers. That ONE line, and only at exactly zero, is
+            // not a charge and is skipped; it is never summed, never counted as a debit, and nothing else free is
+            // ignored. A nonzero, repeated or differently-typed one falls through to the strict checks below.
+            if (! $isTollFree && $type === 'partial-mrc' && $name === 'high-definition-voice') {
+                if ($units !== 0) {
+                    throw new \DomainException('The high-definition-voice service must be exactly zero; refusing to interpret a charge on it.');
+                }
+
+                if ($seenFreeHdVoice) {
+                    throw new \DomainException('More than one partial-mrc/high-definition-voice service; ambiguous.');
+                }
+
+                $seenFreeHdVoice = true;
+
+                continue;
             }
 
             if ($units >= 0) {
