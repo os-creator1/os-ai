@@ -10,6 +10,11 @@
  *   5. Once the browser has answered, the server dials the contact and, when the contact answers, bridges the two
  *      legs: that bridge is the audio. We poll the call's status to show connecting / ringing / connected / ended.
  * Mute and hang up act on the live SDK call; hang up also tells the server so both legs are closed.
+ *
+ * INBOUND (only when the page config carries `inbound` endpoints): the page keeps ONE signed-in Telnyx client for the
+ * user (shared with outbound calling), checks in with the server every 30s so it is counted as available, and when the
+ * SDK reports a ring it asks the server which inbound call is ringing for this user (caller identification), shows the
+ * Incoming popup, and on Answer first CLAIMS the call (one winner across tabs/users) and only then answers its leg.
  */
 (function () {
     'use strict';
@@ -41,10 +46,25 @@
     var pill = $('softphone-pill');
     var pillTimer = $('pill-timer');
     var pillMute = $('pill-mute');
+    var nameEl = $('softphone-name');
+    var avatarEl = $('softphone-avatar');
+    var pillNameEl = $('pill-name');
+    var pillAvatarEl = $('pill-avatar');
+    var incomingRow = $('softphone-incoming');
+    var againBtn = $('softphone-again');
+    var inboundCfg = cfg.inbound || null;
+    var direction = 'outbound';
+    var sharedClient = null;      // the page's one signed-in client (inbound enabled only)
+    var sharedReady = false;
+    var pendingSdk = null;        // an SDK call that is ringing and has not been matched to a server call yet
+    var presenceTimer = null;
+    var reconnectTimer = null;
+    var inboundBusy = false;      // a ring is being identified / an inbound popup is being handled
+    var peerName = cfg.contactLabel || '';
 
     // Functions that are NOT implemented yet. Their controls exist in the markup as hidden hooks
     // ([data-capability]) and stay hidden until a real implementation sets the flag to true.
-    var capabilities = { keypad: false, hold: false, record: false, transfer: false, note: false, incoming: false };
+    var capabilities = { keypad: false, hold: false, record: false, transfer: false, note: false };
     root.querySelectorAll('[data-capability]').forEach(function (el) {
         el.hidden = !capabilities[el.getAttribute('data-capability')];
     });
@@ -103,24 +123,45 @@
         root.setAttribute('data-minimized', min ? '1' : '0');
     }
 
+    function setIdentity(name, sub, initials) {
+        peerName = name;
+        nameEl.textContent = name;
+        pillNameEl.textContent = name;
+        avatarEl.textContent = initials;
+        pillAvatarEl.textContent = initials;
+        subEl.setAttribute('data-sub', sub || '');
+    }
+
+    function initialsOf(name) {
+        var words = String(name || '').replace(/[^\p{L}\p{N}\s]/gu, '').trim().split(/\s+/).filter(Boolean);
+        if (!words.length) { return '#'; }
+        return (words[0].charAt(0) + (words.length > 1 ? words[words.length - 1].charAt(0) : '')).toUpperCase();
+    }
+
+    function dirLabel() { return direction === 'inbound' ? 'Incoming' : 'Outgoing'; }
+
     function setState(state, text, detail) {
         root.setAttribute('data-state', state);
         statusEl.textContent = text;
         detailEl.textContent = detail || '';
         detailEl.hidden = !detail;
+        var incoming = state === 'incoming';
         var live = isLive(state);
         if (!live) { minimized = false; }
         hangRow.hidden = !live;
         hangLabelEl.textContent = state === 'connected' ? 'End call' : 'Cancel';
+        incomingRow.hidden = !incoming;
         controlsEl.hidden = !live;
         muteBtn.disabled = state !== 'connected';
         pillMute.disabled = state !== 'connected';
         minBtn.hidden = !live;
-        closeBtn.hidden = live;
-        doneRow.hidden = live;
+        closeBtn.hidden = live || incoming;
+        doneRow.hidden = live || incoming;
+        againBtn.hidden = direction === 'inbound' || !cfg.contactUid;
         summaryEl.hidden = state !== 'ended' && state !== 'failed';
         timerEl.hidden = state !== 'connected' && state !== 'ended';
-        subEl.textContent = (state === 'ended' || state === 'failed') ? 'Outgoing call' : (cfg.contactPhone || '') + ' \u00b7 Outgoing';
+        var sub = subEl.getAttribute('data-sub') || '';
+        subEl.textContent = (state === 'ended' || state === 'failed') ? dirLabel() + ' call' : (sub ? sub + ' \u00b7 ' : '') + dirLabel();
         applyMinimized();
     }
 
@@ -137,7 +178,7 @@
         out.textContent = label;
         out.setAttribute('data-outcome', outcome);
         $('summary-duration').textContent = fmt(seconds || 0);
-        $('summary-direction').textContent = 'Outgoing';
+        $('summary-direction').textContent = dirLabel();
     }
 
     function startTimer() {
@@ -175,7 +216,9 @@
         if (tickTimer) { clearInterval(tickTimer); tickTimer = null; }
         expecting = false;
         try { if (sdkCall && sdkCall.state !== 'hangup' && sdkCall.state !== 'destroy') { sdkCall.hangup(); } } catch (e) {}
-        try { if (client) { client.disconnect(); } } catch (e) {}
+        try { if (client && client !== sharedClient) { client.disconnect(); } } catch (e) {}
+        pendingSdk = null;
+        inboundBusy = false;
         sdkCall = null;
         client = null;
         active = false;
@@ -204,8 +247,9 @@
             return;
         }
         var connected = call.answered_at !== null;
-        showSummary(connected ? 'connected' : 'unanswered', connected ? 'Connected' : 'Not answered', connected ? seconds || 0 : 0);
-        setState('ended', 'Call ended', '');
+        var missed = direction === 'inbound' ? (call.outcome === 'declined' ? 'Declined' : 'Missed') : 'Not answered';
+        showSummary(connected ? 'connected' : 'unanswered', connected ? 'Connected' : missed, connected ? seconds || 0 : 0);
+        setState('ended', connected || direction !== 'inbound' ? 'Call ended' : (missed + ' call'), '');
         showTime(fmt(connected ? seconds || 0 : 0));
         timerEl.hidden = !connected;
         refreshHistory();
@@ -224,8 +268,10 @@
         if (finished) { return; }
         switch (call.ui_state) {
             case 'connecting': setState('connecting', 'Connecting…', 'Setting up your call.'); break;
-            case 'ringing': setState('ringing', 'Ringing…', 'Calling ' + cfg.contactLabel + '.'); break;
-            case 'connected': setState('connected', 'Connected', 'You are speaking with ' + cfg.contactLabel + '.'); startTimer(); break;
+            case 'ringing':
+                if (direction === 'inbound') { setState('connecting', 'Connecting…', 'Connecting your call.'); } else { setState('ringing', 'Ringing…', 'Calling ' + peerName + '.'); }
+                break;
+            case 'connected': setState('connected', 'Connected', 'You are speaking with ' + peerName + '.'); startTimer(); break;
             default: finishFromServer(call);
         }
     }
@@ -249,12 +295,15 @@
                 sdkCall = call;
                 expecting = false;
                 try { call.answer(); } catch (e) { fail('Your browser could not answer the call. Check your microphone and try again.'); }
+            } else if (inboundCfg && call !== sdkCall) {
+                onInboundRing(call);
             } else if (call !== sdkCall) {
                 try { call.hangup(); } catch (e) {} // never answer a call we did not ask for
             }
             return;
         }
 
+        if (call === pendingSdk && (call.state === 'hangup' || call.state === 'destroy')) { onPendingEnded(); return; }
         if (call === sdkCall && (call.state === 'hangup' || call.state === 'destroy')) { poll(); }
     }
 
@@ -287,6 +336,8 @@
         connectedAt = null;
         showTime('00:00');
         minimized = false;
+        direction = 'outbound';
+        setIdentity(cfg.contactLabel || '', cfg.contactPhone || '', cfg.contactInitials || '#');
         show();
         setState('connecting', 'Allow microphone access', 'Your browser will ask to use the microphone.');
 
@@ -298,10 +349,12 @@
         navigator.mediaDevices.getUserMedia({ audio: true }).then(function (stream) {
             stream.getTracks().forEach(function (t) { t.stop(); });
             if (stale()) { throw CANCELLED; }
+            if (sharedClient && sharedReady) { return { shared: true }; }
             setState('connecting', 'Connecting…', 'Starting your calling session.');
             return api('POST', cfg.sessionUrl);
         }).then(function (r) {
             if (stale()) { throw CANCELLED; }
+            if (r && r.shared) { client = rtc = sharedClient; return Promise.resolve(); }
             if (!r || !r.ok || !r.json || !r.json.data) {
                 throw { friendly: say(r && r.json && r.json.error && r.json.error.code) };
             }
@@ -312,9 +365,9 @@
             client.connect();
             return ready;
         }).then(function () {
-            if (stale()) { try { rtc.disconnect(); } catch (e) {} if (client === rtc) { client = null; } throw CANCELLED; }
+            if (stale()) { try { if (rtc !== sharedClient) { rtc.disconnect(); } } catch (e) {} if (client === rtc) { client = null; } throw CANCELLED; }
             expecting = true;
-            setState('connecting', 'Connecting…', 'Calling ' + cfg.contactLabel + ' from your business number.');
+            setState('connecting', 'Connecting…', 'Calling ' + peerName + ' from your business number.');
             return api('POST', cfg.placeUrl, { contact_uid: cfg.contactUid, idempotency_key: uuid(), channel: 'browser' });
         }).then(function (r) {
             if (!r.ok || !r.json || !r.json.data) {
@@ -338,6 +391,163 @@
             if (e && e.friendly) { return fail(e.friendly); }
             fail('Could not start the call. Check your connection and try again.');
         }).then(function () { starting = false; });
+    }
+
+    // ------------------------------------------------------------------ inbound calls
+
+    var answering = false;
+
+    function onInboundRing(call) {
+        // Already on / handling a call: this ring is not shown. (The server does not ring a busy user; this covers the race.)
+        if (active || inboundBusy) { try { call.hangup(); } catch (e) {} return; }
+        inboundBusy = true;
+        pendingSdk = call;
+        identifyInbound(0);
+    }
+
+    // The SDK knows a leg is ringing; only the server knows WHO is calling and which call it is.
+    function identifyInbound(tries) {
+        if (!pendingSdk) { return; }
+        var retry = function () {
+            if (tries < 3) { setTimeout(function () { identifyInbound(tries + 1); }, 1000); return; }
+            // Not a call the server says is ringing for this user: never show it and never answer it.
+            try { if (pendingSdk) { pendingSdk.hangup(); } } catch (e) {}
+            pendingSdk = null;
+            inboundBusy = false;
+        };
+        api('GET', inboundCfg.incomingUrl).then(function (r) {
+            var list = r.ok && r.json && Array.isArray(r.json.data) ? r.json.data : [];
+            if (list.length) { showIncoming(list[0]); } else { retry(); }
+        }).catch(retry);
+    }
+
+    function showIncoming(data) {
+        direction = 'inbound';
+        active = true;
+        finished = false;
+        answering = false;
+        attempt++;
+        callUid = data.id;
+        connectedAt = null;
+        var caller = data.caller || {};
+        setIdentity(caller.name || caller.number || 'Unknown caller', caller.name ? (caller.number || '') : '', caller.name ? initialsOf(caller.name) : '#');
+        showTime('00:00');
+        minimized = false;
+        show();
+        setState('incoming', 'Incoming call', '');
+    }
+
+    // The ringing leg ended before we answered it: the caller gave up, it timed out, or someone else took it.
+    function onPendingEnded() {
+        pendingSdk = null;
+        if (root.getAttribute('data-state') !== 'incoming' || finished) { return; }
+        var uid = callUid, mine = attempt;
+        api('GET', cfg.statusUrl.replace('__CALL__', encodeURIComponent(uid))).then(function (r) {
+            if (mine !== attempt || finished) { return; }
+            var d = r.ok && r.json && r.json.data;
+            if (d && (d.ui_state === 'ended' || d.ui_state === 'failed')) { finishFromServer(d); } else { dismissInbound(); }
+        }).catch(function () { if (mine === attempt && !finished) { dismissInbound(); } });
+    }
+
+    function dismissInbound() {
+        finished = true;
+        cleanup();
+        closePopup();
+    }
+
+    function answerInbound() {
+        if (!pendingSdk || answering || finished) { return; }
+        answering = true;
+        var sdk = pendingSdk, uid = callUid, mine = attempt;
+        setState('connecting', 'Connecting…', 'Connecting your call.');
+        // The microphone is checked BEFORE claiming, so a refusal never takes the call away from everyone else.
+        var mic = navigator.mediaDevices && navigator.mediaDevices.getUserMedia ? navigator.mediaDevices.getUserMedia({ audio: true }) : Promise.reject({ name: 'NotFoundError' });
+        mic.then(function (stream) {
+            stream.getTracks().forEach(function (t) { t.stop(); });
+            if (mine !== attempt || finished) { throw CANCELLED; }
+            return api('POST', inboundCfg.answerUrl.replace('__CALL__', encodeURIComponent(uid)));
+        }).then(function (r) {
+            if (mine !== attempt || finished) { throw CANCELLED; }
+            if (!r.ok) {
+                // Someone else answered first (or it stopped ringing): this popup simply goes away.
+                var message = r.json && r.json.error && r.json.error.message;
+                dismissInbound();
+                throw CANCELLED;
+            }
+            sdkCall = sdk;
+            pendingSdk = null;
+            try { sdk.answer(); } catch (e) { api('POST', cfg.hangupUrl.replace('__CALL__', encodeURIComponent(uid))).catch(function () {}); fail('Your browser could not answer the call. Check your microphone and try again.'); throw CANCELLED; }
+            pollTimer = setInterval(poll, 1500);
+            poll();
+        }).catch(function (e) {
+            if (e === CANCELLED) { return; }
+            var blocked = e && e.name === 'NotAllowedError';
+            declineInbound();
+            finished = false;
+            fail(blocked ? 'Microphone access was blocked. Allow it in your browser settings to answer calls.' : 'Could not answer the call. Check your microphone and try again.');
+        });
+    }
+
+    function declineInbound() {
+        var uid = callUid, sdk = pendingSdk;
+        pendingSdk = null;
+        var hang = function () { try { if (sdk) { sdk.hangup(); } } catch (e) {} };
+        // Tell the server first so it records "declined" rather than a missed call when the leg then ends.
+        if (uid && inboundCfg) { api('POST', inboundCfg.declineUrl.replace('__CALL__', encodeURIComponent(uid))).then(hang, hang); } else { hang(); }
+        finished = true;
+        cleanup();
+        closePopup();
+    }
+
+    // ---- the page's one signed-in client + availability heartbeat
+
+    function connectShared() {
+        if (!inboundCfg || !window.TelnyxWebRTC || sharedClient) { return; }
+        var rtc = null;
+        api('POST', cfg.sessionUrl).then(function (r) {
+            if (!r.ok || !r.json || !r.json.data) { throw new Error('session'); }
+            rtc = new window.TelnyxWebRTC.TelnyxRTC({ login_token: r.json.data.login_token });
+            rtc.remoteElement = 'mg-remote-audio';
+            rtc.on('telnyx.notification', onNotification);
+            rtc.on('telnyx.socket.close', function () { if (sharedClient === rtc) { teardownShared(); scheduleReconnect(); } });
+            sharedClient = rtc;
+            var ready = waitForReady(rtc);
+            rtc.connect();
+            return ready;
+        }).then(function () {
+            sharedReady = true;
+            heartbeat();
+            if (!presenceTimer) { presenceTimer = setInterval(heartbeat, 30000); }
+            // Login tokens are short-lived: renew the session well before it lapses (never mid-call).
+            setTimeout(function renew() { if (active || inboundBusy) { setTimeout(renew, 30000); return; } teardownShared(); connectShared(); }, 50 * 60 * 1000);
+        }).catch(function () {
+            if (rtc && sharedClient === rtc) { teardownShared(); }
+            scheduleReconnect();
+        });
+    }
+
+    function teardownShared() {
+        try { if (sharedClient) { sharedClient.disconnect(); } } catch (e) {}
+        sharedClient = null;
+        sharedReady = false;
+        if (presenceTimer) { clearInterval(presenceTimer); presenceTimer = null; }
+    }
+
+    function scheduleReconnect() {
+        if (reconnectTimer) { return; }
+        reconnectTimer = setTimeout(function () {
+            reconnectTimer = null;
+            if (active || inboundBusy || starting) { scheduleReconnect(); return; }
+            teardownShared();
+            connectShared();
+        }, 20000);
+    }
+
+    function heartbeat() {
+        if (!sharedReady) { return; }
+        api('POST', inboundCfg.presenceUrl).then(function (r) {
+            if (r.status === 503 || r.status === 403 || r.status === 404) { teardownShared(); } // no longer available: stop registering
+        }).catch(function () { /* the next beat retries */ });
     }
 
     function hangUp() {
@@ -394,13 +604,26 @@
     function closePopup() { minimized = false; root.classList.remove('is-open'); applyMinimized(); }
     closeBtn.addEventListener('click', closePopup);
     $('softphone-done').addEventListener('click', closePopup);
+    $('softphone-answer').addEventListener('click', answerInbound);
+    $('softphone-decline').addEventListener('click', declineInbound);
     // "Call again" reuses the exact same start sequence (and its server checks) as the contact's call button.
     $('softphone-again').addEventListener('click', start);
 
     // Leaving the page must not leave a call (or a charge) running on the server.
     window.addEventListener('pagehide', function () {
-        if (active && !finished && callUid) {
+        // A ringing (not yet answered) inbound popup must not hang the call up just because this page is being left.
+        if (active && !finished && callUid && root.getAttribute('data-state') !== 'incoming') {
             api('POST', cfg.hangupUrl.replace('__CALL__', encodeURIComponent(callUid)), null, true);
         }
     });
+
+    // Leaving a page ends the browser's audio: warn before a live INBOUND call is dropped by navigating away.
+    window.addEventListener('beforeunload', function (e) {
+        if (direction === 'inbound' && active && !finished && root.getAttribute('data-state') === 'connected') {
+            e.preventDefault();
+            e.returnValue = '';
+        }
+    });
+
+    if (inboundCfg) { connectShared(); }
 })();

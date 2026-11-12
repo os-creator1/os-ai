@@ -1,8 +1,13 @@
 {{-- CRM browser softphone: see public/js/crm/mg-softphone.js. Rendered only for a user who may place calls.
      Visual design: the 340px floating call popup. Controls for functions that do not exist yet (keypad, hold, note,
-     recording, transfer, incoming answer) are rendered `hidden` with data-capability hooks and stay hidden until the
-     script's `capabilities` flags are switched on by a real implementation. --}}
+     recording, transfer) are rendered `hidden` with data-capability hooks and stay hidden until the script's
+     `capabilities` flags are switched on by a real implementation. Incoming (Answer / Decline) is real and is enabled only
+     when the page's config carries `inbound` endpoints (inbound calling on for this user + Business). --}}
+@once
 @php
+    $contactUid = $contactUid ?? null;
+    $displayName = $displayName ?? 'Caller';
+    $profile = $profile ?? [];
     $spName = (string) $displayName;
     $spWords = preg_split('/\s+/u', trim(preg_replace('/[^\p{L}\p{N}\s]/u', '', $spName)), -1, PREG_SPLIT_NO_EMPTY) ?: [];
     $spInitials = $spWords === [] ? '#' : mb_strtoupper(mb_substr($spWords[0], 0, 1).(count($spWords) > 1 ? mb_substr(end($spWords), 0, 1) : ''));
@@ -10,6 +15,7 @@
     $softphoneConfig = [
         'csrf' => csrf_token(),
         'contactUid' => $contactUid,
+        'inbound' => $browserCalling['inbound'] ?? null,
         'contactLabel' => $displayName,
         'contactPhone' => $spPhone,
         'contactInitials' => $spInitials,
@@ -29,6 +35,7 @@
     .mg-softphone[data-state="connecting"] .mg-sp-dot,.mg-softphone[data-state="ringing"] .mg-sp-dot{background:var(--sp-amber);animation:mg-sp-pl 1.4s ease-in-out infinite}
     .mg-softphone[data-state="connected"] .mg-sp-dot{background:var(--sp-green)}
     .mg-softphone[data-state="failed"] .mg-sp-dot{background:var(--sp-end)}
+    .mg-softphone[data-state="incoming"] .mg-sp-dot{background:var(--sp-green);animation:mg-sp-pl 1.4s ease-in-out infinite}
     @keyframes mg-sp-pl{0%,100%{opacity:1}50%{opacity:.3}}
     @media (prefers-reduced-motion:reduce){.mg-softphone .mg-sp-dot{animation:none!important}}
     .mg-sp-title{flex:1;min-width:0}
@@ -84,7 +91,7 @@
     .mg-sp-pill button.on{background:#fff;color:#1f1a19}
     @media (max-width:480px){.mg-softphone{right:.75rem;left:.75rem;bottom:.75rem;width:auto;max-width:none}.mg-sp-pill{right:.75rem;bottom:.75rem}}
 </style>
-<div id="mg-softphone" class="mg-softphone" hidden data-state="idle" data-config="{{ json_encode($softphoneConfig) }}" role="dialog" aria-label="Call {{ $displayName }}" aria-live="polite">
+<div id="mg-softphone" class="mg-softphone" hidden data-state="idle" data-config="{{ json_encode($softphoneConfig) }}" role="dialog" aria-label="Phone call" aria-live="polite">
     <div class="mg-sp-top">
         <span class="mg-sp-dot" aria-hidden="true"></span>
         <span class="mg-sp-title" data-role="softphone-status"></span>
@@ -93,9 +100,9 @@
         <button type="button" class="mg-sp-ib" data-role="softphone-close" aria-label="Close" hidden><svg class="mg-sp-ic" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
     </div>
     <div class="mg-sp-who">
-        <span class="mg-sp-av" aria-hidden="true">{{ $spInitials }}</span>
+        <span class="mg-sp-av" aria-hidden="true" data-role="softphone-avatar">{{ $spInitials }}</span>
         <div class="mg-sp-nm">
-            <b>{{ $displayName }}</b>
+            <b data-role="softphone-name">{{ $displayName }}</b>
             <span data-role="softphone-sub">{{ $spPhone }}</span>
         </div>
     </div>
@@ -132,8 +139,8 @@
         <div class="mg-sp-row"><span>Saved</span><b>To this contact</b></div>
     </div>
 
-    {{-- Hook: incoming call (not enabled; inbound browser calls are not supported yet). --}}
-    <div class="mg-sp-bot" data-role="softphone-incoming" data-capability="incoming" hidden>
+    {{-- Incoming call: shown only in the `incoming` state, and only when inbound endpoints are configured. --}}
+    <div class="mg-sp-bot" data-role="softphone-incoming" hidden>
         <button type="button" class="mg-sp-sec" data-role="softphone-decline" style="color:var(--sp-err-fg)">Decline</button>
         <button type="button" class="mg-sp-end mg-sp-acc" data-role="softphone-answer"><svg class="mg-sp-ic" viewBox="0 0 24 24"><path d="M5 4h4l2 5-2.5 1.5a11 11 0 0 0 5 5L15 13l5 2v4a1 1 0 0 1-1 1A16 16 0 0 1 4 5a1 1 0 0 1 1-1z"/></svg>Answer</button>
     </div>
@@ -149,8 +156,8 @@
 
 {{-- Minimized call pill --}}
 <div class="mg-sp-pill" data-role="softphone-pill" hidden role="group" aria-label="Call in progress">
-    <span class="mg-sp-av" aria-hidden="true">{{ $spInitials }}</span>
-    <span class="mg-sp-pn"><b>{{ $displayName }}</b><span><i class="mg-sp-dot" aria-hidden="true" style="display:inline-block"></i><span data-role="pill-timer">00:00</span></span></span>
+    <span class="mg-sp-av" aria-hidden="true" data-role="pill-avatar">{{ $spInitials }}</span>
+    <span class="mg-sp-pn"><b data-role="pill-name">{{ $displayName }}</b><span><i class="mg-sp-dot" aria-hidden="true" style="display:inline-block"></i><span data-role="pill-timer">00:00</span></span></span>
     <button type="button" data-role="pill-mute" aria-label="Mute" aria-pressed="false" style="margin-left:8px"><svg class="mg-sp-ic" viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21"/></svg></button>
     <button type="button" data-role="pill-expand" aria-label="Expand"><svg class="mg-sp-ic" viewBox="0 0 24 24"><path d="M14 4h6v6M10 20H4v-6M20 4l-6 6M4 20l6-6"/></svg></button>
     <button type="button" class="mg-sp-pend" data-role="pill-hangup" aria-label="End call"><span style="width:18px;height:18px;display:flex"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 14.5c5-5 13-5 18 0l-2.5 2.5-3.5-1.5v-2.5a10 10 0 0 0-6 0V15.5L5.5 17z"/></svg></span></button>
@@ -158,3 +165,4 @@
 <audio id="mg-remote-audio" autoplay playsinline></audio>
 <script src="{{ asset('vendor/telnyx/webrtc-2.28.2.js') }}"></script>
 <script src="{{ asset('js/crm/mg-softphone.js') }}"></script>
+@endonce

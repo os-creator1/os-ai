@@ -10,6 +10,9 @@ use App\Library\Voice\BrowserCallsUnavailableException;
 use App\Library\Voice\BrowserCredentialProvisioner;
 use App\Library\Voice\CustomerCallPlacer;
 use App\Library\Voice\CustomerCallRefusedException;
+use App\Library\Voice\Inbound\InboundCallRouter;
+use App\Library\Voice\Inbound\InboundCallingGate;
+use App\Models\BusinessVoiceBrowserCredential;
 use App\Library\Workspace\LocationAccessGuard;
 use App\Models\BusinessVoiceCall;
 use App\Models\Contacts;
@@ -83,18 +86,18 @@ class VoiceCallController extends CustomerBaseController
     }
 
     /** End a call from the CRM: hangs up both legs and closes the record. */
-    public function hangup(string $workspaceUid, string $businessUid, string $callUid, BrowserCallOrchestrator $orchestrator): JsonResponse
+    public function hangup(string $workspaceUid, string $businessUid, string $callUid, BrowserCallOrchestrator $orchestrator, InboundCallRouter $inbound): JsonResponse
     {
         [, $business] = $this->resolveEntitledBusinessTenancy($workspaceUid, $businessUid, PlatformFeature::Crm->value);
         $this->authorize('place_voice_calls');
 
-        $call = BusinessVoiceCall::query()->where('business_id', $business->id)->where('kind', 'customer')->where('uid', $callUid)->first();
+        $call = $this->callFor($business, $callUid);
         $contact = $call?->contact_id !== null ? Contacts::query()->find($call->contact_id) : null;
         if ($call === null || ($contact !== null && ! $this->locationAccessible($contact))) {
             return $this->error('call_not_found', 'Call not found.', 404);
         }
 
-        $call = $orchestrator->userHangup($call);
+        $call = $call->kind === 'inbound' ? $inbound->userHangup($call) : $orchestrator->userHangup($call);
 
         return response()->json(['data' => $this->present($call, $contact?->uid)]);
     }
@@ -104,7 +107,7 @@ class VoiceCallController extends CustomerBaseController
         [, $business] = $this->resolveEntitledBusinessTenancy($workspaceUid, $businessUid, PlatformFeature::Crm->value);
         $this->authorize('place_voice_calls');
 
-        $call = BusinessVoiceCall::query()->where('business_id', $business->id)->where('kind', 'customer')->where('uid', $callUid)->first();
+        $call = $this->callFor($business, $callUid);
         if ($call === null) {
             return $this->error('call_not_found', 'Call not found.', 404);
         }
@@ -115,6 +118,85 @@ class VoiceCallController extends CustomerBaseController
         }
 
         return response()->json(['data' => $this->present($call, $contact?->uid)]);
+    }
+
+    /** A customer call of this Business, or an inbound call this user is a party to (rang their browser / they answered). */
+    private function callFor(\App\Models\Business $business, string $callUid): ?BusinessVoiceCall
+    {
+        $call = BusinessVoiceCall::query()->where('business_id', $business->id)->whereIn('kind', ['customer', 'inbound'])->where('uid', $callUid)->first();
+        if ($call === null || $call->kind !== 'inbound') {
+            return $call;
+        }
+
+        $userId = (int) Auth::id();
+
+        return ((int) $call->answered_by_user_id === $userId || $call->legs()->where('user_id', $userId)->exists()) ? $call : null;
+    }
+
+    /** Browser availability heartbeat: this user's open page is signed in and can take an inbound call. */
+    public function presence(string $workspaceUid, string $businessUid, InboundCallingGate $gate): JsonResponse
+    {
+        [, $business] = $this->resolveEntitledBusinessTenancy($workspaceUid, $businessUid, PlatformFeature::Crm->value);
+        $this->authorize('place_voice_calls');
+
+        if (! $gate->available($business)) {
+            return $this->error('inbound_unavailable', 'Inbound calling is not available.', 503);
+        }
+
+        $updated = BusinessVoiceBrowserCredential::query()->where('business_id', $business->id)->where('user_id', (int) Auth::id())
+            ->where('expires_at', '>', now())->update(['presence_at' => now()]);
+
+        return $updated === 0
+            ? $this->error('browser_session_required', 'Start a calling session first.', 409)
+            : response()->json(['data' => ['available' => true]])->header('Cache-Control', 'no-store');
+    }
+
+    /** Inbound calls currently ringing THIS user's browser, with caller identification (called when the SDK reports a ring). */
+    public function incoming(string $workspaceUid, string $businessUid): JsonResponse
+    {
+        [, $business] = $this->resolveEntitledBusinessTenancy($workspaceUid, $businessUid, PlatformFeature::Crm->value);
+        $this->authorize('place_voice_calls');
+
+        $userId = (int) Auth::id();
+        $calls = BusinessVoiceCall::query()->where('business_id', $business->id)->where('kind', 'inbound')
+            ->where('status', BusinessVoiceCall::STATUS_INITIATED)->whereNull('claimed_leg_id')
+            ->whereHas('legs', fn ($q) => $q->where('user_id', $userId)->where('status', 'ringing'))
+            ->orderBy('id')->limit(3)->get();
+
+        return response()->json(['data' => $calls->map(fn (BusinessVoiceCall $c) => $this->present($c, null))->all()])->header('Cache-Control', 'no-store');
+    }
+
+    /** Answer an inbound call: the ONE-winner claim. Only after this succeeds does the browser answer its leg. */
+    public function answer(string $workspaceUid, string $businessUid, string $callUid, InboundCallRouter $router): JsonResponse
+    {
+        [, $business] = $this->resolveEntitledBusinessTenancy($workspaceUid, $businessUid, PlatformFeature::Crm->value);
+        $this->authorize('place_voice_calls');
+
+        $call = $this->callFor($business, $callUid);
+        if ($call === null || $call->kind !== 'inbound') {
+            return $this->error('call_not_found', 'Call not found.', 404);
+        }
+
+        $result = $router->claim($call, (int) Auth::id());
+        if (! $result['ok']) {
+            return $this->error((string) $result['code'], $result['code'] === 'already_answered' ? 'Someone else already answered this call.' : 'This call is no longer ringing.', 409);
+        }
+
+        return response()->json(['data' => $this->present($call->refresh(), null)]);
+    }
+
+    public function decline(string $workspaceUid, string $businessUid, string $callUid, InboundCallRouter $router): JsonResponse
+    {
+        [, $business] = $this->resolveEntitledBusinessTenancy($workspaceUid, $businessUid, PlatformFeature::Crm->value);
+        $this->authorize('place_voice_calls');
+
+        $call = $this->callFor($business, $callUid);
+        if ($call === null || $call->kind !== 'inbound') {
+            return $this->error('call_not_found', 'Call not found.', 404);
+        }
+        $router->decline($call, (int) Auth::id());
+
+        return response()->json(['data' => $this->present($call->refresh(), null)]);
     }
 
     /** Mirrors ContactsController::locationAccessible(): Location-less Contacts are open; otherwise the actor needs the grant. */
@@ -132,13 +214,28 @@ class VoiceCallController extends CustomerBaseController
     /** @return array<string, mixed> */
     private function present(BusinessVoiceCall $call, ?string $contactUid): array
     {
-        return [
+        $inbound = $call->kind === 'inbound';
+        $caller = null;
+        if ($inbound) {
+            $contact = $call->contact_id !== null ? Contacts::query()->find($call->contact_id) : null;
+            // A contact at a Location this user cannot reach is shown as an unknown number: never leak the name.
+            $visible = $contact !== null && $this->locationAccessible($contact);
+            $contactUid = $visible ? (string) $contact->uid : null;
+            $caller = [
+                'name' => $visible ? $contact->getFullName(null) : null,
+                'number' => $call->caller_number !== null ? $this->formatNumber((string) $call->caller_number) : null,
+            ];
+        }
+
+        return array_merge([
             'id' => $call->uid,
             'contact_uid' => $contactUid,
             'status' => $call->status, // requested | initiated | answered | ended | failed
             'channel' => $call->channel,
             // What a calling UI shows: connecting (browser/call being set up), ringing, connected, ended, failed.
             'ui_state' => ['requested' => 'connecting', 'initiated' => 'ringing', 'answered' => 'connected', 'ended' => 'ended', 'failed' => 'failed'][$call->status] ?? 'connecting',
+            'direction' => $inbound ? 'inbound' : 'outbound',
+            'outcome' => $call->outcome,
             'failure_code' => $call->failure_code,
             'hangup_cause' => $call->hangup_cause,
             'initiated_at' => $call->initiated_at?->toIso8601String(),
@@ -149,7 +246,12 @@ class VoiceCallController extends CustomerBaseController
             'audio' => $call->channel === 'browser'
                 ? ['browser' => true, 'note' => 'Audio is carried by the browser softphone.']
                 : ['browser' => false, 'note' => 'Placing a call does not connect browser audio.'],
-        ];
+        ], $inbound ? ['audio' => ['browser' => true, 'note' => 'Audio is carried by the browser softphone.'], 'caller' => $caller] : []);
+    }
+
+    private function formatNumber(string $e164): string
+    {
+        return preg_match('/^\+1(\d{3})(\d{3})(\d{4})$/', $e164, $m) === 1 ? sprintf('+1 (%s) %s-%s', $m[1], $m[2], $m[3]) : $e164;
     }
 
     private function error(string $code, string $message, int $status): JsonResponse

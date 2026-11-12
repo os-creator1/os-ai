@@ -28,7 +28,17 @@ class BusinessVoiceCall extends Model
         'answered_at' => 'datetime',
         'ended_at' => 'datetime',
         'duration_seconds' => 'integer',
+        'caller_number' => 'encrypted',
+        'ring_deadline_at' => 'datetime',
+        'bridged_at' => 'datetime',
     ];
+
+    protected $hidden = ['caller_number'];
+
+    public function legs(): \Illuminate\Database\Eloquent\Relations\HasMany
+    {
+        return $this->hasMany(BusinessVoiceCallLeg::class, 'business_voice_call_id');
+    }
 
     public function business(): BelongsTo
     {

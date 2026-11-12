@@ -63,6 +63,9 @@
 <div class="sidenav-overlay"></div>
 <div class="drag-target"></div>
 
+{{-- inbound browser calls (renders nothing unless enabled for this user and Business) --}}
+@include('panels.softphone-global')
+
 {{-- include footer --}}
 @include('panels/footer')
 
