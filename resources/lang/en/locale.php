@@ -1854,6 +1854,8 @@
             'sending_server_exceed_sending_limit'             => 'All sending servers exceed sending limit, waiting...',
             'sending_limit_exceed'                            => 'You have exceeded your sending limit.',
             'message_successfully_delivered'                  => 'Your message was successfully delivered',
+            'campaign_successfully_sent'                      => 'Your message was sent',
+            'campaign_sending_failed'                         => 'Your message could not be sent',
             'import_file_description'                         => 'The file must contains <code>phone</code> column, include a <code>country code</code> at the beginning for a successful import.',
             'indicated_in_a_column_file'                      => 'Indicated in a column in the file (Y-m-d H:i, e.g.: 2021-03-22 00:11)',
             'select_the_date'                                 => 'Select the date',

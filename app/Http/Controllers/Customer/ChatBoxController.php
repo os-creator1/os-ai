@@ -558,22 +558,34 @@
             }
 
             if (isset($data->getData()->status)) {
+                $sentPayload = $data->getData();
+
+                // A managed/BYO dispatcher rejection carries only the dispatcher's flat
+                // 'campaign_sending_failed' text. Show the same customer-safe reason
+                // reply() shows, never that generic (and previously untranslated) string.
+                if (($sentPayload->managed ?? false) === true && $sentPayload->status !== 'success') {
+                    $sentPayload->message = ConversationSendFailureReason::fromProviderErrorCategory(
+                        isset($sentPayload->error_category) ? \App\Enums\Messaging\ProviderErrorCategory::tryFrom((string) $sentPayload->error_category) : null,
+                        \App\Library\AgencyOutreach\AgencyByoSender::selectedChannel($business) !== null,
+                    )->customerMessage();
+                }
+
                 // RFC-005 Milestone 5 §6.1 — 'retain' returns to compose with
                 // the same token so a retry resolves against the same open
                 // reservation; 'clear' (or none) goes to the inbox.
-                if (($data->getData()->m5_token_action ?? 'clear') === 'retain') {
+                if (($sentPayload->m5_token_action ?? 'clear') === 'retain') {
                     return redirect()
                         ->route('customer.workspaces.businesses.conversations.new', [$workspaceUid, $businessUid, 'm5_retry_token' => $input['idempotency_token'] ?? null])
                         ->withInput()
                         ->with([
-                            'status'  => $data->getData()->status,
-                            'message' => $data->getData()->message,
+                            'status'  => $sentPayload->status,
+                            'message' => $sentPayload->message,
                         ]);
                 }
 
                 return redirect()->route('customer.workspaces.businesses.conversations.index', [$workspaceUid, $businessUid])->with([
-                    'status'  => $data->getData()->status,
-                    'message' => $data->getData()->message,
+                    'status'  => $sentPayload->status,
+                    'message' => $sentPayload->message,
                 ]);
             }
 
