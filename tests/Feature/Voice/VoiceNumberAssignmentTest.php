@@ -21,7 +21,8 @@ class VoiceNumberAssignmentTest extends TestCase
     use RefreshDatabase;
 
     private const CONN = 'conn_fixture_1';
-    private const REF = 'num_ref_1';
+    private const REF = 'num_ref_1';      // what the platform stores: NOT the phone-number resource id
+    private const RESOURCE = '3081436796672803842'; // the real /phone_numbers resource id Telnyx returns for the E.164
 
     protected function setUp(): void
     {
@@ -29,6 +30,7 @@ class VoiceNumberAssignmentTest extends TestCase
         config([
             'messaging.voice.connection_id' => self::CONN,
             'services.telnyx.api_key' => 'fixture_api_key_not_a_real_credential',
+            'services.telnyx.mode' => 'live',
         ]);
     }
 
@@ -40,9 +42,41 @@ class VoiceNumberAssignmentTest extends TestCase
         return $number->fresh();
     }
 
-    private function patched(string $connection = self::CONN): void
+    /** @var list<array{0:int,1:array}> PATCH responses, consumed in order (the last one repeats) */
+    private array $patchQueue = [];
+    private string $verifyConnection = self::CONN;
+    private bool $lookupFindsNumber = true;
+
+    /**
+     * Fakes the three Telnyx calls the assigner makes: the by-E.164 lookup, the PATCH, and the verifying GET.
+     *
+     * @param list<array{0:int,1:array}>|null $patches
+     */
+    private function fakeTelnyx(?array $patches = null, string $verifyConnection = self::CONN, bool $lookupFindsNumber = true): void
     {
-        Http::fake(['api.telnyx.com/v2/phone_numbers/*' => Http::response(['data' => ['id' => self::REF, 'connection_id' => $connection]])]);
+        $this->patchQueue = $patches ?? [[200, ['data' => ['id' => self::RESOURCE, 'connection_id' => self::CONN]]]];
+        $this->verifyConnection = $verifyConnection;
+        $this->lookupFindsNumber = $lookupFindsNumber;
+
+        Http::fake(['api.telnyx.com/v2/phone_numbers*' => function (Request $r) {
+            if ($r->method() === 'PATCH') {
+                [$status, $body] = count($this->patchQueue) > 1 ? array_shift($this->patchQueue) : $this->patchQueue[0];
+
+                return Http::response($body, $status);
+            }
+            if (str_contains($r->url(), 'filter')) {
+                return Http::response(['data' => $this->lookupFindsNumber
+                    ? [['id' => self::RESOURCE, 'phone_number' => $r->data()['filter[phone_number]'] ?? null, 'status' => 'active']]
+                    : []]);
+            }
+
+            return Http::response(['data' => ['id' => self::RESOURCE, 'connection_id' => $this->verifyConnection]]);
+        }]);
+    }
+
+    private function patched(): void
+    {
+        $this->fakeTelnyx();
     }
 
     public function test_a_local_number_is_assigned_and_recorded_only_after_telnyx_confirms(): void
@@ -52,8 +86,9 @@ class VoiceNumberAssignmentTest extends TestCase
         $number = app(VoiceNumberAssigner::class)->assign($this->number());
 
         Http::assertSent(fn (Request $r) => $r->method() === 'PATCH'
-            && $r->url() === 'https://api.telnyx.com/v2/phone_numbers/' . self::REF
+            && $r->url() === 'https://api.telnyx.com/v2/phone_numbers/' . self::RESOURCE // resolved id, never the stored reference
             && $r['connection_id'] === self::CONN);
+        Http::assertNotSent(fn (Request $r) => str_contains($r->url(), self::REF));
         $this->assertSame(self::CONN, $number->voice_connection_id);
         $this->assertNotNull($number->voice_assigned_at);
         $this->assertNull($number->voice_assignment_failure_reason);
@@ -73,7 +108,7 @@ class VoiceNumberAssignmentTest extends TestCase
 
     public function test_a_2xx_that_does_not_show_the_connection_is_not_recorded_as_assigned(): void
     {
-        Http::fake(['api.telnyx.com/v2/phone_numbers/*' => Http::response(['data' => ['id' => self::REF, 'connection_id' => 'someone_else']])]);
+        $this->fakeTelnyx([[200, ['data' => ['id' => self::RESOURCE, 'connection_id' => 'someone_else']]]], 'someone_else');
 
         $number = app(VoiceNumberAssigner::class)->assign($this->number());
 
@@ -84,7 +119,7 @@ class VoiceNumberAssignmentTest extends TestCase
 
     public function test_a_telnyx_error_is_recorded_and_not_thrown(): void
     {
-        Http::fake(['api.telnyx.com/v2/phone_numbers/*' => Http::response(['errors' => [['code' => '10010']]], 422)]);
+        $this->fakeTelnyx([[422, ['errors' => [['code' => '10010']]]]]);
 
         $number = app(VoiceNumberAssigner::class)->assign($this->number());
 
@@ -94,9 +129,7 @@ class VoiceNumberAssignmentTest extends TestCase
 
     public function test_a_failed_assignment_can_be_retried_to_success(): void
     {
-        Http::fake(['api.telnyx.com/v2/phone_numbers/*' => Http::sequence()
-            ->push([], 500)
-            ->push(['data' => ['id' => self::REF, 'connection_id' => self::CONN]])]);
+        $this->fakeTelnyx([[500, []], [200, ['data' => ['id' => self::RESOURCE, 'connection_id' => self::CONN]]]]);
         $assigner = app(VoiceNumberAssigner::class);
         $number = $assigner->assign($this->number());
         $this->assertSame('http_500', $number->voice_assignment_failure_reason);
@@ -105,6 +138,35 @@ class VoiceNumberAssignmentTest extends TestCase
 
         $this->assertNotNull($number->voice_assigned_at);
         $this->assertNull($number->voice_assignment_failure_reason);
+    }
+
+    public function test_a_number_telnyx_cannot_resolve_to_a_resource_is_recorded_not_patched(): void
+    {
+        $this->fakeTelnyx(null, self::CONN, false);
+
+        $number = app(VoiceNumberAssigner::class)->assign($this->number());
+
+        Http::assertNotSent(fn (Request $r) => $r->method() === 'PATCH');
+        $this->assertNull($number->voice_assigned_at);
+        $this->assertSame('resource_not_found', $number->voice_assignment_failure_reason);
+    }
+
+    public function test_outside_live_mode_nothing_is_sent_and_no_attempt_is_consumed(): void
+    {
+        $this->fakeTelnyx();
+        config(['services.telnyx.mode' => 'sandbox']);
+        $assigner = app(VoiceNumberAssigner::class);
+
+        $number = $assigner->assign($this->number());
+        $this->assertSame(0, (int) $number->voice_assignment_attempts);
+        $this->assertNull($number->voice_assignment_failure_reason);
+
+        // The retry command is equally inert for an already-failed number.
+        $failed = $this->failedNumber();
+        $this->artisan('voice:retry-number-assignments')->assertExitCode(0);
+
+        Http::assertNothingSent();
+        $this->assertSame(1, (int) $failed->fresh()->voice_assignment_attempts);
     }
 
     public function test_toll_free_inactive_unreferenced_and_unconfigured_numbers_are_skipped(): void
@@ -127,7 +189,7 @@ class VoiceNumberAssignmentTest extends TestCase
             'messaging.managed_messaging_enabled' => true,
             'messaging.managed_messaging_provisioning_enabled' => true,
         ]);
-        Http::fake(['api.telnyx.com/v2/phone_numbers/*' => Http::response([], 503)]);
+        $this->fakeTelnyx([[503, []]]);
 
         $number = app(BusinessMessagingProvisioningService::class)
             ->provisionNumber($this->makeBusiness(), new AvailableNumberCandidate('+14155550101', PhoneNumberType::Local, 'cand-1'));
@@ -169,7 +231,7 @@ class VoiceNumberAssignmentTest extends TestCase
     public function test_a_failure_schedules_a_backed_off_retry_and_stops_at_the_attempt_cap(): void
     {
         config(['messaging.voice.assignment_retry.max_attempts' => 2, 'messaging.voice.assignment_retry.base_backoff_minutes' => 5]);
-        Http::fake(['api.telnyx.com/v2/phone_numbers/*' => Http::response([], 500)]);
+        $this->fakeTelnyx([[500, []]]);
         $assigner = app(VoiceNumberAssigner::class);
 
         $number = $assigner->assign($this->number());

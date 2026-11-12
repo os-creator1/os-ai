@@ -41,15 +41,40 @@ final class VoiceNumberAssigner
             return $number; // already confirmed against this connection
         }
 
+        // Outside live mode no provider request is made and no attempt is consumed: the integration is simply off.
+        if (config('services.telnyx.mode') !== 'live') {
+            return $number;
+        }
+
         $apiKey = trim((string) config('services.telnyx.api_key'));
         if ($apiKey === '') {
             return $this->record($number, null, 'not_configured');
         }
 
-        $url = self::API_BASE . '/phone_numbers/' . rawurlencode((string) $number->provider_number_reference);
-
         try {
             $client = Http::withToken($apiKey)->timeout(self::TIMEOUT_SECONDS)->acceptJson()->asJson();
+
+            // provider_number_reference can be a number-ORDER item id, which is not the phone-number configuration
+            // resource id this endpoint needs. Resolve the real resource from the E.164 number itself, and require it
+            // to be that exact, active number.
+            $lookup = $client->get(self::API_BASE . '/phone_numbers', ['filter[phone_number]' => $number->phone_number]);
+            if (! $lookup->successful()) {
+                return $this->record($number, null, 'lookup_http_' . $lookup->status());
+            }
+
+            $resourceId = '';
+            foreach ((array) $lookup->json('data', []) as $row) {
+                if (is_array($row) && ($row['phone_number'] ?? null) === $number->phone_number
+                    && strtolower((string) ($row['status'] ?? '')) === 'active' && (string) ($row['id'] ?? '') !== '') {
+                    $resourceId = (string) $row['id'];
+                    break;
+                }
+            }
+            if ($resourceId === '') {
+                return $this->record($number, null, 'resource_not_found');
+            }
+
+            $url = self::API_BASE . '/phone_numbers/' . rawurlencode($resourceId);
             $response = $client->patch($url, ['connection_id' => $connectionId]);
 
             if (! $response->successful()) {
@@ -62,14 +87,14 @@ final class VoiceNumberAssigner
                 return $this->record($number, null, 'http_' . $response->status());
             }
 
-            $confirmed = (string) $response->json('data.id') === (string) $number->provider_number_reference
+            $confirmed = (string) $response->json('data.id') === $resourceId
                 && (string) $response->json('data.connection_id') === $connectionId;
 
             if (! $confirmed) {
                 // The PATCH answered 2xx without proving the assignment: verify with a read before believing it.
                 $check = $client->get($url);
                 $confirmed = $check->successful()
-                    && (string) $check->json('data.id') === (string) $number->provider_number_reference
+                    && (string) $check->json('data.id') === $resourceId
                     && (string) $check->json('data.connection_id') === $connectionId;
             }
         } catch (\Throwable) {
