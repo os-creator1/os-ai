@@ -306,4 +306,16 @@ class RecoverPendingNumberCommandTest extends TestCase
         $this->artisan('messaging:recover-telnyx-order', ['--incident' => $this->incidentId, '--order' => self::PARENT, '--dry-run' => true])->assertExitCode(1);
         Http::assertNothingSent();
     }
+
+    public function test_a_free_hd_voice_line_is_not_ignored_for_toll_free_billing(): void
+    {
+        $this->fakeTelnyx(['results' => [['tn' => self::PHONE, 'charge_type' => 'toll-free-number', 'services' => [
+            $this->row('otc', 'numbers', '-1.00000'), $this->row('partial-mrc', 'numbers', '-0.06452'), $this->row('partial-mrc', 'SMS', '-0.00645'),
+            $this->row('partial-mrc', 'high-definition-voice', '0.00000'),
+        ]]]]);
+
+        $this->run_()->expectsOutputToContain('unexpected number of service charges')->assertExitCode(1);
+
+        $this->assertNothingWritten();
+    }
 }
