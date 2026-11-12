@@ -241,4 +241,21 @@ class CustomerOutboundCallTest extends TestCase
         $this->place($this->contact->uid, 'req-key-0011')->assertStatus(409)->assertJsonPath('error.code', 'contact_call_in_progress');
         $this->assertSame(1, BusinessVoiceCall::count(), 'The second request must not create or dial another call.');
     }
+
+    public function test_a_number_suspended_after_it_was_first_read_cannot_place_the_call(): void
+    {
+        $done = false;
+        \DB::beforeExecuting(function ($query) use (&$done) {
+            if (! $done && str_contains(strtolower($query), 'for update') && str_contains($query, 'business_messaging_numbers')) {
+                $done = true; // a renewal suspends the number just before this request takes its lock
+                \DB::table('business_messaging_numbers')->where('id', $this->number->id)->update(['status' => 'suspended']);
+            }
+        });
+
+        $this->place()->assertStatus(409)->assertJsonPath('error.code', 'number_not_voice_ready');
+
+        $this->assertTrue($done, 'The lock query ran, so the race was exercised.');
+        $this->noDial();
+        $this->assertSame(0, BusinessVoiceCall::count());
+    }
 }

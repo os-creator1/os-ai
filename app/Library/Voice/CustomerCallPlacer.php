@@ -68,9 +68,11 @@ final class CustomerCallPlacer
         $token = bin2hex(random_bytes(32));
         $window = now()->subSeconds((int) $cfg['ring_timeout_secs'] + (int) $cfg['max_duration_secs'] + 60);
 
-        [$call, $replay] = DB::transaction(function () use ($business, $contact, $userId, $idempotencyKey, $number, $toHash, $token, $window, $cfg): array {
+        [$call, $replay] = DB::transaction(function () use ($business, $contact, $userId, $idempotencyKey, $number, $toHash, $token, $window, $cfg, $connectionId): array {
             // Serialise every placement for this number: the checks below and the insert are one atomic step.
-            BusinessMessagingNumber::query()->whereKey($number->id)->lockForUpdate()->first();
+            $locked = BusinessMessagingNumber::query()->whereKey($number->id)->lockForUpdate()->first();
+            // Re-validate on the LOCKED row: a renewal may have suspended the number after it was first read.
+            $this->assertVoiceReady($locked, $connectionId);
 
             $existing = BusinessVoiceCall::query()->where('business_id', $business->id)->where('idempotency_key', $idempotencyKey)->first();
             if ($existing !== null) {
@@ -129,26 +131,37 @@ final class CustomerCallPlacer
 
     private function resolveVoiceReadyNumber(Business $business, string $connectionId): BusinessMessagingNumber
     {
-        $unavailable = new CustomerCallRefusedException('number_not_voice_ready', 'This business does not have a number set up for calling.', 409);
-
         $identity = $this->identities->resolveForBusiness($business);
         if ($identity === null) {
-            throw $unavailable;
+            throw $this->notVoiceReady();
         }
 
         try {
             $number = $this->identities->resolvePrimaryNumber($identity);
         } catch (\Throwable) {
-            throw $unavailable;
+            throw $this->notVoiceReady();
         }
 
-        if ($number->number_type !== PhoneNumberType::Local
+        $this->assertVoiceReady($number, $connectionId);
+
+        return $number;
+    }
+
+    private function assertVoiceReady(?BusinessMessagingNumber $number, string $connectionId): void
+    {
+        if ($number === null
+            || ! $number->isActive()
+            || ! $number->is_primary
+            || $number->number_type !== PhoneNumberType::Local
             || trim((string) $number->provider_number_reference) === ''
             || $number->voice_assigned_at === null
             || $number->voice_connection_id !== $connectionId) {
-            throw $unavailable;
+            throw $this->notVoiceReady();
         }
+    }
 
-        return $number;
+    private function notVoiceReady(): CustomerCallRefusedException
+    {
+        return new CustomerCallRefusedException('number_not_voice_ready', 'This business does not have a number set up for calling.', 409);
     }
 }
