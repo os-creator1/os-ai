@@ -446,7 +446,8 @@
         pendingSdk = null;
         identifyGen++;
         // Still being identified (no popup yet): just free the slot so the next ring is handled.
-        if (root.getAttribute('data-state') !== 'incoming' || finished) { if (!active) { inboundBusy = false; } return; }
+        var waiting = root.getAttribute('data-state') === 'incoming' || answering; // ringing, or answering but not yet claimed
+        if (!waiting || finished) { if (!active) { inboundBusy = false; } return; }
         var uid = callUid, mine = attempt;
         api('GET', cfg.statusUrl.replace('__CALL__', encodeURIComponent(uid))).then(function (r) {
             if (mine !== attempt || finished) { return; }
