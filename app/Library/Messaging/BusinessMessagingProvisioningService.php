@@ -170,6 +170,13 @@ class BusinessMessagingProvisioningService
                 $number = $number->fresh();
             }
 
+            // Local numbers join the platform Voice Connection. Never allowed to fail or undo the purchase.
+            try {
+                $number = app(\App\Library\Voice\VoiceNumberAssigner::class)->assign($number);
+            } catch (\Throwable $voiceError) {
+                \Illuminate\Support\Facades\Log::warning('Voice assignment raised after purchase', ['number_id' => $number->id]);
+            }
+
             return $number;
         } catch (\Throwable $e) {
             $this->incidents->record(
