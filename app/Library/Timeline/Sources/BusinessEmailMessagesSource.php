@@ -12,6 +12,7 @@ use App\Library\Timeline\TimelineSubject;
 use App\Models\BusinessEmailMessage;
 use Carbon\CarbonImmutable;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Gate;
 
 /**
  * A Contact's email (the email ledger), interleaved with their SMS in the one
@@ -31,7 +32,9 @@ final class BusinessEmailMessagesSource implements TimelineSource
 
     public function recent(TimelineSubject $subject, int $limit): array
     {
-        if ($subject->contact === null || (int) $subject->contact->business_id !== (int) $subject->business->id || Auth::id() === null) {
+        if ($subject->contact === null || (int) $subject->contact->business_id !== (int) $subject->business->id || Auth::id() === null
+            // Email is Conversations content: the same permission that opens the inbox.
+            || ! Gate::allows('chat_box')) {
             return [];
         }
 
