@@ -29,11 +29,12 @@ final class CustomerCallPlacer
     public function __construct(
         private readonly BusinessMessagingIdentityResolver $identities,
         private readonly TelnyxCallDialer $dialer,
+        private readonly BrowserCredentialProvisioner $browserCredentials,
     ) {
     }
 
     /** @return array{0: BusinessVoiceCall, 1: bool} the call, and whether it is a replay of an earlier identical request */
-    public function place(Business $business, Contacts $contact, int $userId, string $idempotencyKey): array
+    public function place(Business $business, Contacts $contact, int $userId, string $idempotencyKey, string $channel = 'server'): array
     {
         $cfg = (array) config('messaging.voice.customer_calls');
         $apiKey = trim((string) config('services.telnyx.api_key'));
@@ -48,6 +49,20 @@ final class CustomerCallPlacer
         $webhookUrl = (string) (config('messaging.voice.webhook_url') ?: route('webhooks.telnyx_voice'));
         if (! str_starts_with($webhookUrl, 'https://')) {
             throw new CustomerCallRefusedException('calling_unavailable', 'Calling is not available right now.', 503);
+        }
+
+        // Browser calls ring the agent's browser first, so a provisioned, unexpired session for THIS user must exist.
+        $agentSipUri = null;
+        if ($channel === 'browser') {
+            try {
+                BrowserCredentialProvisioner::assertEnabled();
+            } catch (BrowserCallsUnavailableException) {
+                throw new CustomerCallRefusedException('calling_unavailable', 'Calling is not available right now.', 503);
+            }
+            $agentSipUri = $this->browserCredentials->sipUriFor($business, $userId);
+            if ($agentSipUri === null) {
+                throw new CustomerCallRefusedException('browser_session_required', 'Start a calling session first.', 409);
+            }
         }
 
         if ((int) $contact->business_id !== (int) $business->id) {
@@ -68,7 +83,7 @@ final class CustomerCallPlacer
         $token = bin2hex(random_bytes(32));
         $window = now()->subSeconds((int) $cfg['ring_timeout_secs'] + (int) $cfg['max_duration_secs'] + 60);
 
-        [$call, $replay] = DB::transaction(function () use ($business, $contact, $userId, $idempotencyKey, $number, $toHash, $token, $window, $cfg, $connectionId): array {
+        [$call, $replay] = DB::transaction(function () use ($business, $contact, $userId, $idempotencyKey, $number, $toHash, $token, $window, $cfg, $connectionId, $channel): array {
             // Serialise every placement for this number: the checks below and the insert are one atomic step.
             $locked = BusinessMessagingNumber::query()->whereKey($number->id)->lockForUpdate()->first();
             // Re-validate on the LOCKED row: a renewal may have suspended the number after it was first read.
@@ -91,6 +106,10 @@ final class CustomerCallPlacer
                     ->orWhere(fn ($u) => $u->where('status', BusinessVoiceCall::STATUS_FAILED)->where('failure_code', 'transport_error')))
                 ->where('created_at', '>', $window);
 
+            // One softphone per browser: a user cannot start a second browser call while one is live.
+            if ($channel === 'browser' && (clone $active)->where('channel', 'browser')->where('initiated_by_user_id', $userId)->exists()) {
+                throw new CustomerCallRefusedException('already_on_a_call', 'You are already on a call.', 409);
+            }
             if ((clone $active)->where('to_hash', $toHash)->exists()) {
                 throw new CustomerCallRefusedException('contact_call_in_progress', 'A call to this contact is already in progress.', 409);
             }
@@ -105,6 +124,7 @@ final class CustomerCallPlacer
             return [BusinessVoiceCall::create([
                 'uid' => (string) Str::uuid(),
                 'kind' => 'customer',
+                'channel' => $channel,
                 'client_state_hash' => hash('sha256', $token),
                 'business_id' => $business->id,
                 'business_messaging_number_id' => $number->id,
@@ -120,10 +140,25 @@ final class CustomerCallPlacer
             return [$call, true];
         }
 
+        $maxDuration = max(1, min((int) $cfg['max_duration_secs'], 3600));
+
+        if ($channel === 'browser') {
+            // Leg 1 of 2: ring the agent's browser. The contact is dialled only when the browser answers (the webhook
+            // orchestrator does that and bridges), so nobody is ever called into silence.
+            $call = $this->dialer->dial(
+                $call, $apiKey, $connectionId, $number->phone_number, $agentSipUri, $webhookUrl, $token,
+                ringTimeoutSecs: max(5, (int) config('messaging.voice.browser.agent_ring_timeout_secs')),
+                timeLimitSecs: $maxDuration + 90,
+                idColumn: 'agent_call_control_id',
+            );
+
+            return [$call, false];
+        }
+
         $call = $this->dialer->dial(
             $call, $apiKey, $connectionId, $number->phone_number, $destination, $webhookUrl, $token,
             ringTimeoutSecs: (int) $cfg['ring_timeout_secs'],
-            timeLimitSecs: max(1, min((int) $cfg['max_duration_secs'], 3600)),
+            timeLimitSecs: $maxDuration,
         );
 
         return [$call, false];

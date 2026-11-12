@@ -109,6 +109,8 @@ class ContactDirectoryController extends CustomerBaseController
         return view('customer.people.show', [
             'contactUid' => (string) $contact->uid,
             'profile' => $profile,
+            'browserCalling' => $this->browserCalling($workspaceUid, $businessUid),
+            'callHistory' => $this->callHistory($business, $contact),
             'actions' => $this->profileActions($workspace, $business, $contact, $profile, $canConverse),
             // Business-defined Custom Fields: only shown for a Contact whose
             // Location the actor may access (the existing Contact Location ACL).
@@ -141,6 +143,56 @@ class ContactDirectoryController extends CustomerBaseController
         return redirect()
             ->route('customer.workspaces.businesses.people.show', [$workspaceUid, $businessUid, $contactUid])
             ->with('flash_success', 'Custom fields saved.');
+    }
+
+    /**
+     * Browser calling is offered only to a user who may place calls, on a deployment where it is switched on and live.
+     * The page then gets the endpoints the softphone needs; every one re-checks tenancy, entitlement and permission.
+     *
+     * @return array{sessionUrl: string, placeUrl: string, statusUrl: string, hangupUrl: string}|null
+     */
+    private function browserCalling(string $workspaceUid, string $businessUid): ?array
+    {
+        if (! (bool) config('messaging.voice.customer_calls.enabled')
+            || ! (bool) config('messaging.voice.browser.enabled')
+            || config('services.telnyx.mode') !== 'live'
+            || ! auth()->user()?->can('place_voice_calls')) {
+            return null;
+        }
+
+        $scope = [$workspaceUid, $businessUid];
+
+        return [
+            'sessionUrl' => route('customer.workspaces.businesses.calls.browser-session', $scope),
+            'placeUrl' => route('customer.workspaces.businesses.calls.store', $scope),
+            'statusUrl' => route('customer.workspaces.businesses.calls.show', [...$scope, '__CALL__']),
+            'hangupUrl' => route('customer.workspaces.businesses.calls.hangup', [...$scope, '__CALL__']),
+        ];
+    }
+
+    /**
+     * The contact's recent calls for the profile: outcome, duration and time only. No phone number, Telnyx id or
+     * credential is ever included. The Contact's Location access was already enforced by findForBusiness().
+     *
+     * @return list<array{outcome: string, duration: ?string, when: string}>
+     */
+    private function callHistory(Business $business, Contacts $contact): array
+    {
+        return \App\Models\BusinessVoiceCall::query()
+            ->where('business_id', $business->id)->where('kind', 'customer')->where('contact_id', $contact->id)
+            ->whereIn('status', [\App\Models\BusinessVoiceCall::STATUS_ENDED, \App\Models\BusinessVoiceCall::STATUS_FAILED])
+            ->latest('id')->limit(10)->get()
+            ->map(function ($call): array {
+                $seconds = $call->duration_seconds;
+
+                return [
+                    'outcome' => $call->status === \App\Models\BusinessVoiceCall::STATUS_FAILED
+                        ? 'Failed'
+                        : ($call->answered_at !== null ? 'Connected' : 'Not answered'),
+                    'duration' => $seconds !== null ? intdiv($seconds, 60) . ':' . str_pad((string) ($seconds % 60), 2, '0', STR_PAD_LEFT) : null,
+                    'when' => $call->created_at?->diffForHumans() ?? '',
+                ];
+            })->all();
     }
 
     /**
