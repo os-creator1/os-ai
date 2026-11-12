@@ -1818,7 +1818,10 @@
             Route::get('/', 'ChatBoxController@index')->name('index');
             Route::get('/new', 'ChatBoxController@new')->name('new');
             // Email threads from the connected mailbox (email ledger, not chat_boxes).
+            // Compatibility: the former standalone Email page now lives inside Conversations (Email filter); saved links still work.
             Route::get('/email', 'Business\EmailConversationsController@threads')->name('email');
+            // One email thread opened inside the unified inbox (thread key in the body: provider ids are not URL-safe).
+            Route::post('/email-thread', 'ChatBoxController@emailThread')->name('email_thread');
             Route::post('/sent', 'ChatBoxController@sent')->name('sent');
             Route::post('/load', 'ChatBoxController@loadChatUsers')->name('load');
             Route::post('/{uid}/messages', 'ChatBoxController@messages')->name('messages');

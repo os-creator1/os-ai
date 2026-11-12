@@ -549,6 +549,8 @@
             $this->app->tag([
                 \App\Library\Timeline\Sources\ConversationMessagesSource::class,
                 \App\Library\Timeline\Sources\AttributedOutboundMessagesSource::class,
+                // Unified inbox — the Contact's email, interleaved with their SMS (safe Contact match only).
+                \App\Library\Timeline\Sources\BusinessEmailMessagesSource::class,
                 \App\Library\Timeline\Sources\AutomationActivitySource::class,
                 \App\Library\Timeline\Sources\ContactRecordSource::class,
                 // Implementation Contract 17 §12.G — Payments & Contracts joins

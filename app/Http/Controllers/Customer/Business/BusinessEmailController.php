@@ -34,6 +34,7 @@ use App\Models\Contacts;
 use App\Models\Workspace;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Contracts\View\View;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
@@ -378,7 +379,7 @@ class BusinessEmailController extends CustomerBaseController
         return $this->back($workspaceUid, $businessUid, 'success', 'Email account disconnected and its stored authorization destroyed.');
     }
 
-    public function send(SendBusinessEmailRequest $request, string $workspaceUid, string $businessUid): RedirectResponse
+    public function send(SendBusinessEmailRequest $request, string $workspaceUid, string $businessUid): RedirectResponse|JsonResponse
     {
         $this->authorize('chat_box');
         $this->authorize('view_contact');
@@ -419,14 +420,14 @@ class BusinessEmailController extends CustomerBaseController
                 sentByUserId: (int) Auth::id(),
             ));
         } catch (BusinessEmailSendRefusedException $exception) {
-            return $this->back($workspaceUid, $businessUid, 'error', $exception->userMessage());
+            return $this->backOrJson($workspaceUid, $businessUid, 'error', $exception->userMessage());
         }
 
         return match ($message->status) {
-            BusinessEmailMessageStatus::Accepted => $this->back($workspaceUid, $businessUid, 'success', 'Email sent. Your email provider accepted it for delivery.'),
-            BusinessEmailMessageStatus::Failed => $this->back($workspaceUid, $businessUid, 'error', $message->failure_category?->customerMessage() ?? 'The email could not be sent.'),
-            BusinessEmailMessageStatus::Unconfirmed => $this->back($workspaceUid, $businessUid, 'error', 'We could not confirm whether this email was sent. Check your sent mail before trying again.'),
-            default => $this->back($workspaceUid, $businessUid, 'success', 'This email is already being sent.'),
+            BusinessEmailMessageStatus::Accepted => $this->backOrJson($workspaceUid, $businessUid, 'success', 'Email sent. Your email provider accepted it for delivery.'),
+            BusinessEmailMessageStatus::Failed => $this->backOrJson($workspaceUid, $businessUid, 'error', $message->failure_category?->customerMessage() ?? 'The email could not be sent.'),
+            BusinessEmailMessageStatus::Unconfirmed => $this->backOrJson($workspaceUid, $businessUid, 'error', 'We could not confirm whether this email was sent. Check your sent mail before trying again.'),
+            default => $this->backOrJson($workspaceUid, $businessUid, 'success', 'This email is already being sent.'),
         };
     }
 
@@ -435,7 +436,7 @@ class BusinessEmailController extends CustomerBaseController
      * The message is resolved THROUGH the Business and the actor's Location
      * ACL; anything else is the same 404 with no row and no provider call.
      */
-    public function reply(ReplyBusinessEmailRequest $request, string $workspaceUid, string $businessUid, string $messageUid): RedirectResponse
+    public function reply(ReplyBusinessEmailRequest $request, string $workspaceUid, string $businessUid, string $messageUid): RedirectResponse|JsonResponse
     {
         $this->authorize('chat_box');
         [, $business] = $this->resolveBusinessTenancy($workspaceUid, $businessUid, true);
@@ -471,10 +472,10 @@ class BusinessEmailController extends CustomerBaseController
             abort_if($location === null, 404);
         }
 
-        $back = fn (string $status, string $message) => $request->validated('return_to') === 'conversations'
-            ? redirect()->route('customer.workspaces.businesses.conversations.email', [$workspaceUid, $businessUid, 'thread' => $original->provider_thread_id ?? $original->uid])
+        $back = fn (string $status, string $message) => $request->validated('return_to') === 'conversations' && ! $request->expectsJson()
+            ? redirect()->route('customer.workspaces.businesses.conversations.index', [$workspaceUid, $businessUid, 'channel' => 'email', 'thread' => $original->provider_thread_id ?? $original->uid])
                 ->with(['status' => $status, 'message' => $message])
-            : $this->back($workspaceUid, $businessUid, $status, $message);
+            : $this->backOrJson($workspaceUid, $businessUid, $status, $message);
 
         try {
             $message = $this->sender->send(new BusinessEmailSendRequest(
@@ -503,6 +504,16 @@ class BusinessEmailController extends CustomerBaseController
         if (! $this->authority->mayManage($workspace, 'manage_business_email')) {
             throw new AuthorizationException();
         }
+    }
+
+    /** send()/reply(): the Conversations composer posts with Accept: application/json and stays on the page. */
+    private function backOrJson(string $workspaceUid, string $businessUid, string $status, string $message): RedirectResponse|JsonResponse
+    {
+        if (request()->expectsJson()) {
+            return response()->json(['status' => $status, 'message' => $message], $status === 'success' ? 200 : 422);
+        }
+
+        return $this->back($workspaceUid, $businessUid, $status, $message);
     }
 
     private function back(string $workspaceUid, string $businessUid, string $status, string $message): RedirectResponse

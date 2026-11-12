@@ -88,6 +88,22 @@ class BusinessEmailConversationsTest extends TestCase
         ]));
     }
 
+    /** Email is a filter inside Conversations now: the inbox's list and thread endpoints, and the URL a reply returns to. */
+    private function inboxUrl(?string $thread = null): string
+    {
+        return route('customer.workspaces.businesses.conversations.index', array_filter([$this->workspace->uid, $this->business->uid, 'channel' => 'email', 'thread' => $thread]));
+    }
+
+    private function emailList(?Business $business = null, ?Workspace $workspace = null)
+    {
+        return $this->post(route('customer.workspaces.businesses.conversations.load', [($workspace ?? $this->workspace)->uid, ($business ?? $this->business)->uid]), ['channel' => 'email', 'filter' => 'recents']);
+    }
+
+    private function emailThread(string $thread)
+    {
+        return $this->post(route('customer.workspaces.businesses.conversations.email_thread', [$this->workspace->uid, $this->business->uid]), ['thread' => $thread]);
+    }
+
     private function replyUrl(BusinessEmailMessage $message, ?Business $business = null, ?Workspace $workspace = null): string
     {
         return route('customer.workspaces.businesses.email.reply', [($workspace ?? $this->workspace)->uid, ($business ?? $this->business)->uid, $message->uid]);
@@ -105,14 +121,14 @@ class BusinessEmailConversationsTest extends TestCase
         $this->makeMessage($this->locA, 'Re: Quote request', 't-a', direction: 'outbound');
         $this->authenticateAs($this->owner);
 
-        $list = $this->get($this->convUrl())->assertOk()->getContent();
+        $list = $this->emailList()->assertOk()->getContent();
         $this->assertStringContainsString('Quote request', $list);
-        $this->assertStringContainsString('2 messages', $list);
+        $this->assertStringContainsString('stranger@example.com', $list);
 
-        $thread = $this->get($this->convUrl('t-a'))->assertOk()->getContent();
+        $thread = $this->emailThread('t-a')->assertOk()->json('timeline');
         $this->assertStringContainsString('stranger@example.com', $thread);
         $this->assertStringContainsString('Body of Quote request', $thread);
-        $this->assertStringContainsString('You (owner@business.test)', $thread);
+        $this->assertStringContainsString('owner@business.test', $thread);
     }
 
     public function test_an_authorized_user_can_reply_to_a_sender_who_is_not_a_contact_without_creating_one(): void
@@ -123,7 +139,7 @@ class BusinessEmailConversationsTest extends TestCase
 
         // The recipient is the stored sender; a browser-supplied address is ignored.
         $this->post($this->replyUrl($inbound), $this->form(['to_email' => 'attacker@evil.test']))
-            ->assertRedirect($this->convUrl('t-a'));
+            ->assertRedirect($this->inboxUrl('t-a'));
 
         $this->assertSame(1, $this->fakeGoogle->callCount('send'));
         $sent = $this->fakeGoogle->sent[0];
@@ -156,11 +172,12 @@ class BusinessEmailConversationsTest extends TestCase
 
         // Staff limited to Location A.
         $this->authenticateAs($this->staff, ['chat_box', 'view_contact']);
-        $html = $this->get($this->convUrl())->assertOk()->getContent();
+        $html = $this->emailList()->assertOk()->getContent();
         $this->assertStringContainsString('Visible to A staff', $html);
         $this->assertStringNotContainsString('Only Location B', $html);
         $this->assertStringNotContainsString('Unresolved owner', $html);
-        $this->assertStringNotContainsString('Body of Only Location B', $this->get($this->convUrl('t-b'))->getContent());
+        $this->emailThread('t-b')->assertNotFound();
+        $this->emailThread('t-u')->assertNotFound();
 
         $this->post($this->replyUrl($b), $this->form())->assertNotFound();
         $this->post($this->replyUrl($unresolved), $this->form())->assertNotFound();
@@ -170,7 +187,7 @@ class BusinessEmailConversationsTest extends TestCase
         [$otherOwner, $otherBusiness, $otherWorkspace] = $this->emailTenant('Other Studio');
         $this->activeAccount($otherBusiness);
         $this->authenticateAs($otherOwner);
-        $this->get($this->convUrl())->assertNotFound();
+        $this->emailList()->assertNotFound();
         $this->post($this->replyUrl($a), $this->form())->assertNotFound();
         $this->post($this->replyUrl($a, $otherBusiness, $otherWorkspace), $this->form())->assertNotFound();
         $this->assertSame(0, $this->fakeGoogle->callCount('send'));
@@ -181,7 +198,7 @@ class BusinessEmailConversationsTest extends TestCase
         $unresolved = $this->makeMessage(null, 'Unresolved owner', 't-u');
         $this->authenticateAs($this->owner);
 
-        $this->assertStringContainsString('Unresolved owner', $this->get($this->convUrl())->assertOk()->getContent());
+        $this->assertStringContainsString('Unresolved owner', $this->emailList()->assertOk()->getContent());
 
         // Two active Locations and no proof which one: refused, never guessed.
         $this->post($this->replyUrl($unresolved), $this->form())->assertRedirect();
@@ -201,15 +218,20 @@ class BusinessEmailConversationsTest extends TestCase
         ])->save();
         $this->authenticateAs($this->owner);
 
-        foreach ([$this->convUrl(), $this->convUrl('t-x'), route('customer.workspaces.businesses.email.show', [$this->workspace->uid, $this->business->uid])] as $url) {
-            $html = $this->get($url)->assertOk()->getContent();
+        $rendered = [
+            'list' => $this->emailList()->assertOk()->getContent(),
+            'thread' => $this->emailThread('t-x')->assertOk()->json('timeline'),
+            'context' => $this->emailThread('t-x')->assertOk()->json('context'),
+            'settings' => $this->get(route('customer.workspaces.businesses.email.show', [$this->workspace->uid, $this->business->uid]))->assertOk()->getContent(),
+        ];
 
-            $this->assertStringNotContainsString('<script>alert', $html, $url);
-            $this->assertStringNotContainsString('<img src=x', $html, $url);
-            $this->assertStringNotContainsString('<a href="javascript:alert', $html, $url);
+        foreach ($rendered as $where => $html) {
+            $this->assertStringNotContainsString('<script>alert', $html, $where);
+            $this->assertStringNotContainsString('<img src=x', $html, $where);
+            $this->assertStringNotContainsString('<a href="javascript:alert', $html, $where);
         }
 
-        $this->assertStringContainsString('&lt;script&gt;alert(&#039;body&#039;)&lt;/script&gt;', $this->get($this->convUrl('t-x'))->getContent());
+        $this->assertStringContainsString('&lt;script&gt;alert(&#039;body&#039;)&lt;/script&gt;', $rendered['thread']);
     }
 
     public function test_sms_conversation_routes_are_unchanged_by_the_email_tab(): void
@@ -220,6 +242,7 @@ class BusinessEmailConversationsTest extends TestCase
         $this->assertSame('customer.workspaces.businesses.conversations.index', $match('GET', $base));
         $this->assertSame('customer.workspaces.businesses.conversations.new', $match('GET', $base . '/new'));
         $this->assertSame('customer.workspaces.businesses.conversations.email', $match('GET', $base . '/email'));
+        $this->assertSame('customer.workspaces.businesses.conversations.email_thread', $match('POST', $base . '/email-thread'));
         $this->assertSame('customer.workspaces.businesses.conversations.messages', $match('POST', $base . '/some-uid/messages'));
         $this->assertSame('customer.workspaces.businesses.conversations.reply', $match('POST', $base . '/some-uid/reply'));
         $this->assertSame('customer.workspaces.businesses.conversations.load', $match('POST', $base . '/load'));
