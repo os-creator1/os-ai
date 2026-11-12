@@ -13,6 +13,7 @@ on:
       - 'resources/views/customer/ChatBox/**'
       - 'routes/customer.php'
       - 'tests/Feature/Conversations/**'
+      - 'tests/js/**'
       - 'tests/Feature/BusinessEmail/BusinessEmailConversationsTest.php'
       - '.github/workflows/unified-conversations-tests.yml'
 
@@ -73,9 +74,25 @@ jobs:
           php artisan test
           tests/Feature/Conversations/UnifiedConversationsInboxTest.php
           tests/Feature/BusinessEmail/BusinessEmailConversationsTest.php
+          tests/Feature/Conversations/UnifiedConversationsViewAsTest.php
+          --stop-on-failure
+      - name: Run conversation location and View-As regressions
+        run: >-
+          php artisan test
+          tests/Feature/Conversations/ChatBoxLocationAclTest.php
+          tests/Feature/Security/ConversationsViewAsSendTest.php
           --stop-on-failure
       - name: Run existing contact timeline regression
         run: >-
           php artisan test
           tests/Feature/Conversations/ContactActivityTimelineTest.php
           --stop-on-failure
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Run composer JavaScript browser regression (real Chromium)
+        run: |
+          npm install --no-save --no-package-lock playwright@1.63.0
+          npx playwright install --with-deps chromium
+          node tests/js/conversations-composer.spec.js

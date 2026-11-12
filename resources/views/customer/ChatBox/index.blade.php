@@ -1107,7 +1107,7 @@
             $guide.append($("<a></a>").attr("href", c.settings_url).text("Open Email settings"));
           }
         }
-        $("#message, .send").prop("disabled", !usable);
+        syncSendAvailability();
         $("#message").attr("placeholder", email ? "Write your email…" : "...");
       }
 
@@ -1118,9 +1118,49 @@
         setComposerChannel($(this).data("channel"));
       });
 
+      // The idempotency key of an email send belongs to ONE intent (conversation + endpoint + exact content), never to the wording
+      // of an outcome. It is kept until the server says "sent" (HTTP 200); after ANY other outcome — including a dropped connection,
+      // where the provider may well have accepted the mail — a manual retry of the same content re-sends the SAME key, which the
+      // existing sender turns into "already sent" instead of a second email. Edited content is a new intent and gets a new key.
+      // Nothing here ever resubmits on its own.
+      var emailSendsInFlight = {};
+
+      function emailIntentKey(chatId, c, subject, body, location) {
+        return [chatId, c.url, c.contact_uid || "", location || "", subject, body].join("\u0001");
+      }
+
+      function emailTokenStore() {
+        try { return window.sessionStorage; } catch (e) { return null; }
+      }
+
+      function emailTokenFor(intent) {
+        const store = emailTokenStore();
+        const name = "mg.emailToken." + intent;
+        let token = pendingEmailTokens[intent] || (store && store.getItem(name)) || m5UuidV4();
+        pendingEmailTokens[intent] = token;
+        if (store) { try { store.setItem(name, token); } catch (e) { /* storage unavailable: the in-memory key still holds */ } }
+        return token;
+      }
+
+      function forgetEmailToken(intent) {
+        delete pendingEmailTokens[intent];
+        const store = emailTokenStore();
+        if (store) { try { store.removeItem("mg.emailToken." + intent); } catch (e) { /* nothing to remove */ } }
+      }
+
+      // Send/typing availability for the conversation that is open NOW and its selected channel (never a stale in-flight one).
+      function syncSendAvailability() {
+        const c = composerState.cfg || {};
+        const usable = composerState.channel === "email" ? !!c.email : !!c.sms;
+        const busy = !!emailSendsInFlight[String($(".chat_id").val())];
+        $("#message").prop("disabled", !usable);
+        $(".send").prop("disabled", !usable || busy);
+      }
+
       function sendEmail() {
         const c = composerState.cfg || {};
-        const chatId = $(".chat_id").val();
+        const sendId = String($(".chat_id").val());   // the conversation this send belongs to
+        const stillHere = function() { return String($(".chat_id").val()) === sendId; };
         const body = ($("#message").val() || "").trim();
         const subject = ($("#email-subject").val() || "").trim();
         const warn = function(text) {
@@ -1130,31 +1170,38 @@
         if (!c.email || !c.url) { warn("Email can't be sent from here right now."); return; }
         if (subject === "" || body === "") { warn("Add a subject and a message."); return; }
         if ((c.locations || []).length && !$("#email-location").val()) { warn("Choose which location this is for."); return; }
+        if (emailSendsInFlight[sendId]) { return; }
 
-        const key = chatId + "|" + c.url;
-        pendingEmailTokens[key] = pendingEmailTokens[key] || m5UuidV4();
-        const data = { _token: "{{ csrf_token() }}", subject: subject, body: body, send_token: pendingEmailTokens[key] };
-        if ($("#email-location").val()) { data.location_uid = $("#email-location").val(); }
+        const location = $("#email-location").val() || "";
+        const intent = emailIntentKey(sendId, c, subject, body, location);
+        const data = { _token: "{{ csrf_token() }}", subject: subject, body: body, send_token: emailTokenFor(intent) };
+        if (location) { data.location_uid = location; }
         if (c.contact_uid) { data.contact_uid = c.contact_uid; }
 
-        $(".send").attr("disabled", true);
+        emailSendsInFlight[sendId] = true;
+        syncSendAvailability();
+
         $.ajax({ url: c.url, type: "POST", data: data, dataType: "json", headers: { Accept: "application/json" } })
           .done(function(response) {
-            delete pendingEmailTokens[key];
-            $("#message").val("");
+            forgetEmailToken(intent);
             toastr["success"](response.message || "Sent.", "{{ __('locale.labels.success') }}", { closeButton: true, positionClass: "toast-top-right", progressBar: true, newestOnTop: true, rtl: isRtl });
-            loadTimeline(chatId);
+            if (stillHere()) {
+              $("#message").val("");
+              loadTimeline(sendId);
+            }
           })
           .fail(function(xhr) {
             const json = xhr.responseJSON || {};
             const first = json.errors ? Object.values(json.errors)[0][0] : null;
-            const text = first || json.message || "The email could not be sent.";
-            // A refused/failed send can be tried again with a fresh key; one whose delivery is unconfirmed keeps its key.
-            if (!/confirm/i.test(text)) { delete pendingEmailTokens[key]; }
-            warn(text);
+            // Keep the key. When no server answer arrived (dropped connection, timeout, 5xx) the outcome is UNKNOWN: say so, and
+            // never claim it failed or retry by ourselves.
+            const answered = xhr.status >= 200 && xhr.status < 500 && xhr.status !== 0;
+            warn(first || (answered ? json.message : null) || "We couldn't confirm whether this email was sent. Check your sent mail; sending the same message again will not duplicate it.");
+            if (!answered && stillHere()) { loadTimeline(sendId); }
           })
           .always(function() {
-            $(".send").attr("disabled", !(composerState.cfg && composerState.cfg.email));
+            delete emailSendsInFlight[sendId];
+            syncSendAvailability();
           });
       }
 

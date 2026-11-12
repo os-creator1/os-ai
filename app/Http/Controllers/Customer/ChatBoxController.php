@@ -1730,7 +1730,8 @@
             // notion, so those narrower views stay SMS-only rather than mixing in rows that cannot honour the filter.
             $channel = in_array($request->get('channel'), ['sms', 'email'], true) ? $request->get('channel') : 'all';
             $emailEligible = $channel !== 'sms' && in_array($filter, ['recents', 'all'], true) && $created === null;
-            $chat_box = $channel === 'email' ? null : $query->with('latestMessage')->paginate(50, ['*'], 'page', $page);
+            // Email-only and the merged All list page themselves (UnifiedConversationList); SMS-only and the narrower SMS views paginate as ever.
+            $chat_box = ($channel === 'email' || ($channel === 'all' && $emailEligible)) ? null : $query->with('latestMessage')->paginate(50, ['*'], 'page', $page);
 
             $items = app(\App\Library\Conversations\UnifiedConversationList::class)
                 ->items($business, (int) Auth::id(), $channel, $emailEligible, $query, $chat_box, (int) $page, $search);

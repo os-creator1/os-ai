@@ -383,7 +383,7 @@ class ContactActivityTimelineTest extends TestCase
         $many = $read();
 
         $this->assertSame($few, $many);
-        $this->assertSame(9, $many, 'Messages, sent reports, the three automation ledgers, the block list, the contact\'s group, this contact\'s documents (no rows, so payments/refunds add nothing further), and this contact\'s form submissions.');
+        $this->assertSame(11, $many, 'Messages, sent reports, the three automation ledgers, the block list, the contact\'s group, this contact\'s documents (no rows, so payments/refunds add nothing further), this contact\'s form submissions, and — for the unified inbox — this contact\'s email: exactly two more FIXED reads, the actor\'s Location-reach lookup (BusinessEmailLocationScope) and the Location-scoped email ledger read. Neither depends on how much history exists, which the equality above proves.');
     }
 
     // -----------------------------------------------------------------

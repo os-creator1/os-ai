@@ -5,7 +5,9 @@ namespace App\Library\Conversations;
 use App\Library\BusinessEmail\BusinessEmailAccountManager;
 use App\Library\BusinessEmail\BusinessEmailContactResolver;
 use App\Library\BusinessEmail\BusinessEmailLocationScope;
+use App\Enums\Business\BusinessLocationLifecycleState;
 use App\Models\Business;
+use App\Models\BusinessLocation;
 use App\Models\BusinessEmailMessage;
 use App\Models\Contacts;
 use Illuminate\Support\Facades\Gate;
@@ -47,11 +49,18 @@ class ConversationComposerOptions
         $canCompose = $canReply || ($contact !== null && $recipient !== null);
         $email = $mayEmail && $connected && $canCompose;
 
+        // The sender needs a Location: a reply keeps its thread's, a new email uses the Contact's own, else the Business's single active
+        // one. When none of those is provable and there is a real choice, the actor must pick one of THEIR accessible active Locations
+        // (the same resolver the send endpoints validate against); with nothing they may use, Email is not offered at all.
         $choices = collect();
 
-        if ($email && $replyTo !== null && $replyTo->location_id === null) {
+        if ($email && ! $this->locationIsProvable($business, $canReply ? $replyTo->location_id : $contact?->location_id)) {
             $active = $this->locations->activeLocations($business, $this->locations->accessibleLocationIds($userId, $business));
-            $choices = $active['activeTotal'] > 1 ? $active['selectable'] : collect();
+
+            if ($active['activeTotal'] > 1) {
+                $choices = $active['selectable'];
+                $email = $choices->isNotEmpty();
+            }
         }
 
         $subject = $replyTo !== null
@@ -76,5 +85,20 @@ class ConversationComposerOptions
             'contact_uid' => $email && ! $canReply ? $contact->uid : null,
             'locations' => $choices->map(fn ($l) => ['uid' => $l->uid, 'name' => $l->name])->values()->all(),
         ];
+    }
+
+    /** Is this a valid ACTIVE Location of the Business, so the sender needs no explicit choice? */
+    private function locationIsProvable(Business $business, ?int $locationId): bool
+    {
+        if ($locationId !== null && BusinessLocation::query()
+            ->where('id', $locationId)
+            ->where('business_id', $business->id)
+            ->where('lifecycle_state', BusinessLocationLifecycleState::Active->value)
+            ->exists()) {
+            return true;
+        }
+
+        // The Business's single active Location is the sender's own fallback.
+        return Contacts::singleActiveLocationIdFor((int) $business->id) !== null;
     }
 }

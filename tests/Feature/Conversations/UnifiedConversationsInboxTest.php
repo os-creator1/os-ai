@@ -247,4 +247,135 @@ class UnifiedConversationsInboxTest extends TestCase
         $this->post($this->route('load'), ['channel' => 'email'])->assertNotFound();
         $this->post($this->route('email_thread'), ['thread' => 't-a'])->assertNotFound();
     }
+
+    public function test_a_new_email_to_a_contact_without_a_location_offers_the_actors_accessible_locations(): void
+    {
+        $this->activeAccount($this->business);
+        $locB = $this->makeLocation($this->business, 'Location B');
+        $contact = $this->contactWithEmails($this->business, ['pat@example.com'], null, 'Pat');
+        $box = $this->box($contact->phone, 'Text', now());
+        $this->authenticateAs($this->owner);
+
+        $composer = $this->post($this->route('timeline', [$box->uid]))->assertOk()->json('composer');
+
+        $this->assertTrue($composer['email']);
+        $this->assertEqualsCanonicalizing([$this->locA->uid, $locB->uid], array_column($composer['locations'], 'uid'));
+        $this->assertStringEndsWith('/email/send', $composer['url']);
+    }
+
+    public function test_no_location_choice_is_offered_when_the_contacts_own_or_the_single_location_is_provable(): void
+    {
+        $this->activeAccount($this->business);
+
+        // One active Location: the sender's own fallback, nothing to choose.
+        $contact = $this->contactWithEmails($this->business, ['pat@example.com'], null, 'Pat');
+        $box = $this->box($contact->phone, 'Text', now());
+        $this->authenticateAs($this->owner);
+        $this->assertSame([], $this->post($this->route('timeline', [$box->uid]))->assertOk()->json('composer.locations'));
+
+        // Several active Locations, but the Contact belongs to one: that Location is used, never asked.
+        $this->makeLocation($this->business, 'Location B');
+        $placed = $this->contactWithEmails($this->business, ['lee@example.com'], $this->locA->id, 'Lee');
+        $placedBox = $this->box($placed->phone, 'Text', now());
+        $composer = $this->post($this->route('timeline', [$placedBox->uid]))->assertOk()->json('composer');
+        $this->assertTrue($composer['email']);
+        $this->assertSame([], $composer['locations']);
+    }
+
+    public function test_email_is_not_offered_when_no_authorized_location_can_be_chosen(): void
+    {
+        $this->activeAccount($this->business);
+        $locB = $this->makeLocation($this->business, 'Location B');
+        $staff = $this->createCustomer();
+        $membership = $this->member($this->workspace, $staff->user, WorkspaceMembershipRole::Staff);
+        $membership->forceFill(['location_access_scope' => LocationAccessScope::Selected])->save();
+        // Selected scope with NO assigned Location: nothing they may choose, and nothing to guess.
+        $contact = $this->contactWithEmails($this->business, ['pat@example.com'], null, 'Pat');
+        $box = $this->box($contact->phone, 'Text', now());
+        $this->authenticateAs($staff, ['chat_box', 'view_contact']);
+
+        $response = $this->post($this->route('timeline', [$box->uid]));
+
+        if ($response->status() === 200) {
+            $composer = $response->json('composer');
+            $this->assertFalse($composer['email']);
+            $this->assertSame([], $composer['locations']);
+            $this->assertNotContains($locB->uid, array_column($composer['locations'], 'uid'));
+        } else {
+            $response->assertNotFound(); // the conversation itself is outside their reach
+        }
+    }
+
+    public function test_search_finds_an_older_email_even_when_the_same_contacts_newer_sms_does_not_match(): void
+    {
+        $this->activeAccount($this->business);
+        $contact = $this->contactWithEmails($this->business, ['pat@example.com'], $this->locA->id, 'Pat');
+        $this->box($contact->phone, 'See you today', now());
+        $this->email('Invoice for May', 't-inv', now()->subDay(), 'pat@example.com', contactId: $contact->id);
+        $this->authenticateAs($this->owner);
+
+        $found = $this->list('all', ['search' => 'Invoice']);
+
+        $this->assertSame(1, substr_count($found, 'data-role="conversation-row-title"'), 'the person is found, once');
+        $this->assertStringContainsString('Invoice for May', $found);
+        $this->assertStringContainsString('SMS · Email', $found);
+        // And the plain SMS search still works.
+        $this->assertStringContainsString('See you today', $this->list('all', ['search' => $contact->phone]));
+    }
+
+    /** @return list<string> row ids in page order */
+    private function rowIds(string $html): array
+    {
+        preg_match_all('/<li data-id="([^"]+)"/', $html, $m);
+
+        return $m[1];
+    }
+
+    public function test_all_paginates_sixty_email_threads_without_any_sms_conversations(): void
+    {
+        $this->activeAccount($this->business);
+        $base = now()->startOfMinute();
+
+        for ($i = 0; $i < 60; $i++) {
+            $this->email('Subject ' . $i, 't-' . $i, $base->copy()->subMinutes($i));
+        }
+
+        $this->authenticateAs($this->owner);
+
+        $one = $this->rowIds($this->list('all', ['page' => 1]));
+        $two = $this->rowIds($this->list('all', ['page' => 2]));
+        $three = $this->rowIds($this->list('all', ['page' => 3]));
+
+        $this->assertCount(50, $one);
+        $this->assertCount(10, $two);
+        $this->assertSame([], $three);
+        $this->assertSame([], array_intersect($one, $two), 'no thread is repeated across pages');
+        $this->assertSame(array_map(fn ($i) => 'email:t-' . $i, range(0, 59)), array_merge($one, $two), 'newest first, page after page');
+    }
+
+    public function test_mixed_sms_and_email_pages_are_bounded_ordered_and_not_duplicated(): void
+    {
+        $this->activeAccount($this->business);
+        $base = now()->startOfMinute();
+        $expected = [];
+
+        for ($i = 0; $i < 30; $i++) {
+            $box = $this->box('1555222' . str_pad((string) $i, 4, '0', STR_PAD_LEFT), 'Text ' . $i, $base->copy()->subMinutes(2 * $i));
+            $this->email('Subject ' . $i, 't-' . $i, $base->copy()->subMinutes(2 * $i + 1));
+            $expected[] = $box->uid;
+            $expected[] = 'email:t-' . $i;
+        }
+
+        $this->authenticateAs($this->owner);
+
+        $one = $this->rowIds($this->list('all', ['page' => 1]));
+        $two = $this->rowIds($this->list('all', ['page' => 2]));
+
+        $this->assertCount(50, $one);
+        $this->assertCount(10, $two);
+        $this->assertSame($expected, array_merge($one, $two));
+
+        // SMS-only pagination is unchanged: its own 50-row pages.
+        $this->assertCount(30, $this->rowIds($this->list('sms')));
+    }
 }
