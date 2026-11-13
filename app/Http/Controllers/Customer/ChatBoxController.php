@@ -686,6 +686,9 @@
                     'profileUrl' => $context->hasContact() && Gate::allows('view_contact')
                         ? route('customer.workspaces.businesses.people.show', [$workspaceUid, $businessUid, $context->contactUid])
                         : null,
+                    'addContactUrl' => ! $context->hasContact() && Gate::allows('create_contact')
+                        ? route('customer.workspaces.businesses.people.add', [$workspaceUid, $businessUid])
+                        : null,
                 ])->render(),
             ]);
         }
@@ -755,6 +758,9 @@
                     'matched'     => $contact !== null,
                     'profileUrl'  => $contact !== null && Gate::allows('view_contact')
                         ? route('customer.workspaces.businesses.people.show', [$workspaceUid, $businessUid, $contact->uid])
+                        : null,
+                    'addContactUrl' => $contact === null && Gate::allows('create_contact')
+                        ? route('customer.workspaces.businesses.people.add', [$workspaceUid, $businessUid])
                         : null,
                 ])->render(),
             ]);
