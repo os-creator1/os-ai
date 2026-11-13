@@ -70,7 +70,7 @@ return [
 
     'links' => [
         'help_centre' => env('MARKETING_HELP_URL'),
-        'support_email' => env('MARKETING_SUPPORT_EMAIL'),
+        'support_email' => env('MARKETING_SUPPORT_EMAIL', 'support@getmotiongrove.com'),
         'rates' => env('MARKETING_RATES_URL'),
         'privacy' => env('MARKETING_PRIVACY_URL'),
         'terms' => env('MARKETING_TERMS_URL'),
@@ -217,7 +217,24 @@ return [
     | Page metadata (unique title + description per page)
     |--------------------------------------------------------------------------
     */
+    // Zoom Marketplace support contact and published service commitments.
+    // Confirm support capacity and email deliverability before submitting to Zoom.
+    'support' => [
+        'email' => 'support@getmotiongrove.com',
+        'legal_email' => 'legal@getmotiongrove.com',
+        'hours' => 'Monday–Friday, 09:00–17:00 (Europe/Vilnius), excluding Lithuanian public holidays',
+        'first_response' => 'Within 2 business days',
+    ],
+
     'pages' => [
+        'support' => [
+            'title' => 'Support Center | MotionGrove',
+            'description' => 'Contact MotionGrove support by email, review our published business hours and first-response commitment, or find help with your Zoom calendar integration.',
+        ],
+        'zoom-docs' => [
+            'title' => 'Zoom Integration Guide | MotionGrove',
+            'description' => 'Step-by-step help for connecting Zoom to MotionGrove Calendar, scheduling Zoom meetings, troubleshooting issues and disconnecting or removing the app.',
+        ],
         'home' => [
             'title' => 'MotionGrove — More bookings. Less busywork.',
             'description' => 'MotionGrove helps small businesses get found, turn visitors into leads and get booked — with a website, SEO, optional ads, CRM, automations and real people to help you set up.',

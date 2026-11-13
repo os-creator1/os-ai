@@ -1,0 +1,67 @@
+/* Public MotionGrove support and Zoom documentation; scoped to marketing help pages. */
+.mg-help-page{color:#27211f;background:#fbf9f6}
+.mg-help-hero{background:radial-gradient(ellipse at 84% 16%,#eadbd6 0,transparent 46%),linear-gradient(160deg,#f5eeeb,#fcf9f6 68%);border-bottom:1px solid #e9e0db}
+.mg-help-hero-inner{padding-top:44px;padding-bottom:82px;max-width:1200px}
+.mg-help-breadcrumb{display:flex;flex-wrap:wrap;align-items:center;gap:11px;color:#75655f;font-size:13px;margin-bottom:68px}
+.mg-help-breadcrumb a{color:#75655f;text-decoration:none}
+.mg-help-breadcrumb a:hover{text-decoration:underline}
+.mg-help-eyebrow{display:block;font-size:11px;font-weight:800;letter-spacing:.14em;color:#a44943;margin-bottom:18px}
+.mg-help-hero h1{font-size:clamp(42px,6vw,78px);line-height:1.04;letter-spacing:-.052em;max-width:850px;margin:0 0 24px;font-weight:800}
+.mg-help-lead{font-size:clamp(17px,2vw,21px);color:#5e5350;line-height:1.62;max-width:710px;margin:0}
+.mg-help-hero-actions{display:flex;flex-wrap:wrap;align-items:center;gap:12px;margin-top:36px}
+.mg-help-button,.mg-help-button-secondary{display:inline-flex;align-items:center;justify-content:center;gap:14px;padding:15px 22px;border-radius:10px;text-decoration:none;font-size:14px;font-weight:750;transition:background-color .15s ease}
+.mg-help-button{background:#b4514a;color:#fff!important}
+.mg-help-button:hover{background:#933e38}
+.mg-help-button-secondary{background:#fff;color:#302625!important;border:1px solid #ddd1ca}
+.mg-help-button-secondary:hover{background:#f1e9e4}
+.mg-help-section{padding-top:86px;padding-bottom:22px}
+.mg-help-section-tight{padding-top:46px;padding-bottom:36px}
+.mg-help-section-heading{max-width:680px;margin-bottom:36px}
+.mg-help-section-heading h2,.mg-help-service-bar h2,.mg-help-bottom h2{font-size:clamp(27px,3vw,40px);line-height:1.15;letter-spacing:-.038em;margin:0 0 14px}
+.mg-help-section-heading p,.mg-help-service-bar p,.mg-help-bottom p{color:#6b5e58;font-size:16px;line-height:1.65;margin:0}
+.mg-help-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px}
+.mg-help-card{background:#fff;border:1px solid #e8dfd8;border-radius:16px;padding:30px;display:flex;flex-direction:column;align-items:flex-start;min-width:0}
+.mg-help-card-featured{background:#fff8f5;border-color:#e3c9c2}
+.mg-help-card-icon{width:43px;height:43px;display:grid;place-items:center;background:#f5e7e3;color:#9c433d;border-radius:12px;font-size:23px;font-weight:700;margin-bottom:20px}
+.mg-help-card h3{font-size:21px;letter-spacing:-.025em;margin:0 0 10px}
+.mg-help-card p{color:#635752;line-height:1.65;font-size:15px;flex:1;margin:0 0 23px}
+.mg-help-text-link{font-size:14px;font-weight:750;color:#aa443e!important;text-decoration:underline;text-underline-offset:4px;overflow-wrap:anywhere}
+.mg-help-service-bar{display:grid;grid-template-columns:1fr 1fr;gap:44px;padding:35px;border-radius:18px;background:#eee6e0}
+.mg-help-service-bar dl{margin:0;background:#fff;border-radius:12px;padding:8px 24px}
+.mg-help-service-bar dl div{padding:14px 0;border-bottom:1px solid #eee6e1}
+.mg-help-service-bar dl div:last-child{border-bottom:0}
+.mg-help-service-bar dt{font-size:12px;color:#7b6b65;margin-bottom:5px}
+.mg-help-service-bar dd{font-size:15px;color:#2c2522;margin:0;line-height:1.5}
+.mg-help-bottom{display:flex;justify-content:space-between;gap:32px;align-items:center;border-top:1px solid #e7ddd6;padding:36px 0 52px}
+.mg-help-bottom .mg-help-text-link{display:inline-block;margin-top:12px}
+.mg-help-small-links{display:flex;flex-direction:column;gap:15px;min-width:200px;font-size:14px}
+.mg-help-small-links a{color:#aa443e;text-decoration:underline;text-underline-offset:3px}
+.mg-help-hero-docs .mg-help-hero-inner{padding-bottom:70px}
+.mg-help-docs-shell{display:grid;grid-template-columns:220px minmax(0,780px);justify-content:space-between;gap:64px;padding-top:70px;padding-bottom:85px}
+.mg-help-docs-nav-inner{position:sticky;top:30px;display:flex;flex-direction:column;gap:16px;border-left:1px solid #e6dcd6;padding-left:19px}
+.mg-help-docs-nav strong{font-size:12px;text-transform:uppercase;letter-spacing:.1em;margin-bottom:9px}
+.mg-help-docs-nav a{font-size:13px;color:#685b54;line-height:1.45;text-decoration:none}
+.mg-help-docs-nav a:hover{color:#a74440;text-decoration:underline}
+.mg-help-docs-body{min-width:0}
+.mg-help-docs-section{scroll-margin-top:40px;padding-bottom:40px;margin-bottom:46px;border-bottom:1px solid #e8dfd8}
+.mg-help-docs-section:last-child{margin-bottom:0;border-bottom:0;padding-bottom:0}
+.mg-help-docs-section h2{font-size:clamp(27px,3vw,36px);letter-spacing:-.03em;line-height:1.18;margin:0 0 22px}
+.mg-help-docs-section h3{font-size:20px;margin:30px 0 14px}
+.mg-help-docs-section p,.mg-help-docs-section li{font-size:15.5px;line-height:1.75;color:#4d4540}
+.mg-help-docs-section p{margin:0 0 16px}
+.mg-help-docs-section a:not(.mg-help-button){color:#a74440;text-decoration:underline;text-underline-offset:3px}
+.mg-help-docs-section ul{padding-left:24px;margin:18px 0 23px}
+.mg-help-docs-section li{padding-left:5px;margin-bottom:13px}
+.mg-help-steps{padding-left:26px;margin:20px 0 24px}
+.mg-help-steps li::marker{font-weight:800;color:#a74440}
+.mg-help-note{background:#f3eae5;border-left:3px solid #b4514a;color:#554742;border-radius:0 9px 9px 0;padding:17px 21px;line-height:1.68;margin:23px 0;font-size:14px}
+.mg-help-faq{border-top:1px solid #e8dfd8}
+.mg-help-faq details{border-bottom:1px solid #e8dfd8;padding:18px 0}
+.mg-help-faq summary{cursor:pointer;font-weight:700;font-size:16px;color:#332b27}
+.mg-help-faq details p{padding-top:16px}
+.mg-help-docs-contact{background:#f4ebe6;border-radius:18px;padding:32px}
+.mg-help-docs-contact .mg-help-button{margin:7px 0 19px}
+.mg-help-docs-contact p:last-child{margin:0}
+.mg-help-page :focus-visible{outline:3px solid #bd5951;outline-offset:3px}
+@media(max-width:880px){.mg-help-docs-shell{grid-template-columns:1fr;gap:28px;padding-top:38px}.mg-help-docs-nav-inner{position:static;display:flex;flex-direction:row;flex-wrap:wrap;gap:10px;border:0;padding:0}.mg-help-docs-nav strong{width:100%;margin:0}.mg-help-docs-nav a{border:1px solid #ddd1ca;border-radius:24px;padding:9px 12px}}
+@media(max-width:640px){.mg-help-hero-inner{padding-top:30px;padding-bottom:55px}.mg-help-breadcrumb{margin-bottom:47px}.mg-help-hero h1{font-size:42px}.mg-help-grid,.mg-help-service-bar{grid-template-columns:1fr}.mg-help-section{padding-top:52px}.mg-help-section-tight{padding-top:15px}.mg-help-service-bar{gap:22px;padding:24px}.mg-help-bottom{flex-direction:column;align-items:flex-start}.mg-help-card{padding:24px}.mg-help-docs-shell{padding-bottom:52px}.mg-help-docs-contact{padding:24px}.mg-help-button{width:100%}.mg-help-hero-actions{align-items:stretch}.mg-help-docs-section{margin-bottom:32px}}

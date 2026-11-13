@@ -58,6 +58,18 @@ class MarketingController extends Controller
         return $this->page('pricing');
     }
 
+    /** Public Zoom Marketplace support page. */
+    public function support(): View
+    {
+        return $this->page('support');
+    }
+
+    /** Public guide to connecting, using and removing the native Zoom calendar integration. */
+    public function zoomDocs(): View
+    {
+        return $this->page('zoom-docs');
+    }
+
     private function page(string $page): View
     {
         abort_unless($this->site->servesRequest(request()), 404);
