@@ -27,14 +27,14 @@
 <div class="card" style="padding: 24px; display: flex; flex-direction: column; gap: 8px{{ $cardDark ? '; background: #181413; color: #FFFFFF; border-color: #181413' : '' }}"><b style="font-size: 17px">{{ $cardTitle }}</b><span style="color: {{ $cardDark ? '#C9C0BA' : '#5E5652' }}; line-height: 1.55">{{ $cardText }}</span></div>
 @endforeach
 </div>
-<p style="margin: 0; font-size: 13px; color: #6B625E">Feature availability depends on your plan. <a href="{{ $mg->url('pricing') }}" style="text-decoration: underline">Compare plans</a>.</p>
+@if ($mg->sellsOnline())<p style="margin: 0; font-size: 13px; color: #6B625E">Feature availability depends on your plan. <a href="{{ $mg->url('pricing') }}" style="text-decoration: underline">Compare plans</a>.</p>@endif{{ '' }}
 </section>
 @endif
 </div>
 
 @include('marketing.partials.cta-panel', ['title' => $c['cta']['title'], 'lead' => $c['cta']['lead'], 'buttons' => array_filter([
-    ['label' => 'Get started', 'url' => $mg->getStartedUrl(), 'style' => 'btn-p'],
-    $mg->hasBookDemo() ? ['label' => $c['cta']['secondary'], 'url' => $mg->bookDemoUrl(), 'style' => 'ghost'] : null,
+    ['label' => $mg->getStartedLabel(), 'url' => $mg->getStartedUrl(), 'style' => 'btn-p'],
+    $mg->sellsOnline() && $mg->hasBookDemo() ? ['label' => $c['cta']['secondary'], 'url' => $mg->bookDemoUrl(), 'style' => 'ghost'] : null,
 ])])
 @endsection
 

@@ -38,7 +38,11 @@ final class SiteSchema
     /** Where a visitor can be sent by a hero / final call-to-action. */
     public const CTA_TARGETS = ['signup' => 'Start signup', 'pricing' => 'See pricing', 'booking' => 'Book a call'];
 
-    public const GOALS = ['both' => 'Sell subscriptions and book calls', 'subscriptions' => 'Sell subscriptions', 'book_call' => 'Book a call'];
+    public const GOALS = [
+        'both' => 'Self-service signup, plus Book a call',
+        'subscriptions' => 'Self-service signup only',
+        'book_call' => 'Book a call only — no pricing, plans or signup shown',
+    ];
 
     public const HOME_ORDER_DEFAULT = ['hero', 'trust', 'problem', 'system', 'capabilities', 'people', 'how', 'videos', 'comparison', 'pricing', 'commitment', 'faq', 'final_cta'];
 
@@ -102,7 +106,8 @@ final class SiteSchema
                 self::strings('x.industries', 'Which industries do you serve?', 8, 60),
                 self::text('x.language', 'Website language', 40),
                 self::text('x.market', 'Market / country', 60),
-                self::choice('x.goal', 'What is the main goal of your website?', self::GOALS),
+                self::choice('x.niche', 'Which industry examples should the product illustrations use?', NichePresets::NICHES),
+                self::choice('x.goal', 'How should visitors become customers?', self::GOALS),
             ]],
             // ---------------------------------------------------------------- Screen 2: the 15 home sections
             'header' => ['step' => 2, 'page' => 'home', 'label' => 'Header & navigation', 'fields' => [

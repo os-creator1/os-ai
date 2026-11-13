@@ -8,7 +8,7 @@ use App\Library\Branding\AgencyWhiteLabelManager;
 use App\Library\Workspace\AgencyClientRelationshipManager;
 use App\Models\AgencySite;
 use App\Models\Workspace;
-use Illuminate\Http\Response;
+use Symfony\Component\HttpFoundation\Response;
 use Illuminate\Support\Facades\Cache;
 
 /**
@@ -36,6 +36,11 @@ class AgencySiteController extends Controller
     public function page(string $publicId, string $page): Response
     {
         [$site, $values] = $this->live($publicId);
+
+        // Call-only: the old Pricing URL never shows prices; it goes to the booking page instead.
+        if (($to = $this->renderer->redirectFor($site, $values, $page)) !== null) {
+            return redirect()->away($to, 302)->header('Cache-Control', 'no-store');
+        }
 
         $html = $this->renderer->page($site, $values, $page);
         abort_if($html === null, 404);

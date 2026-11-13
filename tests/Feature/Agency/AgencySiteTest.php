@@ -422,7 +422,7 @@ class AgencySiteTest extends TestCase
         $this->assertSame('49.00', $plan->price);
     }
 
-    public function test_book_a_call_mode_hides_prices_and_points_plans_at_the_calendar(): void
+    public function test_book_a_call_mode_has_no_pricing_page_and_sends_it_to_the_calendar(): void
     {
         [$agency, $owner] = $this->agency();
         $this->connectAgencyStripe($agency, (int) $owner->user_id);
@@ -431,11 +431,14 @@ class AgencySiteTest extends TestCase
         $this->openEditor($agency, $owner);
         $this->save($agency, ['x.pricing_mode' => 'book_call', 'x.goal' => 'book_call', 'x.booking_type_uid' => $type->public_booking_uuid], 7)->assertOk();
 
-        $html = $this->get($this->url('preview', $agency, ['page' => 'pricing']))->assertOk()->getContent();
-        $this->assertStringNotContainsString('$39', $html);
-        $this->assertStringContainsString('Starter', $html);
-        $this->assertStringContainsString(route('public.booking.show', $type->public_booking_uuid), $html);
-        $this->assertStringNotContainsString('/signup/', $html);
+        // The previously exposed Pricing URL never shows prices: it leads to the booking page.
+        $this->get($this->url('preview', $agency, ['page' => 'pricing']))
+            ->assertRedirect(route('public.booking.show', $type->public_booking_uuid));
+
+        $home = $this->get($this->url('preview', $agency, ['page' => 'home']))->assertOk()->getContent();
+        $this->assertStringNotContainsString('$39', $home);
+        $this->assertStringNotContainsString('Starter', $home);
+        $this->assertStringNotContainsString('/signup/', $home);
     }
 
     public function test_the_comparison_table_reflects_what_each_plans_tier_really_includes(): void

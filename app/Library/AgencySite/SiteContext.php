@@ -43,6 +43,15 @@ final class SiteContext
     ) {
     }
 
+    /**
+     * "Book a call only": the Agency turned self-service signup OFF. Server-enforced everywhere it matters — the
+     * Pricing page, plan lists, signup routes and every conversion CTA read this one switch, never a CSS rule.
+     */
+    public function callOnly(): bool
+    {
+        return $this->goal === 'book_call';
+    }
+
     public function offersSubscriptions(): bool
     {
         return in_array($this->goal, ['both', 'subscriptions'], true) && $this->pricingMode !== 'book_call';
@@ -57,6 +66,11 @@ final class SiteContext
      */
     public function actionablePlans(): array
     {
+        // Call-only sites never present plans, prices or comparisons, whatever plans the Agency has published.
+        if ($this->callOnly()) {
+            return [];
+        }
+
         return array_values(array_filter(
             $this->plans,
             fn (array $plan) => ($this->offersSubscriptions() && $plan['sellable']) || $this->offersBooking(),
