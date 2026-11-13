@@ -540,6 +540,38 @@ class BusinessEmailImapTest extends TestCase
         $this->assertSame(0, BusinessEmailAccount::query()->count());
     }
 
+    public function test_blank_ports_default_to_993_and_465_even_with_manually_entered_hosts(): void
+    {
+        $settings = $this->settings(['imap_port' => '', 'smtp_port' => null]);
+        $this->assertSame(993, $settings->imapPort);
+        $this->assertSame('ssl', $settings->imapSecurity);
+        $this->assertSame(465, $settings->smtpPort);
+        $this->assertSame('ssl', $settings->smtpSecurity);
+
+        // Explicit valid ports are preserved; each side defaults independently.
+        $mixed = $this->settings(['imap_port' => 143, 'smtp_port' => '']);
+        $this->assertSame([143, 'starttls', 465, 'ssl'], [$mixed->imapPort, $mixed->imapSecurity, $mixed->smtpPort, $mixed->smtpSecurity]);
+        $this->assertSame(587, $this->settings(['imap_port' => '', 'smtp_port' => 587])->smtpPort);
+
+        // Invalid explicit ports are still refused, never silently replaced.
+        $this->expectException(\App\Exceptions\BusinessEmail\BusinessEmailImapException::class);
+        $this->settings(['imap_port' => 25]);
+    }
+
+    public function test_connecting_with_manual_hosts_and_blank_ports_uses_the_standard_ports(): void
+    {
+        [, $business, $workspace] = $this->owner();
+
+        $this->post($this->connectOtherUrl($workspace, $business), $this->form(['imap_port' => '', 'smtp_port' => '']))->assertRedirect();
+
+        $account = BusinessEmailAccount::query()->where('business_id', $business->id)->firstOrFail();
+        $stored = ImapSettings::fromBlob(Crypt::decryptString((string) DB::table('business_email_accounts')->where('id', $account->id)->value('refresh_token_encrypted')));
+        $this->assertSame('imap.acme-plumbing.com', $stored->imapHost);
+        $this->assertSame(993, $stored->imapPort);
+        $this->assertSame(465, $stored->smtpPort);
+        $this->assertTrue($this->imap->implicitTls);
+    }
+
     public function test_unsafe_servers_are_refused_without_any_connection(): void
     {
         [, $business, $workspace] = $this->owner();
