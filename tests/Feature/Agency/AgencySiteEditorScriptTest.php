@@ -209,4 +209,31 @@ class AgencySiteEditorScriptTest extends TestCase
         $this->assertSame('Typed while the cleanup ran', $r['saved']);
         $this->assertTrue($r['reloaded'], 'the page reloads only once everything is saved');
     }
+
+    public function test_switching_dog_business_to_general_right_before_cleanup_is_respected(): void
+    {
+        $r = $this->runEditor()['clearAfterSwitchingDogToGeneral'];
+        $e = $r['events'];
+
+        $this->assertSame('general', $r['savedNiche'], 'the pending selection was saved first');
+        $this->assertContains('clear-refused', $e, 'the server refuses: General is saved');
+        $this->assertNotContains('clear', $e, 'no cleanup ran');
+        $this->assertNull($r['clearedNiche']);
+        $this->assertSame([], (array) $r['clearBody'], 'the page sends no industry of its own');
+        $this->assertFalse($r['reloaded'], 'no reload over the unfinished action');
+        $this->assertStringContainsString('Choose an industry first', $r['state']);
+    }
+
+    public function test_switching_general_to_dog_business_right_before_cleanup_uses_the_new_selection(): void
+    {
+        $r = $this->runEditor()['clearAfterSwitchingGeneralToDog'];
+        $e = $r['events'];
+
+        $this->assertSame('dog_business', $r['savedNiche']);
+        $this->assertSame('dog_business', $r['clearedNiche'], 'the cleanup used the just-saved industry');
+        $this->assertLessThan(array_search('clear', $e, true), array_search('save:x.niche', $e, true), 'selection saved before the cleanup');
+        $this->assertSame([], (array) $r['clearBody']);
+        $this->assertSame('dog_business', $r['savedNiche'], 'the selection is not overwritten');
+        $this->assertTrue($r['reloaded']);
+    }
 }

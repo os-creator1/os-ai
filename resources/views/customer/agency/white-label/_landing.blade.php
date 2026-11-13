@@ -71,7 +71,7 @@
                             <b>Old example content is still saved in this draft.</b>
                             @if (count($e['legacySamples']['pinned']))
                                 {{ count($e['legacySamples']['pinned']) }} saved section(s) are unedited copies of the original event examples and override your industry: {{ implode(', ', $e['legacySamples']['pinned']) }}.
-                                <button type="button" class="btn btn-sm btn-outline-secondary ms-1" data-clear-legacy-samples="{{ $e['values']['x.niche'] ?? '' }}">Replace them with my industry's examples</button>
+                                <button type="button" class="btn btn-sm btn-outline-secondary ms-1" data-clear-legacy-samples="1">Replace them with my industry's examples</button>
                                 <span class="d-block">Only those unedited copies are replaced. Your own wording, branding, links, calendar and plans are not touched.</span>
                             @endif
                             @if (count($e['legacySamples']['review']))

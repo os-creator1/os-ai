@@ -279,8 +279,8 @@
             return;
         }
         if (t.hasAttribute('data-clear-legacy-samples')) {
-            var nicheKey = t.getAttribute('data-clear-legacy-samples');
-            if (!nicheKey || !confirm('Replace the unedited event examples saved in this draft with your industry examples?')) { return; }
+            // The industry is NOT sent: the server uses the one saved on the draft after the flush below.
+            if (!confirm('Replace the unedited event examples saved in this draft with your industry examples?')) { return; }
             // Pending edits are saved FIRST, so the server cleans up the draft the owner actually sees; an edit typed while the
             // cleanup runs is saved after it (settleScopes). The page reloads only when every save succeeded.
             setState('Saving your changes…');
@@ -290,7 +290,7 @@
                     return null;
                 }
                 setState('Replacing old examples…');
-                return saver.enqueue(function () { return post(urls.clearSamples, { niche: nicheKey }); }).then(function (j) {
+                return saver.enqueue(function () { return post(urls.clearSamples, {}); }).then(function (j) {
                     if (!(j && j.ok)) { setState((j && j.message) || 'Could not replace the old examples.', true); return null; }
                     return settleScopes(null); // anything typed while the cleanup was running
                 });

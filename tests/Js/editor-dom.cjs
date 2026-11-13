@@ -181,7 +181,14 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
             if (opts.failSave) { return { status: 422, body: { ok: false, message: 'Use plain text only.' } }; }
             Object.assign(server.state, body.answers);
         }
-        if (kind === 'clear-legacy-samples') { server.events.push('clear'); if (opts.slowClear) { await wait(1200); } }
+        if (kind === 'clear-legacy-samples') {
+            // Like the real endpoint: the industry is the one SAVED on the draft; anything the page sends is ignored.
+            const niche = server.state['x.niche'] || opts.niche;
+            server.clearBody = body;
+            if (!niche || niche === 'general') { server.events.push('clear-refused'); return { status: 422, body: { ok: false, message: 'Choose an industry first: the old examples are only replaced for the industry saved on this draft.' } }; }
+            server.events.push('clear'); server.clearedNiche = niche;
+            if (opts.slowClear) { await wait(1200); }
+        }
         return ok();
     };
     const injectClear = (page) => page.evaluate(() => {
@@ -201,9 +208,23 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
             inputKept: await page.inputValue(TITLE), state: (await page.textContent('#wl-save-state')).trim(),
         };
     };
-    results.clearSavesPendingEditFirst = await scenario(browser, 'clear-pending', clearServer({}), clearRun('pending'));
-    results.clearBlockedBySaveFailure = await scenario(browser, 'clear-fail', clearServer({ failSave: true }), clearRun('pending'));
-    results.clearKeepsEditsTypedDuringTheRequest = await scenario(browser, 'clear-during', clearServer({ slowClear: true }), clearRun('during'));
+    // Switching the industry right before the click: the cleanup follows what is SAVED after the flush, never the page's old value.
+    const nicheRun = (to, settleFirst) => async (page, server) => {
+        let loads = 0; page.on('load', () => { loads++; });
+        page.on('dialog', (d) => d.accept());
+        await injectClear(page);
+        await page.click('[data-step-button="1"]');
+        if (settleFirst) { await page.selectOption('[data-path="x.niche"] select', settleFirst); await wait(1600); }   // autosaved already
+        await page.selectOption('[data-path="x.niche"] select', to);                                                  // pending autosave
+        await page.click('#clr');
+        await wait(3000);
+        return { events: server.events, savedNiche: server.state['x.niche'], clearedNiche: server.clearedNiche || null, clearBody: server.clearBody || null, reloaded: loads >= 1, state: (await page.textContent('#wl-save-state')).trim() };
+    };
+    results.clearSavesPendingEditFirst = await scenario(browser, 'clear-pending', clearServer({ niche: 'dog_business' }), clearRun('pending'));
+    results.clearBlockedBySaveFailure = await scenario(browser, 'clear-fail', clearServer({ failSave: true, niche: 'dog_business' }), clearRun('pending'));
+    results.clearKeepsEditsTypedDuringTheRequest = await scenario(browser, 'clear-during', clearServer({ slowClear: true, niche: 'dog_business' }), clearRun('during'));
+    results.clearAfterSwitchingDogToGeneral = await scenario(browser, 'clear-dog-general', clearServer({}), nicheRun('general', 'dog_business'));
+    results.clearAfterSwitchingGeneralToDog = await scenario(browser, 'clear-general-dog', clearServer({}), nicheRun('dog_business', null));
 
     console.log(JSON.stringify(results));
     await browser.close();

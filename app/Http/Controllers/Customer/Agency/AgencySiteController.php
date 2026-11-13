@@ -9,7 +9,6 @@ use App\Http\Controllers\Customer\Agency\Concerns\AuthorizesAgencyWorkspace;
 use App\Library\AgencySite\AgencySiteBookingService;
 use App\Library\AgencySite\AgencySiteManager;
 use App\Library\AgencySite\LegacySampleCleaner;
-use App\Library\AgencySite\NichePresets;
 use App\Library\AgencySite\SiteEditorPresenter;
 use App\Library\AgencySite\SiteRenderer;
 use App\Library\AgencySite\SiteSchema;
@@ -139,18 +138,17 @@ class AgencySiteController extends Controller
     }
 
     /**
-     * Select the industry and reset ONLY saved answers that are verbatim copies of the old general (event) demo
+     * Reset, for the industry SAVED on the draft (never one sent by the page), ONLY saved answers that are verbatim copies of the old general (event) demo
      * content. Custom text is never changed; it is reported back for the owner to review.
      */
-    public function clearLegacySamples(Request $request, string $workspaceUid): JsonResponse
+    public function clearLegacySamples(string $workspaceUid): JsonResponse
     {
         $agency = $this->authorizedAgency($workspaceUid);
-        $data = $request->validate(['niche' => ['required', 'string', 'in:'.implode(',', array_diff(array_keys(NichePresets::NICHES), [NichePresets::GENERAL]))]]);
         $site = $this->sites->find($agency);
         abort_if($site === null, 404);
 
-        return $this->guard(function () use ($agency, $site, $data) {
-            $result = $this->samples->apply((int) Auth::id(), $agency, $site, $data['niche']);
+        return $this->guard(function () use ($agency, $site) {
+            $result = $this->samples->apply((int) Auth::id(), $agency, $site);
 
             return $this->state($agency, $this->sites->find($agency)) + ['cleared' => array_keys($result['removed']), 'review' => $result['review']];
         });

@@ -7,6 +7,7 @@ use App\Models\AgencySite;
 use App\Models\Workspace;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Validation\ValidationException;
 
 /**
  * White Label — a narrow, explicit way to remove the OLD event/photo-booth demo copy from a draft that has since
@@ -68,7 +69,9 @@ final class LegacySampleCleaner
     }
 
     /**
-     * Select the niche and reset the pinned copies. Returns what was removed, so the previous draft can be restored by
+     * Reset the pinned copies for the industry the owner has SAVED. The niche is never supplied by the caller: it is read
+     * from the latest draft under the lock, so a stale page (or request) can neither pick nor overwrite the selection,
+     * and a draft on General is refused untouched. Returns what was removed, so the previous draft can be restored by
      * re-saving it, and logs the same.
      *
      * Which values are removable is decided against the LATEST draft while holding the same workspace write lock
@@ -78,9 +81,9 @@ final class LegacySampleCleaner
      *
      * @return array{niche: string, removed: array<string, mixed>, review: list<string>}
      */
-    public function apply(int $actorUserId, Workspace $agency, AgencySite $site, string $niche): array
+    public function apply(int $actorUserId, Workspace $agency, AgencySite $site): array
     {
-        return DB::transaction(function () use ($actorUserId, $agency, $niche): array {
+        return DB::transaction(function () use ($actorUserId, $agency): array {
             // Same lock, same order as every other draft write: workspace row first, then the draft.
             $locked = Workspace::query()->whereKey($agency->id)->lockForUpdate()->firstOrFail();
             $this->whiteLabel->assertCanManage($locked, $actorUserId);
@@ -88,11 +91,18 @@ final class LegacySampleCleaner
             $latest = $this->manager->find($locked);
             abort_if($latest === null, 404);
 
-            $analysis = $this->analyse($latest);
             $values = AgencySiteManager::values($latest);
+            $niche = (string) ($values['x.niche'] ?? NichePresets::GENERAL);
+
+            if ($niche === NichePresets::GENERAL || ! array_key_exists($niche, NichePresets::NICHES)) {
+                throw ValidationException::withMessages(['niche' => 'Choose an industry first: the old examples are only replaced for the industry saved on this draft.']);
+            }
+
+            $analysis = $this->analyse($latest);
             $removed = array_intersect_key($values, array_flip($analysis['pinned']));
 
-            $this->manager->save($actorUserId, $locked, ['x.niche' => $niche] + array_fill_keys($analysis['pinned'], null));
+            // x.niche is deliberately NOT written: the saved selection is what this cleanup follows.
+            $this->manager->save($actorUserId, $locked, array_fill_keys($analysis['pinned'], null));
 
             Log::info('agency-site.legacy-samples-cleared', ['agency_workspace_id' => $locked->id, 'niche' => $niche, 'previous_niche' => $values['x.niche'] ?? null, 'removed' => $removed]);
 

@@ -57,11 +57,11 @@ class AgencyLegacySampleCleanupTest extends TestCase
         return route('customer.workspaces.agency.site.clear-legacy-samples', ['workspaceUid' => $agency->uid]);
     }
 
-    private function staleDraft(Workspace $agency, Customer $owner): AgencySite
+    private function staleDraft(Workspace $agency, Customer $owner, ?string $niche = 'dog_business'): AgencySite
     {
         $type = app(AgencySiteBookingService::class)->create((int) $owner->user_id, $agency, ['name' => 'Intro call', 'duration_minutes' => 30, 'default_hours' => true]);
 
-        return $this->save($agency, $owner, [
+        return $this->save($agency, $owner, ($niche === null ? [] : ['x.niche' => $niche]) + [
             'x.goal' => 'book_call',
             'x.booking_type_uid' => $type->public_booking_uuid,
             // pinned copies of the old general demo (unedited defaults saved long ago)
@@ -88,7 +88,7 @@ class AgencyLegacySampleCleanupTest extends TestCase
         $this->assertSame(['copy.home.hero.lead'], $analysis['review']);
 
         $this->authenticateAs($owner);
-        $response = $this->postJson($this->url($agency), ['niche' => 'dog_business'])->assertOk()->assertJsonPath('ok', true);
+        $response = $this->postJson($this->url($agency))->assertOk()->assertJsonPath('ok', true);
         $response->assertJsonPath('review.0', 'copy.home.hero.lead');
 
         $after = AgencySiteManager::values($site->fresh());
@@ -116,7 +116,6 @@ class AgencyLegacySampleCleanupTest extends TestCase
     {
         [$agency, $owner] = $this->agency();
         $site = $this->staleDraft($agency, $owner);
-        $this->save($agency, $owner, ['x.niche' => 'dog_business']);
 
         $state = app(SiteEditorPresenter::class)->present($agency, $site->fresh());
         $trust = collect($state['groups']['trust']['fields'])->firstWhere('path', 'copy.home.trust.industries');
@@ -126,7 +125,7 @@ class AgencyLegacySampleCleanupTest extends TestCase
         $this->assertEqualsCanonicalizing(['copy.home.trust.industries', 'copy.home.hero.title'], $state['legacySamples']['pinned']);
     }
 
-    public function test_the_cleanup_is_owner_only_scoped_to_its_own_agency_and_validated(): void
+    public function test_the_cleanup_is_owner_only_and_scoped_to_its_own_agency(): void
     {
         [$agency, $owner] = $this->agency('Agency A');
         [$other, $otherOwner] = $this->agency('Agency B');
@@ -134,15 +133,66 @@ class AgencyLegacySampleCleanupTest extends TestCase
         $otherSite = $this->save($other, $otherOwner, ['copy.home.hero.title' => 'More bookings.']);
 
         $this->authenticateAs($otherOwner);
-        $this->postJson($this->url($agency), ['niche' => 'dog_business'])->assertNotFound();
-
-        $this->authenticateAs($owner);
-        $this->postJson($this->url($agency), ['niche' => 'general'])->assertStatus(422);
-        $this->postJson($this->url($agency), ['niche' => 'nonsense'])->assertStatus(422);
+        $this->postJson($this->url($agency))->assertNotFound();
 
         // Agency B is untouched by anything Agency A did.
         $this->assertSame('More bookings.', AgencySiteManager::values($otherSite->fresh())['copy.home.hero.title']);
         $this->assertArrayNotHasKey('x.niche', AgencySiteManager::values($otherSite->fresh()));
+    }
+
+    public function test_general_means_the_cleanup_is_unavailable_and_nothing_is_changed(): void
+    {
+        [$agency, $owner] = $this->agency();
+        $site = $this->staleDraft($agency, $owner, null);          // never chose an industry
+        $before = AgencySiteManager::values($site->fresh());
+        $this->authenticateAs($owner);
+
+        $this->postJson($this->url($agency))->assertStatus(422);
+
+        // The owner switched Dog Business -> General: the button is hidden and the endpoint refuses.
+        $this->save($agency, $owner, ['x.niche' => 'dog_business']);
+        $this->save($agency, $owner, ['x.niche' => 'general']);
+        $draft = AgencySiteManager::values($site->fresh());
+        $this->assertSame([], app(SiteEditorPresenter::class)->present($agency, $site->fresh())['legacySamples']['pinned']);
+        $this->postJson($this->url($agency))->assertStatus(422);
+        $this->assertSame($draft, AgencySiteManager::values($site->fresh()), 'a refused cleanup mutates nothing');
+        $this->assertSame($before['copy.home.hero.title'], $draft['copy.home.hero.title']);
+    }
+
+    public function test_a_niche_sent_by_the_client_can_neither_pick_nor_override_the_saved_selection(): void
+    {
+        [$agency, $owner] = $this->agency();
+        $site = $this->staleDraft($agency, $owner, 'general');
+        $this->authenticateAs($owner);
+
+        // A stale button/page claiming Dog Business is ignored while General is saved.
+        $this->postJson($this->url($agency), ['niche' => 'dog_business'])->assertStatus(422);
+        $this->assertSame('general', AgencySiteManager::values($site->fresh())['x.niche']);
+
+        // The owner moves General -> Dog Business: the cleanup follows what is saved, whatever the request says.
+        $this->save($agency, $owner, ['x.niche' => 'dog_business']);
+        $this->postJson($this->url($agency), ['niche' => 'general'])->assertOk();
+        $values = AgencySiteManager::values($site->fresh());
+        $this->assertSame('dog_business', $values['x.niche'], 'the saved selection is never overwritten');
+        $this->assertArrayNotHasKey('copy.home.trust.industries', $values);
+    }
+
+    public function test_a_niche_changed_in_another_tab_after_this_one_loaded_is_respected(): void
+    {
+        [$agency, $owner] = $this->agency();
+        $stale = $this->staleDraft($agency, $owner, 'dog_business')->fresh();   // this tab still believes Dog Business
+
+        $this->save($agency, $owner, ['x.niche' => 'general']);                // another tab switches to General
+        $before = AgencySiteManager::values($stale->fresh());
+
+        try {
+            app(LegacySampleCleaner::class)->apply((int) $owner->user_id, $agency, $stale);
+            $this->fail('General is saved: the cleanup must refuse');
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            $this->assertArrayHasKey('niche', $e->errors());
+        }
+
+        $this->assertSame($before, AgencySiteManager::values($stale->fresh()), 'nothing is deleted or overwritten');
     }
 
     public function test_custom_text_saved_concurrently_in_another_tab_is_never_deleted(): void
@@ -153,7 +203,7 @@ class AgencyLegacySampleCleanupTest extends TestCase
         // Another tab replaces the pinned headline with the owner's own words after that load.
         $this->save($agency, $owner, ['copy.home.hero.title' => 'Our own headline.']);
 
-        $result = app(LegacySampleCleaner::class)->apply((int) $owner->user_id, $agency, $stale, 'dog_business');
+        $result = app(LegacySampleCleaner::class)->apply((int) $owner->user_id, $agency, $stale);
 
         $values = AgencySiteManager::values($stale->fresh());
         $this->assertSame('Our own headline.', $values['copy.home.hero.title'], 'the concurrent custom edit survives');
@@ -169,7 +219,7 @@ class AgencyLegacySampleCleanupTest extends TestCase
 
         $queries = [];
         \Illuminate\Support\Facades\DB::listen(function ($q) use (&$queries) { $queries[] = strtolower($q->sql); });
-        app(LegacySampleCleaner::class)->apply((int) $owner->user_id, $agency, $site, 'dog_business');
+        app(LegacySampleCleaner::class)->apply((int) $owner->user_id, $agency, $site);
 
         $lock = collect($queries)->search(fn ($sql) => str_contains($sql, 'for update') && str_contains($sql, 'workspaces'));
         $draft = collect($queries)->search(fn ($sql) => str_starts_with($sql, 'select') && str_contains($sql, 'agency_sites'));
@@ -187,7 +237,7 @@ class AgencyLegacySampleCleanupTest extends TestCase
         $before = AgencySiteManager::values($site);
 
         try {
-            app(LegacySampleCleaner::class)->apply((int) $otherOwner->user_id, $agency, $site, 'dog_business');
+            app(LegacySampleCleaner::class)->apply((int) $otherOwner->user_id, $agency, $site);
             $this->fail('a user who cannot manage the Agency must be refused');
         } catch (\Throwable $e) {
             $this->assertNotInstanceOf(\PHPUnit\Framework\AssertionFailedError::class, $e);
