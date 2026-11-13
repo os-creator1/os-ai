@@ -49,7 +49,6 @@ class InboundCallingTest extends TestCase
             'messaging.voice.browser.enabled' => true,
             'messaging.voice.browser.credential_connection_id' => 'conn_webrtc_1',
             'messaging.voice.inbound.enabled' => true,
-            'messaging.voice.inbound.pilot_business_ids' => [$this->business->id],
             'messaging.voice.connection_id' => self::CONN,
             'messaging.voice.webhook_url' => 'https://app.example.test/webhooks/telnyx-voice',
             'services.telnyx.mode' => 'live',
@@ -166,15 +165,31 @@ class InboundCallingTest extends TestCase
         $this->assertSame([], $this->sent(fn (Request $r) => str_contains($r->url(), '/actions/')));
     }
 
-    public function test_a_business_that_is_not_pilot_approved_is_never_routed(): void
+    public function test_two_unrelated_businesses_are_routed_with_no_allowlist_and_never_across_tenants(): void
     {
         $this->setting('browser');
-        config(['messaging.voice.inbound.pilot_business_ids' => []]);
+        $this->online();
+        $this->assertSame([], (array) config('messaging.voice.inbound.pilot_business_ids', []), 'There is no per-Business allowlist.');
 
-        $this->ring()->assertOk();
+        // A second, unrelated tenant with its own number and routing.
+        [$customer2, $business2, $workspace2] = $this->tenant(WorkspacePlanTier::Growth);
+        $identity2 = $this->attachIdentity($business2);
+        $number2 = $this->attachNumber($identity2, $this->uniqueNumber(), true, BusinessMessagingNumberStatus::Active, 'num_ref_2');
+        \DB::table('business_messaging_numbers')->where('id', $number2->id)->update(['number_type' => 'local', 'voice_connection_id' => self::CONN, 'voice_assigned_at' => now()]);
+        BusinessInboundCallSetting::create(['business_id' => $business2->id, 'mode' => 'browser', 'browser_ring_secs' => 20]);
 
-        $this->assertSame(0, BusinessVoiceCall::query()->where('kind', 'inbound')->count());
-        $this->assertSame([], $this->actions('reject'));
+        $this->ring('evt-1', '+' . self::CALLER, 'caller-1')->assertOk()->assertJsonPath('status', 'applied');
+        $this->ring('evt-2', '+14155559999', 'caller-2', $number2->fresh()->phone_number)->assertOk()->assertJsonPath('status', 'applied');
+
+        $first = BusinessVoiceCall::where('telnyx_call_control_id', 'caller-1')->firstOrFail();
+        $second = BusinessVoiceCall::where('telnyx_call_control_id', 'caller-2')->firstOrFail();
+        $this->assertSame($this->business->id, (int) $first->business_id);
+        $this->assertSame($business2->id, (int) $second->business_id);
+        $this->assertSame(0, BusinessVoiceCallLeg::where('business_voice_call_id', $second->id)->count(), 'Business 2 has no available browser; business 1\'s user is never rung for it.');
+        $this->assertSame('missed', $second->refresh()->outcome);
+
+        // The first business's signed-in user can neither see nor answer the second business's call.
+        $this->postJson(route('customer.workspaces.businesses.calls.answer', [$this->workspace->uid, $this->business->uid, $second->uid]))->assertStatus(404);
     }
 
     public function test_an_unsigned_inbound_webhook_is_rejected_before_anything_is_processed(): void
@@ -550,9 +565,9 @@ class InboundCallingTest extends TestCase
         return route('customer.workspaces.businesses.calling.' . $name, [$this->workspace->uid, $this->business->uid]);
     }
 
-    public function test_the_owner_can_change_routing_but_not_to_forwarding_without_a_verified_number_or_without_pilot_approval(): void
+    public function test_the_owner_can_change_routing_but_not_to_forwarding_without_a_verified_number_or_while_the_platform_is_off(): void
     {
-        $this->get($this->calling('show'))->assertOk()->assertSee('When someone calls');
+        $this->get($this->calling('show'))->assertOk()->assertSee('When someone calls')->assertDontSee('pilot businesses', false);
 
         $this->put($this->calling('update'), ['mode' => 'browser', 'browser_ring_secs' => 25])->assertSessionHasNoErrors();
         $this->assertSame('browser', BusinessInboundCallSetting::firstOrFail()->mode);
@@ -560,9 +575,43 @@ class InboundCallingTest extends TestCase
         $this->put($this->calling('update'), ['mode' => 'forward', 'browser_ring_secs' => 25])->assertSessionHasErrors('mode');
         $this->put($this->calling('update'), ['mode' => 'browser', 'browser_ring_secs' => 3])->assertSessionHasErrors('browser_ring_secs');
 
-        config(['messaging.voice.inbound.pilot_business_ids' => []]);
+        // The one global emergency switch: choosing a mode is refused, the page explains, and turning calling off still works.
+        config(['messaging.voice.inbound.enabled' => false]);
+        $this->get($this->calling('show'))->assertOk()->assertSee('temporarily unavailable');
         $this->put($this->calling('update'), ['mode' => 'browser_then_forward', 'browser_ring_secs' => 20])->assertSessionHasErrors('mode');
         $this->assertSame('browser', BusinessInboundCallSetting::firstOrFail()->mode, 'Nothing changed.');
+        $this->put($this->calling('update'), ['mode' => 'off', 'browser_ring_secs' => 20])->assertSessionHasNoErrors();
+        $this->assertSame('off', BusinessInboundCallSetting::firstOrFail()->mode);
+    }
+
+    public function test_every_eligible_business_can_open_and_configure_calling_and_strangers_cannot(): void
+    {
+        [$customer2, $business2, $workspace2] = $this->tenant(WorkspacePlanTier::Growth);
+        $url2 = fn (string $n) => route('customer.workspaces.businesses.calling.' . $n, [$workspace2->uid, $business2->uid]);
+
+        // Business 1's owner configures business 1 and is a stranger to business 2.
+        $this->put($this->calling('update'), ['mode' => 'browser', 'browser_ring_secs' => 20])->assertSessionHasNoErrors();
+        $this->get($url2('show'))->assertStatus(404);
+        $this->put($url2('update'), ['mode' => 'browser', 'browser_ring_secs' => 20])->assertStatus(404);
+        $this->assertSame(0, BusinessInboundCallSetting::where('business_id', $business2->id)->count());
+
+        // Business 2's owner (never allowlisted anywhere) configures business 2 and is a stranger to business 1.
+        $this->authenticateAs($customer2);
+        $this->get($url2('show'))->assertOk()->assertSee('When someone calls');
+        $this->put($url2('update'), ['mode' => 'browser', 'browser_ring_secs' => 30])->assertSessionHasNoErrors();
+        $this->assertSame(30, (int) BusinessInboundCallSetting::where('business_id', $business2->id)->value('browser_ring_secs'));
+        $this->get($this->calling('show'))->assertStatus(404);
+        $this->put($this->calling('update'), ['mode' => 'off', 'browser_ring_secs' => 20])->assertStatus(404);
+        $this->assertSame('browser', BusinessInboundCallSetting::where('business_id', $this->business->id)->value('mode'));
+    }
+
+    public function test_the_calling_menu_entry_is_never_hidden_even_when_telephony_is_unavailable(): void
+    {
+        $settings = route('customer.workspaces.businesses.settings.show', [$this->workspace->uid, $this->business->uid]);
+        $this->get($settings)->assertOk()->assertSee(route('customer.workspaces.businesses.calling.show', [$this->workspace->uid, $this->business->uid]), false);
+
+        config(['messaging.voice.inbound.enabled' => false, 'services.telnyx.api_key' => '']);
+        $this->get($settings)->assertOk()->assertSee(route('customer.workspaces.businesses.calling.show', [$this->workspace->uid, $this->business->uid]), false);
     }
 
     public function test_verifying_a_forward_number_speaks_a_code_and_the_code_enables_forwarding(): void

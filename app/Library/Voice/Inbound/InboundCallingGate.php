@@ -6,13 +6,15 @@ use App\Models\Business;
 use App\Models\BusinessInboundCallSetting;
 
 /**
- * The single answer to "may inbound calling run?". Two independent switches that BOTH must be on: the platform flag
- * (default off) and an operator's pilot approval of this specific Business. Nothing a customer can edit turns either
- * on, because voice-minute billing is not finished and commercial inbound calling must never start silently.
+ * The single answer to "may inbound calling run?". It is available to every Business on the platform whenever the platform
+ * is operational: the global emergency switch (VOICE_INBOUND_CALLS_ENABLED, on by default; set false to disable inbound
+ * calling everywhere at once) AND the telephony stack (customer calling, browser calling, live Telnyx mode, credentials, a
+ * Voice connection, a webhook key, an https webhook URL). There is no per-Business approval or allowlist. Who may use it
+ * is decided elsewhere and unchanged: tenancy, CRM entitlement, permissions, and a Business's own voice-ready number.
  */
 final class InboundCallingGate
 {
-    /** Deployment-level: flag on, calling stack configured and live. */
+    /** Deployment-level: emergency switch on, calling stack configured and live. */
     public function platformEnabled(): bool
     {
         return (bool) config('messaging.voice.inbound.enabled')
@@ -25,15 +27,10 @@ final class InboundCallingGate
             && str_starts_with((string) (config('messaging.voice.webhook_url') ?: route('webhooks.telnyx_voice')), 'https://');
     }
 
-    public function pilotApproved(Business $business): bool
-    {
-        return in_array((int) $business->id, array_map('intval', (array) config('messaging.voice.inbound.pilot_business_ids')), true);
-    }
-
-    /** The platform flag AND this Business's pilot approval. */
+    /** Whether inbound calling may run for this Business: platform-wide, with no per-Business approval. */
     public function available(Business $business): bool
     {
-        return $this->platformEnabled() && $this->pilotApproved($business);
+        return $this->platformEnabled();
     }
 
     /** Available AND the Business has chosen a routing mode. */

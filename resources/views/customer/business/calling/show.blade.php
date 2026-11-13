@@ -23,7 +23,7 @@
 @endsection
 
 @section('content')
-    @php($enabled = $platformEnabled && $pilotApproved)
+    @php($enabled = $platformEnabled)
     @php($formsDisabled = ! $canManage || ! $enabled)
     <div class="mg-calling" data-role="calling-settings">
         <h1>Calling</h1>
@@ -34,7 +34,7 @@
         @endif
 
         @if (! $enabled)
-            <div class="mg-calling-note" data-role="calling-unavailable">Inbound calling is not turned on for this business yet. It is rolling out to pilot businesses; you will be able to choose an option here once your business is approved.</div>
+            <div class="mg-calling-note" data-role="calling-unavailable">Calling is temporarily unavailable. Your settings below are saved as they are, and you can change them again as soon as calling is back.</div>
         @elseif (! $canManage)
             <div class="mg-calling-note" data-role="calling-readonly">Only the account owner, or a member with calling permission, can change these settings.</div>
         @endif

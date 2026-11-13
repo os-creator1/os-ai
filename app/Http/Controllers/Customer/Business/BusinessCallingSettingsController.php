@@ -23,9 +23,10 @@ use Illuminate\Validation\Rule;
  * needs only ordinary back-office access; CHANGING routing needs the manage_inbound_calling authority (the Workspace owner
  * or an explicit grant) via WorkspaceManagementAuthority, which is refused outright during a View-As session.
  *
- * Nothing here can start inbound calling: that needs the platform flag AND an operator's pilot approval of this Business
- * (InboundCallingGate). Until both, the page says so and every control is disabled. The forwarding number is never
- * rendered back after it is saved (only its last four digits), and it cannot be dialled until verified.
+ * Available to every Business whenever the platform is operational (InboundCallingGate: global emergency switch + telephony
+ * stack); there is no per-Business approval. When it is not operational the page says so and every control is disabled.
+ * The forwarding number is never rendered back after it is saved (only its last four digits), and it cannot be dialled
+ * until verified.
  */
 class BusinessCallingSettingsController extends CustomerBaseController
 {
@@ -50,7 +51,6 @@ class BusinessCallingSettingsController extends CustomerBaseController
             'workspaceUid' => $workspaceUid,
             'businessUid' => $businessUid,
             'platformEnabled' => $this->gate->platformEnabled(),
-            'pilotApproved' => $this->gate->pilotApproved($business),
             'canManage' => $this->authority->mayManage($workspace, 'manage_inbound_calling'),
             'mode' => $setting?->mode ?? BusinessInboundCallSetting::MODE_OFF,
             'ringSecs' => $setting?->browser_ring_secs ?? (int) config('messaging.voice.inbound.browser_ring_secs_default'),
@@ -72,9 +72,9 @@ class BusinessCallingSettingsController extends CustomerBaseController
             'browser_ring_secs' => ['required', 'integer', 'min:' . (int) config('messaging.voice.inbound.browser_ring_secs_min'), 'max:' . (int) config('messaging.voice.inbound.browser_ring_secs_max')],
         ]);
 
-        // Turning calling on is an operator decision while voice billing is unfinished: refused unless pilot-approved.
+        // Choosing a routing mode needs the calling platform to be operational (turning it off is always allowed).
         if ($data['mode'] !== BusinessInboundCallSetting::MODE_OFF && ! $this->gate->available($business)) {
-            return $this->back($workspaceUid, $businessUid)->withErrors(['mode' => 'Inbound calling is not enabled for this business yet. It is available to pilot businesses approved by MotionGrove.']);
+            return $this->back($workspaceUid, $businessUid)->withErrors(['mode' => 'Calling is temporarily unavailable. Please try again shortly.']);
         }
 
         $existing = BusinessInboundCallSetting::query()->where('business_id', $business->id)->first();
@@ -152,7 +152,7 @@ class BusinessCallingSettingsController extends CustomerBaseController
     private function message(string $code): string
     {
         return match ($code) {
-            'unavailable' => 'Inbound calling is not enabled for this business yet.',
+            'unavailable' => 'Calling is temporarily unavailable. Please try again shortly.',
             'number_not_voice_ready' => 'This business needs an active calling-ready number first.',
             'rate_limited' => 'Too many verification calls. Try again tomorrow.',
             'dial_failed' => 'We could not place the verification call. Try again shortly.',

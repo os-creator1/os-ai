@@ -1,5 +1,5 @@
 {{-- Inbound browser calls on every normal page. Renders nothing unless the server says this user, in this Business, may take
-     inbound calls (flag on + pilot-approved + browser routing + permission + not View-As). Contact profiles include the
+     inbound calls (platform operational + browser routing + permission + not View-As). Contact profiles include the
      softphone themselves; the softphone partial is @once, so it can never be rendered twice. --}}
 @auth
     @php
