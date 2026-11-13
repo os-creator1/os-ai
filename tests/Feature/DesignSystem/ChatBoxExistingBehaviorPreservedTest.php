@@ -169,7 +169,8 @@ class ChatBoxExistingBehaviorPreservedTest extends TestCase
             $this->assertStringContainsString($hook, $contents, "Expected {$hook} to survive.");
         }
 
-        $this->assertStringContainsString('accept="image/*,video/*"', $contents);
+        // The picker offers exactly the types the reply endpoint accepts (an explicit list rather than image/*,video/*).
+        $this->assertStringContainsString('accept=".jpg,.jpeg,.png,.gif,.bmp,.webp,.mp4,.mov,.ogg,.qt"', $contents);
         $this->assertStringContainsString('class="form-control message"', $contents);
         $this->assertStringContainsString('form-send-message', $contents);
     }
