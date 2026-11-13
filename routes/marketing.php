@@ -34,6 +34,8 @@ $register = function (bool $named = true) use ($legalSlugs) {
     $route(Route::get('solutions', [MarketingController::class, 'solutions']), 'marketing.solutions');
     $route(Route::get('how-it-works', [MarketingController::class, 'howItWorks']), 'marketing.how-it-works');
     $route(Route::get('customers', [MarketingController::class, 'customers']), 'marketing.customers');
+    $route(Route::get('support', [MarketingController::class, 'support']), 'marketing.support');
+    $route(Route::get('docs/zoom', [MarketingController::class, 'zoomDocs']), 'marketing.zoom-docs');
     $route(Route::get('legal', [LegalController::class, 'index']), 'marketing.legal');
     foreach ($legalSlugs as $slug) {
         $route(Route::get($slug, [LegalController::class, 'show'])->defaults('slug', $slug), 'marketing.legal.'.$slug);
