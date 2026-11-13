@@ -478,8 +478,9 @@ class ChatBoxSecurityTest extends TestCase
 
         // Timeline (was the client-side history): media -> message -> time.
         $timeline = file_get_contents(base_path('resources/views/customer/ChatBox/partials/_timeline.blade.php'));
-        $this->assertTrue(strpos($timeline, 'timeline-media') < strpos($timeline, '{{ $item->body }}'));
-        $this->assertTrue(strpos($timeline, '{{ $item->body }}') < strpos($timeline, 'timeline-message-meta'));
+        $sms = substr($timeline, (int) strpos($timeline, '<div class="chat {{')); // the SMS bubble; the email card above it has its own order
+        $this->assertTrue(strpos($sms, 'timeline-media') < strpos($sms, '{{ $item->body }}'));
+        $this->assertTrue(strpos($sms, '{{ $item->body }}') < strpos($sms, 'timeline-message-meta'));
         $this->assertStringContainsString("{{ \$item->isInbound() ? 'chat-left' : '' }}", $timeline);
 
         // Optimistic send: message always -> optional media -> no time.

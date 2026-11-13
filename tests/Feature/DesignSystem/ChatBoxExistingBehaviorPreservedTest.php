@@ -363,9 +363,11 @@ class ChatBoxExistingBehaviorPreservedTest extends TestCase
 
         // Timeline partial (was the client-side history): media -> message -> time.
         $timeline = file_get_contents(base_path('resources/views/customer/ChatBox/partials/_timeline.blade.php'));
+        // The email card (earlier in the partial) has its own header -> subject -> body order; the rule is about the SMS bubble.
+        $sms = substr($timeline, (int) strpos($timeline, '<div class="chat {{'));
         $this->assertTrue(
-            strpos($timeline, 'timeline-media') < strpos($timeline, '{{ $item->body }}')
-            && strpos($timeline, '{{ $item->body }}') < strpos($timeline, 'timeline-message-meta')
+            strpos($sms, 'timeline-media') < strpos($sms, '{{ $item->body }}')
+            && strpos($sms, '{{ $item->body }}') < strpos($sms, 'timeline-message-meta')
         );
 
         // Optimistic: message always -> optional media -> no chat-time; exact 200px sizing.
