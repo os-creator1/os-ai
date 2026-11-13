@@ -78,13 +78,13 @@ class ChatBoxComponentAdoptionTest extends TestCase
 
     public function test_exactly_8_button_markers_are_present(): void
     {
-        $this->assertMarkerTotal('<x-button', 8);
+        $this->assertMarkerTotal('<x-button', 11);
     }
 
     public function test_exact_per_file_button_breakdown(): void
     {
         $expected = [
-            'resources/views/customer/ChatBox/_sidebar.blade.php' => 5, // 4 tab-filters + Load More
+            'resources/views/customer/ChatBox/_sidebar.blade.php' => 8, // 3 channel buttons (All/SMS/Email) + 4 tab-filters + Load More
             'resources/views/customer/ChatBox/index.blade.php' => 2, // composer send + contact-panel toggle
             'resources/views/customer/ChatBox/new.blade.php' => 1, // submit
             'resources/views/customer/ChatBox/partials/_chat_list.blade.php' => 0,

@@ -706,10 +706,10 @@
         /*
          * Dark mode: ONE continuous workspace surface.
          *
-         * Why there were three: the list pane (.sidebar-content) and the contact panel used --color-surface (#262625); the
-         * conversation panes were meant to use --color-chat-canvas (#1a1a19) via the rule above, but the theme's
-         * `.dark-layout .chat-application .content-right .chat-app-window .start-chat-area, .user-chats { background-color: #1e1e1d }`
-         * is MORE specific, so the panel actually rendered #1e1e1d; and the wrapper behind them kept the page canvas (#1a1a19).
+         * Why there were three: the list pane (.sidebar-content) and the contact panel used --color-surface (the dark surface token); the
+         * conversation panes were meant to use --color-chat-canvas (the dark canvas token) via the rule above, but the theme's
+         * `.dark-layout .chat-application .content-right .chat-app-window .start-chat-area, .user-chats { background-color: <a third, slightly different dark grey> }`
+         * is MORE specific, so the panel actually rendered that third grey; and the wrapper behind them kept the page canvas token.
          * Three parents, three hex values. Every pane is now painted with the same canvas token (selectors at least as specific as
          * the theme's own), and the panes are told apart by hairline borders only. The nav sidebar and header are not touched.
          * Everything here is under html.dark-layout, so light mode is unchanged.

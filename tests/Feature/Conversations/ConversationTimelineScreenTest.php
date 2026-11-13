@@ -66,8 +66,9 @@ class ConversationTimelineScreenTest extends TestCase
         );
 
         $composer = $this->between($html, '<form class="chat-app-form"', '</form>');
-        $this->assertStringContainsString('data-role="composer-channel">SMS</span>', $composer);
-        $this->assertStringNotContainsStringIgnoringCase('email', $composer, 'No Email option until a Business has email.');
+        $this->assertStringContainsString('data-role="composer-channel"', $composer);
+        $this->assertMatchesRegularExpression('/data-channel="sms"[^>]*>SMS<\/button>/', $composer, 'SMS is the default channel.');
+        $this->assertMatchesRegularExpression('/data-channel="email"[^>]*\bhidden\b[^>]*>Email<\/button>/', $composer, 'The Email option stays hidden until the server says email is usable.');
         $this->assertStringContainsString('id="message"', $composer);
     }
 
