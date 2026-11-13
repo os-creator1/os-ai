@@ -59,6 +59,16 @@ class ZoomCalendarUiTest extends TestCase
         $this->get($this->zoomPage())->assertOk()->assertSee('Needs reconnecting');
     }
 
+    public function test_a_pending_never_completed_authorization_still_offers_connect_not_reconnect(): void
+    {
+        ZoomConnection::query()->create([
+            'business_id' => $this->business->id, 'user_id' => $this->owner->user->id,
+            'state' => ZoomConnection::STATE_PENDING, 'state_nonce' => hash('sha256', 'n'),
+        ]);
+
+        $this->get($this->zoomPage())->assertOk()->assertSee('Connect Zoom')->assertDontSee('Reconnect Zoom', false)->assertSee('Not connected');
+    }
+
     public function test_a_disconnected_or_ineligible_calendar_shows_a_clear_setup_message_not_a_connect_button(): void
     {
         $this->setTier('core');
