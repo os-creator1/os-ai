@@ -34,7 +34,7 @@ final class CustomerCallPlacer
     }
 
     /** @return array{0: BusinessVoiceCall, 1: bool} the call, and whether it is a replay of an earlier identical request */
-    public function place(Business $business, Contacts $contact, int $userId, string $idempotencyKey, string $channel = 'server'): array
+    public function place(Business $business, ?Contacts $contact, int $userId, string $idempotencyKey, string $channel = 'server', ?string $number = null): array
     {
         $cfg = (array) config('messaging.voice.customer_calls');
         $apiKey = trim((string) config('services.telnyx.api_key'));
@@ -65,16 +65,18 @@ final class CustomerCallPlacer
             }
         }
 
-        if ((int) $contact->business_id !== (int) $business->id) {
+        // A call is to a CRM contact, or (for an authorized conversation with an unlinked number, resolved by the controller)
+        // to that exact number. No contact row is ever invented for it.
+        if ($contact !== null && (int) $contact->business_id !== (int) $business->id) {
             throw new CustomerCallRefusedException('contact_not_found', 'Contact not found.', 404);
         }
 
-        $destination = E164Normalizer::normalize('+' . ltrim((string) $contact->phone, '+'));
+        $destination = E164Normalizer::normalize('+' . ltrim((string) ($contact?->phone ?? $number ?? ''), '+'));
         if ($destination === null) {
             throw new CustomerCallRefusedException('invalid_destination', 'This contact does not have a valid phone number.');
         }
         // Business-scoped, like managed messaging's own opt-out lookups: another tenant's opt-out must never block this one.
-        if (Blacklists::query()->where('business_id', $business->id)->where('number', $contact->phone)->exists()) {
+        if (Blacklists::query()->where('business_id', $business->id)->where('number', $contact?->phone ?? ltrim($destination, '+'))->exists()) {
             throw new CustomerCallRefusedException('contact_blocked', 'This number is on the do-not-contact list.', 403);
         }
 
@@ -83,7 +85,7 @@ final class CustomerCallPlacer
         $token = bin2hex(random_bytes(32));
         $window = now()->subSeconds((int) $cfg['ring_timeout_secs'] + (int) $cfg['max_duration_secs'] + 60);
 
-        [$call, $replay] = DB::transaction(function () use ($business, $contact, $userId, $idempotencyKey, $number, $toHash, $token, $window, $cfg, $connectionId, $channel): array {
+        [$call, $replay] = DB::transaction(function () use ($destination, $business, $contact, $userId, $idempotencyKey, $number, $toHash, $token, $window, $cfg, $connectionId, $channel): array {
             // Serialise every placement for this number: the checks below and the insert are one atomic step.
             $locked = BusinessMessagingNumber::query()->whereKey($number->id)->lockForUpdate()->first();
             // Re-validate on the LOCKED row: a renewal may have suspended the number after it was first read.
@@ -91,7 +93,7 @@ final class CustomerCallPlacer
 
             $existing = BusinessVoiceCall::query()->where('business_id', $business->id)->where('idempotency_key', $idempotencyKey)->first();
             if ($existing !== null) {
-                if ($existing->to_hash !== $toHash || (int) $existing->contact_id !== (int) $contact->id) {
+                if ($existing->to_hash !== $toHash || (int) $existing->contact_id !== (int) $contact?->id) {
                     throw new CustomerCallRefusedException('idempotency_key_reused', 'That request key was already used for a different call.', 409);
                 }
 
@@ -129,7 +131,8 @@ final class CustomerCallPlacer
                 'client_state_hash' => hash('sha256', $token),
                 'business_id' => $business->id,
                 'business_messaging_number_id' => $number->id,
-                'contact_id' => $contact->id,
+                'contact_id' => $contact?->id,
+                'caller_number' => $contact === null ? $destination : null, // remote party of an unlinked call (encrypted by the model)
                 'initiated_by_user_id' => $userId,
                 'idempotency_key' => $idempotencyKey,
                 'to_hash' => $toHash,

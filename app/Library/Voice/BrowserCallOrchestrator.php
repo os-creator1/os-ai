@@ -212,7 +212,11 @@ final class BrowserCallOrchestrator
         $token = base64_decode($clientStateB64, true);
         $contact = $call->contact_id !== null ? Contacts::query()->find($call->contact_id) : null;
         $number = BusinessMessagingNumber::query()->find($call->business_messaging_number_id);
-        $destination = $contact !== null ? E164Normalizer::normalize('+' . ltrim((string) $contact->phone, '+')) : null;
+        // A contact's number, or (unlinked conversation call) the exact number recorded at placement. The to_hash check below
+        // proves it is still the one the call was authorized for.
+        $destination = $contact !== null
+            ? E164Normalizer::normalize('+' . ltrim((string) $contact->phone, '+'))
+            : ($call->contact_id === null && $call->caller_number !== null ? E164Normalizer::normalize((string) $call->caller_number) : null);
 
         // The token proves the event is for THIS call; the stored hash proves the destination was not changed since.
         if ($token === false || hash('sha256', $token) !== $call->client_state_hash

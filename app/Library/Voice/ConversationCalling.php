@@ -9,6 +9,7 @@ use App\Library\Voice\Inbound\InboundCallingSurface;
 use App\Library\Workspace\LocationAccessGuard;
 use App\Models\Blacklists;
 use App\Models\Business;
+use App\Models\ChatBox;
 use App\Models\Contacts;
 use App\Models\Workspace;
 use Illuminate\Support\Facades\Auth;
@@ -59,6 +60,32 @@ final class ConversationCalling
             'statusUrl' => route('customer.workspaces.businesses.calls.show', [...$scope, '__CALL__']),
             'hangupUrl' => route('customer.workspaces.businesses.calls.hangup', [...$scope, '__CALL__']),
         ];
+    }
+
+    /**
+     * The open conversation's own number, for a conversation with NO linked contact (no contact is created). Same gates as the
+     * placement endpoint: this Business's conversation (its Location already authorized by the caller), a valid E.164 number
+     * and no do-not-contact entry. The destination is the customer's number (`to`), never the Business's sending number.
+     *
+     * @return array{uid: string, conversation: string, label: string, phone: string, initials: string}|null
+     */
+    public function numberTarget(?array $calling, Business $business, ChatBox $box, string $label): ?array
+    {
+        if ($calling === null || (int) $box->business_id !== (int) $business->id) {
+            return null;
+        }
+
+        $digits = \App\Library\Business\Migration\ChatBoxBusinessBackfillV1::normalizeCounterparty((string) $box->to);
+        if ($digits === '' || E164Normalizer::normalize('+' . $digits) === null
+            || Blacklists::query()->where('business_id', $business->id)->where('number', $digits)->exists()) {
+            return null;
+        }
+
+        $label = trim($label) !== '' ? trim($label) : '+' . $digits;
+        $words = preg_split('/\s+/u', trim((string) preg_replace('/[^\p{L}\p{N}\s]/u', '', $label)), -1, PREG_SPLIT_NO_EMPTY) ?: [];
+        $initials = $words === [] ? '#' : mb_strtoupper(mb_substr($words[0], 0, 1) . (count($words) > 1 ? mb_substr(end($words), 0, 1) : ''));
+
+        return ['uid' => '', 'conversation' => (string) $box->uid, 'label' => $label, 'phone' => '+' . $digits, 'initials' => $initials];
     }
 
     /**

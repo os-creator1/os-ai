@@ -19,6 +19,7 @@ use App\Models\Contacts;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Gate;
 
 /**
  * JSON backend for a future CRM calling interface: place an outbound call to one of this Business's contacts, and read
@@ -39,26 +40,53 @@ class VoiceCallController extends CustomerBaseController
         $this->authorize('place_voice_calls');
 
         $data = $request->validate([
-            'contact_uid' => ['required', 'string', 'max:64'],
+            'contact_uid' => ['required_without:conversation_uid', 'nullable', 'string', 'max:64'],
+            // An open Conversation (its own uid). The number is ALWAYS resolved here from that conversation, never taken from the client.
+            'conversation_uid' => ['required_without:contact_uid', 'nullable', 'string', 'max:64'],
             'idempotency_key' => ['required', 'string', 'min:8', 'max:64', 'regex:/^[A-Za-z0-9_\-:.]+$/'],
             'channel' => ['sometimes', 'in:server,browser'],
         ]);
 
-        $contact = Contacts::query()->where('uid', $data['contact_uid'])->where('business_id', $business->id)->first();
-        // A Contact at a Location this member cannot reach is not found: same rule as the Contacts screens.
-        if ($contact === null || ! $this->locationAccessible($contact)) {
-            return $this->error('contact_not_found', 'Contact not found.', 404);
+        $contact = null;
+        $number = null;
+        if (! empty($data['contact_uid'])) {
+            $contact = Contacts::query()->where('uid', $data['contact_uid'])->where('business_id', $business->id)->first();
+            // A Contact at a Location this member cannot reach is not found: same rule as the Contacts screens.
+            if ($contact === null || ! $this->locationAccessible($contact)) {
+                return $this->error('contact_not_found', 'Contact not found.', 404);
+            }
+        } else {
+            // Same authority as opening the conversation: chat_box permission, this Business, and the conversation's Location.
+            $box = Gate::allows('chat_box')
+                ? \App\Models\ChatBox::query()->where('uid', $data['conversation_uid'])->where('business_id', $business->id)->first()
+                : null;
+            if ($box !== null && $box->location_id !== null) {
+                $location = $box->location;
+                if ($location === null || ! app(LocationAccessGuard::class)->userCanAccessLocation((int) Auth::id(), $location)) {
+                    $box = null;
+                }
+            }
+            if ($box === null) {
+                return $this->error('conversation_not_found', 'Conversation not found.', 404);
+            }
+            // A number the Business already has as a Contact is called as that Contact (with its Location rule); otherwise the
+            // conversation's own counterparty number is called. The Business's sending number is never the destination.
+            $contact = $box->resolveDisplayContact($business);
+            if ($contact !== null && ! $this->locationAccessible($contact)) {
+                return $this->error('conversation_not_found', 'Conversation not found.', 404);
+            }
+            $number = '+' . \App\Library\Business\Migration\ChatBoxBusinessBackfillV1::normalizeCounterparty((string) $box->to);
         }
 
         try {
-            [$call, $replay] = $placer->place($business, $contact, (int) Auth::id(), $data['idempotency_key'], $data['channel'] ?? 'server');
+            [$call, $replay] = $placer->place($business, $contact, (int) Auth::id(), $data['idempotency_key'], $data['channel'] ?? 'server', $number);
         } catch (CustomerCallRefusedException $e) {
             return $this->error($e->reason, $e->getMessage(), $e->httpStatus);
         }
 
         $status = $call->status === BusinessVoiceCall::STATUS_FAILED ? 502 : ($replay ? 200 : 202);
 
-        return response()->json(['data' => $this->present($call, $contact->uid), 'duplicate' => $replay], $status);
+        return response()->json(['data' => $this->present($call, $contact?->uid), 'duplicate' => $replay], $status);
     }
 
     /**
