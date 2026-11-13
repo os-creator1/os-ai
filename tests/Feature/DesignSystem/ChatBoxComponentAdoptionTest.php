@@ -167,7 +167,9 @@ class ChatBoxComponentAdoptionTest extends TestCase
     {
         $contents = file_get_contents(base_path('resources/views/customer/ChatBox/index.blade.php'));
 
-        $this->assertStringContainsString('<span class="add-to-pin"> </span>', $contents);
+        // Pin is a real button (direct pin/unpin, no confirmation), never a tooltip-wrapped span.
+        $this->assertStringContainsString('<button type="button" class="add-to-pin conv-hb"', $contents);
+        $this->assertStringNotContainsString('<x-tooltip text="Pin', $contents);
     }
 
     // -----------------------------------------------------------------

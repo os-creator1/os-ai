@@ -104,7 +104,7 @@ class ChatBoxDesignSystemContentTest extends TestCase
             (string) file_get_contents(resource_path('views/components/search-field.blade.php'))
         );
 
-        foreach (['x', 'search', 'plus-circle', 'refresh-cw', 'message-square', 'menu', 'shield', 'trash', 'image', 'send', 'delete', 'edit-2', 'info', 'panel-right'] as $name) {
+        foreach (['x', 'search', 'plus-circle', 'refresh-cw', 'message-square', 'menu', 'shield', 'trash', 'image', 'send', 'pin', 'paperclip', 'phone', 'info', 'panel-right'] as $name) {
             $present = str_contains($combined, 'name="' . $name . '"')
                 || str_contains($combined, 'icon="' . $name . '"')
                 || ($name === 'search' && str_contains($combined, '<x-search-field'));
@@ -119,7 +119,7 @@ class ChatBoxDesignSystemContentTest extends TestCase
     {
         $expected = [
             'resources/views/customer/ChatBox/_sidebar.blade.php' => 3, // x, plus-circle (literal) + refresh-cw (icon prop); search is drawn by <x-search-field>
-            'resources/views/customer/ChatBox/index.blade.php' => 9, // 8 literal <x-ds-icon> tags + the contact-panel toggle's panel-right (icon prop)
+            'resources/views/customer/ChatBox/index.blade.php' => 10, // 9 literal <x-ds-icon> tags (incl. pin, paperclip, phone) + the contact-panel toggle's panel-right (icon prop)
             'resources/views/customer/ChatBox/new.blade.php' => 2, // info (literal) + send (icon prop)
             'resources/views/customer/ChatBox/partials/_chat_list.blade.php' => 0,
             'resources/views/customer/ChatBox/partials/_chat_row.blade.php' => 0,
@@ -133,7 +133,7 @@ class ChatBoxDesignSystemContentTest extends TestCase
             $total += $actual;
         }
 
-        $this->assertSame(14, $total);
+        $this->assertSame(15, $total);
     }
 
     /**
@@ -160,18 +160,14 @@ class ChatBoxDesignSystemContentTest extends TestCase
      * a line break inside '...' or "..." is a syntax error, and it stopped the
      * inbox's whole page script — search, load more, sending — from running.
      */
-    public function test_the_two_js_string_embedded_pin_unpin_icons_are_template_literals(): void
+    public function test_the_pin_control_is_a_button_and_no_icon_is_embedded_in_a_js_string(): void
     {
         $contents = file_get_contents(base_path('resources/views/customer/ChatBox/index.blade.php'));
 
-        $this->assertStringContainsString(
-            'addToPin.append(`<x-ds-icon name="delete" class="cursor-pointer font-medium-2 mx-1 text-danger" />`);',
-            $contents
-        );
-        $this->assertStringContainsString(
-            'addToPin.append(`<x-ds-icon name="edit-2" class="cursor-pointer font-medium-2 mx-1 text-info" />`);',
-            $contents
-        );
+        // Pin/unpin only toggles state on a server-rendered button; no icon is swapped in through a JS string any more.
+        $this->assertStringNotContainsString('addToPin.append(', $contents);
+        $this->assertStringContainsString('function setPinState(isPinned)', $contents);
+        $this->assertStringContainsString('<x-ds-icon name="pin"', $contents);
         $this->assertDoesNotMatchRegularExpression(
             '/[\'"]<x-ds-icon/',
             $contents,
@@ -179,7 +175,7 @@ class ChatBoxDesignSystemContentTest extends TestCase
         );
     }
 
-    public function test_the_rendered_pin_unpin_icon_strings_span_lines_only_inside_template_literals(): void
+    public function test_the_rendered_pin_control_is_a_server_rendered_button_with_no_js_embedded_icon(): void
     {
         [, , $business, $workspace] = $this->authenticatedCustomerWithChatBox();
 
@@ -187,18 +183,15 @@ class ChatBoxDesignSystemContentTest extends TestCase
             ->assertOk()
             ->getContent();
 
-        preg_match_all('/addToPin\.append\((.)<svg/', $html, $matches);
-
-        $this->assertCount(2, $matches[1], 'Both pin/unpin icons render as inline SVG.');
-        $this->assertSame(['`', '`'], $matches[1]);
-        $this->assertStringContainsString("\n", substr($html, strpos($html, 'addToPin.append(`<svg'), 400), 'The rendered icon does span lines — which is why a quoted string cannot hold it.');
+        $this->assertStringNotContainsString('addToPin.append(', $html);
+        $this->assertMatchesRegularExpression('/<button type="button" class="add-to-pin conv-hb"[^>]*aria-pressed="false"[^>]*hidden>\s*<svg/', $html, 'The pin icon is rendered inline by the server, inside the button.');
     }
 
-    public function test_feather_replace_count_remains_exactly_3_in_index_and_feather_runtime_script_present(): void
+    public function test_feather_replace_count_remains_exactly_1_in_index_and_feather_runtime_script_present(): void
     {
         $contents = file_get_contents(base_path('resources/views/customer/ChatBox/index.blade.php'));
 
-        $this->assertSame(3, substr_count($contents, 'feather.replace()'));
+        $this->assertSame(1, substr_count($contents, 'feather.replace()'));
         $this->assertStringContainsString("mix('js/scripts/pages/chat.js')", $contents);
     }
 
@@ -302,8 +295,9 @@ class ChatBoxDesignSystemContentTest extends TestCase
     {
         $contents = file_get_contents(base_path('resources/views/customer/ChatBox/index.blade.php'));
 
-        $this->assertSame(3, substr_count($contents, 'Swal.fire({'));
-        $this->assertSame(3, substr_count($contents, 'buttonsStyling: false'));
+        // Block and delete keep their confirmation dialogs; pin/unpin is direct and has none.
+        $this->assertSame(2, substr_count($contents, 'Swal.fire({'));
+        $this->assertSame(2, substr_count($contents, 'buttonsStyling: false'));
     }
 
     public function test_no_scss_or_js_plugin_override_path_was_touched(): void

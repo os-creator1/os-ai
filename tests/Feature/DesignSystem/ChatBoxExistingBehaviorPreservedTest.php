@@ -143,7 +143,7 @@ class ChatBoxExistingBehaviorPreservedTest extends TestCase
         $this->assertStringContainsString("load: \"{{ route('customer.workspaces.businesses.conversations.load', [\$workspaceUid, \$businessUid]) }}\"", $index);
         $this->assertStringContainsString("const conversationUrl = (name, uid) => conversationRoutes[name].replace('__UID__', encodeURIComponent(uid));", $index);
 
-        foreach (["conversationUrl('timeline', chat_id)", "conversationUrl('reply', chatBoxId)", "conversationUrl('delete', sms_id)", "conversationUrl('block', sms_id)", "conversationUrl('pin', sms_id)", "conversationUrl('notification', chat_id)", 'url: conversationRoutes.load'] as $call) {
+        foreach (["conversationUrl('timeline', chat_id)", "conversationUrl('reply', chatBoxId)", "conversationUrl('delete', sms_id)", "conversationUrl('block', sms_id)", "conversationUrl('pin', uid)", "conversationUrl('notification', chat_id)", 'url: conversationRoutes.load'] as $call) {
             $this->assertStringContainsString($call, $index);
         }
 

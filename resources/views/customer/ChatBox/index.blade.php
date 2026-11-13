@@ -1619,6 +1619,8 @@
         .chat-application .chat-app-window .chat-app-form:not(.is-email-channel) {
             display: grid;
             grid-template-columns: minmax(0, 1fr) minmax(106px, 138px) auto;
+            /* Dense: the template picker and Send backfill beside the message field even when the attachment chip sits between them in the DOM. */
+            grid-auto-flow: row dense;
             align-items: center;
             box-sizing: border-box;
             min-width: 0;
@@ -1653,6 +1655,9 @@
         .chat-app-form:not(.is-email-channel) .conversation-channel-switch:not([hidden]) {
             grid-column: 1 / -1;
             margin: 0;
+        }
+        .chat-app-form:not(.is-email-channel) .composer-guidance {
+            grid-column: 1 / -1;
         }
         .chat-app-form .conversation-channel-switch[hidden],
         .composer-attachment-selected[hidden] {

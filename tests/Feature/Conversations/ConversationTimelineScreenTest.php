@@ -89,7 +89,8 @@ class ConversationTimelineScreenTest extends TestCase
         $this->assertStringContainsString('Added to contacts', $timeline);
 
         $panel = $response->json('context');
-        $this->assertStringContainsString('data-role="contact-panel-name">Maya Lopez', $panel);
+        // The name links to the contact's CRM profile for a viewer who may open it.
+        $this->assertMatchesRegularExpression('/data-role="contact-panel-name">\s*<a [^>]*data-role="contact-panel-name-link"[^>]*>Maya Lopez<\/a>/', $panel);
         $this->assertStringContainsString(self::PHONE, $panel);
         $this->assertStringContainsString('maya@example.test', $panel);
         $this->assertStringContainsString('Clients', $panel);
@@ -153,6 +154,7 @@ class ConversationTimelineScreenTest extends TestCase
 
         $this->assertStringContainsString('Maya Lopez', $panel, 'The person is still shown…');
         $this->assertStringNotContainsString('data-role="contact-panel-profile"', $panel, '…but not a link the viewer could not open.');
+        $this->assertStringNotContainsString('data-role="contact-panel-name-link"', $panel, '…and the name is plain text, not a link.');
     }
 
     public function test_every_tenancy_failure_is_the_same_404(): void
