@@ -266,6 +266,12 @@ class MarketingSite
         return true;
     }
 
+    /** Label of the "book a conversation" button. The platform books demos; a call-only Agency books calls. */
+    public function bookDemoLabel(): string
+    {
+        return 'Book a demo';
+    }
+
     /** Label of the generic primary conversion button. */
     public function getStartedLabel(): string
     {

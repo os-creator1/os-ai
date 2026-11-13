@@ -69,7 +69,7 @@
 @endif
 
 @include('marketing.partials.cta-panel', ['title' => $c['cta']['title'], 'lead' => $mg->hasBookDemo() ? $c['cta']['lead'] : null, 'buttons' => array_filter([
-    $mg->hasBookDemo() ? ['label' => 'Book a demo', 'url' => $mg->bookDemoUrl(), 'style' => 'btn-p'] : ['label' => $mg->getStartedLabel(), 'url' => $mg->getStartedUrl(), 'style' => 'btn-p'],
+    $mg->hasBookDemo() ? ['label' => $mg->bookDemoLabel(), 'url' => $mg->bookDemoUrl(), 'style' => 'btn-p'] : ['label' => $mg->getStartedLabel(), 'url' => $mg->getStartedUrl(), 'style' => 'btn-p'],
     $mg->sellsOnline() ? ['label' => $c['cta']['secondary'], 'url' => $mg->url('pricing'), 'style' => 'ghost'] : null,
 ])])
 @endsection

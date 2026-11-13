@@ -122,6 +122,11 @@ final class AgencyMarketingSite extends MarketingSite
         return ! $this->context->callOnly();
     }
 
+    public function bookDemoLabel(): string
+    {
+        return $this->context->callOnly() ? 'Book a call' : 'Book a demo';
+    }
+
     public function getStartedLabel(): string
     {
         return $this->context->callOnly() ? 'Book a call' : 'Get started';

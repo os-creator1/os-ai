@@ -29,7 +29,7 @@
 <span class="chip" style="background: #F6E7E4; color: #8F3B35; align-self: flex-start">{{ $industry['name'] }}</span>
 <h3 style="margin: 0; font-size: 34px; line-height: 1.1; font-weight: 800; letter-spacing: -0.03em">{{ $industry['head'] }}</h3>
 <p class="lead">{{ $industry['body'] }}</p>
-<div style="display: flex; flex-wrap: wrap; gap: 10px; padding-top: 6px">@if ($mg->hasBookDemo())<a href="{{ $mg->bookDemoUrl() }}" class="btn btn-p">Book a demo</a>@endif{{ '' }}@if ($mg->sellsOnline())<a href="{{ $mg->url('pricing') }}" class="btn {{ $mg->hasBookDemo() ? 'btn-s' : 'btn-p' }}">See pricing</a>@endif</div>
+<div style="display: flex; flex-wrap: wrap; gap: 10px; padding-top: 6px">@if ($mg->hasBookDemo())<a href="{{ $mg->bookDemoUrl() }}" class="btn btn-p">{{ $mg->bookDemoLabel() }}</a>@endif{{ '' }}@if ($mg->sellsOnline())<a href="{{ $mg->url('pricing') }}" class="btn {{ $mg->hasBookDemo() ? 'btn-s' : 'btn-p' }}">See pricing</a>@endif</div>
 </div>
 @if ($industry['jobs'])
 <div style="flex: 1 1 420px; display: flex; flex-direction: column; gap: 10px">

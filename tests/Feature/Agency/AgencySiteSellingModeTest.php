@@ -23,7 +23,12 @@ class AgencySiteSellingModeTest extends TestCase
     use CreatesAgencySaasFixtures;
     use RefreshDatabase;
 
-    private const PAGES = ['home', 'product', 'solutions', 'how-it-works'];
+    private const PAGES = ['home', 'product', 'solutions', 'how-it-works', 'customers'];
+
+    private function story(): array
+    {
+        return ['x.testimonials' => [['customer_name' => 'Dana', 'business_name' => 'Dana Dogs', 'quote' => 'It keeps my bookings tidy.', 'approved' => true]]];
+    }
 
     protected function setUp(): void
     {
@@ -79,7 +84,7 @@ class AgencySiteSellingModeTest extends TestCase
     {
         [$agency, $owner, $type] = $this->agency();
         $booking = route('public.booking.show', $type->public_booking_uuid);
-        $site = $this->save($agency, $owner, ['x.goal' => 'book_call', 'x.booking_type_uid' => $type->public_booking_uuid] + $this->legal());
+        $site = $this->save($agency, $owner, ['x.goal' => 'book_call', 'x.booking_type_uid' => $type->public_booking_uuid] + $this->story() + $this->legal());
         $this->publish($agency, $owner);
 
         foreach (self::PAGES as $page) {
@@ -94,6 +99,7 @@ class AgencySiteSellingModeTest extends TestCase
             $this->assertDoesNotMatchRegularExpression('/\$49|Compare plans|See pricing|Choose the plan|Get started|per month|\/ month|\bsign up\b|free trial/i', $html, "{$page}: no price, plan or signup wording");
             $this->assertStringNotContainsString('>Studio<', $html, "{$page}: the published plan is not shown");
             $this->assertStringNotContainsString('data-role="plans', $html);
+            $this->assertStringNotContainsString('Book a demo', $html, "{$page}: the call-only label is never 'Book a demo'");
             $this->assertStringContainsString('Book a call', $html, "{$page}: conversion CTA is Book a call");
             $this->assertStringContainsString('href="' . $booking . '"', $html, "{$page}: CTA leads to the real calendar");
         }
@@ -214,6 +220,11 @@ class AgencySiteSellingModeTest extends TestCase
         $home = $this->get(route('agency.site.home', $site->public_id))->getContent();
         $this->assertStringContainsString(route('agency.site.page', [$site->public_id, 'pricing']), $home, 'pricing is in the navigation');
         $this->assertStringContainsString('Get started', $home);
+
+        // A self-service site that also offers calls keeps the original "Book a demo" wording exactly.
+        $this->save($agency, $owner, ['x.goal' => 'both']);
+        $this->publish($agency, $owner);
+        $this->assertStringContainsString('Book a demo', $this->get(route('agency.site.page', [$site->public_id, 'solutions']))->getContent());
     }
 
     // ------------------------------------------------------------ isolation
@@ -271,7 +282,7 @@ class AgencySiteSellingModeTest extends TestCase
     public function test_the_dog_niche_uses_dog_examples_and_no_event_or_photo_booth_ones(): void
     {
         [$agency, $owner, $type] = $this->agency();
-        $site = $this->save($agency, $owner, ['x.goal' => 'book_call', 'x.niche' => 'dog_business', 'x.booking_type_uid' => $type->public_booking_uuid] + $this->legal());
+        $site = $this->save($agency, $owner, ['x.goal' => 'book_call', 'x.niche' => 'dog_business', 'x.booking_type_uid' => $type->public_booking_uuid] + $this->story() + $this->legal());
         $this->publish($agency, $owner);
 
         $all = '';
