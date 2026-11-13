@@ -307,7 +307,7 @@ class SettingsHubNavigationTest extends TestCase
             ['account-details', 'plan', 'team', 'agency-stripe', 'agency-saas-plans', 'agency-saas-revenue', 'agency-white-label'],
             $modules['account'] ?? null,
         );
-        $this->assertSame(['blocked-numbers'], $modules['outreach'] ?? null, 'The legacy blocked numbers stay with the Agency, unchanged.');
+        $this->assertSame(['phone-messaging', 'calling', 'blocked-numbers'], $modules['outreach'] ?? null, 'Calling joins the Agency outreach settings; the legacy blocked numbers stay with the Agency, unchanged.');
         $this->assertContains('messaging-provider', $modules['advanced'] ?? [], 'Advanced provider settings for the owner.');
         $this->assertStringContainsString('Agency account settings', $html);
     }
