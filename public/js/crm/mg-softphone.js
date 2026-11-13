@@ -157,7 +157,7 @@
         minBtn.hidden = !live;
         closeBtn.hidden = live || incoming;
         doneRow.hidden = live || incoming;
-        againBtn.hidden = direction === 'inbound' || !cfg.contactUid;
+        againBtn.hidden = direction === 'inbound' || !(cfg.contactUid || cfg.conversationUid);
         summaryEl.hidden = state !== 'ended' && state !== 'failed';
         timerEl.hidden = state !== 'connected' && state !== 'ended';
         var sub = subEl.getAttribute('data-sub') || '';
@@ -369,7 +369,9 @@
             if (stale()) { try { if (rtc !== sharedClient) { rtc.disconnect(); } } catch (e) {} if (client === rtc) { client = null; } throw CANCELLED; }
             expecting = true;
             setState('connecting', 'Connecting…', 'Calling ' + peerName + ' from your business number.');
-            return api('POST', cfg.placeUrl, { contact_uid: cfg.contactUid, idempotency_key: uuid(), channel: 'browser' });
+            // A linked contact is called by its uid; an unlinked conversation by the conversation's own uid (the server resolves the number).
+            var target = cfg.contactUid ? { contact_uid: cfg.contactUid } : { conversation_uid: cfg.conversationUid };
+            return api('POST', cfg.placeUrl, Object.assign(target, { idempotency_key: uuid(), channel: 'browser' }));
         }).then(function (r) {
             if (!r.ok || !r.json || !r.json.data) {
                 if (stale()) { throw CANCELLED; }
@@ -648,9 +650,12 @@
     // keeps showing who is really on the line; otherwise the previous contact's identity is fully replaced.
     window.MGSoftphone = {
         callContact: function (contact) {
-            if (!contact || typeof contact.uid !== 'string' || contact.uid === '') { return false; }
+            var hasUid = !!contact && typeof contact.uid === 'string' && contact.uid !== '';
+            var hasConversation = !!contact && typeof contact.conversation === 'string' && contact.conversation !== '';
+            if (!hasUid && !hasConversation) { return false; }
             if (!active && !starting) {
-                cfg.contactUid = contact.uid;
+                cfg.contactUid = hasUid ? contact.uid : null;
+                cfg.conversationUid = hasUid ? null : contact.conversation;
                 cfg.contactLabel = String(contact.label || '');
                 cfg.contactPhone = String(contact.phone || '');
                 cfg.contactInitials = String(contact.initials || '#');

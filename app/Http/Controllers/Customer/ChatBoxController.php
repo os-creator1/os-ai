@@ -660,7 +660,7 @@
             // contacts has the number. Everything contact-keyed hangs off it.
             $contact = $box->resolveDisplayContact($business);
             $context = $contextReader->read($business, $box, $contact);
-            $call = $this->callTarget($workspaceUid, $business, $contact, $context->title());
+            $call = $this->callTarget($workspaceUid, $business, $contact, $context->title(), $box);
 
             // Unified inbox: an email reply from this conversation answers the person's latest email thread (same Contact only).
             $replyTo = $contact === null ? null : app(\App\Library\Conversations\UnifiedEmailInbox::class)
@@ -772,9 +772,10 @@
          *
          * @return array{uid: string, label: string, phone: string, initials: string}|null
          */
-        private function callTarget(string $workspaceUid, Business $business, ?Contacts $contact, string $label): ?array
+        private function callTarget(string $workspaceUid, Business $business, ?Contacts $contact, string $label, ?ChatBox $box = null): ?array
         {
-            if ($contact === null) {
+            // No contact and no SMS conversation (an email thread with no person): nothing to call.
+            if ($contact === null && $box === null) {
                 return null;
             }
 
@@ -786,7 +787,12 @@
 
             $calling = app(\App\Library\Voice\ConversationCalling::class);
 
-            return $calling->target($calling->config($workspace, $business), $business, $contact, $label);
+            $config = $calling->config($workspace, $business);
+
+            // An unlinked conversation number is offered as itself (the box was already Location-authorized when it was resolved).
+            return $contact === null
+                ? $calling->numberTarget($config, $business, $box, $label)
+                : $calling->target($config, $business, $contact, $label);
         }
 
         /**

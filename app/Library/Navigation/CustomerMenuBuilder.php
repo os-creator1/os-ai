@@ -981,6 +981,12 @@ final class CustomerMenuBuilder
             $outreach[] = $this->item($user, 'phone-messaging', 'Phone & Messaging', 'phone', ['access_backend'], 'customer.workspaces.prospecting.phone-messaging', [$account->uid], $current, [
                 'customer.workspaces.prospecting.phone-messaging',
             ]);
+            // Calling (existing business-scoped settings). One Business -> straight to it; several -> a chooser, so calls are
+            // never configured for a guessed tenant.
+            $callingBusiness = $context->agencyOwnBusiness();
+            $outreach[] = $callingBusiness !== null
+                ? $this->item($user, 'calling', 'Calling', 'phone', ['access_backend'], 'customer.workspaces.businesses.calling.show', [$account->uid, $callingBusiness->uid], $current, ['customer.workspaces.businesses.calling.'])
+                : $this->item($user, 'calling', 'Calling', 'phone', ['access_backend'], 'customer.workspaces.calling.index', [$account->uid], $current, ['customer.workspaces.calling.', 'customer.workspaces.businesses.calling.']);
             $outreach[] = $this->item($user, 'blocked-numbers', 'Blocked numbers', 'shield', self::BLACKLIST_PERMISSIONS, 'customer.blacklists.index', [], $current, ['customer.blacklists.']);
         }
 
