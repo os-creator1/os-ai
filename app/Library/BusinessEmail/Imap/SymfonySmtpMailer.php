@@ -34,15 +34,30 @@ final class SymfonySmtpMailer implements SmtpMailer
 
         if ($stream instanceof SocketStream) {
             $stream->setTimeout((float) config('business_email.imap.io_timeout_seconds', 20));
-            $stream->setStreamOptions(['ssl' => [
-                'verify_peer' => true,
-                'verify_peer_name' => true,
-                'allow_self_signed' => false,
-                'peer_name' => $settings->smtpHost,
-                'SNI_enabled' => true,
-            ]]);
+            $stream->setStreamOptions(['ssl' => self::sslOptions($settings->smtpHost)]);
         }
 
         return $transport;
+    }
+
+    /**
+     * The socket is opened to the vetted IP, so PHP would otherwise derive the
+     * SNI name from that IP literal and name-based hosts (shared mail servers
+     * such as Namecheap Private Email) would present a default certificate
+     * that fails verification. SNI and verification both use the configured
+     * NAME; every check stays on.
+     *
+     * @return array<string, mixed>
+     */
+    public static function sslOptions(string $host): array
+    {
+        return [
+            'verify_peer' => true,
+            'verify_peer_name' => true,
+            'allow_self_signed' => false,
+            'peer_name' => $host,
+            'SNI_enabled' => true,
+            'SNI_server_name' => $host,
+        ];
     }
 }
