@@ -706,10 +706,10 @@
         /*
          * Dark mode: ONE continuous workspace surface.
          *
-         * Why there were three: the list pane (.sidebar-content) and the contact panel used --color-surface (#262625); the
-         * conversation panes were meant to use --color-chat-canvas (#1a1a19) via the rule above, but the theme's
-         * `.dark-layout .chat-application .content-right .chat-app-window .start-chat-area, .user-chats { background-color: #1e1e1d }`
-         * is MORE specific, so the panel actually rendered #1e1e1d; and the wrapper behind them kept the page canvas (#1a1a19).
+         * Why there were three: the list pane (.sidebar-content) and the contact panel used --color-surface (the dark surface token); the
+         * conversation panes were meant to use --color-chat-canvas (the dark canvas token) via the rule above, but the theme's
+         * `.dark-layout .chat-application .content-right .chat-app-window .start-chat-area, .user-chats { background-color: <a third, slightly different dark grey> }`
+         * is MORE specific, so the panel actually rendered that third grey; and the wrapper behind them kept the page canvas token.
          * Three parents, three hex values. Every pane is now painted with the same canvas token (selectors at least as specific as
          * the theme's own), and the panes are told apart by hairline borders only. The nav sidebar and header are not touched.
          * Everything here is under html.dark-layout, so light mode is unchanged.
@@ -1596,6 +1596,140 @@
         .conversation-context [data-context="email"] .conversation-context-details dt {
             margin-top: var(--space-3);
         }
+
+        /* Give Recents / Unread / Read / All equal-sized clickable columns. */
+        .chat-application .sidebar-content .tab-group.btn-group {
+            display: grid !important;
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+            gap: 0;
+            width: 100%;
+            box-sizing: border-box;
+        }
+        .chat-application .sidebar-content .tab-group.btn-group .tab-button {
+            align-items: center;
+            display: flex;
+            flex: none;
+            justify-content: center;
+            min-width: 0;
+            width: 100%;
+            padding: 0 var(--space-1) !important;
+        }
+
+        /* Compose inside the remaining conversation width, never outside it. */
+        .chat-application .chat-app-window .chat-app-form:not(.is-email-channel) {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) minmax(106px, 138px) auto;
+            /* Dense: the template picker and Send backfill beside the message field even when the attachment chip sits between them in the DOM. */
+            grid-auto-flow: row dense;
+            align-items: center;
+            box-sizing: border-box;
+            min-width: 0;
+            width: 100%;
+            max-width: 100%;
+            gap: var(--space-2);
+        }
+        .chat-app-form:not(.is-email-channel) .form-send-message {
+            grid-column: 1;
+            flex: none;
+            min-width: 0;
+            max-width: 100%;
+            width: 100%;
+            margin: 0 !important;
+        }
+        .chat-app-form:not(.is-email-channel) .composer-template-select {
+            grid-column: 2;
+            min-width: 0;
+            width: 100%;
+            margin: 0 !important;
+        }
+        .chat-app-form .composer-template-select .select2-container {
+            width: 100% !important;
+            max-width: 100%;
+            min-width: 0;
+        }
+        .chat-app-form:not(.is-email-channel) .send {
+            grid-column: 3;
+            margin: 0;
+            white-space: nowrap;
+        }
+        .chat-app-form:not(.is-email-channel) .conversation-channel-switch:not([hidden]) {
+            grid-column: 1 / -1;
+            margin: 0;
+        }
+        .chat-app-form:not(.is-email-channel) .composer-guidance {
+            grid-column: 1 / -1;
+        }
+        .chat-app-form .conversation-channel-switch[hidden],
+        .composer-attachment-selected[hidden] {
+            display: none !important;
+        }
+        .composer-attachment-trigger {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            border: 0;
+            background: transparent;
+            color: var(--color-text-secondary);
+            cursor: pointer;
+            padding: var(--space-2);
+        }
+        .composer-attachment-trigger:hover,
+        .composer-attachment-trigger:focus-visible { color: var(--color-primary); }
+        .composer-attachment-trigger:disabled { cursor: not-allowed; opacity: .45; }
+        .composer-attachment-selected {
+            display: flex;
+            grid-column: 1 / -1;
+            gap: var(--space-2);
+            align-items: center;
+            min-width: 0;
+            color: var(--color-text-secondary);
+            font-size: var(--type-caption-size);
+        }
+        .composer-attachment-selected #media-name {
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .composer-attachment-selected button {
+            border: none;
+            background: none;
+            color: var(--color-primary);
+            flex: none;
+        }
+        .chat-app-form.is-email-channel .composer-attachment-trigger,
+        .chat-app-form.is-email-channel #media-selection,
+        .chat-app-form.is-email-channel .form-send-message > .input-group-text {
+            display: none !important;
+        }
+        .chat-header .add-to-pin[hidden] { display: none !important; }
+        .chat-header .add-to-pin.is-pinned { color: var(--color-primary); }
+        .chat-header .add-to-pin:disabled { opacity: .6; cursor: progress; }
+        .conversation-context-profile-link { color: inherit; text-decoration: none; }
+        .conversation-context-profile-link:hover { color: var(--color-primary); text-decoration: underline; }
+        /* At intermediate browser widths the CRM sidebar and contact panel leave less room than the viewport suggests. */
+        @media (min-width: 551px) and (max-width: 1399px) {
+            .chat-application .chat-app-window .chat-app-form:not(.is-email-channel) {
+                grid-template-columns: minmax(0, 1fr) auto;
+            }
+            .chat-app-form:not(.is-email-channel) .form-send-message { grid-column: 1 / -1; }
+            .chat-app-form:not(.is-email-channel) .composer-template-select { grid-column: 1; }
+            .chat-app-form:not(.is-email-channel) .send { grid-column: 2; }
+        }
+        @media (max-width: 550px) {
+            .chat-application .chat-app-window .chat-app-form:not(.is-email-channel) {
+                grid-template-columns: minmax(0, 1fr) auto;
+            }
+            .chat-app-form:not(.is-email-channel) .form-send-message {
+                grid-column: 1 / -1;
+            }
+            .chat-app-form:not(.is-email-channel) .composer-template-select {
+                grid-column: 1;
+                max-width: 100%;
+            }
+            .chat-app-form:not(.is-email-channel) .send {
+                grid-column: 2;
+            }
+        }
     </style>
 
 @endsection
@@ -1642,7 +1776,7 @@
                             <h6 class="mb-0 text-truncate" data-role="conversation-title"></h6>
                             <span class="conversation-header-sub text-truncate" data-role="conversation-subtitle"></span>
                         </div>
-                        <span class="add-to-pin"> </span>
+                        <button type="button" class="add-to-pin conv-hb" aria-label="Pin conversation" title="Pin conversation" aria-pressed="false" hidden><x-ds-icon name="pin" size="18" aria-hidden="true" /></button>
                     </div>
                     <div class="d-flex align-items-center conversation-header-actions">
 
@@ -1699,17 +1833,21 @@
                         <p class="composer-guidance text-caption mb-0" data-role="composer-guidance" hidden></p>
 
                         <div class="input-group input-group-merge me-1 form-send-message">
-                            <textarea type="text" id="message" class="form-control message" placeholder="..." autocomplete="off"></textarea>
+                            <textarea id="message" class="form-control message" placeholder="Write a message" autocomplete="off" aria-label="Message"></textarea>
 
                             <span class="input-group-text">
-                                  <label for="media_image" class="attachment-icon form-label mb-0 position-relative">
-                                    <x-ds-icon name="image" id="mms-icon" class="cursor-pointer text-secondary" />
-                                    <input type="file" id="media_image" name="media_image" accept="image/*,video/*" hidden />
-                                  </label>
-                                </span>
+                                <button type="button" id="media-picker" class="composer-attachment-trigger" title="Attach photo or video" aria-label="Attach photo or video">
+                                    <x-ds-icon name="image" id="mms-icon" aria-hidden="true" />
+                                </button>
+                                <input type="file" id="media_image" name="media_image" accept=".jpg,.jpeg,.png,.gif,.bmp,.webp,.mp4,.mov,.ogg,.qt" hidden />
+                            </span>
 
                         </div>
-
+                        <div id="media-selection" class="composer-attachment-selected" role="status" aria-live="polite" hidden>
+                            <x-ds-icon name="paperclip" size="14" aria-hidden="true" />
+                            <span id="media-name"></span>
+                            <button type="button" id="media-remove" aria-label="Remove attachment">Remove</button>
+                        </div>
 
                         <div class="composer-template-select me-1">
                             <select class="form-select select2" id="sms_template" data-placeholder="Select Template">
@@ -1916,7 +2054,8 @@
         $switch.find("[data-channel=sms]").prop("hidden", !c.sms);
         $switch.find("[data-channel=email]").prop("hidden", !c.email);
         $switch.attr("data-single", c.sms && c.email ? "0" : "1");
-        $switch.prop("hidden", !c.sms && !c.email);
+        // A single available channel needs no SMS/Email pill beside the writing field.
+        $switch.prop("hidden", !(c.sms && c.email));
 
         const $locations = $("#email-location").empty();
         (c.locations || []).forEach(function(l) {
@@ -1965,7 +2104,7 @@
           }
         }
         syncSendAvailability();
-        $("#message").attr("placeholder", email ? "Write your email…" : "...");
+        $("#message").attr("placeholder", email ? "Write your email" : "Write a message");
       }
 
       $(document).on("click", "[data-role=composer-channel] .conversation-channel-option", function() {
@@ -2061,6 +2200,7 @@
         const usable = ready && (composerState.channel === "email" ? !!c.email : !!c.sms);
         const busy = !!emailSendsInFlight[String($(".chat_id").val())];
         $("#message").prop("disabled", !usable);
+        $("#media-picker").prop("disabled", !usable || composerState.channel !== "sms");
         $(".send").prop("disabled", !usable || busy);
       }
 
@@ -2099,7 +2239,7 @@
               return;
             }
             forgetEmailToken(intent);
-            toastr["success"](response.message || "Sent.", "{{ __('locale.labels.success') }}", { closeButton: true, positionClass: "toast-top-right", progressBar: true, newestOnTop: true, rtl: isRtl });
+            // The updated conversation timeline is confirmation; don't interrupt every email with a toast.
             if (stillHere()) {
               // Clear only the draft that was submitted: same conversation, still on Email, and the text untouched since. A newer
               // draft (typed while the request was in flight) is never erased.
@@ -2134,6 +2274,15 @@
       // may call, or null). The identity is stamped with the conversation it was loaded for and discarded the moment the selection
       // changes, so a click can never dial the previously selected contact. The softphone itself (existing mg-softphone.js) places
       // nothing until the server re-checks the contact on its own endpoint. A control is shown only when that softphone is present.
+      function setPinState(isPinned) {
+        const $pin = $(".add-to-pin");
+        $pin.prop("hidden", false)
+          .toggleClass("is-pinned", !!isPinned)
+          .attr("aria-pressed", isPinned ? "true" : "false")
+          .attr("aria-label", isPinned ? "Unpin conversation" : "Pin conversation")
+          .attr("title", isPinned ? "Unpin conversation" : "Pin conversation");
+      }
+
       function softphoneAvailable() {
         return !!(window.MGSoftphone && typeof window.MGSoftphone.callContact === "function");
       }
@@ -2142,6 +2291,7 @@
         $("[data-role=conversation-avatar]").text("");
         $("[data-role=conversation-subtitle]").text("");
         $(".conversation-call-btn").prop("hidden", true).removeAttr("data-call-uid data-call-conversation data-call-label data-call-phone data-call-initials data-call-for data-call-unavailable");
+        $(".add-to-pin").prop("hidden", true).prop("disabled", false);
       }
 
       function applyConversationHeader(response) {
@@ -2233,36 +2383,8 @@
             $(".active-chat").toggleClass("is-email-thread", response.channel === "email");
             applyComposer(response.composer, response.channel === "email" ? "email" : "sms");
 
-            let addToPin = $(".add-to-pin");
-
-            if (response.pinned === 1) {
-              addToPin.attr("title", '{{ __('locale.labels.unpin') }}');
-
-              addToPin.tooltip("dispose").tooltip();
-
-
-              // Swap the icon to 'delete'. A template literal, not a quoted
-              // string: the rendered SVG spans several lines, and a line break
-              // inside '...' is a syntax error that stops this whole script
-              // (search, load more, sending) from running.
-              addToPin.find("svg").remove();  // Remove the old icon element
-              addToPin.append(`<x-ds-icon name="delete" class="cursor-pointer font-medium-2 mx-1 text-danger" />`);
-
-              // Re-initialize Feather icons to update
-              feather.replace();
-            } else {
-              addToPin.attr("title", '{{ __('locale.labels.pin') }}');
-
-              addToPin.tooltip("dispose").tooltip();
-
-              // Swap the icon to 'edit-2'
-              addToPin.find("svg").remove();  // Remove the old icon element
-              addToPin.append(`<x-ds-icon name="edit-2" class="cursor-pointer font-medium-2 mx-1 text-info" />`);
-
-              // Re-initialize Feather icons to update
-              feather.replace();
-            }
-
+            setPinState(Number(response.pinned) === 1);
+            
             $("[data-role=conversation-title]").text(response.title);
             $(".chat_history").html(response.timeline);
             $("#conversation-context").html(response.context);
@@ -2288,11 +2410,11 @@
           // Destroy + recreate textarea to prevent browser restoring value
           let msg = $("#message");
           msg.replaceWith(msg.clone().val(""));
-          $("#media_image").val("");
+          $("#media_image").val("").trigger("change");
 
           // HARD RESET composer immediately on chat switch
           $("#message").val("");
-          $("#media_image").val("");
+          $("#media_image").val("").trigger("change");
 
           $(".chat_history").empty();  // Clear the previous person's timeline
           $("#conversation-context").empty();
@@ -2312,7 +2434,7 @@
           loadTimeline(chat_id).done(function() {
             setTimeout(() => {
               $("#message").val("");
-              $("#media_image").val("");
+              $("#media_image").val("").trigger("change");
             }, 50);
           });
         });
@@ -2327,6 +2449,33 @@
         });
       });
 
+
+      // The file picker is a real button (not a hidden input nested inside a label).
+      // Show the exact selected file and let the user remove it before sending MMS.
+      $("#media-picker").on("click", function() {
+        if (!$(this).prop("disabled")) { $("#media_image").trigger("click"); }
+      });
+      $("#media_image").on("change", function() {
+        const file = this.files && this.files[0];
+        const $chip = $("#media-selection");
+        if (!file) {
+          $("#media-name").text("");
+          $chip.prop("hidden", true);
+          return;
+        }
+        const ext = String(file.name || "").split(".").pop().toLowerCase();
+        if (!["jpg", "jpeg", "png", "gif", "bmp", "webp", "mp4", "mov", "ogg", "qt"].includes(ext) || file.size > 20000 * 1024) {
+          this.value = "";
+          $chip.prop("hidden", true);
+          toastr["warning"]("Use a JPG, PNG, GIF, WebP or supported video under 20 MB.", "{{ __('locale.labels.attention') }}");
+          return;
+        }
+        $("#media-name").text(file.name);
+        $chip.prop("hidden", false);
+      });
+      $("#media-remove").on("click", function() {
+        $("#media_image").val("").trigger("change");
+      });
 
       function safeMessageParagraph(value) {
         return $("<p></p>").text(value);
@@ -2363,6 +2512,11 @@
           messageValue = message.val(),
           mediaImage = $("#media_image")[0].files[0]; // get the selected file
 
+        // The existing reply endpoint requires text even when an MMS attachment is present.
+        if (!String(messageValue || "").trim()) {
+          toastr["warning"](mediaImage ? "Write a message to send with your attachment." : "Write a message first.", "{{ __('locale.labels.attention') }}");
+          return;
+        }
         $(".send").attr("disabled", true);
 
         if (!pendingConversationTokens[chatBoxId]) {
@@ -2401,15 +2555,9 @@
             }
 
             if (response.status === "processing") {
-              toastr["info"](response.message, "{{ __('locale.labels.attention') }}", {
-                closeButton: true,
-                positionClass: "toast-top-right",
-                progressBar: true,
-                newestOnTop: true,
-                rtl: isRtl
-              });
+              // Keep delivery status in the timeline; avoid a popup on each send.
+              if (String($(".chat_id").val()) === String(chatBoxId)) { loadTimeline(chatBoxId); }
             } else if (response.status === "success") {
-              toastr["success"](response.message);
 
               // Shown straight away, as it always was; the persisted message
               // takes its place the next time this timeline loads.
@@ -2435,7 +2583,7 @@
 
               chatHistory.append($chat);
               message.val("");
-              $("#media_image").val(""); // reset file input
+              $("#media_image").val("").trigger("change"); // reset file input
               $(".user-chats").scrollTop($(".user-chats > .chats").height());
             } else {
               toastr["warning"](response.message, "{{ __('locale.labels.attention') }}", {
@@ -2682,77 +2830,47 @@
 
       $(".add-to-pin").on("click", function(event) {
         event.preventDefault();
-        let sms_id = $(".chat_id").val();
-
-        Swal.fire({
-          title: "{{ __('locale.labels.are_you_sure') }}",
-          icon: "question",
-          showCancelButton: true,
-          confirmButtonText: "{{ __('locale.labels.yes') }}",
-          customClass: {
-            confirmButton: "btn btn-primary",
-            cancelButton: "btn btn-outline-danger ms-1"
-          },
-          buttonsStyling: false
-        }).then(function(result) {
-          if (result.value) {
-            $.ajax({
-              url: conversationUrl('pin', sms_id),
-              type: "POST",
-              data: {
-                _token: "{{csrf_token()}}"
-              },
-              success: function(response) {
-
-                if (response.status === "success") {
-                  toastr["success"](response.message, '{{__('locale.labels.success')}}!!', {
-                    closeButton: true,
-                    positionClass: "toast-top-right",
-                    progressBar: true,
-                    newestOnTop: true,
-                    rtl: isRtl
-                  });
-
-                  setTimeout(function() {
-                    window.location.reload(); // then reload the page.(3)
-                  }, 1000);
-
-                } else {
-                  toastr["warning"](response.message, '{{ __('locale.labels.warning') }}!', {
-                    closeButton: true,
-                    positionClass: "toast-top-right",
-                    progressBar: true,
-                    newestOnTop: true,
-                    rtl: isRtl
-                  });
-                }
-              },
-              error: function(reject) {
-                if (reject.status === 422) {
-                  let errors = reject.responseJSON.errors;
-                  $.each(errors, function(key, value) {
-                    toastr["warning"](value[0], "{{__('locale.labels.attention')}}", {
-                      closeButton: true,
-                      positionClass: "toast-top-right",
-                      progressBar: true,
-                      newestOnTop: true,
-                      rtl: isRtl
-                    });
-                  });
-                } else {
-                  toastr["warning"](reject.responseJSON.message, "{{__('locale.labels.attention')}}", {
-                    closeButton: true,
-                    positionClass: "toast-top-right",
-                    progressBar: true,
-                    newestOnTop: true,
-                    rtl: isRtl
-                  });
-                }
-              }
-            });
+        const $pin = $(this);
+        const uid = String($(".chat_id").val() || "");
+        if (!uid || uid.indexOf("email:") === 0 || $pin.prop("disabled")) { return; }
+        const wasPinned = $pin.attr("aria-pressed") === "true";
+        $pin.prop("disabled", true);
+        $.ajax({
+          url: conversationUrl('pin', uid),
+          type: "POST",
+          data: { _token: "{{ csrf_token() }}" },
+          dataType: "json"
+        }).done(function(response) {
+          if (response.status !== "success") {
+            toastr["warning"](response.message || "Could not update pin.", "{{ __('locale.labels.attention') }}");
+            return;
           }
+          if (String($(".chat_id").val()) !== uid) { return; }
+          // Direct pin/unpin, no confirmation dialog, success toast or page reload.
+          const isPinned = !wasPinned;
+          setPinState(isPinned);
+          const $row = $("#users-list li[data-id]").filter(function() { return String($(this).attr("data-id")) === uid; }).first();
+          if (!$row.length) { return; }
+          if (isPinned) {
+            let $list = $("#users-list > .chat-users-list-pinned");
+            if (!$list.length) {
+              $('<h4 class="chat-list-title" data-role="dynamic-pinned-title">Pinned</h4>').prependTo("#users-list");
+              $list = $('<ul class="chat-users-list-pinned chat-list media-list" data-role="dynamic-pinned-list"></ul>').insertAfter("#users-list > [data-role=dynamic-pinned-title]");
+              $('<h4 class="chat-list-title" data-role="dynamic-chats-title">Chats</h4>').insertBefore("#users-list > .chat-users-list");
+            }
+            $row.addClass("pinned-row").prependTo($list);
+          } else {
+            $row.removeClass("pinned-row").prependTo("#users-list > .chat-users-list");
+            if (!$("#users-list > .chat-users-list-pinned > li").length) {
+              $("#users-list > .chat-users-list-pinned").remove();
+              $("#users-list > .chat-list-title").remove();
+            }
+          }
+        }).fail(function(xhr) {
+          toastr["warning"]((xhr.responseJSON || {}).message || "Could not update pin.", "{{ __('locale.labels.attention') }}");
+        }).always(function() {
+          $pin.prop("disabled", false);
         });
-
       });
 
       @if(config('broadcasting.connections.pusher.app_id'))

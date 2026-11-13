@@ -143,7 +143,7 @@ class ChatBoxExistingBehaviorPreservedTest extends TestCase
         $this->assertStringContainsString("load: \"{{ route('customer.workspaces.businesses.conversations.load', [\$workspaceUid, \$businessUid]) }}\"", $index);
         $this->assertStringContainsString("const conversationUrl = (name, uid) => conversationRoutes[name].replace('__UID__', encodeURIComponent(uid));", $index);
 
-        foreach (["conversationUrl('timeline', chat_id)", "conversationUrl('reply', chatBoxId)", "conversationUrl('delete', sms_id)", "conversationUrl('block', sms_id)", "conversationUrl('pin', sms_id)", "conversationUrl('notification', chat_id)", 'url: conversationRoutes.load'] as $call) {
+        foreach (["conversationUrl('timeline', chat_id)", "conversationUrl('reply', chatBoxId)", "conversationUrl('delete', sms_id)", "conversationUrl('block', sms_id)", "conversationUrl('pin', uid)", "conversationUrl('notification', chat_id)", 'url: conversationRoutes.load'] as $call) {
             $this->assertStringContainsString($call, $index);
         }
 
@@ -169,7 +169,8 @@ class ChatBoxExistingBehaviorPreservedTest extends TestCase
             $this->assertStringContainsString($hook, $contents, "Expected {$hook} to survive.");
         }
 
-        $this->assertStringContainsString('accept="image/*,video/*"', $contents);
+        // The picker offers exactly the types the reply endpoint accepts (an explicit list rather than image/*,video/*).
+        $this->assertStringContainsString('accept=".jpg,.jpeg,.png,.gif,.bmp,.webp,.mp4,.mov,.ogg,.qt"', $contents);
         $this->assertStringContainsString('class="form-control message"', $contents);
         $this->assertStringContainsString('form-send-message', $contents);
     }
@@ -362,9 +363,11 @@ class ChatBoxExistingBehaviorPreservedTest extends TestCase
 
         // Timeline partial (was the client-side history): media -> message -> time.
         $timeline = file_get_contents(base_path('resources/views/customer/ChatBox/partials/_timeline.blade.php'));
+        // The email card (earlier in the partial) has its own header -> subject -> body order; the rule is about the SMS bubble.
+        $sms = substr($timeline, (int) strpos($timeline, '<div class="chat {{'));
         $this->assertTrue(
-            strpos($timeline, 'timeline-media') < strpos($timeline, '{{ $item->body }}')
-            && strpos($timeline, '{{ $item->body }}') < strpos($timeline, 'timeline-message-meta')
+            strpos($sms, 'timeline-media') < strpos($sms, '{{ $item->body }}')
+            && strpos($sms, '{{ $item->body }}') < strpos($sms, 'timeline-message-meta')
         );
 
         // Optimistic: message always -> optional media -> no chat-time; exact 200px sizing.

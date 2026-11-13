@@ -16,7 +16,13 @@
                 @endif
             </span>
         </span>
-        <h5 class="mb-25 mt-1" data-role="contact-panel-name">{{ $context->title() }}</h5>
+        <h5 class="mb-25 mt-1" data-role="contact-panel-name">
+            @if ($profileUrl !== null)
+                <a href="{{ $profileUrl }}" class="conversation-context-profile-link" data-role="contact-panel-name-link" title="View contact details">{{ $context->title() }}</a>
+            @else
+                {{ $context->title() }}
+            @endif
+        </h5>
         @if ($context->name !== null)
             <div class="text-caption text-numeric" data-role="contact-panel-phone">{{ $context->phone }}</div>
         @endif
@@ -25,7 +31,7 @@
         </div>
     </div>
 
-    @if (! empty($call) || $profileUrl !== null)
+    @if (! empty($call) || $profileUrl !== null || ($addContactUrl ?? null) !== null)
         <div class="conversation-context-actions">
         @if (! empty($call))
             {{-- Hidden until the page confirms the existing browser softphone is present; the server already verified this contact. --}}
@@ -34,7 +40,9 @@
             </button>
         @endif
             @if ($profileUrl !== null)
-                <x-button variant="outline" size="sm" :href="$profileUrl" data-role="contact-panel-profile">Open contact</x-button>
+                <x-button variant="outline" size="sm" :href="$profileUrl" data-role="contact-panel-profile">View contact details</x-button>
+            @elseif (($addContactUrl ?? null) !== null)
+                <x-button variant="outline" size="sm" :href="$addContactUrl" data-role="contact-panel-add">Add to contacts</x-button>
             @endif
         </div>
     @endif

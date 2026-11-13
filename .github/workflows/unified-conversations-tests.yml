@@ -87,6 +87,14 @@ jobs:
           php artisan test
           tests/Feature/Conversations/ContactActivityTimelineTest.php
           --stop-on-failure
+      - name: Run Conversations screen and Design System regression tests
+        run: >-
+          php artisan test
+          tests/Feature/Conversations/ConversationTimelineScreenTest.php
+          tests/Feature/DesignSystem/ChatBoxComponentAdoptionTest.php
+          tests/Feature/DesignSystem/ChatBoxDesignSystemContentTest.php
+          tests/Feature/DesignSystem/ChatBoxExistingBehaviorPreservedTest.php
+          --stop-on-failure
       - name: Set up Node
         uses: actions/setup-node@v4
         with:

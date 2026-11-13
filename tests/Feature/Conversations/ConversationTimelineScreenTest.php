@@ -66,8 +66,9 @@ class ConversationTimelineScreenTest extends TestCase
         );
 
         $composer = $this->between($html, '<form class="chat-app-form"', '</form>');
-        $this->assertStringContainsString('data-role="composer-channel">SMS</span>', $composer);
-        $this->assertStringNotContainsStringIgnoringCase('email', $composer, 'No Email option until a Business has email.');
+        $this->assertStringContainsString('data-role="composer-channel"', $composer);
+        $this->assertMatchesRegularExpression('/data-channel="sms"[^>]*>SMS<\/button>/', $composer, 'SMS is the default channel.');
+        $this->assertMatchesRegularExpression('/data-channel="email"[^>]*\bhidden\b[^>]*>Email<\/button>/', $composer, 'The Email option stays hidden until the server says email is usable.');
         $this->assertStringContainsString('id="message"', $composer);
     }
 
@@ -89,7 +90,8 @@ class ConversationTimelineScreenTest extends TestCase
         $this->assertStringContainsString('Added to contacts', $timeline);
 
         $panel = $response->json('context');
-        $this->assertStringContainsString('data-role="contact-panel-name">Maya Lopez', $panel);
+        // The name links to the contact's CRM profile for a viewer who may open it.
+        $this->assertMatchesRegularExpression('/data-role="contact-panel-name">\s*<a [^>]*data-role="contact-panel-name-link"[^>]*>Maya Lopez<\/a>/', $panel);
         $this->assertStringContainsString(self::PHONE, $panel);
         $this->assertStringContainsString('maya@example.test', $panel);
         $this->assertStringContainsString('Clients', $panel);
@@ -125,7 +127,9 @@ class ConversationTimelineScreenTest extends TestCase
         $this->assertStringContainsString('This number is not linked to a contact.', $response->json('context'));
         $this->assertStringNotContainsString('Maya', $response->json('context'));
         $this->assertStringNotContainsString('Marco', $response->json('context'));
-        $this->assertStringNotContainsString('people', $response->json('context'));
+        // No contact profile is linked for an ambiguous number (an "Add to contacts" link to the new-contact form is allowed).
+        $this->assertStringNotContainsString('data-role="contact-panel-profile"', $response->json('context'));
+        $this->assertStringNotContainsString('data-role="contact-panel-name-link"', $response->json('context'));
     }
 
     public function test_a_number_on_the_block_list_says_so_in_the_panel_and_the_timeline(): void
@@ -153,6 +157,7 @@ class ConversationTimelineScreenTest extends TestCase
 
         $this->assertStringContainsString('Maya Lopez', $panel, 'The person is still shown…');
         $this->assertStringNotContainsString('data-role="contact-panel-profile"', $panel, '…but not a link the viewer could not open.');
+        $this->assertStringNotContainsString('data-role="contact-panel-name-link"', $panel, '…and the name is plain text, not a link.');
     }
 
     public function test_every_tenancy_failure_is_the_same_404(): void
