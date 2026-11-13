@@ -20,6 +20,8 @@ final class BusinessEmailImapException extends RuntimeException
 
     public const TLS_FAILED = 'tls_failed';
 
+    public const SMTP_TLS_FAILED = 'smtp_tls_failed';
+
     public const AUTH_FAILED = 'auth_failed';
 
     public const PROTOCOL = 'protocol_error';
@@ -53,7 +55,8 @@ final class BusinessEmailImapException extends RuntimeException
             self::UNRESOLVABLE => 'We could not find that mail server. Check the server name for typos.',
             self::CONNECT_FAILED => 'We could not connect to the incoming (IMAP) server. Check the IMAP server name and port, and that IMAP access is enabled for the mailbox.',
             self::SMTP_CONNECT_FAILED => 'We could not connect to the outgoing (SMTP) server. Check the SMTP server name and port, and that SMTP access is enabled for the mailbox.',
-            self::TLS_FAILED => 'A secure (TLS) connection could not be verified. The server must have a valid certificate for the name you entered; we never connect without it.',
+            self::TLS_FAILED => 'A secure (TLS) connection to the incoming (IMAP) server could not be verified. The server must have a valid certificate for the IMAP server name you entered; we never connect without it.',
+            self::SMTP_TLS_FAILED => 'A secure (TLS) connection to the outgoing (SMTP) server could not be verified. The server must have a valid certificate for the SMTP server name you entered; we never connect without it.',
             self::AUTH_FAILED => 'The incoming (IMAP) server rejected the username or password. Many providers require an app password or have IMAP access turned off by default — check your provider\'s mail settings.',
             self::SMTP_AUTH_FAILED => 'The outgoing (SMTP) server rejected the username or password. Use the full email address and an app password if your provider offers one.',
             self::TIMEOUT => 'The mail server took too long to answer. Try again in a moment.',
