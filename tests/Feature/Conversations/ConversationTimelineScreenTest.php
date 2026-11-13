@@ -127,7 +127,9 @@ class ConversationTimelineScreenTest extends TestCase
         $this->assertStringContainsString('This number is not linked to a contact.', $response->json('context'));
         $this->assertStringNotContainsString('Maya', $response->json('context'));
         $this->assertStringNotContainsString('Marco', $response->json('context'));
-        $this->assertStringNotContainsString('people', $response->json('context'));
+        // No contact profile is linked for an ambiguous number (an "Add to contacts" link to the new-contact form is allowed).
+        $this->assertStringNotContainsString('data-role="contact-panel-profile"', $response->json('context'));
+        $this->assertStringNotContainsString('data-role="contact-panel-name-link"', $response->json('context'));
     }
 
     public function test_a_number_on_the_block_list_says_so_in_the_panel_and_the_timeline(): void
