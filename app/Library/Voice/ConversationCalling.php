@@ -24,6 +24,34 @@ use Illuminate\Support\Facades\Auth;
 final class ConversationCalling
 {
     /**
+     * Why outbound browser calling cannot run on this deployment, as a precise, non-sensitive message naming the missing
+     * requirement (a setting name, never a value or credential), or null when the platform side is operational. The user's
+     * own permission is separate (see unauthorizedReason()).
+     */
+    public function unavailableReason(Business $business): ?string
+    {
+        return match (true) {
+            ! (bool) config('messaging.voice.customer_calls.enabled') => 'Calling is switched off for this platform (VOICE_CUSTOMER_CALLS_ENABLED).',
+            ! (bool) config('messaging.voice.browser.enabled') => 'Browser calling is switched off for this platform (VOICE_BROWSER_CALLS_ENABLED).',
+            config('services.telnyx.mode') !== 'live' => 'Telnyx is not in live mode on this platform.',
+            trim((string) config('services.telnyx.api_key')) === '' => 'The Telnyx API key is not configured on this platform.',
+            trim((string) config('messaging.voice.connection_id')) === '' => 'The Telnyx voice connection is not configured (TELNYX_VOICE_CONNECTION_ID).',
+            trim((string) config('messaging.voice.browser.credential_connection_id')) === '' => 'The Telnyx browser-calling connection is not configured (TELNYX_WEBRTC_CONNECTION_ID).',
+            trim((string) config('services.telnyx.webhook_public_key')) === '' => 'The Telnyx webhook key is not configured on this platform.',
+            ! str_starts_with((string) (config('messaging.voice.webhook_url') ?: route('webhooks.telnyx_voice')), 'https://') => 'The Telnyx voice webhook URL must be https.',
+            default => null,
+        };
+    }
+
+    /** A precise reason when this user, specifically, may not place calls from this Business; null when they may. */
+    public function unauthorizedReason(Business $business): ?string
+    {
+        return app(CallingAuthority::class)->mayCall(Auth::user(), $business)
+            ? null
+            : 'Your role does not include placing calls. Ask the account owner to grant "place voice calls".';
+    }
+
+    /**
      * The softphone endpoints, or null when this user cannot place browser calls here (switches, live mode, permission,
      * and the CRM entitlement that every calls endpoint requires).
      *
@@ -33,11 +61,7 @@ final class ConversationCalling
     {
         $user = Auth::user();
 
-        if (! (bool) config('messaging.voice.customer_calls.enabled')
-            || ! (bool) config('messaging.voice.browser.enabled')
-            || config('services.telnyx.mode') !== 'live'
-            || $user === null
-            || ! $user->can('place_voice_calls')) {
+        if ($this->unavailableReason($business) !== null || ! app(CallingAuthority::class)->mayCall($user, $business)) {
             return null;
         }
 

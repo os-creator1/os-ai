@@ -150,6 +150,8 @@ class BrowserCallingTest extends TestCase
         $this->startBrowserSession()->assertStatus(503)->assertJsonPath('error.code', 'browser_calling_unavailable');
 
         config(['messaging.voice.browser.enabled' => true]);
+        // The Workspace owner needs no grant (CallingAuthority); staff without place_voice_calls are refused.
+        \DB::table('workspaces')->where('id', $this->workspace->id)->update(['owner_user_id' => $this->platformAdminId()]);
         $this->authenticateAs($this->customer, ['view_numbers']);
         $this->assertContains($this->startBrowserSession()->getStatusCode(), [401, 403]);
         $this->assertSame(0, BusinessVoiceBrowserCredential::count());
