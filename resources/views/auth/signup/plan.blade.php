@@ -55,6 +55,7 @@
                     <input type="hidden" name="tier" value="{{ $plan['tier_value'] }}">
                     <button type="submit" class="btn {{ $featured ? 'btn-primary' : 'btn-outline-primary' }} w-100">{{ __('Start with :plan', ['plan' => $plan['display_name']]) }}</button>
                 </form>
+                @include('legal._links', ['docs' => ['terms-of-service', 'refund-policy', 'privacy-policy']])
             </div>
         </div>
     @endforeach

@@ -1,1 +1,2 @@
 <p class="text-caption" data-role="legal-note">Your privacy policy and terms links are required before you can take sign-ups. Mandatory platform and payment-processor disclosures stay on checkout and billing pages.</p>
+@include('legal._links', ['docs' => ['agency-terms', 'terms-of-service']])

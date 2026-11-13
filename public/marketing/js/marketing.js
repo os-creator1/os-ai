@@ -59,3 +59,31 @@
     menu.addEventListener('click', function (e) { if (e.target.closest && e.target.closest('a')) { menu.open = false; } });
   });
 })();
+
+/* Legal Center: print action, active table-of-contents entry, close the mobile contents after a jump. */
+(function () {
+  'use strict';
+  var doc = document;
+  [].forEach.call(doc.querySelectorAll('[data-print]'), function (b) { b.addEventListener('click', function () { window.print(); }); });
+
+  var links = [].slice.call(doc.querySelectorAll('[data-toc]'));
+  if (links.length && 'IntersectionObserver' in window) {
+    var byId = {};
+    links.forEach(function (a) { byId[a.getAttribute('href').slice(1)] = a; });
+    var obs = new IntersectionObserver(function (entries) {
+      entries.forEach(function (e) {
+        if (!e.isIntersecting) return;
+        links.forEach(function (a) { a.classList.remove('is-active'); a.removeAttribute('aria-current'); });
+        var a = byId[e.target.id];
+        if (a) { a.classList.add('is-active'); a.setAttribute('aria-current', 'location'); }
+      });
+    }, { rootMargin: '-90px 0px -70% 0px' });
+    Object.keys(byId).forEach(function (id) { var h = doc.getElementById(id); if (h) obs.observe(h); });
+  }
+
+  var m = doc.querySelector('.lg-toc-m');
+  if (m) {
+    if (window.matchMedia && window.matchMedia('(max-width:960px)').matches) m.removeAttribute('open');
+    [].forEach.call(m.querySelectorAll('a'), function (a) { a.addEventListener('click', function () { m.removeAttribute('open'); }); });
+  }
+})();

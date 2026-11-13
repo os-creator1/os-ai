@@ -77,6 +77,12 @@
                             ])
                         </div>
                     @endif
+
+                    @if (isset($tabs['legal']))
+                        <div class="tab-pane fade @if ($activeTab === 'legal') show active @endif" id="platform-settings-tabs-legal" role="tabpanel">
+                            @include('admin.settings.platform._legal')
+                        </div>
+                    @endif
                 </x-tabs>
             </div>
         </x-card>

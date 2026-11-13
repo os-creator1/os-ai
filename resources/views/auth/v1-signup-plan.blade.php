@@ -56,6 +56,7 @@
 
             <button type="submit" class="btn btn-primary w-100 mt-1">{{ __('Continue to payment') }}</button>
         </form>
+        @include('legal._links', ['docs' => ['terms-of-service', 'refund-policy', 'privacy-policy']])
     @endif
 
     <form action="{{ route('logout') }}" method="POST" class="mt-1">
