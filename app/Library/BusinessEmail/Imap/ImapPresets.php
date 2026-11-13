@@ -9,7 +9,7 @@ use Closure;
  * for providers that will NOT work with ordinary credentials.
  *
  * Detection never connects anywhere: it uses the address's domain and (for
- * custom domains) the DNS MX host to recognise Zoho, Titan and Hostinger. A
+ * custom domains) the DNS MX host to recognise Zoho, Titan, Hostinger and Namecheap Private Email. A
  * plain custom domain with no recognised host gets the cPanel convention
  * (`mail.<domain>`) marked as a GUESS that the connection test confirms.
  */
@@ -69,6 +69,10 @@ final class ImapPresets
 
             if (str_ends_with($mx, '.titan.email') || $mx === 'titan.email') {
                 return $this->result($this->settings('imap.titan.email', 'smtp.titan.email'), 'Titan Email: use the mailbox password.', null, 'high');
+            }
+
+            if ($mx === 'mx1.privateemail.com' || $mx === 'mx2.privateemail.com') {
+                return $this->result($this->settings('mail.privateemail.com', 'mail.privateemail.com'), 'Namecheap Private Email: use the full mailbox address as the username and an app password (or the mailbox password if app passwords are not enabled).', null, 'high');
             }
 
             if (str_ends_with($mx, '.hostinger.com') || $mx === 'hostinger.com') {

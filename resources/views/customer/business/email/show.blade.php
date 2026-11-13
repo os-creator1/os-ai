@@ -40,27 +40,36 @@
         .bemail { max-width: 62rem; }
         .bemail-head { display: flex; align-items: center; flex-wrap: wrap; gap: .6rem; margin-bottom: .35rem; }
         .bemail-head h4 { margin: 0; }
-        .bemail-pill { display: inline-block; padding: .15rem .6rem; border-radius: 999px; font-size: .75rem; font-weight: 600; background: #f1ede6; color: #5c564d; white-space: nowrap; }
-        .bemail-pill.warn { background: #fbefd0; color: #7a5600; }
-        .bemail-pill.ok { background: #dff3e4; color: #1e6b34; }
+        .bemail-pill { display: inline-block; padding: .15rem .6rem; border-radius: 999px; font-size: .75rem; font-weight: 600; background: var(--color-surface-secondary); color: var(--color-text-secondary); border: 1px solid var(--color-border); white-space: nowrap; }
+        .bemail-pill.warn { background: var(--color-status-warning-soft-bg); color: var(--color-status-warning-text); border-color: var(--color-status-warning-border); }
+        .bemail-pill.ok { background: var(--color-status-success-soft-bg); color: var(--color-status-success-text); border-color: var(--color-status-success-border); }
         .bemail-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-bottom: 1rem; }
-        .bemail-card { background: #fff; border: 1px solid #e6e1d8; border-radius: .9rem; padding: 1.25rem; }
+        .bemail-card { background: var(--color-surface); color: var(--color-text-primary); border: 1px solid var(--color-border); border-radius: .9rem; padding: 1.25rem; }
         .bemail-card-top { display: flex; align-items: flex-start; gap: .75rem; margin-bottom: .9rem; }
-        .bemail-card-top .bemail-icon { flex: none; width: 2.5rem; height: 2.5rem; border-radius: .6rem; background: #f6efe9; display: flex; align-items: center; justify-content: center; font-weight: 700; color: #a8453a; }
+        .bemail-card-top .bemail-icon { flex: none; width: 2.5rem; height: 2.5rem; border-radius: .6rem; background: var(--color-primary-soft-bg); display: flex; align-items: center; justify-content: center; font-weight: 700; color: var(--color-primary); }
         .bemail-card-top .bemail-title { flex: 1; min-width: 0; }
-        .bemail-card-top .bemail-title strong { display: block; }
-        .bemail-card-top .bemail-title span { font-size: .8rem; color: #6f695f; }
-        .bemail-note { font-size: .82rem; color: #6f695f; margin: 0 0 .5rem; }
-        .bemail-notice { background: #fdf3df; border: 1px solid #f1dfb4; border-radius: .75rem; padding: .8rem 1rem; margin-bottom: 1rem; }
+        .bemail-card-top .bemail-title strong { display: block; color: var(--color-text-primary); }
+        .bemail-card-top .bemail-title span { font-size: .8rem; color: var(--color-text-muted); }
+        .bemail-note { font-size: .82rem; color: var(--color-text-muted); margin: 0 0 .5rem; }
+        .bemail-notice { background: var(--color-status-warning-soft-bg); color: var(--color-status-warning-text); border: 1px solid var(--color-status-warning-border); border-radius: .75rem; padding: .8rem 1rem; margin-bottom: 1rem; }
         .bemail-notice strong { display: block; }
-        .bemail-notice span { font-size: .85rem; color: #6f695f; }
+        .bemail-notice span { font-size: .85rem; color: var(--color-text-secondary); }
         .bemail-chips { display: flex; flex-wrap: wrap; gap: .4rem; margin-bottom: 1rem; }
-        .bemail-chips span { font-size: .75rem; padding: .15rem .6rem; border-radius: 999px; border: 1px solid #e6e1d8; background: #f8f6f2; color: #5c564d; }
+        .bemail-chips span { font-size: .75rem; padding: .15rem .6rem; border-radius: 999px; border: 1px solid var(--color-border); background: var(--color-surface-secondary); color: var(--color-text-secondary); }
         .bemail-other { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr); gap: 1.5rem; }
         .bemail-row { display: flex; gap: .75rem; }
         .bemail-row .bemail-port { flex: none; width: 6rem; }
-        .bemail-field-error { color: #b3261e; font-size: .8rem; margin-top: .2rem; }
+        .bemail-field-error { color: var(--color-status-danger-text); font-size: .8rem; margin-top: .2rem; }
         .bemail-actions { display: flex; align-items: center; flex-wrap: wrap; gap: .75rem; margin-top: .75rem; }
+        .bemail-card .form-label { color: var(--color-text-primary); }
+        .bemail-card .form-text { color: var(--color-text-muted); }
+        .bemail-card .form-control { background-color: var(--color-surface); color: var(--color-text-primary); border-color: var(--color-border); }
+        .bemail-card .form-control::placeholder { color: var(--color-text-muted); opacity: 1; }
+        .bemail-card .form-control:focus { border-color: var(--color-primary); }
+        .bemail-card .btn-outline-secondary { color: var(--color-text-primary); border-color: var(--color-border-strong); }
+        .bemail-card .btn-outline-secondary:hover { background: var(--color-surface-secondary); color: var(--color-text-primary); }
+        .bemail-card .btn-primary { background-color: var(--color-primary); border-color: var(--color-primary); color: var(--color-text-inverse); }
+        .bemail-card .btn-primary:hover { background-color: var(--color-primary-hover); border-color: var(--color-primary-hover); }
         @media (max-width: 767px) { .bemail-grid, .bemail-other { grid-template-columns: 1fr; } }
     </style>
 
@@ -121,7 +130,7 @@
                     <div class="bemail-other">
                         <div>
                             <div class="bemail-chips">
-                                <span>Zoho Mail</span><span>Titan</span><span>Hostinger</span><span>cPanel hosting</span><span>+ others</span>
+                                <span>Zoho Mail</span><span>Namecheap Private Email</span><span>Titan</span><span>Hostinger</span><span>cPanel hosting</span><span>+ others</span>
                             </div>
                             <p class="bemail-note">We always use an encrypted connection and check the server’s certificate.</p>
                             <p class="bemail-note">Using Gmail or Outlook? Use the Google or Microsoft option above — they don’t accept ordinary passwords here.</p>

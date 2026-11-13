@@ -125,7 +125,7 @@ final class ImapBusinessEmailProvider implements BusinessEmailProvider, InboundB
             throw new ImapError(match (true) {
                 preg_match('/code "?535|auth(entication)? (failed|required)|invalid credentials/i', $message) === 1 => ImapError::SMTP_AUTH_FAILED,
                 preg_match('/starttls|tls|ssl|certificate/i', $message) === 1 => ImapError::TLS_FAILED,
-                preg_match('/could not be established|refused|timed out/i', $message) === 1 => ImapError::CONNECT_FAILED,
+                preg_match('/could not be established|refused|timed out|getaddrinfo/i', $message) === 1 => ImapError::SMTP_CONNECT_FAILED,
                 default => ImapError::PROTOCOL,
             });
         }
