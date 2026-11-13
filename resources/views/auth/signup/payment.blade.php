@@ -49,6 +49,7 @@
         @csrf
         <button type="submit" class="btn btn-primary w-100">{{ $cta }}</button>
     </form>
+    @include('legal._links', ['docs' => ['terms-of-service', 'refund-policy', 'privacy-policy']])
     <p class="text-muted small text-center mt-1">{{ __('You will enter your card details on Stripe. We never see or store them.') }}</p>
 
     <p class="text-center mt-2"><a href="{{ route('register.business') }}">{{ __('Back') }}</a></p>

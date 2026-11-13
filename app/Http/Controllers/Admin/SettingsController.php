@@ -122,6 +122,12 @@
                 throw new AuthorizationException();
             }
 
+            // Legal Company Information belongs to the Platform Owner alone: it is not a delegable settings
+            // ability, and the write endpoint enforces the same rule on the server.
+            if (app(\App\Library\PlatformOwner\PlatformOwnerAuthority::class)->allowsRequest($request)) {
+                $tabs['legal'] = 'Legal Company Information';
+            }
+
             $breadcrumbs = [
                 ['link' => \App\Helpers\Helper::adminHomeUrl(), 'name' => __('locale.menu.Dashboard')],
                 ['link' => \App\Helpers\Helper::adminHomeUrl(), 'name' => __('locale.menu.Settings')],

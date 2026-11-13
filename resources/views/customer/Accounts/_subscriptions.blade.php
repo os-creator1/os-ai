@@ -5,6 +5,7 @@
         <h4 class="card-title">{{ __('locale.labels.current_plan') }}</h4>
     </div>
     <div class="card-body my-2 py-25">
+        @include('legal._links', ['docs' => ['refund-policy', 'terms-of-service']])
         <div class="row">
             <div class="col-md-6">
                 <div class="mb-2 pb-50">
