@@ -466,6 +466,80 @@ class BusinessEmailImapTest extends TestCase
         $this->assertStringContainsString('outgoing (SMTP) server rejected', (string) session('message'));
     }
 
+    public function test_private_email_mx_hosts_are_detected_and_manual_settings_are_preserved(): void
+    {
+        $presets = new ImapPresets(fn (string $domain) => ['MX1.PrivateEmail.com', 'mx2.privateemail.com']);
+        $detected = $presets->detect('owner@acme-plumbing.com');
+
+        $this->assertSame('high', $detected['confidence']);
+        $this->assertSame(
+            ['imap_host' => 'mail.privateemail.com', 'imap_port' => 993, 'smtp_host' => 'mail.privateemail.com', 'smtp_port' => 465],
+            $detected['settings'],
+        );
+        $this->assertSame('mail.privateemail.com', (new ImapPresets(fn () => ['mx2.privateemail.com']))->detect('a@b-corp.com')['settings']['smtp_host']);
+        $this->assertSame('guess', (new ImapPresets(fn () => ['mx.evilprivateemail.com']))->detect('a@b-corp.com')['confidence']);
+
+        [, $business, $workspace] = $this->owner();
+        $this->app->instance(ImapPresets::class, new ImapPresets(fn () => ['mx1.privateemail.com']));
+
+        // Blank server fields are filled from the preset; the username stays the full address.
+        $this->post($this->connectOtherUrl($workspace, $business), $this->form(['imap_host' => '', 'smtp_host' => '', 'imap_port' => '', 'smtp_port' => '', 'username' => '']))->assertRedirect();
+        $this->assertSame('mail.privateemail.com', $this->imap->peerName);
+        $stored = ImapSettings::fromBlob(Crypt::decryptString((string) DB::table('business_email_accounts')->value('refresh_token_encrypted')));
+        $this->assertSame('mail.privateemail.com', $stored->smtpHost);
+        $this->assertSame(465, $stored->smtpPort);
+        $this->assertSame('owner@acme-plumbing.com', $stored->username);
+        BusinessEmailAccount::query()->delete();
+
+        // A manually entered server is never overwritten by detection.
+        $this->post($this->connectOtherUrl($workspace, $business), $this->form(['smtp_host' => '', 'smtp_port' => '']))->assertRedirect();
+        $stored = ImapSettings::fromBlob(Crypt::decryptString((string) DB::table('business_email_accounts')->value('refresh_token_encrypted')));
+        $this->assertSame('imap.acme-plumbing.com', $stored->imapHost);
+        $this->assertSame('mail.privateemail.com', $stored->smtpHost);
+    }
+
+    public function test_connection_failures_are_distinguished_without_exposing_credentials(): void
+    {
+        [, $business, $workspace] = $this->owner();
+        $url = $this->connectOtherUrl($workspace, $business);
+
+        $this->app->bind(ImapTransport::class, fn () => new class implements ImapTransport {
+            public function open(string $ip, int $port, string $peerName, bool $implicitTls): void
+            {
+                throw new \App\Exceptions\BusinessEmail\BusinessEmailImapException(\App\Exceptions\BusinessEmail\BusinessEmailImapException::CONNECT_FAILED);
+            }
+
+            public function readLine(): ?string { return null; }
+
+            public function read(int $bytes): string { return ""; }
+
+            public function write(string $data): void {}
+
+            public function startTls(): bool { return false; }
+
+            public function close(): void {}
+        });
+        $this->post($url, $this->form());
+        $this->assertStringContainsString('incoming (IMAP) server', (string) session('message'));
+        $this->assertStringContainsString('could not connect', (string) session('message'));
+
+        $this->app->bind(ImapTransport::class, fn () => $this->imap);
+        $this->loginStatus = 'NO [AUTHENTICATIONFAILED] bad';
+        $this->post($url, $this->form());
+        $this->assertStringContainsString('incoming (IMAP) server rejected', (string) session('message'));
+
+        $this->loginStatus = 'OK login';
+        $this->smtp->testFailure = new \RuntimeException('Connection could not be established with host "smtp" for password secret-pass-123');
+        $this->post($url, $this->form());
+        $this->assertStringContainsString('could not connect to the outgoing (SMTP) server', (string) session('message'));
+
+        $this->smtp->testFailure = new \RuntimeException('Expected response code "235" but got code "535"');
+        $this->post($url, $this->form());
+        $this->assertStringContainsString('outgoing (SMTP) server rejected', (string) session('message'));
+
+        $this->assertSame(0, BusinessEmailAccount::query()->count());
+    }
+
     public function test_unsafe_servers_are_refused_without_any_connection(): void
     {
         [, $business, $workspace] = $this->owner();
