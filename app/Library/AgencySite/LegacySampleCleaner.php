@@ -2,8 +2,10 @@
 
 namespace App\Library\AgencySite;
 
+use App\Library\Branding\AgencyWhiteLabelManager;
 use App\Models\AgencySite;
 use App\Models\Workspace;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
 /**
@@ -29,6 +31,7 @@ final class LegacySampleCleaner
         private readonly SiteContextFactory $contexts,
         private readonly SiteEditorPresenter $presenter,
         private readonly AgencySiteManager $manager,
+        private readonly AgencyWhiteLabelManager $whiteLabel,
     ) {
     }
 
@@ -68,18 +71,32 @@ final class LegacySampleCleaner
      * Select the niche and reset the pinned copies. Returns what was removed, so the previous draft can be restored by
      * re-saving it, and logs the same.
      *
+     * Which values are removable is decided against the LATEST draft while holding the same workspace write lock
+     * AgencySiteManager::save() takes (the lock is re-entrant inside this transaction, so the save below does not wait
+     * on itself). A custom answer saved from another tab a moment ago is therefore seen and kept; it can never be
+     * mistaken for the stale copy it replaced. $site only identifies the draft: its loaded values are never trusted.
+     *
      * @return array{niche: string, removed: array<string, mixed>, review: list<string>}
      */
     public function apply(int $actorUserId, Workspace $agency, AgencySite $site, string $niche): array
     {
-        $analysis = $this->analyse($site);
-        $values = AgencySiteManager::values($site);
-        $removed = array_intersect_key($values, array_flip($analysis['pinned']));
+        return DB::transaction(function () use ($actorUserId, $agency, $niche): array {
+            // Same lock, same order as every other draft write: workspace row first, then the draft.
+            $locked = Workspace::query()->whereKey($agency->id)->lockForUpdate()->firstOrFail();
+            $this->whiteLabel->assertCanManage($locked, $actorUserId);
 
-        $this->manager->save($actorUserId, $agency, ['x.niche' => $niche] + array_fill_keys($analysis['pinned'], null));
+            $latest = $this->manager->find($locked);
+            abort_if($latest === null, 404);
 
-        Log::info('agency-site.legacy-samples-cleared', ['agency_workspace_id' => $agency->id, 'niche' => $niche, 'previous_niche' => $values['x.niche'] ?? null, 'removed' => $removed]);
+            $analysis = $this->analyse($latest);
+            $values = AgencySiteManager::values($latest);
+            $removed = array_intersect_key($values, array_flip($analysis['pinned']));
 
-        return ['niche' => $niche, 'removed' => $removed, 'review' => $analysis['review']];
+            $this->manager->save($actorUserId, $locked, ['x.niche' => $niche] + array_fill_keys($analysis['pinned'], null));
+
+            Log::info('agency-site.legacy-samples-cleared', ['agency_workspace_id' => $locked->id, 'niche' => $niche, 'previous_niche' => $values['x.niche'] ?? null, 'removed' => $removed]);
+
+            return ['niche' => $niche, 'removed' => $removed, 'review' => $analysis['review']];
+        });
     }
 }

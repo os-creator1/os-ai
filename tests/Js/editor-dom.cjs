@@ -172,6 +172,39 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
     results.resetKeepsUnrelatedInFlightEdit = await scenario(browser, 'other-inflight', otherServer({ slowOther: true }), otherRun('inflight'));
     results.resetWithFailedUnrelatedSave = await scenario(browser, 'other-failed', otherServer({ failOther: true }), otherRun('pending'));
 
+    // Legacy-sample cleanup: pending edits are saved BEFORE the cleanup runs, a failed save blocks it (and the reload), and
+    // an edit typed while the cleanup request is in flight is saved after it, never lost.
+    const clearServer = (opts) => async (kind, body, server) => {
+        server.events = server.events || [];
+        if (kind === 'save') {
+            server.events.push('save:' + Object.keys(body.answers).join(','));
+            if (opts.failSave) { return { status: 422, body: { ok: false, message: 'Use plain text only.' } }; }
+            Object.assign(server.state, body.answers);
+        }
+        if (kind === 'clear-legacy-samples') { server.events.push('clear'); if (opts.slowClear) { await wait(1200); } }
+        return ok();
+    };
+    const injectClear = (page) => page.evaluate(() => {
+        const b = document.createElement('button'); b.type = 'button'; b.id = 'clr'; b.setAttribute('data-clear-legacy-samples', 'dog_business');
+        document.querySelector('#wl-site').appendChild(b);
+    });
+    const clearRun = (mode) => async (page, server) => {
+        let loads = 0; page.on('load', () => { loads++; });
+        page.on('dialog', (d) => d.accept());
+        await injectClear(page);
+        await page.fill(TITLE, 'Typed just before the cleanup');
+        await page.click('#clr');                                       // well inside the debounce: the edit is still pending
+        if (mode === 'during') { await wait(500); await page.fill(TITLE, 'Typed while the cleanup ran'); }
+        await wait(3500);
+        return {
+            events: server.events, saved: server.state['copy.home.hero.title'], reloaded: loads >= 1,
+            inputKept: await page.inputValue(TITLE), state: (await page.textContent('#wl-save-state')).trim(),
+        };
+    };
+    results.clearSavesPendingEditFirst = await scenario(browser, 'clear-pending', clearServer({}), clearRun('pending'));
+    results.clearBlockedBySaveFailure = await scenario(browser, 'clear-fail', clearServer({ failSave: true }), clearRun('pending'));
+    results.clearKeepsEditsTypedDuringTheRequest = await scenario(browser, 'clear-during', clearServer({ slowClear: true }), clearRun('during'));
+
     console.log(JSON.stringify(results));
     await browser.close();
 })();

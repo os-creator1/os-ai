@@ -144,4 +144,55 @@ class AgencyLegacySampleCleanupTest extends TestCase
         $this->assertSame('More bookings.', AgencySiteManager::values($otherSite->fresh())['copy.home.hero.title']);
         $this->assertArrayNotHasKey('x.niche', AgencySiteManager::values($otherSite->fresh()));
     }
+
+    public function test_custom_text_saved_concurrently_in_another_tab_is_never_deleted(): void
+    {
+        [$agency, $owner] = $this->agency();
+        $stale = $this->staleDraft($agency, $owner)->fresh();   // what this tab loaded: hero.title is still the pinned copy
+
+        // Another tab replaces the pinned headline with the owner's own words after that load.
+        $this->save($agency, $owner, ['copy.home.hero.title' => 'Our own headline.']);
+
+        $result = app(LegacySampleCleaner::class)->apply((int) $owner->user_id, $agency, $stale, 'dog_business');
+
+        $values = AgencySiteManager::values($stale->fresh());
+        $this->assertSame('Our own headline.', $values['copy.home.hero.title'], 'the concurrent custom edit survives');
+        $this->assertArrayNotHasKey('copy.home.trust.industries', $values, 'the still-pinned copy is reset');
+        $this->assertSame(['copy.home.trust.industries'], array_keys($result['removed']));
+        $this->assertSame('dog_business', $values['x.niche']);
+    }
+
+    public function test_the_workspace_write_lock_is_taken_before_the_draft_is_read(): void
+    {
+        [$agency, $owner] = $this->agency();
+        $site = $this->staleDraft($agency, $owner)->fresh();
+
+        $queries = [];
+        \Illuminate\Support\Facades\DB::listen(function ($q) use (&$queries) { $queries[] = strtolower($q->sql); });
+        app(LegacySampleCleaner::class)->apply((int) $owner->user_id, $agency, $site, 'dog_business');
+
+        $lock = collect($queries)->search(fn ($sql) => str_contains($sql, 'for update') && str_contains($sql, 'workspaces'));
+        $draft = collect($queries)->search(fn ($sql) => str_starts_with($sql, 'select') && str_contains($sql, 'agency_sites'));
+
+        $this->assertNotFalse($lock, 'the workspace row is locked');
+        $this->assertNotFalse($draft, 'the draft is read');
+        $this->assertLessThan($draft, $lock, 'lock first, then read the latest draft');
+    }
+
+    public function test_the_cleanup_refuses_a_non_owner_and_changes_nothing(): void
+    {
+        [$agency, $owner] = $this->agency('Agency A');
+        [, $otherOwner] = $this->agency('Agency B');
+        $site = $this->staleDraft($agency, $owner)->fresh();
+        $before = AgencySiteManager::values($site);
+
+        try {
+            app(LegacySampleCleaner::class)->apply((int) $otherOwner->user_id, $agency, $site, 'dog_business');
+            $this->fail('a user who cannot manage the Agency must be refused');
+        } catch (\Throwable $e) {
+            $this->assertNotInstanceOf(\PHPUnit\Framework\AssertionFailedError::class, $e);
+        }
+
+        $this->assertSame($before, AgencySiteManager::values($site->fresh()));
+    }
 }
