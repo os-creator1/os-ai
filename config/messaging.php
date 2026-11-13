@@ -262,13 +262,12 @@ return [
             'agent_ring_timeout_secs' => 25,
             'credential_ttl_days' => 30,
         ],
-        // Inbound calls: ring workspace users' browsers and/or forward to one verified personal phone. OFF by default and
-        // pilot-only: voice-minute billing is not finished, so even with the flag on, a Business takes inbound calls only
-        // when an operator lists its id in VOICE_INBOUND_PILOT_BUSINESS_IDS. Every limit below is enforced server-side.
+        // Inbound calls: ring workspace users' browsers and/or forward to one verified personal phone. Available to every
+        // Business when the platform is operational. `enabled` is the ONE global emergency switch (on by default; set
+        // VOICE_INBOUND_CALLS_ENABLED=false to stop inbound calling everywhere). There is no per-Business approval.
+        // Every limit below is enforced server-side.
         'inbound' => [
-            'enabled' => env('VOICE_INBOUND_CALLS_ENABLED', false),
-            // Comma-separated Business ids an operator has approved for the pilot. Empty = nobody.
-            'pilot_business_ids' => array_values(array_filter(array_map('intval', explode(',', (string) env('VOICE_INBOUND_PILOT_BUSINESS_IDS', ''))))),
+            'enabled' => env('VOICE_INBOUND_CALLS_ENABLED', true),
             'max_concurrent_per_business' => (int) env('VOICE_INBOUND_MAX_CONCURRENT', 2),
             'max_per_hour_per_business' => (int) env('VOICE_INBOUND_MAX_PER_HOUR', 40),
             'max_duration_secs' => (int) env('VOICE_INBOUND_MAX_SECS', 900),

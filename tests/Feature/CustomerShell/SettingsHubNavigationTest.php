@@ -142,7 +142,7 @@ class SettingsHubNavigationTest extends TestCase
 
             $this->assertSame([
                 'business-setup' => ['business-details', 'locations', 'services', 'custom-fields'],
-                'communication' => ['text-messaging', 'email'],
+                'communication' => ['text-messaging', 'calling', 'email'],
                 'payments' => ['payment-processing'],
                 'billing-team' => ['usage-billing', 'plan', 'team'],
                 'features' => [],
@@ -366,7 +366,7 @@ class SettingsHubNavigationTest extends TestCase
         // Email is offered to an actor holding an email permission (here every
         // permission but view_numbers), exactly as Text messaging would be. Payment
         // processing is the read-only Stripe status page for staff; only an owner gets its controls.
-        $this->assertSame(['business-setup' => ['locations', 'services', 'custom-fields'], 'communication' => ['email'], 'payments' => ['payment-processing']], $modules, 'No details (not theirs), no texting (no permission), no billing, plan or team, no switches.');
+        $this->assertSame(['business-setup' => ['locations', 'services', 'custom-fields'], 'communication' => ['calling', 'email'], 'payments' => ['payment-processing']], $modules, 'No details (not theirs), no texting (no permission), no billing, plan or team, no switches.');
         $this->get(route('customer.workspaces.team.show', $workspace->uid))->assertNotFound();
         $this->get(route('customer.workspaces.settings.show', $workspace->uid))->assertNotFound();
         $this->get(route('customer.workspaces.show', $workspace->uid))->assertNotFound();

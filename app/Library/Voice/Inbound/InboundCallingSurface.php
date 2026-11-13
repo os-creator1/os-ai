@@ -10,7 +10,7 @@ use Illuminate\Support\Facades\Gate;
 
 /**
  * What a page needs to take inbound browser calls: the endpoints, and only for a user who may. Decided on the server per
- * request, so a page for a Business that is not pilot-approved, not set to ring browsers, a user without the calling
+ * request, so a page for a Business not set to ring browsers, a user without the calling
  * permission, or a View-As session never receives a softphone that registers for calls. Every endpoint it names
  * re-checks tenancy, entitlement and permission itself.
  */
