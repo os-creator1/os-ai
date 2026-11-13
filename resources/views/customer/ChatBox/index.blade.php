@@ -1597,6 +1597,24 @@
             margin-top: var(--space-3);
         }
 
+        /* Give Recents / Unread / Read / All equal-sized clickable columns. */
+        .chat-application .sidebar-content .tab-group.btn-group {
+            display: grid !important;
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+            gap: 0;
+            width: 100%;
+            box-sizing: border-box;
+        }
+        .chat-application .sidebar-content .tab-group.btn-group .tab-button {
+            align-items: center;
+            display: flex;
+            flex: none;
+            justify-content: center;
+            min-width: 0;
+            width: 100%;
+            padding: 0 var(--space-1) !important;
+        }
+
         /* Compose inside the remaining conversation width, never outside it. */
         .chat-application .chat-app-window .chat-app-form:not(.is-email-channel) {
             display: grid;
