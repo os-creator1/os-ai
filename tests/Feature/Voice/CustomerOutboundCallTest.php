@@ -125,6 +125,8 @@ class CustomerOutboundCallTest extends TestCase
 
     public function test_a_user_without_the_calling_permission_cannot_call(): void
     {
+        // The Workspace owner needs no grant (CallingAuthority); this is staff without place_voice_calls.
+        \DB::table('workspaces')->where('id', $this->workspace->id)->update(['owner_user_id' => $this->platformAdminId()]);
         $this->authenticateAs($this->customer, ['view_numbers']);
 
         $this->assertContains($this->place()->getStatusCode(), [401, 403], 'Calling without the permission must be refused.');

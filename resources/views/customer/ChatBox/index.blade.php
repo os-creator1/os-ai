@@ -2141,7 +2141,7 @@
       function resetConversationHeader() {
         $("[data-role=conversation-avatar]").text("");
         $("[data-role=conversation-subtitle]").text("");
-        $(".conversation-call-btn").prop("hidden", true).removeAttr("data-call-uid data-call-conversation data-call-label data-call-phone data-call-initials data-call-for");
+        $(".conversation-call-btn").prop("hidden", true).removeAttr("data-call-uid data-call-conversation data-call-label data-call-phone data-call-initials data-call-for data-call-unavailable");
       }
 
       function applyConversationHeader(response) {
@@ -2159,7 +2159,16 @@
         if (usable) {
           $header.attr({ "data-call-uid": call.uid || "", "data-call-conversation": call.conversation || "", "data-call-label": call.label, "data-call-phone": call.phone, "data-call-initials": call.initials, "data-call-for": forId, "aria-label": "Call " + call.label }).prop("hidden", false);
         } else {
-          $header.prop("hidden", true).removeAttr("data-call-uid data-call-conversation data-call-label data-call-phone data-call-initials data-call-for");
+          // Never silently hidden when the number is callable but calling is not: show the control with the precise reason.
+          const blocked = call && !softphoneAvailable()
+            ? "Calling could not load on this page. Refresh the page and try again."
+            : String(response.call_unavailable || "");
+          $header.removeAttr("data-call-uid data-call-conversation data-call-label data-call-phone data-call-initials data-call-for data-call-unavailable");
+          if (blocked !== "") {
+            $header.attr({ "data-call-unavailable": blocked, "aria-label": "Call unavailable: " + blocked, "title": blocked }).prop("hidden", false);
+          } else {
+            $header.removeAttr("data-call-unavailable").prop("hidden", true);
+          }
         }
 
         // The panel's own Call button was rendered by the server for this contact; keep it only when it can work.
@@ -2176,6 +2185,11 @@
         const $btn = $(this);
         const uid = String($btn.attr("data-call-uid") || "");
         const conversation = String($btn.attr("data-call-conversation") || "");
+        const unavailable = String($btn.attr("data-call-unavailable") || "");
+        if (unavailable !== "") {
+          if (window.toastr) { window.toastr.warning(unavailable, "Calling unavailable"); }
+          return;
+        }
         // A stale or unstamped control (the selection moved on) never dials.
         if ((uid === "" && conversation === "") || String($btn.attr("data-call-for") || "") !== String($(".chat_id").val()) || !softphoneAvailable()) {
           $btn.prop("hidden", true);

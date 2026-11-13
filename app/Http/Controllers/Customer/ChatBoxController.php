@@ -677,6 +677,7 @@
                     ->for($business, $workspaceUid, $businessUid, (int) Auth::id(), true, $contact, $replyTo),
                 'title'    => $context->title(),
                 'call'     => $call,
+                'call_unavailable' => $call === null ? $this->callUnavailable($business, $box) : null,
                 'timeline' => view('customer.ChatBox.partials._timeline', [
                     'page' => $timeline->forConversation($business, $box, $contact),
                 ])->render(),
@@ -766,6 +767,21 @@
          *
          * @return array{uid: string, label: string, phone: string, initials: string}|null
          */
+        /** Why a valid-number conversation has no Call button: a precise, non-sensitive message (never silently hidden). */
+        private function callUnavailable(Business $business, ?ChatBox $box): ?string
+        {
+            if ($box === null || \App\Models\Blacklists::query()->where('business_id', $business->id)->where('number', preg_replace('/\D+/', '', (string) $box->to))->exists()) {
+                return null; // nothing callable here (or deliberately blocked): no calling message
+            }
+            $digits = preg_replace('/\D+/', '', (string) $box->to);
+            if (\App\Library\Messaging\E164Normalizer::normalize('+' . $digits) === null) {
+                return null;
+            }
+            $calling = app(\App\Library\Voice\ConversationCalling::class);
+
+            return $calling->unavailableReason($business) ?? $calling->unauthorizedReason($business);
+        }
+
         private function callTarget(string $workspaceUid, Business $business, ?Contacts $contact, string $label, ?ChatBox $box = null): ?array
         {
             // No contact and no SMS conversation (an email thread with no person): nothing to call.

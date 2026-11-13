@@ -227,7 +227,7 @@ final class InboundCallRouter
         foreach ($rows as $row) {
             $user = User::query()->find($row->user_id);
             if ($user === null || in_array((int) $user->id, $busy, true)
-                || ! Gate::forUser($user)->allows('place_voice_calls')
+                || ! app(\App\Library\Voice\CallingAuthority::class)->mayCall($user, $business)
                 || ! app(BusinessRouteAccess::class)->actorMayUseBusiness($user, $business)) {
                 continue;
             }
