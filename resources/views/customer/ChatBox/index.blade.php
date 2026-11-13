@@ -1683,6 +1683,15 @@
         .chat-header .add-to-pin:disabled { opacity: .6; cursor: progress; }
         .conversation-context-profile-link { color: inherit; text-decoration: none; }
         .conversation-context-profile-link:hover { color: var(--color-primary); text-decoration: underline; }
+        /* At intermediate browser widths the CRM sidebar and contact panel leave less room than the viewport suggests. */
+        @media (min-width: 551px) and (max-width: 1399px) {
+            .chat-application .chat-app-window .chat-app-form:not(.is-email-channel) {
+                grid-template-columns: minmax(0, 1fr) auto;
+            }
+            .chat-app-form:not(.is-email-channel) .form-send-message { grid-column: 1 / -1; }
+            .chat-app-form:not(.is-email-channel) .composer-template-select { grid-column: 1; }
+            .chat-app-form:not(.is-email-channel) .send { grid-column: 2; }
+        }
         @media (max-width: 550px) {
             .chat-application .chat-app-window .chat-app-form:not(.is-email-channel) {
                 grid-template-columns: minmax(0, 1fr) auto;
