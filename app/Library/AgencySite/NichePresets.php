@@ -55,6 +55,7 @@ final class NichePresets
                 'copy.footer_blurb' => "{$brand} — your website, leads and bookings in one place, built for dog training and boarding businesses.",
                 'pages.solutions.description' => "{$brand} for dog trainers, puppy-training schools, obedience businesses, board-and-train operators and dog boarding businesses.",
                 'page_copy.solutions.lead' => 'Different kinds of dog business, the same everyday problem: too many inquiries, too many tools and not enough time.',
+                'product_features.auto.unverified_bullets' => ['Review requests after the class'],
                 'flow_steps.1.rows' => [['Jordan Park', 'Puppy training · consult', '#B4514A'], ['Dog', 'Biscuit, 5 months', '#A99E96'], ['Source', 'Website form', '#A99E96']],
                 'page_copy.solutions.note' => 'Don’t see your kind of dog business? The platform works for any business that runs on inquiries and bookings.',
             ],

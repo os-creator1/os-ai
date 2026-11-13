@@ -278,6 +278,15 @@
             });
             return;
         }
+        if (t.hasAttribute('data-clear-legacy-samples')) {
+            var nicheKey = t.getAttribute('data-clear-legacy-samples');
+            if (!nicheKey || !confirm('Replace the unedited event examples saved in this draft with your industry examples?')) { return; }
+            setState('Replacing old examples…');
+            saver.enqueue(function () { return post(urls.clearSamples, { niche: nicheKey }); }).then(function (r) {
+                if (r && r.ok) { reloading = true; setState('Done'); window.location.reload(); } else { setState((r && r.message) || 'Could not replace the old examples', true); }
+            });
+            return;
+        }
         if (t.hasAttribute('data-step-button')) { go(parseInt(t.getAttribute('data-step-button'), 10)); return; }
         if (t.hasAttribute('data-step-prev')) { go(step - 1); return; }
         if (t.hasAttribute('data-step-next')) { go(step + 1); return; }

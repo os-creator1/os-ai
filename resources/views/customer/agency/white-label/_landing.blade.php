@@ -16,6 +16,7 @@
         'save' => route('customer.workspaces.agency.site.save', $agencyWorkspace->uid),
         'step' => route('customer.workspaces.agency.site.step', $agencyWorkspace->uid),
         'reset' => route('customer.workspaces.agency.site.reset-group', $agencyWorkspace->uid),
+        'clearSamples' => route('customer.workspaces.agency.site.clear-legacy-samples', $agencyWorkspace->uid),
         'booking' => route('customer.workspaces.agency.site.booking-type', $agencyWorkspace->uid),
         'publish' => route('customer.workspaces.agency.site.publish', $agencyWorkspace->uid),
         'unpublish' => route('customer.workspaces.agency.site.unpublish', $agencyWorkspace->uid),
@@ -65,6 +66,19 @@
                 <x-card title="Business and website setup">
                     <p class="text-caption">Your website name, logo and colours come from the <a href="{{ route('customer.workspaces.agency.white-label.show', $agencyWorkspace->uid) }}">Branding tab</a>: currently <strong>{{ $e['brand']['name'] }}</strong>{{ $e['brand']['saved'] ? '' : ' (not saved yet)' }}. A complete starter website already exists and updates as you answer.</p>
                     @include('customer.agency.white-label._group', ['group' => $e['groups']['setup'], 'canEdit' => $canEdit])
+                    @if ($canEdit && (count($e['legacySamples']['pinned']) || count($e['legacySamples']['review'])))
+                        <div class="alert alert-warning small" data-role="legacy-samples">
+                            <b>Old example content is still saved in this draft.</b>
+                            @if (count($e['legacySamples']['pinned']))
+                                {{ count($e['legacySamples']['pinned']) }} saved section(s) are unedited copies of the original event examples and override your industry: {{ implode(', ', $e['legacySamples']['pinned']) }}.
+                                <button type="button" class="btn btn-sm btn-outline-secondary ms-1" data-clear-legacy-samples="{{ $e['values']['x.niche'] ?? '' }}">Replace them with my industry's examples</button>
+                                <span class="d-block">Only those unedited copies are replaced. Your own wording, branding, links, calendar and plans are not touched.</span>
+                            @endif
+                            @if (count($e['legacySamples']['review']))
+                                <span class="d-block">Your own text in {{ implode(', ', $e['legacySamples']['review']) }} still mentions event examples. Please rewrite it; it is not changed automatically.</span>
+                            @endif
+                        </div>
+                    @endif
                     <p class="text-caption mb-0" data-role="domain-note">Your site is hosted at <a href="{{ $e['hostedUrl'] }}" target="_blank" rel="noopener">{{ $e['hostedUrl'] }}</a> once published. A custom marketing domain is not part of this release.</p>
                 </x-card>
             </section>

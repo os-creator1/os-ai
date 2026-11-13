@@ -1065,6 +1065,7 @@
             Route::get('preview/{page?}', 'Agency\AgencySiteController@preview')->name('preview');
             Route::post('save', 'Agency\AgencySiteController@save')->middleware('throttle:120,1')->name('save');
             Route::post('step', 'Agency\AgencySiteController@step')->middleware('throttle:120,1')->name('step');
+            Route::post('clear-legacy-samples', 'Agency\AgencySiteController@clearLegacySamples')->middleware('throttle:20,1')->name('clear-legacy-samples');
             Route::post('reset-group', 'Agency\AgencySiteController@resetGroup')->middleware('throttle:60,1')->name('reset-group');
             Route::post('booking-type', 'Agency\AgencySiteController@createBookingType')->middleware('throttle:20,1')->name('booking-type');
             Route::post('publish', 'Agency\AgencySiteController@publish')->middleware('throttle:20,1')->name('publish');
