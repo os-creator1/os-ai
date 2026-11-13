@@ -47,6 +47,9 @@ class BusinessEmailAccount extends Model
         'disconnected_at' => 'datetime',
         'revoked_at' => 'datetime',
         'last_refreshed_at' => 'datetime',
+        // Written by the inbound syncer through the query builder; the Settings → Email
+        // view calls diffForHumans() on it, so it must hydrate as a Carbon instance.
+        'inbound_synced_at' => 'datetime',
         'lock_version' => 'integer',
     ];
 
