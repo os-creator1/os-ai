@@ -120,15 +120,25 @@ final class ImapBusinessEmailProvider implements BusinessEmailProvider, InboundB
         } catch (ImapError $error) {
             throw $error;
         } catch (\Throwable $exception) {
-            $message = $exception->getMessage();
-
-            throw new ImapError(match (true) {
-                preg_match('/code "?535|auth(entication)? (failed|required)|invalid credentials/i', $message) === 1 => ImapError::SMTP_AUTH_FAILED,
-                preg_match('/starttls|tls|ssl|certificate/i', $message) === 1 => ImapError::TLS_FAILED,
-                preg_match('/could not be established|refused|timed out|getaddrinfo/i', $message) === 1 => ImapError::SMTP_CONNECT_FAILED,
-                default => ImapError::PROTOCOL,
-            });
+            throw new ImapError(self::classifySmtpTestFailure($exception->getMessage()));
         }
+    }
+
+    /**
+     * Maps a (never-displayed) SMTP transport message to a safe reason. TLS is
+     * matched on real TLS markers only: the "ssl://" scheme in a plain
+     * connection error must not turn a refused connection into a TLS failure.
+     */
+    public static function classifySmtpTestFailure(string $message): string
+    {
+        $text = str_ireplace('ssl://', '', $message);
+
+        return match (true) {
+            preg_match('/code "?535|auth(entication)? (failed|required)|invalid credentials/i', $text) === 1 => ImapError::SMTP_AUTH_FAILED,
+            preg_match('/ssl operation failed|certificate|openssl|crypto|starttls|\btls\b/i', $text) === 1 => ImapError::SMTP_TLS_FAILED,
+            preg_match('/could not be established|refused|timed out|getaddrinfo/i', $text) === 1 => ImapError::SMTP_CONNECT_FAILED,
+            default => ImapError::PROTOCOL,
+        };
     }
 
     public function send(string $accessToken, BusinessEmailOutbound $email): BusinessEmailProviderSendResult
