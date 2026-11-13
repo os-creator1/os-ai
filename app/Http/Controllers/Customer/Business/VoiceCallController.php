@@ -37,7 +37,7 @@ class VoiceCallController extends CustomerBaseController
     public function store(Request $request, string $workspaceUid, string $businessUid, CustomerCallPlacer $placer): JsonResponse
     {
         [, $business] = $this->resolveEntitledBusinessTenancy($workspaceUid, $businessUid, PlatformFeature::Crm->value);
-        $this->authorize('place_voice_calls');
+        $this->requireCalling($business);
 
         $data = $request->validate([
             'contact_uid' => ['required_without:conversation_uid', 'nullable', 'string', 'max:64'],
@@ -96,7 +96,7 @@ class VoiceCallController extends CustomerBaseController
     public function browserSession(string $workspaceUid, string $businessUid, BrowserCredentialProvisioner $provisioner): JsonResponse
     {
         [, $business] = $this->resolveEntitledBusinessTenancy($workspaceUid, $businessUid, PlatformFeature::Crm->value);
-        $this->authorize('place_voice_calls');
+        $this->requireCalling($business);
 
         try {
             // Browser calling also requires the customer-call switch, exactly like a server-side call.
@@ -117,7 +117,7 @@ class VoiceCallController extends CustomerBaseController
     public function hangup(string $workspaceUid, string $businessUid, string $callUid, BrowserCallOrchestrator $orchestrator, InboundCallRouter $inbound): JsonResponse
     {
         [, $business] = $this->resolveEntitledBusinessTenancy($workspaceUid, $businessUid, PlatformFeature::Crm->value);
-        $this->authorize('place_voice_calls');
+        $this->requireCalling($business);
 
         $call = $this->callFor($business, $callUid);
         $contact = $call?->contact_id !== null ? Contacts::query()->find($call->contact_id) : null;
@@ -137,7 +137,7 @@ class VoiceCallController extends CustomerBaseController
     public function show(string $workspaceUid, string $businessUid, string $callUid): JsonResponse
     {
         [, $business] = $this->resolveEntitledBusinessTenancy($workspaceUid, $businessUid, PlatformFeature::Crm->value);
-        $this->authorize('place_voice_calls');
+        $this->requireCalling($business);
 
         $call = $this->callFor($business, $callUid);
         if ($call === null) {
@@ -150,6 +150,14 @@ class VoiceCallController extends CustomerBaseController
         }
 
         return response()->json(['data' => $this->present($call, $contact?->uid)]);
+    }
+
+    /** Owner-aware (see CallingAuthority): the Workspace owner needs no grant; staff need place_voice_calls. */
+    private function requireCalling(\App\Models\Business $business): void
+    {
+        if (! app(\App\Library\Voice\CallingAuthority::class)->mayCall(Auth::user(), $business)) {
+            throw new \Illuminate\Auth\Access\AuthorizationException('This action is unauthorized.');
+        }
     }
 
     /** A customer call of this Business, or an inbound call this user is a party to (rang their browser / they answered). */
@@ -169,7 +177,7 @@ class VoiceCallController extends CustomerBaseController
     public function presence(string $workspaceUid, string $businessUid, InboundCallingGate $gate): JsonResponse
     {
         [, $business] = $this->resolveEntitledBusinessTenancy($workspaceUid, $businessUid, PlatformFeature::Crm->value);
-        $this->authorize('place_voice_calls');
+        $this->requireCalling($business);
 
         if (! $gate->available($business)) {
             return $this->error('inbound_unavailable', 'Inbound calling is not available.', 503);
@@ -187,7 +195,7 @@ class VoiceCallController extends CustomerBaseController
     public function incoming(string $workspaceUid, string $businessUid): JsonResponse
     {
         [, $business] = $this->resolveEntitledBusinessTenancy($workspaceUid, $businessUid, PlatformFeature::Crm->value);
-        $this->authorize('place_voice_calls');
+        $this->requireCalling($business);
 
         $userId = (int) Auth::id();
         $calls = BusinessVoiceCall::query()->where('business_id', $business->id)->where('kind', 'inbound')
@@ -202,7 +210,7 @@ class VoiceCallController extends CustomerBaseController
     public function answer(string $workspaceUid, string $businessUid, string $callUid, InboundCallRouter $router): JsonResponse
     {
         [, $business] = $this->resolveEntitledBusinessTenancy($workspaceUid, $businessUid, PlatformFeature::Crm->value);
-        $this->authorize('place_voice_calls');
+        $this->requireCalling($business);
 
         $call = $this->callFor($business, $callUid);
         if ($call === null || $call->kind !== 'inbound') {
@@ -220,7 +228,7 @@ class VoiceCallController extends CustomerBaseController
     public function decline(string $workspaceUid, string $businessUid, string $callUid, InboundCallRouter $router): JsonResponse
     {
         [, $business] = $this->resolveEntitledBusinessTenancy($workspaceUid, $businessUid, PlatformFeature::Crm->value);
-        $this->authorize('place_voice_calls');
+        $this->requireCalling($business);
 
         $call = $this->callFor($business, $callUid);
         if ($call === null || $call->kind !== 'inbound') {

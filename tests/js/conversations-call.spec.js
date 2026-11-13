@@ -63,10 +63,20 @@ const visible = (page, sel) => page.evaluate((s) => [...document.querySelectorAl
     await load(page, 'conv-1', null);
     assert.equal(await visible(page, '[data-role=conversation-call]'), 0);
   });
-  await scenario('softphone missing from the page: the control is not offered, not shown disabled', false, async (page) => {
+  await scenario('softphone missing from the page: only an explained, non-dialling header control remains', false, async (page) => {
     await load(page, 'conv-1', A);
-    assert.equal(await visible(page, '[data-role=conversation-call]'), 0);
+    assert.equal(await visible(page, '.conversation-call-btn'), 1);
+    assert.match(await page.getAttribute('.conversation-call-btn', 'data-call-unavailable'), /could not load/);
     assert.equal(await page.evaluate(() => document.querySelectorAll('#conversation-context [data-role=conversation-call]').length), 0);
+    await page.click('.conversation-call-btn');
+    assert.deepEqual(await page.evaluate(() => window.calls), [], 'an unavailable control never dials');
+  });
+  await scenario('server says calling is unavailable: the control shows the precise reason and never dials', true, async (page) => {
+    await page.evaluate(() => { $('.chat_id').val('conv-1'); applyConversationHeader({ title: 'X', call: null, call_unavailable: 'Telnyx is not in live mode on this platform.' }); });
+    assert.equal(await visible(page, '.conversation-call-btn'), 1);
+    assert.equal(await page.getAttribute('.conversation-call-btn', 'title'), 'Telnyx is not in live mode on this platform.');
+    await page.click('.conversation-call-btn');
+    assert.deepEqual(await page.evaluate(() => window.calls), []);
   });
   await scenario('callable contact: header and panel controls show, header subtitle/avatar fill', true, async (page) => {
     await load(page, 'conv-1', A);

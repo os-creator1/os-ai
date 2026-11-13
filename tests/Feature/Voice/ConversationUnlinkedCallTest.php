@@ -185,6 +185,57 @@ class ConversationUnlinkedCallTest extends TestCase
         $this->assertNull($this->timeline($box)->assertOk()->json('call'));
     }
 
+    public function test_the_workspace_owner_can_call_without_granting_themselves_a_permission_but_staff_cannot(): void
+    {
+        $box = $this->conversationWith($this->business, self::CUSTOMER_PHONE);
+        // Only ordinary back-office access: no explicit place_voice_calls grant.
+        $this->authenticateAs($this->customer, ['chat_box']);
+
+        $this->assertSame('+' . self::CUSTOMER_PHONE, $this->timeline($box)->assertOk()->json('call.phone'));
+        $this->place(['conversation_uid' => $box->uid])->assertStatus(202);
+
+        // The same user as a NON-owner (staff) still needs the explicit permission.
+        \DB::table('workspaces')->where('id', $this->workspace->id)->update(['owner_user_id' => User::query()->orderBy('id')->value('id')]);
+        $json = $this->timeline($box)->assertOk()->json();
+        $this->assertNull($json['call']);
+        $this->assertStringContainsString('place voice calls', $json['call_unavailable']);
+        $before = BusinessVoiceCall::count();
+        $this->assertGreaterThanOrEqual(400, $this->postJson($this->url('store'), ['conversation_uid' => $box->uid, 'idempotency_key' => 'staff-key-0001', 'channel' => 'browser'])->status());
+        $this->assertSame($before, BusinessVoiceCall::count());
+
+        // With the explicit permission, staff can.
+        $this->authenticateAs($this->customer, ['chat_box', 'place_voice_calls']);
+        $this->assertNotNull($this->timeline($box)->assertOk()->json('call'));
+    }
+
+    public function test_missing_telephony_configuration_is_named_precisely_without_leaking_values_or_bypassing_checks(): void
+    {
+        $box = $this->conversationWith($this->business, self::CUSTOMER_PHONE);
+        config(['messaging.voice.browser.credential_connection_id' => '']);
+
+        $json = $this->timeline($box)->assertOk()->json();
+        $this->assertNull($json['call']);
+        $this->assertStringContainsString('TELNYX_WEBRTC_CONNECTION_ID', $json['call_unavailable']);
+        $this->assertStringNotContainsString('fixture_api_key', json_encode($json));
+
+        config(['services.telnyx.mode' => 'sandbox']);
+        $this->assertStringContainsString('live mode', $this->timeline($box)->json('call_unavailable'));
+        // The safety check still stands: nothing can be placed.
+        $this->postJson($this->url('store'), ['conversation_uid' => $box->uid, 'idempotency_key' => 'cfg-key-00001', 'channel' => 'browser'])->assertStatus(503);
+
+        // A number that is not callable at all gets no calling message.
+        $bad = $this->conversationWith($this->business, '123');
+        $this->assertNull($this->timeline($bad)->json('call_unavailable'));
+    }
+
+    public function test_the_conversations_page_loads_the_softphone_for_outbound_calling_regardless_of_inbound_settings(): void
+    {
+        config(['messaging.voice.inbound.enabled' => false]);
+        $html = $this->get(route('customer.workspaces.businesses.conversations.index', [$this->workspace->uid, $this->business->uid]))->assertOk()->getContent();
+        $this->assertStringContainsString('id="mg-softphone"', $html);
+        $this->assertStringContainsString('js/crm/mg-softphone.js', $html);
+    }
+
     private function webhook(string $eventId, string $type, string $callId, string $clientState)
     {
         $pair = sodium_crypto_sign_keypair();

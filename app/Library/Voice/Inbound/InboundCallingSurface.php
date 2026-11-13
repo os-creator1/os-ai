@@ -23,7 +23,7 @@ final class InboundCallingSurface
     /** @return array<string, string>|null */
     public function inboundUrls(string $workspaceUid, Business $business, ?User $user): ?array
     {
-        if ($user === null || ! $this->gate->available($business) || ! Gate::forUser($user)->allows('place_voice_calls')
+        if ($user === null || ! $this->gate->available($business) || ! app(\App\Library\Voice\CallingAuthority::class)->mayCall($user, $business)
             || $this->routes->viewedBusinessIdFor((int) $user->id) !== null) {
             return null;
         }

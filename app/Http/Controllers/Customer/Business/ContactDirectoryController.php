@@ -156,7 +156,7 @@ class ContactDirectoryController extends CustomerBaseController
         if (! (bool) config('messaging.voice.customer_calls.enabled')
             || ! (bool) config('messaging.voice.browser.enabled')
             || config('services.telnyx.mode') !== 'live'
-            || ! auth()->user()?->can('place_voice_calls')) {
+            || ! app(\App\Library\Voice\CallingAuthority::class)->mayCall(auth()->user(), $business)) {
             return null;
         }
 
