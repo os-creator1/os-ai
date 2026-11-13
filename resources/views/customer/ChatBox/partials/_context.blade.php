@@ -29,7 +29,7 @@
         <div class="conversation-context-actions">
         @if (! empty($call))
             {{-- Hidden until the page confirms the existing browser softphone is present; the server already verified this contact. --}}
-            <button type="button" class="conv-btn conv-btn-outline" data-role="conversation-call" data-call-uid="{{ $call['uid'] }}" data-call-label="{{ $call['label'] }}" data-call-phone="{{ $call['phone'] }}" data-call-initials="{{ $call['initials'] }}" aria-label="Call {{ $call['label'] }}" hidden>
+            <button type="button" class="conv-btn conv-btn-outline" data-role="conversation-call" data-call-uid="{{ $call['uid'] }}" data-call-conversation="{{ $call['conversation'] ?? '' }}" data-call-label="{{ $call['label'] }}" data-call-phone="{{ $call['phone'] }}" data-call-initials="{{ $call['initials'] }}" aria-label="Call {{ $call['label'] }}" hidden>
                 <x-ds-icon name="phone" size="16" aria-hidden="true" />Call
             </button>
         @endif

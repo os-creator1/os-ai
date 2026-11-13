@@ -2141,7 +2141,7 @@
       function resetConversationHeader() {
         $("[data-role=conversation-avatar]").text("");
         $("[data-role=conversation-subtitle]").text("");
-        $(".conversation-call-btn").prop("hidden", true).removeAttr("data-call-uid data-call-label data-call-phone data-call-initials data-call-for");
+        $(".conversation-call-btn").prop("hidden", true).removeAttr("data-call-uid data-call-conversation data-call-label data-call-phone data-call-initials data-call-for");
       }
 
       function applyConversationHeader(response) {
@@ -2157,9 +2157,9 @@
 
         const $header = $(".conversation-call-btn");
         if (usable) {
-          $header.attr({ "data-call-uid": call.uid, "data-call-label": call.label, "data-call-phone": call.phone, "data-call-initials": call.initials, "data-call-for": forId, "aria-label": "Call " + call.label }).prop("hidden", false);
+          $header.attr({ "data-call-uid": call.uid || "", "data-call-conversation": call.conversation || "", "data-call-label": call.label, "data-call-phone": call.phone, "data-call-initials": call.initials, "data-call-for": forId, "aria-label": "Call " + call.label }).prop("hidden", false);
         } else {
-          $header.prop("hidden", true).removeAttr("data-call-uid data-call-label data-call-phone data-call-initials data-call-for");
+          $header.prop("hidden", true).removeAttr("data-call-uid data-call-conversation data-call-label data-call-phone data-call-initials data-call-for");
         }
 
         // The panel's own Call button was rendered by the server for this contact; keep it only when it can work.
@@ -2175,17 +2175,21 @@
       $(document).on("click", "[data-role=conversation-call]", function() {
         const $btn = $(this);
         const uid = String($btn.attr("data-call-uid") || "");
+        const conversation = String($btn.attr("data-call-conversation") || "");
         // A stale or unstamped control (the selection moved on) never dials.
-        if (uid === "" || String($btn.attr("data-call-for") || "") !== String($(".chat_id").val()) || !softphoneAvailable()) {
+        if ((uid === "" && conversation === "") || String($btn.attr("data-call-for") || "") !== String($(".chat_id").val()) || !softphoneAvailable()) {
           $btn.prop("hidden", true);
           return;
         }
-        window.MGSoftphone.callContact({
+        const target = {
           uid: uid,
           label: String($btn.attr("data-call-label") || ""),
           phone: String($btn.attr("data-call-phone") || ""),
           initials: String($btn.attr("data-call-initials") || "")
-        });
+        };
+        // A conversation with no linked contact is called through the conversation itself (the server resolves its number).
+        if (conversation !== "") { target.conversation = conversation; }
+        window.MGSoftphone.callContact(target);
       });
 
       /**

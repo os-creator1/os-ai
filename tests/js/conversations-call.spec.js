@@ -29,7 +29,7 @@ ${roles.map((r) => `<button data-role="${r}"></button>`).join('')}
 </div><audio id="mg-remote-audio"></audio></body></html>`;
 
 const panel = (call) => `<div data-role="contact-panel" data-header-initials="AM" data-header-subtitle="+1 970"><div class="conversation-context-actions">` +
-  (call ? `<button type="button" data-role="conversation-call" data-call-uid="${call.uid}" data-call-label="${call.label}" data-call-phone="${call.phone}" data-call-initials="${call.initials}" hidden>Call</button>` : '') + `</div></div>`;
+  (call ? `<button type="button" data-role="conversation-call" data-call-uid="${call.uid}" data-call-conversation="${call.conversation || ''}" data-call-label="${call.label}" data-call-phone="${call.phone}" data-call-initials="${call.initials}" hidden>Call</button>` : '') + `</div></div>`;
 
 async function scenario(name, withSoftphone, fn) {
   const browser = await chromium.launch();
@@ -80,6 +80,13 @@ const visible = (page, sel) => page.evaluate((s) => [...document.querySelectorAl
     assert.deepEqual(await page.evaluate(() => window.calls), [{ uid: 'contact-a', label: 'Amira Misurati', phone: '+19708259551', initials: 'AM' }]);
     assert.equal(await page.textContent('[data-role=softphone-name]'), 'Amira Misurati');
     assert.equal(await page.evaluate(() => document.getElementById('mg-softphone').classList.contains('is-open')), true);
+  });
+  await scenario('an unlinked conversation number is called through the conversation itself, with no contact uid', true, async (page) => {
+    await load(page, 'conv-1', { uid: '', conversation: 'conv-1', label: '+19708250000', phone: '+19708250000', initials: '#' });
+    assert.equal(await visible(page, '[data-role=conversation-call]'), 2);
+    await page.click('.conversation-call-btn');
+    assert.deepEqual(await page.evaluate(() => window.calls), [{ uid: '', label: '+19708250000', phone: '+19708250000', initials: '#', conversation: 'conv-1' }]);
+    assert.equal(await page.textContent('[data-role=softphone-name]'), '+19708250000');
   });
   await scenario('switching conversation discards the previous identity before the new one loads', true, async (page) => {
     await load(page, 'conv-1', A);
