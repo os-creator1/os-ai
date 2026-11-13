@@ -173,4 +173,67 @@ class AgencySiteEditorScriptTest extends TestCase
         $this->assertFalse($r['otherSaved']);
         $this->assertTrue($r['heroLocked'], 'the reset section is locked, not silently ignoring input, until the page is reloaded');
     }
+
+    public function test_the_legacy_sample_cleanup_saves_pending_edits_first(): void
+    {
+        $r = $this->runEditor()['clearSavesPendingEditFirst'];
+
+        $e = $r['events'];
+        $this->assertSame(1, count(array_keys($e, 'clear')), 'the cleanup runs once');
+        $this->assertLessThan(array_search('clear', $e, true), array_search('save:copy.home.hero.title', $e, true), 'the pending edit is saved BEFORE the cleanup runs');
+        $this->assertSame('clear', end($e), 'nothing stale is saved after it');
+        $this->assertSame('Typed just before the cleanup', $r['saved']);
+        $this->assertTrue($r['reloaded']);
+    }
+
+    public function test_a_failed_save_blocks_the_legacy_sample_cleanup_and_the_reload(): void
+    {
+        $r = $this->runEditor()['clearBlockedBySaveFailure'];
+
+        $this->assertNotContains('clear', $r['events'], 'no cleanup is requested while an edit cannot be saved');
+        $this->assertFalse($r['reloaded'], 'no reload over unsaved content');
+        $this->assertSame('Typed just before the cleanup', $r['inputKept'], 'the edit is still in the field');
+        $this->assertStringContainsString('NOT replaced', $r['state']);
+        $this->assertStringContainsString('Use plain text only.', $r['state'], 'the error is actionable');
+    }
+
+    public function test_edits_typed_while_the_legacy_sample_cleanup_runs_are_saved_not_lost(): void
+    {
+        $r = $this->runEditor()['clearKeepsEditsTypedDuringTheRequest'];
+
+        $e = $r['events'];
+        $clear = array_search('clear', $e, true);
+        $this->assertLessThan($clear, array_search('save:copy.home.hero.title', $e, true), 'the pending edit is saved before the cleanup');
+        $this->assertSame('save:copy.home.hero.title', end($e), 'the edit typed during the request is saved after it');
+        $this->assertGreaterThan($clear, array_key_last($e));
+        $this->assertSame('Typed while the cleanup ran', $r['saved']);
+        $this->assertTrue($r['reloaded'], 'the page reloads only once everything is saved');
+    }
+
+    public function test_switching_dog_business_to_general_right_before_cleanup_is_respected(): void
+    {
+        $r = $this->runEditor()['clearAfterSwitchingDogToGeneral'];
+        $e = $r['events'];
+
+        $this->assertSame('general', $r['savedNiche'], 'the pending selection was saved first');
+        $this->assertContains('clear-refused', $e, 'the server refuses: General is saved');
+        $this->assertNotContains('clear', $e, 'no cleanup ran');
+        $this->assertNull($r['clearedNiche']);
+        $this->assertSame([], (array) $r['clearBody'], 'the page sends no industry of its own');
+        $this->assertFalse($r['reloaded'], 'no reload over the unfinished action');
+        $this->assertStringContainsString('Choose an industry first', $r['state']);
+    }
+
+    public function test_switching_general_to_dog_business_right_before_cleanup_uses_the_new_selection(): void
+    {
+        $r = $this->runEditor()['clearAfterSwitchingGeneralToDog'];
+        $e = $r['events'];
+
+        $this->assertSame('dog_business', $r['savedNiche']);
+        $this->assertSame('dog_business', $r['clearedNiche'], 'the cleanup used the just-saved industry');
+        $this->assertLessThan(array_search('clear', $e, true), array_search('save:x.niche', $e, true), 'selection saved before the cleanup');
+        $this->assertSame([], (array) $r['clearBody']);
+        $this->assertSame('dog_business', $r['savedNiche'], 'the selection is not overwritten');
+        $this->assertTrue($r['reloaded']);
+    }
 }

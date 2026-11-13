@@ -278,6 +278,29 @@
             });
             return;
         }
+        if (t.hasAttribute('data-clear-legacy-samples')) {
+            // The industry is NOT sent: the server uses the one saved on the draft after the flush below.
+            if (!confirm('Replace the unedited event examples saved in this draft with your industry examples?')) { return; }
+            // Pending edits are saved FIRST, so the server cleans up the draft the owner actually sees; an edit typed while the
+            // cleanup runs is saved after it (settleScopes). The page reloads only when every save succeeded.
+            setState('Saving your changes…');
+            flushScopes(null).then(function (saved) {
+                if (!saved.ok) {
+                    setState('Your changes could not be saved, so the old examples were NOT replaced. ' + saved.message + ' Your edits are still on this page: fix the problem or use Save draft, then try again.', true);
+                    return null;
+                }
+                setState('Replacing old examples…');
+                return saver.enqueue(function () { return post(urls.clearSamples, {}); }).then(function (j) {
+                    if (!(j && j.ok)) { setState((j && j.message) || 'Could not replace the old examples.', true); return null; }
+                    return settleScopes(null); // anything typed while the cleanup was running
+                });
+            }).then(function (final) {
+                if (final === null || final === undefined) { return; }
+                if (final.ok) { reloading = true; setState('Done'); window.location.reload(); return; }
+                setState('The old examples were replaced, but other changes were not saved — ' + final.message + ' Your edits are still on this page; use Save draft, then reload.', true);
+            }).catch(function () { setState('Could not replace the old examples. Your edits are still on this page.', true); });
+            return;
+        }
         if (t.hasAttribute('data-step-button')) { go(parseInt(t.getAttribute('data-step-button'), 10)); return; }
         if (t.hasAttribute('data-step-prev')) { go(step - 1); return; }
         if (t.hasAttribute('data-step-next')) { go(step + 1); return; }

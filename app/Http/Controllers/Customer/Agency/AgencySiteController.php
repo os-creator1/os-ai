@@ -8,6 +8,7 @@ use App\Http\Controllers\Controller;
 use App\Http\Controllers\Customer\Agency\Concerns\AuthorizesAgencyWorkspace;
 use App\Library\AgencySite\AgencySiteBookingService;
 use App\Library\AgencySite\AgencySiteManager;
+use App\Library\AgencySite\LegacySampleCleaner;
 use App\Library\AgencySite\SiteEditorPresenter;
 use App\Library\AgencySite\SiteRenderer;
 use App\Library\AgencySite\SiteSchema;
@@ -37,6 +38,7 @@ class AgencySiteController extends Controller
         private readonly SiteRenderer $renderer,
         private readonly SiteEditorPresenter $presenter,
         private readonly AgencySiteBookingService $booking,
+        private readonly LegacySampleCleaner $samples,
     ) {
     }
 
@@ -132,6 +134,23 @@ class AgencySiteController extends Controller
             [, $site] = $this->sites->createAndSelectBookingType((int) Auth::id(), $agency, $data);
 
             return $this->state($agency, $site);
+        });
+    }
+
+    /**
+     * Reset, for the industry SAVED on the draft (never one sent by the page), ONLY saved answers that are verbatim copies of the old general (event) demo
+     * content. Custom text is never changed; it is reported back for the owner to review.
+     */
+    public function clearLegacySamples(string $workspaceUid): JsonResponse
+    {
+        $agency = $this->authorizedAgency($workspaceUid);
+        $site = $this->sites->find($agency);
+        abort_if($site === null, 404);
+
+        return $this->guard(function () use ($agency, $site) {
+            $result = $this->samples->apply((int) Auth::id(), $agency, $site);
+
+            return $this->state($agency, $this->sites->find($agency)) + ['cleared' => array_keys($result['removed']), 'review' => $result['review']];
         });
     }
 

@@ -28,7 +28,8 @@ final class SiteEditorPresenter
     {
         $values = AgencySiteManager::values($site);
         $context = $this->contexts->make($site, $values);
-        [$defaultTree] = $this->builder->build([], $context);
+        // The defaults the editor shows (and "reset" returns to) are those of the selected industry, not the general ones.
+        [$defaultTree] = $this->builder->build(array_intersect_key($values, ['x.niche' => 1]), $context);
         [$tree, $homeOrder] = $this->builder->build($values, $context);
 
         $groups = [];
@@ -99,6 +100,7 @@ final class SiteEditorPresenter
             'pages' => array_map(fn ($page) => ['key' => $page, 'url' => route('customer.workspaces.agency.site.preview', [$agency->uid, $page])], SiteSchema::PAGES),
             'ctaTargets' => SiteSchema::CTA_TARGETS,
             'goals' => SiteSchema::GOALS,
+            'legacySamples' => (($values['x.niche'] ?? NichePresets::GENERAL) !== NichePresets::GENERAL) ? app(LegacySampleCleaner::class)->analyse($site) : ['pinned' => [], 'review' => []],
             'signupUrls' => collect($context->plans)->mapWithKeys(fn ($p) => [$p['uid'] => route('agency.site.signup', [$site->public_id, $p['uid']])])->all(),
         ];
     }
@@ -147,13 +149,14 @@ final class SiteEditorPresenter
     }
 
     /** The value the form shows for a field the Agency has not changed. */
-    private function defaultFor(array $field, array $defaultTree): mixed
+    public function defaultFor(array $field, array $defaultTree): mixed
     {
         $path = $field['path'];
 
         if (str_starts_with($path, 'x.')) {
             return match ($path) {
                 'x.goal' => 'both',
+                'x.niche' => NichePresets::GENERAL,
                 'x.industries' => (array) Arr::get($defaultTree, 'copy.home.trust.industries', []),
                 default => in_array($field['type'], ['strings', 'rows'], true) ? [] : (str_starts_with($path, 'x.cta.') ? 'pricing' : null),
             };
@@ -163,7 +166,7 @@ final class SiteEditorPresenter
     }
 
     /** Lists of positional tuples become named rows so one form control can edit any list. */
-    private function forEditor(array $field, mixed $value, array $defaultTree): mixed
+    public function forEditor(array $field, mixed $value, array $defaultTree): mixed
     {
         if (($field['type'] ?? null) !== 'rows' || ! is_array($value)) {
             return $value;
