@@ -15,7 +15,7 @@ use App\Library\Workspace\AgencyClientRelationshipManager;
 use App\Repositories\Contracts\WorkspaceRepository;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Http\Response;
+use Symfony\Component\HttpFoundation\Response;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Validation\ValidationException;
 
@@ -47,13 +47,35 @@ class AgencySiteController extends Controller
         $site = $this->sites->find($agency);
         abort_if($site === null, 404);
 
-        $html = $this->renderer->page($site, AgencySiteManager::values($site), $page, $agency->uid);
+        $values = AgencySiteManager::values($site);
+
+        // Call-only: previewing the old Pricing URL goes where a visitor would be sent, never to prices.
+        if (($to = $this->renderer->redirectFor($site, $values, $page, $agency->uid)) !== null) {
+            return redirect()->away($to, 302)->header('Cache-Control', 'no-store');
+        }
+
+        $html = $this->renderer->page($site, $values, $page, $agency->uid);
         abort_if($html === null, 404);
 
         return response($html)->header('Content-Type', 'text/html; charset=UTF-8')
             ->header('X-Robots-Tag', 'noindex, nofollow')
             ->header('Cache-Control', 'no-store')
             ->header('X-Frame-Options', 'SAMEORIGIN');
+    }
+
+    /** marketing.css in the DRAFT's colours, for the preview only. Same authorisation as the preview itself. */
+    public function previewCss(string $workspaceUid): Response
+    {
+        $agency = $this->authorizedAgency($workspaceUid);
+        $site = $this->sites->find($agency);
+        abort_if($site === null, 404);
+
+        $context = $this->renderer->site($site, AgencySiteManager::values($site), $agency->uid)->context();
+
+        return response($this->renderer->css($context))
+            ->header('Content-Type', 'text/css; charset=UTF-8')
+            ->header('Cache-Control', 'private, no-store')
+            ->header('X-Content-Type-Options', 'nosniff');
     }
 
     /** Save answers (JSON). Returns the refreshed checklist so the editor can show status without a reload. */

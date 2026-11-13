@@ -7,7 +7,7 @@
 <p class="final-lead" style="margin: 0; font-size: 19px; line-height: 1.55; color: #FBE9E6; max-width: 620px"><span class="hide-m">{{ $c['lead'] }}</span><span class="show-m">{{ $c['lead_mobile'] }}</span></p>
 <div class="final-cta-btns" style="display: flex; flex-wrap: wrap; justify-content: center; gap: 12px; padding-top: 6px">
 <a href="{{ $mg->ctaUrl('final') }}" class="btn" style="background: #FFFFFF; color: #181413; min-height: 54px; padding: 0 28px; font-size: 16px">{{ $c['primary'] }}</a>
-@if ($mg->hasBookDemo())<a href="{{ $mg->bookDemoUrl() }}" class="btn btn-g" style="min-height: 54px; padding: 0 26px; font-size: 16px">{{ $c['secondary'] }}</a>@endif
+@if ($mg->sellsOnline() && $mg->hasBookDemo())<a href="{{ $mg->bookDemoUrl() }}" class="btn btn-g" style="min-height: 54px; padding: 0 26px; font-size: 16px">{{ $c['secondary'] }}</a>@endif
 </div>
 </div>
 </div>

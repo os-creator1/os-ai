@@ -607,4 +607,44 @@ return [
         ['Team access', 'Invite staff with the right permissions.', false],
         ['Agency & white-label', 'Manage client businesses under your own brand on the Agency plan.', true],
     ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Illustration sample data
+    | The made-up business, people, inquiries and keywords shown inside the product illustrations. These are the
+    | platform's own defaults; an Agency that picks a niche (App\Library\AgencySite\NichePresets) swaps them for
+    | examples from that industry. Read in the views as $mg->demo('key'), never hardcoded.
+    |--------------------------------------------------------------------------
+    */
+    'demo' => [
+        'business' => 'Lumen Events',
+        'owner' => 'Alex',
+        'lead_name' => 'Jordan P.',
+        'lead_full' => 'Jordan Park',
+        'lead_detail' => 'Wedding, June 14 · from your website form',
+        'lead_tag' => 'Wedding · June 14',
+        'signed_name' => 'Riverside Gala',
+        'reply_snippet' => 'Thanks Jordan — here’s our availability for June 14…',
+        'inbox_subject' => 'Are you available June 14?',
+        'callback_note' => 'Call back the Nguyen party!!',
+        'search_query' => 'photo booth near me',
+        'keywords' => ['photo booth rental near me', 'wedding photo booth', '360 booth hire'],
+        'keywords_product' => ['photo booth rental near me', 'wedding photo booth', 'event booth hire'],
+        'seo_next' => 'Next step: add a service page for corporate events',
+        'services' => ['Weddings', 'Corporate events', 'Birthdays'],
+        'site_domain' => 'lumenevents.com',
+        'site_tagline' => 'Unforgettable events, captured.',
+        'site_cta' => 'Check availability',
+        'chat_question' => 'Hi! Do you have a booth free on June 14?',
+        'chat_answer' => 'We do! Here’s our package list and a link to book.',
+        'crm_a_name' => 'Jordan Park',
+        'crm_a_kind' => 'Wedding',
+        'crm_b_name' => 'Mia Torres',
+        'crm_b_kind' => 'Birthday',
+        'crm_c_name' => 'Riverside Gala',
+        'crm_c_kind' => 'Corporate',
+        'crm_d_name' => 'Chen wedding',
+        'open_dates' => 'June dates you still have open.',
+        'after_event' => 'Day after the event',
+    ],
 ];

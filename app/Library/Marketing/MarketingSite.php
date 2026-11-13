@@ -48,6 +48,12 @@ class MarketingSite
         return (bool) $this->cfg('show_placeholders');
     }
 
+    /** A sample-data string for a product illustration, e.g. demo('business') or demo('keywords.0'). */
+    public function demo(string $key): string
+    {
+        return (string) $this->cfg('demo.'.$key, '');
+    }
+
     /** Section switch, e.g. section('home.trust_logos'). */
     public function section(string $key): bool
     {
@@ -249,6 +255,21 @@ class MarketingSite
         }
 
         return $this->bookDemoUrl() ?? $this->loginUrl();
+    }
+
+    /**
+     * Whether visitors can pick a plan and sign up themselves. Always true on the platform's own site; an Agency
+     * that sells by "Book a call" only turns it off, and the shared views then drop pricing and signup prompts.
+     */
+    public function sellsOnline(): bool
+    {
+        return true;
+    }
+
+    /** Label of the generic primary conversion button. */
+    public function getStartedLabel(): string
+    {
+        return 'Get started';
     }
 
     /** Generic "Get started": the featured plan's destination. */

@@ -21,11 +21,11 @@
 <div style="flex: 1"></div>
 <div style="display: flex; align-items: center; gap: 10px">
 <a href="{{ $mg->loginUrl() }}" class="hide-m" style="font-size: 15px; font-weight: 600; padding: 10px 12px">Log in</a>
-@if ($mg->hasBookDemo() && $active !== 'book-demo')
+@if ($mg->sellsOnline() && $mg->hasBookDemo() && $active !== 'book-demo')
 <a href="{{ $mg->bookDemoUrl() }}" class="btn btn-s hide-m">Book a demo</a>
 @endif
 @if ($showGetStarted)
-<a href="{{ $mg->getStartedUrl() }}" class="btn btn-p mg-gs">Get started</a>
+<a href="{{ $mg->getStartedUrl() }}" class="btn btn-p mg-gs">{{ $mg->getStartedLabel() }}</a>
 @endif
 <details class="mg-menu show-m" style="position: relative">
 <summary aria-label="Open menu" style="width: 44px; height: 44px; border-radius: 10px; border: 1px solid #DCD5CE; background: #FFFFFF; display: flex; align-items: center; justify-content: center"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"></path></svg></summary>
@@ -34,7 +34,7 @@
 <a href="{{ $href }}" style="padding: 14px; font-size: 18px; font-weight: 600">{{ $label }}</a>
 @endforeach
 <div style="display: flex; flex-direction: column; gap: 8px; padding: 10px 4px 4px; border-top: 1px solid #EFEAE5; margin-top: 6px">
-@if ($mg->hasBookDemo())
+@if ($mg->sellsOnline() && $mg->hasBookDemo())
 <a href="{{ $mg->bookDemoUrl() }}" class="btn btn-s">Book a demo</a>
 @endif
 <a href="{{ $mg->loginUrl() }}" class="btn" style="color: #2E2826">Log in</a>

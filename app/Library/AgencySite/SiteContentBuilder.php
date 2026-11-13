@@ -60,7 +60,31 @@ final class SiteContentBuilder
             Arr::set($tree, $path, $value);
         }
 
-        $tree['faqs'] = ['home' => SiteDefaults::homeFaqs($brand), 'pricing' => SiteDefaults::pricingFaqs()];
+        // Industry layer: wording and illustration sample data for the chosen niche, above the neutral defaults and
+        // below every answer the Agency has saved.
+        $answers = $this->validAnswers($values);
+        $niche = NichePresets::for((string) ($answers['x.niche'] ?? NichePresets::GENERAL), $brand);
+
+        foreach ($niche['values'] as $path => $value) {
+            Arr::set($tree, $path, $value);
+        }
+
+        $tree['demo'] = array_merge((array) ($tree['demo'] ?? []), $niche['demo']);
+
+        if ($niche['industries'] !== []) {
+            $tree['industries'] = $niche['industries'];
+        }
+
+        $callOnly = $context->callOnly();
+        $tree['faqs'] = ['home' => SiteDefaults::homeFaqs($brand, $callOnly, $niche['whoFor']), 'pricing' => $callOnly ? [] : SiteDefaults::pricingFaqs()];
+
+        if ($callOnly) {
+            // Starter wording for a site with no pricing and no signup; the Agency's own answers still win below.
+            foreach (SiteDefaults::callOnlyValues() as $path => $value) {
+                Arr::set($tree, $path, $value);
+            }
+        }
+
         Arr::set($tree, 'pages.pricing.description', "Plans and pricing for {$brand}.");
         Arr::set($tree, 'pages.home.title', $brand);
         $tree['site'] = ['name' => $brand, 'legal_name' => $context->legalName, 'og_image' => 'img/mg-mark.png'];
@@ -75,8 +99,6 @@ final class SiteContentBuilder
             }
         }
 
-        $answers = $this->validAnswers($values);
-
         // Setup answers feed starter wording; the Agency's own answers below still win.
         if (! empty($answers['x.industries']) && ! array_key_exists('copy.home.trust.industries', $answers)) {
             Arr::set($tree, 'copy.home.trust.industries', $answers['x.industries']);
@@ -89,6 +111,10 @@ final class SiteContentBuilder
             }
 
             Arr::set($tree, $path, $this->shaped($tree, $path, $value));
+        }
+
+        if ($callOnly) {
+            $tree = $this->enforceCallOnly($tree);
         }
 
         // The "why one platform" table compares software; a row about help from people is a promise only the Agency can make.
@@ -137,6 +163,41 @@ final class SiteContentBuilder
         $order = $this->homeOrder($answers, $context, $hasStories);
 
         return [$tree, $order];
+    }
+
+    /** Wording that sells a plan, a price or a self-service signup. */
+    private const SELLING_WORDS = '/pric(e|es|ing)\b|\bplans?\b|billing|subscri|per month|\/\s?(mo|month|year)|\$\s?\d|free trial|\btrial\b|sign[\s-]?up|checkout|get started|\bbuy\b|\bcancel/iu';
+
+    /**
+     * Call-only is enforced on the content too: an Agency answer saved while it sold online (a "Get started" button, a
+     * billing FAQ) must not put pricing or signup wording back on a site that has turned self-service off.
+     */
+    private function enforceCallOnly(array $tree): array
+    {
+        foreach (['copy.home.hero.primary', 'copy.home.final.primary'] as $path) {
+            if (preg_match(self::SELLING_WORDS, (string) Arr::get($tree, $path, '')) === 1) {
+                Arr::set($tree, $path, 'Book a call');
+            }
+        }
+
+        // Product tags that say which plan a capability belongs to ("SEO & ads · Growth plan") are plan information.
+        foreach ((array) ($tree['product_features'] ?? []) as $key => $feature) {
+            if (isset($feature['chip'])) {
+                $tree['product_features'][$key]['chip'] = trim((string) preg_replace('/\s*·\s*[\w ]*\bplans?\b/iu', '', $feature['chip']));
+            }
+        }
+
+        foreach ((array) ($tree['product_more'] ?? []) as $i => $card) {
+            $tree['product_more'][$i][1] = trim((string) preg_replace('/\s+on the Agency plan/iu', '', (string) ($card[1] ?? '')));
+        }
+
+        $tree['faqs']['home'] = array_values(array_filter(
+            (array) ($tree['faqs']['home'] ?? []),
+            fn ($faq) => preg_match(self::SELLING_WORDS, ($faq['q'] ?? '').' '.($faq['a'] ?? '')) !== 1,
+        ));
+        $tree['faqs']['pricing'] = [];
+
+        return $tree;
     }
 
     /** Replace the product name in every string value (never in keys), and drop the original owner's story copy. */
@@ -272,8 +333,8 @@ final class SiteContentBuilder
             $hidden[] = 'faq';
         }
 
-        // A pricing section or comparison table with no plan in it is not a section.
-        if ($context->actionablePlans() === []) {
+        // A pricing section or comparison table with no plan in it is not a section (call-only sites never have one).
+        if ($context->callOnly() || $context->actionablePlans() === []) {
             array_push($hidden, 'pricing', 'comparison');
         }
 

@@ -326,7 +326,10 @@ final class AgencySiteManager
         if (in_array($goal, ['both', 'book_call'], true)) {
             $uuid = $values['x.booking_type_uid'] ?? null;
             $readiness = $this->booking->readiness($agency, $uuid);
-            $add('booking', 'Booking type', $readiness['ready'] ? 'pass' : 'fail', $readiness['ready'] ? 'Visitors can book into your calendar.' : ($readiness['reason'] ?? 'Choose a booking type.'), 8);
+            $why = $readiness['reason'] ?? 'Choose a booking type.';
+            $add('booking', 'Booking type', $readiness['ready'] ? 'pass' : 'fail', $readiness['ready'] ? 'Visitors can book into your calendar.' : ($goal === 'book_call'
+                ? 'Book a call only needs a working booking calendar, and none is set up: '.$why.' Choose a booking type, or switch to self-service signup, before publishing.'
+                : $why), 8);
         }
 
         // The goal is only honoured if at least one way to convert actually works: a visitor must be able to buy or book.

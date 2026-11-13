@@ -90,6 +90,11 @@ final class AgencyMarketingSite extends MarketingSite
 
     public function url(string $page): string
     {
+        // Call-only: a link to Pricing can never exist, so it becomes the booking page (or home as a last resort).
+        if ($page === 'pricing' && $this->context->callOnly()) {
+            return $this->bookDemoUrl() ?? ($this->context->pageUrl)('home');
+        }
+
         return match ($page) {
             'book-demo' => $this->bookDemoUrl() ?? ($this->context->pageUrl)('home'),
             default => ($this->context->pageUrl)($page),
@@ -112,6 +117,26 @@ final class AgencyMarketingSite extends MarketingSite
         return $this->bookDemoUrl() !== null;
     }
 
+    public function sellsOnline(): bool
+    {
+        return ! $this->context->callOnly();
+    }
+
+    public function getStartedLabel(): string
+    {
+        return $this->context->callOnly() ? 'Book a call' : 'Get started';
+    }
+
+    /** Pricing is not a page of a call-only site, whatever the Agency's page switches say. */
+    public function pageVisible(string $key): bool
+    {
+        if ($key === 'pricing' && $this->context->callOnly()) {
+            return false;
+        }
+
+        return parent::pageVisible($key);
+    }
+
     public function getStartedUrl(): string
     {
         return $this->ctaUrl('default');
@@ -119,7 +144,7 @@ final class AgencyMarketingSite extends MarketingSite
 
     public function ctaUrl(string $slot): string
     {
-        $default = $this->context->goal === 'book_call' ? 'booking' : 'pricing';
+        $default = $this->context->callOnly() ? 'booking' : 'pricing';
 
         return $this->resolveTarget((string) Arr::get($this->tree, 'x.cta.'.$slot, $default));
     }
@@ -127,6 +152,11 @@ final class AgencyMarketingSite extends MarketingSite
     /** signup | pricing | booking → a URL that always leads somewhere that works. */
     public function resolveTarget(string $target): string
     {
+        if ($this->context->callOnly()) {
+            // Every conversion path is the booking calendar: signup and pricing do not exist on this site.
+            return $this->bookDemoUrl() ?? ($this->context->pageUrl)('home');
+        }
+
         $pricing = ($this->context->pageUrl)('pricing');
 
         return match ($target) {
@@ -152,6 +182,10 @@ final class AgencyMarketingSite extends MarketingSite
 
     public function plans(): array
     {
+        if ($this->context->callOnly()) {
+            return [];
+        }
+
         $out = [];
 
         foreach ($this->context->actionablePlans() as $plan) {
@@ -185,6 +219,10 @@ final class AgencyMarketingSite extends MarketingSite
 
     public function planUrl(string $tier): string
     {
+        if ($this->context->callOnly()) {
+            return $this->resolveTarget('booking');
+        }
+
         return ($this->context->pageUrl)('pricing');
     }
 

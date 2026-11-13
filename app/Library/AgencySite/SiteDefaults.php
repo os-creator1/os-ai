@@ -80,11 +80,22 @@ final class SiteDefaults
     }
 
     /** Starter Q&A that states only facts about the software and the Agency's own billing flow. */
-    public static function homeFaqs(string $brand): array
+    public static function homeFaqs(string $brand, bool $callOnly = false, ?string $whoFor = null): array
     {
+        $who = $whoFor ?? 'Small businesses that run on inquiries and bookings.';
+
+        if ($callOnly) {
+            return [
+                ['q' => "What is {$brand}?", 'a' => "{$brand} is an all-in-one workspace for your website, customers, conversations, calendar and follow-ups."],
+                ['q' => 'Who is it for?', 'a' => $who],
+                ['q' => 'How do I get started?', 'a' => 'Book a call. We will walk through how it would work for your business.'],
+                ['q' => 'How do I contact support?', 'a' => 'Use the support link in the footer of this site or inside your account.'],
+            ];
+        }
+
         return [
             ['q' => "What is {$brand}?", 'a' => "{$brand} is an all-in-one workspace for your website, customers, conversations, calendar and follow-ups."],
-            ['q' => 'Who is it for?', 'a' => 'Small businesses that run on inquiries and bookings.'],
+            ['q' => 'Who is it for?', 'a' => $who],
             ['q' => 'How do I get started?', 'a' => 'Choose a plan, create your account and your workspace is set up for you.'],
             ['q' => 'How does billing work?', 'a' => 'Plans are billed on a recurring subscription through Stripe. You can manage your payment method and subscription from your account.'],
             ['q' => 'How do I contact support?', 'a' => 'Use the support link in the footer of this site or inside your account.'],
@@ -96,6 +107,32 @@ final class SiteDefaults
         return [
             ['q' => 'How am I billed?', 'a' => 'Your plan renews automatically on its billing interval until you cancel. Payments are processed securely by Stripe.'],
             ['q' => 'Can I change or cancel my plan?', 'a' => 'You can manage your subscription, payment method and invoices from the billing portal in your account.'],
+        ];
+    }
+
+    /**
+     * Starter wording for a call-only site: no plan, price or signup is mentioned anywhere. Applied above the
+     * MotionGrove copy and below the Agency's own answers.
+     *
+     * @return array<string, mixed>
+     */
+    public static function callOnlyValues(): array
+    {
+        return [
+            'copy.home.hero.primary' => 'Book a call',
+            'copy.home.final.primary' => 'Book a call',
+            'copy.home.final.lead' => 'Book a call and see how it would work for your business.',
+            'copy.home.final.lead_mobile' => 'Book a call and see how it would work for you.',
+            'copy.home.commitment.eyebrow' => 'Getting started',
+            'page_copy.how-it-works.lead' => 'Four simple steps from a first call to getting started.',
+            'page_copy.how-it-works.steps' => [
+                ['Book a call', 'Tell us about your business and what you need.', 'Pick a time that suits you.', 'We confirm the call in your calendar.', 'Milestone', 'Call booked'],
+                ['Set up your workspace', 'Add your business details, services and availability.', 'Fill in your business profile.', 'Your workspace is ready with the tools you need.', 'Milestone', 'Workspace ready'],
+                ['Connect your tools', 'Connect your website, calendar and messaging.', 'Connect the channels you use.', 'The connections are available in your workspace.', 'Milestone', 'Tools connected'],
+                ['Start using it', 'Capture leads, book appointments and follow up.', 'Run your day from one place.', 'Everything lives in one workspace.', 'Milestone', 'Up and running'],
+            ],
+            'page_copy.how-it-works.cta.lead' => 'Book a call and see how it would work for you.',
+            'copy.usage_note' => '',
         ];
     }
 
