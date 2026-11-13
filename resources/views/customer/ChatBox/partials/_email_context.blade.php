@@ -8,12 +8,18 @@
         <span class="avatar bg-light-primary conversation-context-avatar" aria-hidden="true">
             <span class="avatar-content"><x-ds-icon name="mail" /></span>
         </span>
-        <h6 class="mb-0 conversation-context-name">{{ $name ?? $counterpart }}</h6>
+        <h6 class="mb-0 conversation-context-name">
+            @if ($matched && $profileUrl !== null)
+                <a href="{{ $profileUrl }}" class="conversation-context-profile-link" data-role="contact-panel-name-link" title="View contact details">{{ $name ?? $counterpart }}</a>
+            @else
+                {{ $name ?? $counterpart }}
+            @endif
+        </h6>
         @if ($name !== null)
             <p class="text-caption mb-0">{{ $counterpart }}</p>
         @endif
     </div>
-    @if (! empty($call) || ($matched && $profileUrl !== null))
+    @if (! empty($call) || ($matched && $profileUrl !== null) || ($addContactUrl ?? null) !== null)
         <div class="conversation-context-actions">
         @if (! empty($call))
             {{-- Hidden until the page confirms the existing browser softphone is present; the server already verified this contact. --}}
@@ -22,7 +28,9 @@
             </button>
         @endif
             @if ($matched && $profileUrl !== null)
-                <a class="btn btn-sm btn-outline-primary" href="{{ $profileUrl }}" data-role="contact-profile-link">View contact</a>
+                <a class="btn btn-sm btn-outline-primary" href="{{ $profileUrl }}" data-role="contact-profile-link">View contact details</a>
+            @elseif (($addContactUrl ?? null) !== null)
+                <a class="btn btn-sm btn-outline-primary" href="{{ $addContactUrl }}" data-role="contact-panel-add">Add to contacts</a>
             @endif
         </div>
     @endif
