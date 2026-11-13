@@ -2448,6 +2448,9 @@
         | them. See Workspace\AgencyProspectingController.
         |
         */
+        // Agency Settings -> Calling: picks WHICH business's (existing, business-scoped) Calling settings to open. No calling logic here.
+        Route::get('{workspaceUid}/calling', 'Workspace\AgencyCallingChooserController@choose')->name('calling.index');
+
         Route::prefix('{workspaceUid}/prospecting')->name('prospecting.')->group(function () {
             Route::get('/', 'Workspace\AgencyProspectingController@overview')->name('overview');
 
