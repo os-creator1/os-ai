@@ -38,8 +38,9 @@ final class ImapSettings
         $password = is_string($input['password'] ?? null) ? $input['password'] : '';
         $imapHost = self::host($input['imap_host'] ?? null);
         $smtpHost = self::host($input['smtp_host'] ?? null);
-        $imapPort = (int) ($input['imap_port'] ?? 0);
-        $smtpPort = (int) ($input['smtp_port'] ?? 0);
+        // A blank port means "use the standard one" (implicit TLS); an entered port is kept and validated below.
+        $imapPort = self::port($input['imap_port'] ?? null, 993);
+        $smtpPort = self::port($input['smtp_port'] ?? null, 465);
 
         if ($email === null) {
             throw new Imap(Imap::INVALID_SETTINGS, 'Enter a valid email address.');
@@ -112,6 +113,11 @@ final class ImapSettings
         }
 
         return $host;
+    }
+
+    private static function port(mixed $value, int $default): int
+    {
+        return $value === null || (is_string($value) && trim($value) === '') ? $default : (int) $value;
     }
 
     private static function text(mixed $value, int $max): string
