@@ -101,6 +101,7 @@ final class SeoCitationLocationSection
         public readonly ?array $googleNap = null,
         public readonly bool $phoneComparable = true,
         public readonly bool $canEditSharedDirectories = true,
+        public readonly ?string $businessDescription = null,
     ) {
     }
 
