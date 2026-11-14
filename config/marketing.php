@@ -48,6 +48,12 @@ return [
     | Call-to-action destinations
     |--------------------------------------------------------------------------
     */
+    // Call-only landing pages on the marketing host. `dogs_site` is the PUBLIC ID of the published White Label site served
+    // at /dogs (find it with `php artisan agency-site:find`); blank = /dogs is a 404. Never taken from a request.
+    'landing' => [
+        'dogs_site' => env('MARKETING_LANDING_DOGS_SITE'),
+    ],
+
     'cta' => [
         // ONE destination for every "Book a demo" / "Talk to us" button.
         // Precedence: this explicit URL (e.g. a verified Calendly link), then the

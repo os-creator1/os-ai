@@ -122,6 +122,12 @@ final class AgencyMarketingSite extends MarketingSite
         return $this->bookDemoUrl() !== null;
     }
 
+    /** The platform's Support center and Zoom guide are MotionGrove-branded pages: an Agency site links none of them. */
+    public function hasPlatformSupportPages(): bool
+    {
+        return false;
+    }
+
     public function sellsOnline(): bool
     {
         return ! $this->context->callOnly();

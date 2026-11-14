@@ -266,6 +266,12 @@ class MarketingSite
         return true;
     }
 
+    /** Whether MotionGrove's own Support center and Zoom guide pages exist for this site (an Agency's site has none). */
+    public function hasPlatformSupportPages(): bool
+    {
+        return true;
+    }
+
     /** Label of the "book a conversation" button. The platform books demos; a call-only Agency books calls. */
     public function bookDemoLabel(): string
     {

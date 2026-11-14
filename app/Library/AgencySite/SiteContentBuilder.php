@@ -166,13 +166,13 @@ final class SiteContentBuilder
     }
 
     /** Wording that sells a plan, a price or a self-service signup. */
-    private const SELLING_WORDS = '/pric(e|es|ing)\b|\bplans?\b|billing|subscri|per month|\/\s?(mo|month|year)|\$\s?\d|free trial|\btrial\b|sign[\s-]?up|checkout|get started|\bbuy\b|\bcancel/iu';
+    public const SELLING_WORDS = '/pric(e|es|ing)\b|\bplans?\b|billing|subscri|per month|\/\s?(mo|month|year)|\$\s?\d|free trial|\btrial\b|sign[\s-]?up|checkout|get started|\bbuy\b|\bcancel/iu';
 
     /**
      * Call-only is enforced on the content too: an Agency answer saved while it sold online (a "Get started" button, a
      * billing FAQ) must not put pricing or signup wording back on a site that has turned self-service off.
      */
-    private function enforceCallOnly(array $tree): array
+    public static function enforceCallOnly(array $tree): array
     {
         foreach (['copy.home.hero.primary', 'copy.home.final.primary'] as $path) {
             if (preg_match(self::SELLING_WORDS, (string) Arr::get($tree, $path, '')) === 1) {
