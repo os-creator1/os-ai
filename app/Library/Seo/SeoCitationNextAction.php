@@ -21,7 +21,8 @@ use App\Enums\Seo\SeoDirectoryImportance;
  * ranking outcome is promised.
  *
  * Order: 1 missing business information, 2 Google connection/health/differences
- * (or stale Google data, stated as not verified), 3 known listing
+ * (missing Google data is only ever a "not verified" note — never a recommendation of its own, because with zero
+ * mirror retention it would reappear on every visit and bury real work), 3 known listing
  * inconsistencies, 4 unhandled Essential/Recommended directories, 5 unhandled
  * niche-specific directories, 6 listings due a review, else "all clear".
  */
@@ -38,34 +39,29 @@ final class SeoCitationNextAction
     private const WHY_NAP = 'Directories and Google compare your name, address and phone, so keeping them consistent helps customers trust and find the right details. Listings do not guarantee any ranking change.';
 
     /**
-     * @return array{kind: string, title: string, why: string, action: string, target: string, row: ?SeoCitationRow, evidence: array<int, string>}
+     * @return array{kind: string, title: string, why: string, action: ?string, target: string, row: ?SeoCitationRow, evidence: array<int, string>, directory: ?array, google_note: ?string}
      *   target: 'settings' | 'google' | 'directory' | 'none'
      */
-    public static function for(SeoCitationLocationSection $section): array
+    public static function for(SeoCitationLocationSection $section, bool $canManage = false): array
     {
         $missing = self::missingInformation($section);
 
         if ($missing !== []) {
             return self::make(self::MISSING_INFO, 'Complete your business information', 'Every directory asks for these details, and they cannot be guessed. ' . self::WHY_NAP, 'Complete business profile', 'settings', null,
-                array_map(fn (string $f) => $f . ' is not set in your business profile.', $missing));
+                array_map(fn (string $f) => $f . ' is not set in your business profile.', $missing), $canManage, $section);
         }
 
         $items = $section->attentionItems();
 
         foreach ($items as $item) {
             if ($item['row'] === null) {
-                return self::make(self::GOOGLE, 'Fix your Google Business Profile', $item['message'] . ' Google is the listing customers see first in local search.', $item['action'], 'google', null, self::googleEvidence($section));
+                return self::make(self::GOOGLE, 'Fix your Google Business Profile', $item['message'] . ' Google is the listing customers see first in local search.', $item['action'], 'google', null, self::googleEvidence($section), $canManage, $section);
             }
-        }
-
-        if ($section->googleState() === SeoCitationLocationSection::GOOGLE_CONNECTED && ! $section->googleCheckedAutomatically()) {
-            return self::make(self::GOOGLE, 'Refresh your Google Business Profile details', 'Google details for this location are missing or out of date, so they have not been compared with your business profile. This is not a verification.', 'Open Google Business Profile', 'google', null,
-                ['Connected to Google, but no fresh details were available to compare.']);
         }
 
         foreach ($items as $item) {
             if ($item['kind'] === 'inaccurate') {
-                return self::make(self::INCONSISTENT, 'Correct ' . $item['name'], 'A recorded listing differs from your business information, or you marked it as needing correction. ' . self::WHY_NAP, self::directoryAction($item['row'])['label'], 'directory', $item['row'], [$item['message']]);
+                return self::make(self::INCONSISTENT, 'Correct ' . $item['name'], 'A recorded listing differs from your business information, or you marked it as needing correction. ' . self::WHY_NAP, self::directoryAction($item['row'], $canManage)['label'], 'directory', $item['row'], [$item['message']], $canManage, $section);
             }
         }
 
@@ -87,48 +83,76 @@ final class SeoCitationNextAction
                         $evidence[] = ($section->nicheLabel ?? 'Your industry') . ' guidance: ' . $row->nicheGuidance;
                     }
 
-                    return self::make($kind, 'Check ' . $item['name'], 'Customers use this directory to find businesses like yours. ' . self::WHY_NAP, self::directoryAction($row)['label'], 'directory', $row, $evidence);
+                    return self::make($kind, 'Check ' . $item['name'], 'Customers use this directory to find businesses like yours. ' . self::WHY_NAP, self::directoryAction($row, $canManage)['label'], 'directory', $row, $evidence, $canManage, $section);
                 }
             }
         }
 
         foreach ($items as $item) {
             if ($item['kind'] === 'stale') {
-                return self::make(self::REVIEW_DUE, 'Re-check ' . $item['name'], $item['message'], 'Review existing listing', 'directory', $item['row'], ['Last confirmed a while ago.']);
+                return self::make(self::REVIEW_DUE, 'Re-check ' . $item['name'], $item['message'], self::directoryAction($item['row'], $canManage)['label'], 'directory', $item['row'], ['Last confirmed a while ago.'], $canManage, $section);
             }
         }
 
-        return self::make(self::CLEAR, 'Nothing urgent right now', 'No known inconsistencies and no priority directory is waiting. Only recorded results are counted — directories you have not recorded are not assumed missing.', 'Review directory inventory', 'none', null, []);
+        return self::make(self::CLEAR, 'Nothing urgent right now', 'No known inconsistencies and no priority directory is waiting. Only recorded results are counted — directories you have not recorded are not assumed missing.', null, 'none', null, [], $canManage, $section);
     }
 
     /**
-     * What a directory's main action can really do. It only opens the official page (existing catalog
-     * URL); nothing is published or marked Listed by opening it.
+     * Where a directory's primary action really goes. Never invents a URL and never marks anything:
+     *  - listing: a recorded, SeoLinkSafety-checked listing URL exists, so the owner can look at it (a
+     *    recorded URL is the owner's own note, not proof the listing is verified);
+     *  - setup:   the catalog's official claim/setup page (claim_url only; a directory homepage is not a setup flow);
+     *  - drawer:  no approved URL, so the owner finds the listing themselves and records it in the drawer;
+     *  - info:    same, but the viewer cannot manage it — guidance only.
      *
-     * @return array{label: string, hint: ?string}
+     * @return array{kind: string, label: ?string, url: ?string, hint: ?string}
      */
-    public static function directoryAction(SeoCitationRow $row): array
+    public static function directoryAction(SeoCitationRow $row, bool $canManage = false): array
     {
-        $key = $row->directory->key;
         $hasRecord = $row->hasRecordedDetails();
 
-        if ($row->isCustom()) {
-            return ['label' => $hasRecord ? 'Review existing listing' : 'Open listing setup', 'hint' => null];
+        if ($hasRecord && $row->safeListingUrl !== null) {
+            return ['kind' => 'listing', 'label' => 'Review existing listing', 'url' => $row->safeListingUrl, 'hint' => 'Opens the listing URL you recorded. Check it still shows your details, then record what you see.'];
         }
 
-        if ($key === 'bing_places') {
-            return $hasRecord
-                ? ['label' => 'Review existing listing', 'hint' => null]
-                : ['label' => 'Import from Google', 'hint' => 'Bing Places offers an official import from your Google Business Profile. Sign in there to start it; MotionGrove does not import for you.'];
+        $claim = SeoLinkSafety::safeHttpsUrl($row->directory->claim_url);
+
+        if ($claim !== null) {
+            return ['kind' => 'setup', 'label' => self::setupLabel($row), 'url' => $claim, 'hint' => self::setupHint($row)];
         }
 
-        if ($key === 'apple_business') {
-            return $hasRecord
-                ? ['label' => 'Review existing listing', 'hint' => null]
-                : ['label' => 'Set up Apple Business', 'hint' => 'Opens Apple\'s official Apple Business page. Sign in with an Apple Account to claim or add your place.'];
+        $manual = 'No official setup link is on file for this directory. Search for your business there yourself, then record what you find.';
+
+        return $canManage && $row->writable
+            ? ['kind' => 'drawer', 'label' => 'Record what you find', 'url' => null, 'hint' => $manual]
+            : ['kind' => 'info', 'label' => null, 'url' => null, 'hint' => $manual . ' Someone with edit access can record it.'];
+    }
+
+    /** Label for the official claim/setup link (used by the hero and the drawer). */
+    public static function setupLabel(SeoCitationRow $row): string
+    {
+        $recorded = $row->hasRecordedDetails();
+        $key = $row->isCustom() ? null : $row->directory->key;
+
+        return match (true) {
+            $recorded => 'Manage listing',
+            $key === 'bing_places' => 'Import from Google',
+            $key === 'apple_business' => 'Set up Apple Business',
+            default => 'Open listing setup',
+        };
+    }
+
+    private static function setupHint(SeoCitationRow $row): ?string
+    {
+        if ($row->hasRecordedDetails() || $row->isCustom()) {
+            return null;
         }
 
-        return ['label' => $hasRecord ? 'Review existing listing' : 'Open listing setup', 'hint' => null];
+        return match ($row->directory->key) {
+            'bing_places' => 'Bing Places offers an official import from your Google Business Profile. Sign in there to start it; MotionGrove does not import for you.',
+            'apple_business' => 'Opens Apple\'s official Apple Business page. Sign in with an Apple Account to claim or add your place.',
+            default => null,
+        };
     }
 
     /**
@@ -200,8 +224,15 @@ final class SeoCitationNextAction
         return $out;
     }
 
-    private static function make(string $kind, string $title, string $why, string $action, string $target, ?SeoCitationRow $row, array $evidence): array
+    private static function make(string $kind, string $title, string $why, ?string $action, string $target, ?SeoCitationRow $row, array $evidence, bool $canManage, SeoCitationLocationSection $section): array
     {
-        return compact('kind', 'title', 'why', 'action', 'target', 'row', 'evidence');
+        $directory = $row !== null ? self::directoryAction($row, $canManage) : null;
+
+        // Missing Google data is a "not verified" note, never a recommendation and never "healthy".
+        $googleNote = $section->googleState() === SeoCitationLocationSection::GOOGLE_CONNECTED && ! $section->googleCheckedAutomatically()
+            ? 'Google is connected, but no current Google details are available to compare, so your Google listing is not verified here.'
+            : null;
+
+        return compact('kind', 'title', 'why', 'action', 'target', 'row', 'evidence', 'directory') + ['google_note' => $googleNote];
     }
 }

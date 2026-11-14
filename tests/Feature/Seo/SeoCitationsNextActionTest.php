@@ -4,6 +4,7 @@ namespace Tests\Feature\Seo;
 
 use App\Enums\Entitlement\WorkspacePlanTier;
 use App\Enums\Seo\SeoCitationStatus;
+use App\Enums\GoogleBusinessProfile\GoogleConnectionState;
 use App\Library\Seo\SeoCitationNextAction;
 use App\Models\Business;
 use App\Models\BusinessLocation;
@@ -97,14 +98,111 @@ class SeoCitationsNextActionTest extends TestCase
 
         $html = $this->page($workspace, $business, $location);
         $this->assertStringContainsString('Set up Apple Business', $html);
-        $this->assertStringContainsString('Import from Google · Bing Places for Business', $html);
-        $this->assertStringContainsString('Open listing setup · Yelp for Business', $html);
+        $this->assertStringContainsString('Opens Apple', $html);
 
-        $this->makeCitation($business, $location, $this->directory('bing_places'), ['listed_name' => $business->name, 'last_verified_at' => now()]);
+        \App\Models\SeoCitationDirectory::query()->where('key', 'apple_business')->update(['is_active' => false]);
+        $html = $this->page($workspace, $business, $location);
+        $this->assertMatchesRegularExpression('/data-role="next-best-action"[^>]*>.*?Import from Google/s', $html);
+
+        \App\Models\SeoCitationDirectory::query()->where('key', 'bing_places')->update(['is_active' => false]);
+        $html = $this->page($workspace, $business, $location);
+        $this->assertMatchesRegularExpression('/data-role="next-best-action"[^>]*>.*?Open listing setup/s', $html);
+        $this->assertSame(0, SeoCitation::query()->count(), 'Opening links never marks anything Listed.');
+    }
+
+    public function test_an_existing_listing_links_to_the_recorded_url_not_the_claim_url(): void
+    {
+        [$business, $workspace, $location] = $this->tenant();
+        $apple = $this->directory('apple_business');
+        $this->makeCitation($business, $location, $apple, [
+            'status' => SeoCitationStatus::NeedsCorrection->value,
+            'listed_name' => 'Wrong Name Ltd',
+            'listing_url' => 'https://maps.example-directory.com/place/acme',
+            'last_verified_at' => now(),
+        ]);
 
         $html = $this->page($workspace, $business, $location);
-        $this->assertStringContainsString('Review existing listing · Bing Places for Business', $html);
-        $this->assertSame(1, SeoCitation::query()->count(), 'Opening links never marks anything Listed.');
+        $this->assertSame(SeoCitationNextAction::INCONSISTENT, $this->bestKind($html));
+        $this->assertMatchesRegularExpression('/href="https:\/\/maps\.example-directory\.com\/place\/acme"[^>]*data-role="next-best-action" data-action-kind="listing"[^>]*>.*?Review existing listing/s', $html);
+        $this->assertDoesNotMatchRegularExpression('/href="https:\/\/business\.apple\.com"[^>]*data-role="next-best-action"/', $html);
+    }
+
+    public function test_a_recorded_listing_without_a_url_uses_the_official_setup_link_labelled_as_such(): void
+    {
+        [$business, $workspace, $location] = $this->tenant();
+        $this->makeCitation($business, $location, $this->directory('apple_business'), [
+            'status' => SeoCitationStatus::NeedsCorrection->value, 'listed_name' => 'Wrong Name Ltd', 'listing_url' => null, 'last_verified_at' => now(),
+        ]);
+
+        $html = $this->page($workspace, $business, $location);
+        $this->assertMatchesRegularExpression('/href="https:\/\/business\.apple\.com"[^>]*data-role="next-best-action" data-action-kind="setup"[^>]*>.*?Manage listing/s', $html);
+    }
+
+    public function test_a_directory_without_a_claim_url_offers_the_drawer_and_never_a_link(): void
+    {
+        [$business, $workspace, $location] = $this->tenant();
+        $this->noClaimUrlEverywhere();
+
+        $html = $this->page($workspace, $business, $location);
+        $this->assertStringContainsString('No official setup link is on file', $html);
+        $this->assertMatchesRegularExpression('/<button[^>]*data-role="next-best-action"\s+data-action-kind="drawer"/', $html);
+        $this->assertDoesNotMatchRegularExpression('/<a [^>]*data-role="next-best-action"/', $html);
+    }
+
+    public function test_a_read_only_viewer_gets_guidance_and_no_write_action(): void
+    {
+        [$customer, $business, $workspace] = $this->entitledTenant(WorkspacePlanTier::Growth);
+        $location = $this->publicStorefront($business, 'Main Storefront');
+        $this->authenticateAsSeoCustomer($customer, ['view_seo', 'view_google_business_profile']);
+        $this->noClaimUrlEverywhere();
+
+        $html = $this->page($workspace, $business, $location);
+        $this->assertStringContainsString('Someone with edit access can record it.', $html);
+        $this->assertStringNotContainsString('data-role="next-best-action"', $html);
+        $this->assertStringNotContainsString('data-role="next-best-record"', $html);
+    }
+
+    public function test_the_all_clear_state_advertises_no_button(): void
+    {
+        [$business, $workspace, $location] = $this->tenant();
+        \App\Models\SeoCitationDirectory::query()->update(['is_active' => false]);
+
+        $html = $this->page($workspace, $business, $location);
+        $this->assertSame(SeoCitationNextAction::CLEAR, $this->bestKind($html));
+        $this->assertStringNotContainsString('data-role="next-best-action"', $html);
+    }
+
+    /** @dataProvider retentionProvider */
+    public function test_missing_google_mirror_never_monopolises_the_next_action(?int $retentionDays): void
+    {
+        $this->bindFakeGoogleClient();
+        config(['google_business_profile.mirror.retention_days' => $retentionDays]);
+        [$business, $workspace, $location] = $this->tenant();
+        $this->bindGoogleLocation($business, $location, $this->activeConnection($business), false);
+
+        $html = $this->page($workspace, $business, $location);
+
+        $this->assertSame(SeoCitationNextAction::PRIORITY_DIRECTORY, $this->bestKind($html), 'A read-only Google refresh must not outrank directory setup.');
+        $this->assertStringContainsString('your Google listing is not verified here', $html);
+    }
+
+    public static function retentionProvider(): array
+    {
+        return ['zero retention (unset)' => [null], 'positive retention' => [7]];
+    }
+
+    public function test_google_connection_loss_still_outranks_directories(): void
+    {
+        $this->bindFakeGoogleClient();
+        [$business, $workspace, $location] = $this->tenant();
+        $this->bindGoogleLocation($business, $location, $this->activeConnection($business, ['state' => GoogleConnectionState::Revoked]));
+
+        $this->assertSame(SeoCitationNextAction::GOOGLE, $this->bestKind($this->page($workspace, $business, $location)));
+    }
+
+    private function noClaimUrlEverywhere(): void
+    {
+        \App\Models\SeoCitationDirectory::query()->update(['claim_url' => null]);
     }
 
     public function test_a_private_address_never_reaches_the_listing_kit(): void
