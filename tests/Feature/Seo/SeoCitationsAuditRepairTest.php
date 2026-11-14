@@ -327,10 +327,8 @@ class SeoCitationsAuditRepairTest extends TestCase
         $this->assertSame(10, $summary['needsSetup']);
         $this->assertSame($summary['attention'], preg_match_all('/data-role="citation-row"[^>]*data-attention="1"/', $html), 'The count is the number of rows the list flags.');
         $this->assertSame($summary['needsSetup'], preg_match_all('/data-role="citation-row"[^>]*data-setup-needed="1"/', $html));
-        $this->assertSame(1, preg_match('/data-stat="attention">(.*?)<\/div>/s', $html, $stat));
-        $this->assertSame('Needs attention 3 Differs, marked for correction, or due a review', trim(preg_replace('/\s+/', ' ', strip_tags($stat[1]))));
-        $this->assertMatchesRegularExpression('/data-progress="setup">10</', $html);
-        $this->assertStringContainsString('data-filter="setup"', $html);
+        $this->assertMatchesRegularExpression('/data-jump="attention" data-count="3"/', $html);
+        $this->assertStringContainsString('data-filter="attention"', $html);
     }
 
     public function test_a_connected_google_row_with_a_difference_is_counted_as_attention_exactly_where_the_list_lists_it(): void
@@ -458,7 +456,7 @@ class SeoCitationsAuditRepairTest extends TestCase
         $this->assertSame([], $onSecondary->unverifiedFields(), 'A phone that is deliberately not compared is not "could not be verified".');
 
         $html = $this->page($workspace, $business, $secondary);
-        $this->assertStringContainsString('Business phone', $html);
+        $this->assertStringContainsString('Location phone', $html);
         $this->assertStringContainsString('data-role="phone-not-compared"', $html);
         $this->assertStringNotContainsString('data-role="phone-not-compared"', $this->page($workspace, $business, $primary));
     }

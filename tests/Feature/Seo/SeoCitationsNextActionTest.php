@@ -287,6 +287,63 @@ class SeoCitationsNextActionTest extends TestCase
         $this->assertSame(SeoCitationNextAction::CLEAR, $this->bestKind($this->page($workspace, $business, $location)));
     }
 
+    public function test_copy_all_contains_only_available_confirmed_fields(): void
+    {
+        [$business, $workspace, $main] = $this->tenant();
+        $main->forceFill(['is_primary' => true])->save();
+        $business->forceFill(['website_url' => null])->save();
+        $secondary = $this->privateLocation($business, 'Branch');
+        $secondary->forceFill(['is_primary' => false])->save();
+
+        $html = $this->page($workspace, $business, $secondary);
+        $this->assertSame(1, preg_match('/data-copy="([^"]*)" data-all="1"/', $html, $m));
+        $all = html_entity_decode($m[1]);
+
+        $this->assertStringContainsString('Business name: ' . $business->name, $all);
+        $this->assertStringNotContainsString('99 Secret Lane', $all, 'A private street address is never copied.');
+        $this->assertStringNotContainsString('+15550101234', $all, 'An unconfirmed secondary-location phone is never copied.');
+        $this->assertStringNotContainsString('Website', $all, 'A missing value is never copied.');
+        $this->assertStringNotContainsString('Not set', $all);
+    }
+
+    public function test_progress_legend_filters_and_location_menu_are_wired_to_real_data(): void
+    {
+        [$business, $workspace, $main] = $this->tenant();
+        $second = $this->publicStorefront($business, 'Second Branch');
+        $this->makeCitation($business, $main, $this->directory('bing_places'), ['status' => SeoCitationStatus::NeedsCorrection->value, 'listed_name' => 'Wrong Name Ltd', 'last_verified_at' => now()]);
+
+        $html = $this->page($workspace, $business, $main);
+
+        $this->assertMatchesRegularExpression('/data-jump="attention" data-count="1"/', $html);
+        $this->assertStringContainsString('data-filter="attention"', $html);
+        $this->assertMatchesRegularExpression('/data-bucket="attention"/', $html);
+        $this->assertSame(2, preg_match_all('/data-location-option="[0-9a-f]{13}" href="[^"]*\?location=[0-9a-f]{13}"/', $html), 'One working link per authorized location.');
+        $this->assertStringContainsString('data-location-option="' . $second->uid . '"', $html);
+        $this->assertGreaterThan(0, preg_match_all('/<button type="button" aria-expanded="false" data-cg-row-toggle>/', $html), 'Rows expand with a real button.');
+        $this->assertSame(0, preg_match('/Design preview/i', $html), 'No design-preview controls ship.');
+    }
+
+    public function test_worth_doing_next_never_repeats_the_hero_and_every_card_has_an_honest_action(): void
+    {
+        [$business, $workspace, $location] = $this->tenant();
+
+        $html = $this->page($workspace, $business, $location);
+        $hero = explode('data-role="next-best-title">', $html)[1];
+        $heroTitle = trim(explode('</h2>', $hero)[0]);
+
+        $cards = explode('data-opportunity="', $html);
+        array_shift($cards);
+        $this->assertNotEmpty($cards);
+        $this->assertLessThanOrEqual(4, count($cards));
+
+        foreach ($cards as $card) {
+            $card = explode('</article>', $card)[0];
+            $name = trim(explode('"', $card)[0]);
+            $this->assertFalse(str_ends_with($heroTitle, $name), 'The hero\'s own directory is not repeated as a card.');
+            $this->assertMatchesRegularExpression('/<a class="cg-btn cg-ghost cg-sm" href="https:\/\/|data-bs-target="#citation-drawer-|class="cg-hint"/', $card, 'Every card has a real link, the record drawer, or honest guidance.');
+        }
+    }
+
     private function noClaimUrlEverywhere(): void
     {
         \App\Models\SeoCitationDirectory::query()->update(['claim_url' => null]);

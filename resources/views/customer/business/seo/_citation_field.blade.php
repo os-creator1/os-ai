@@ -24,14 +24,13 @@
         default => 'circle-dashed',
     };
 @endphp
-<div class="cz-field cz-field--{{ $tone }}" data-field="{{ $field }}" data-result="{{ $result->value }}">
-    <span class="cz-label">{{ $label }}</span>
-    <x-ds-icon :name="$icon" size="14" />
+<div class="cg-field cg-field--{{ $tone }}" data-field="{{ $field }}" data-result="{{ $result->value }}">
+    <span class="cg-label">{{ $label }}</span>
     <span class="cz-field-value">
         @if($value !== null)
             {{ $value }}
             @if($result === SeoNapFieldResult::Mismatch)
-                <span class="d-block text-caption">Differs from your business profile</span>
+                <span style="display:block;font-size:12px">Differs from your business profile</span>
             @endif
         @else
             {{ $result === SeoNapFieldResult::NotComparable ? 'Not compared' : 'Not checked' }}

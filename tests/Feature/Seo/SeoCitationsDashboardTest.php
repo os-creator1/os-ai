@@ -104,11 +104,11 @@ class SeoCitationsDashboardTest extends TestCase
 
         $html = $this->page($workspace, $business, $location);
 
-        $this->assertStringContainsString('data-section="business-profile"', $html);
-        $this->assertStringContainsString('Business information', $html);
-        $this->assertMatchesRegularExpression('/data-canonical="name">\s*' . preg_quote($business->name, '/') . '/', $html);
-        $this->assertMatchesRegularExpression('/data-canonical="phone">\s*\+15550101234/', $html);
-        $this->assertMatchesRegularExpression('/data-canonical="address">\s*' . preg_quote(self::ADDRESS, '/') . '/', $html);
+        // The canonical business information is the Listing kit now (copy-ready, one field per row).
+        $this->assertStringContainsString('data-section="listing-kit"', $html);
+        $this->assertMatchesRegularExpression('/data-kit="name".*?data-copy="' . preg_quote($business->name, '/') . '"/s', $html);
+        $this->assertMatchesRegularExpression('/data-kit="phone".*?data-copy="\+15550101234"/s', $html);
+        $this->assertMatchesRegularExpression('/data-kit="address".*?data-copy="' . preg_quote(self::ADDRESS, '/') . '"/s', $html);
         $this->assertStringContainsString('https://example.test', $html);
     }
 
@@ -118,7 +118,7 @@ class SeoCitationsDashboardTest extends TestCase
 
         $html = $this->page($workspace, $business);
 
-        $this->assertStringContainsString('Keep your business information accurate and consistent across the places customers search.', $html);
+        $this->assertStringContainsString('Keep your business details the same everywhere customers look.', $html);
         $this->assertStringContainsString('Manually tracked', $html);
 
         // Nothing overstates automation.
@@ -242,12 +242,11 @@ class SeoCitationsDashboardTest extends TestCase
         // Google is not linked. The actor holds the GBP permission, so Google is
         // a tracked listing too.
         // 15 offered directories (10 core + 5 Photo Booth) + the Google row.
-        $this->assertSame('Listings tracked 16 Directories for this location', $this->stat($html, 'tracked'));
-        $this->assertSame('Completed 1 of 16 Listed with details recorded, or connected', $this->stat($html, 'linked'));
+        $this->assertSame('1 of 16 directories listed', $this->stat($html, 'listed'));
         // Untouched directories are NOT problems: "Needs attention" counts real
         // problems only, and "Needs setup" counts the unfinished work.
-        $this->assertSame('Needs attention 0 Differs, marked for correction, or due a review', $this->stat($html, 'attention'));
-        $this->assertMatchesRegularExpression('/data-progress="setup">14</', $html);
+        $this->assertDoesNotMatchRegularExpression('/data-jump="attention"/', $html);
+        $this->assertMatchesRegularExpression('/data-jump="unchecked" data-count="15"/', $html);
     }
 
     // -----------------------------------------------------------------
@@ -480,8 +479,8 @@ class SeoCitationsDashboardTest extends TestCase
         $html = $this->page($workspace, $business, $second);
 
         $this->assertStringContainsString('data-role="location-switcher"', $html);
-        $this->assertMatchesRegularExpression('/<option value="' . $second->uid . '" selected>/', $html);
-        $this->assertDoesNotMatchRegularExpression('/<option value="' . $first->uid . '" selected>/', $html);
+        $this->assertMatchesRegularExpression('/aria-checked="true" data-location-option="' . $second->uid . '"/', $html);
+        $this->assertMatchesRegularExpression('/aria-checked="false" data-location-option="' . $first->uid . '"/', $html);
     }
 
     // -----------------------------------------------------------------
