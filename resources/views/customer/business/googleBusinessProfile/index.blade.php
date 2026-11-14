@@ -45,6 +45,7 @@
         $locationsUrl = route('customer.workspaces.businesses.gbp.locations', [$workspaceUid, $businessUid]);
         $refreshUrl = route('customer.workspaces.businesses.gbp.refresh', [$workspaceUid, $businessUid]);
         $googleManageUrl = 'https://business.google.com/';
+        $retentionDays = (int) ($mirrorRetentionDays ?? 0);
         $anyStale = $isActive && collect($bindings)->contains(fn ($item) => ! $item['profile']['fresh']);
     @endphp
 
@@ -281,15 +282,20 @@
                                 <div>
                                     <p class="mb-25"><strong>Refresh required</strong></p>
                                     <p class="text-caption mb-0">
-                                        Google data is not available or has passed its retention window. Refresh to read this listing from Google again;
-                                        nothing is shown from memory.
+                                        @if($retentionDays === 0)
+                                            This deployment does not keep your Google listing between visits. Refresh reads it live from Google and shows it for that one visit only,
+                                            so this overview stays empty until you refresh.
+                                        @else
+                                            Google data is not available or has passed its {{ $retentionDays }}-day retention window. Refresh to read this listing from Google again;
+                                            nothing is shown from memory.
+                                        @endif
                                         @if($binding->bound_title_snapshot) Linked listing: {{ $binding->bound_title_snapshot }}. @endif
                                     </p>
                                 </div>
                                 @if (! empty($canManageGoogle))
                                     <form method="POST" action="{{ $refreshUrl }}">
                                         @csrf
-                                        <button type="submit" class="btn btn-outline-primary"><x-ds-icon name="refresh-cw" :size="14" /> Refresh from Google</button>
+                                        <button type="submit" class="btn btn-outline-primary"><x-ds-icon name="refresh-cw" :size="14" /> {{ $retentionDays === 0 ? 'View live from Google' : 'Refresh from Google' }}</button>
                                     </form>
                                 @endif
                             </div>

@@ -37,8 +37,8 @@
     @if($ephemeral ?? false)
         <x-alert variant="info" class="mb-2">
             This is a live view of what Google returned just now. Google data is not
-            retained between requests on this deployment, so reopening this page will
-            ask you to refresh again.
+            retained between requests on this deployment, so it is gone once you leave or reload
+            this page, and reopening it will ask you to refresh again.
         </x-alert>
     @endif
 
@@ -75,7 +75,11 @@
                 {{-- A stale mirror is never shown as current: refresh, don't fabricate. --}}
                 <div class="gbp-stale mb-3" data-role="gbp-stale">
                     <x-alert variant="warning" class="mb-0 flex-grow-1">
-                        Google data is not available or has passed its 30-day retention window. Refresh to compare.
+                        @if((int) ($mirrorRetentionDays ?? 0) === 0)
+                            Google data is not kept between visits on this deployment. Refresh to compare against Google live.
+                        @else
+                            Google data is not available or has passed its {{ (int) $mirrorRetentionDays }}-day retention window. Refresh to compare.
+                        @endif
                     </x-alert>
                     @if(! empty($canManageGoogle))
                         <form method="POST" action="{{ $refreshUrl }}">
