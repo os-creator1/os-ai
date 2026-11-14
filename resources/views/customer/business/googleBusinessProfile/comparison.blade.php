@@ -24,103 +24,131 @@
     @php
         $backUrl = route('customer.workspaces.businesses.gbp.index', [$workspaceUid, $businessUid]);
         $refreshUrl = route('customer.workspaces.businesses.gbp.refresh', [$workspaceUid, $businessUid]);
+        $retentionDays = (int) ($mirrorRetentionDays ?? 0);
+        $single = count($comparisons) === 1 ? $comparisons[0] : null;
     @endphp
 
-    <div class="gbp-narrow mb-2" style="max-width: 1120px">
-        <a href="{{ $backUrl }}" class="gbp-link d-inline-flex align-items-center gap-50 mb-50"><x-ds-icon name="arrow-left" :size="14" /> Google Business Profile</a>
-        <h1 class="h3 mb-25">Platform vs Google</h1>
-        <p class="text-caption mb-0">A read-only comparison. Nothing here changes your Google listing or the details stored on this platform.</p>
-    </div>
+    <div class="gbp-page gbp-main">
+        <div class="gbp-title-block gbp-wrap-md">
+            <a href="{{ $backUrl }}" class="gbp-back"><x-ds-icon name="arrow-left" :size="14" /> Google Business Profile</a>
+            <h1 class="gbp-h1">Platform vs Google</h1>
+            <p class="gbp-sub">
+                @if($single){{ $single['location']?->name ?? 'Linked location' }} &middot; @endif
+                Read-only. Nothing here changes Google or MotionGrove.
+            </p>
+        </div>
 
-    <x-flash-alert class="mb-2" />
+        <x-flash-alert class="gbp-wrap-md" />
 
-    @if($ephemeral ?? false)
-        <x-alert variant="info" class="mb-2">
-            This is a live view of what Google returned just now. Google data is not
-            retained between requests on this deployment, so it is gone once you leave or reload
-            this page, and reopening it will ask you to refresh again.
-        </x-alert>
-    @endif
-
-    {{-- MULTI-LOCATION CORRECTION — a refresh that could not reach Google
-         for some bindings says so explicitly, and never lets the bindings
-         it DID refresh imply that all of them succeeded. --}}
-    @foreach($failures ?? [] as $failure)
-        <x-alert variant="warning" class="mb-2">
-            {{ $failure['location'] ?? 'One linked location' }}: {{ $failure['message'] }}
-        </x-alert>
-    @endforeach
-
-    {{-- One block per binding. This view renders a COLLECTION in every
-         case — the binding-addressed comparison route passes exactly one,
-         and a zero-retention refresh passes every binding it refreshed —
-         so no code path can silently show only the first or the last. --}}
-    @foreach($comparisons as $comparison)
-        @php
-            $rows = collect($comparison['rows']);
-            $count = fn (string $status) => $rows->filter(fn ($row) => $row->status->value === $status)->count();
-            $matching = $count('match');
-            $differing = $count('mismatch');
-            $unavailable = $comparison['mirrorIsFresh'] ? 0 : $rows->count();
-        @endphp
-        <x-card :padded="true" class="mb-2" style="max-width: 1120px">
-            <div class="gbp-section-head">
-                <div>
-                    <p class="gbp-eyebrow mb-25">Linked location</p>
-                    <h2 class="h5">{{ $comparison['location']?->name ?? $comparison['binding']->provider_location_resource_name }}</h2>
-                </div>
+        @if($ephemeral ?? false)
+            <div class="gbp-notice is-info gbp-wrap-md">
+                <p>
+                    This is a live view of what Google returned just now. Google data is not
+                    retained between requests on this deployment, so it is gone once you leave or reload
+                    this page, and reopening it will ask you to refresh again.
+                </p>
             </div>
+        @endif
 
-            @unless($comparison['mirrorIsFresh'])
+        {{-- MULTI-LOCATION CORRECTION — a refresh that could not reach Google for some bindings says so explicitly, and never lets
+             the bindings it DID refresh imply that all of them succeeded. --}}
+        @foreach($failures ?? [] as $failure)
+            <x-alert variant="warning" class="gbp-wrap-md mb-0">
+                {{ $failure['location'] ?? 'One linked location' }}: {{ $failure['message'] }}
+            </x-alert>
+        @endforeach
+
+        {{-- One block per binding. This view renders a COLLECTION in every case — the binding-addressed comparison route passes
+             exactly one, and a zero-retention refresh passes every binding it refreshed — so no code path can silently show only
+             the first or the last. --}}
+        @foreach($comparisons as $comparison)
+            @php
+                $rows = collect($comparison['rows']);
+                $fresh = (bool) $comparison['mirrorIsFresh'];
+                $count = fn (string $status) => $rows->filter(fn ($row) => $row->status->value === $status)->count();
+                $matching = $count('match');
+                $differing = $count('mismatch');
+                $filled = $rows->filter(fn ($row) => $row->platformValue !== null)->count();
+                $locName = $comparison['location']?->name ?? $comparison['binding']->provider_location_resource_name;
+            @endphp
+
+            @unless($fresh)
                 {{-- A stale mirror is never shown as current: refresh, don't fabricate. --}}
-                <div class="gbp-stale mb-3" data-role="gbp-stale">
-                    <x-alert variant="warning" class="mb-0 flex-grow-1">
-                        @if((int) ($mirrorRetentionDays ?? 0) === 0)
-                            Google data is not kept between visits on this deployment. Refresh to compare against Google live.
-                        @else
-                            Google data is not available or has passed its {{ (int) $mirrorRetentionDays }}-day retention window. Refresh to compare.
-                        @endif
-                    </x-alert>
+                <section class="gbp-stale gbp-wrap-md" data-role="gbp-stale" style="padding: 20px 22px; border-radius: 16px">
+                    <span class="gbp-tile is-warn" style="width:44px;height:44px;border-radius:12px"><x-ds-icon name="refresh-cw" :size="20" /></span>
+                    <div class="t">
+                        <b style="font-size:16px">Google data needs a refresh</b>
+                        <span style="font-size:14px">
+                            @if($retentionDays === 0)
+                                Google data is not kept between visits on this deployment. Refresh to compare against Google live.
+                            @else
+                                Google data is not available or has passed its {{ $retentionDays }}-day retention window. Refresh to compare.
+                            @endif
+                        </span>
+                    </div>
                     @if(! empty($canManageGoogle))
                         <form method="POST" action="{{ $refreshUrl }}">
                             @csrf
-                            <button type="submit" class="btn btn-primary"><x-ds-icon name="refresh-cw" :size="14" /> Refresh from Google</button>
+                            <button type="submit" class="gbp-btn is-primary" style="padding:0 20px"><x-ds-icon name="refresh-cw" :size="16" /> Refresh from Google</button>
                         </form>
                     @endif
-                </div>
-            @else
-                <div class="gbp-cmp-summary">
-                    <x-badge variant="success">{{ $matching }} matching</x-badge>
-                    <x-badge variant="warning">{{ $differing }} differing</x-badge>
-                    <x-badge variant="secondary">{{ $rows->count() - $matching - $differing }} missing or unavailable</x-badge>
-                </div>
+                </section>
             @endunless
 
-            <div role="table" aria-label="Platform compared with Google">
-                <div class="gbp-cmp-row is-head" role="row">
-                    <div role="columnheader">Field</div>
-                    <div role="columnheader">Platform value</div>
-                    <div role="columnheader">Google value</div>
-                    <div role="columnheader">Status</div>
+            <section class="gbp-cmp-card gbp-wrap-md">
+                <div class="gbp-cmp-top">
+                    <b>Business details{{ count($comparisons) > 1 ? ' · ' . $locName : '' }}</b>
+                    @if($fresh)
+                        <span class="gbp-cmp-count {{ $differing === 0 ? 'is-ok' : '' }}">{{ $matching }} matching &middot; {{ $differing }} differing &middot; {{ $rows->count() - $matching - $differing }} missing or unavailable</span>
+                    @else
+                        <span class="gbp-cmp-count">{{ $filled }} of {{ $rows->count() }} filled in MotionGrove</span>
+                    @endif
                 </div>
-                @foreach($comparison['rows'] as $row)
-                    @php($status = $row->status->value)
-                    <div class="gbp-cmp-row {{ $status === 'mismatch' ? 'is-mismatch' : '' }}" role="row">
-                        <div role="cell"><strong>{{ $row->field }}</strong></div>
-                        <div role="cell"><span class="gbp-cmp-label">Platform value</span>{{ $row->platformValue ?? '—' }}</div>
-                        <div role="cell"><span class="gbp-cmp-label">Google value</span>{{ $row->googleValue ?? '—' }}</div>
-                        <div role="cell">
-                            <span class="gbp-cmp-label">Status</span>
-                            <x-badge :variant="$status === 'match' ? 'success' : ($status === 'mismatch' ? 'warning' : 'secondary')">
-                                {{ $row->status->label() }}
-                            </x-badge>
-                            @if($row->reason)
-                                <span class="text-caption d-block">{{ $row->reason }}</span>
+
+                <div role="table" aria-label="Platform compared with Google">
+                    <div class="gbp-tr th {{ $fresh ? 'has-status' : '' }}" role="row">
+                        <span role="columnheader">Field</span>
+                        <span role="columnheader">MotionGrove</span>
+                        <span role="columnheader">Google</span>
+                        @if($fresh)<span role="columnheader">Status</span>@endif
+                    </div>
+                    @foreach($comparison['rows'] as $row)
+                        @php $status = $row->status->value; @endphp
+                        <div class="gbp-tr {{ $fresh ? 'has-status' : '' }} {{ $fresh && $status === 'mismatch' ? 'is-diff' : '' }}" role="row">
+                            <span class="f" role="cell">{{ $row->field }}</span>
+                            <span role="cell" class="v">
+                                <span class="gbp-cl">MotionGrove</span>
+                                @if($row->platformValue !== null)
+                                    {{ $row->platformValue }}
+                                @else
+                                    <span class="miss">Not set</span>
+                                @endif
+                            </span>
+                            <span role="cell" class="g">
+                                <span class="gbp-cl">Google</span>
+                                @if(! $fresh)
+                                    <span class="gbp-sk" style="width: {{ 40 + (crc32($row->field) % 35) }}%" aria-label="Not available until refreshed"></span>
+                                @elseif($row->googleValue !== null)
+                                    <span class="v">{{ $row->googleValue }}</span>
+                                @else
+                                    <span class="miss">&mdash;</span>
+                                @endif
+                            </span>
+                            @if($fresh)
+                                <span role="cell">
+                                    <span class="gbp-cl">Status</span>
+                                    <x-badge :variant="$status === 'match' ? 'success' : ($status === 'mismatch' ? 'warning' : 'secondary')">
+                                        {{ $row->status->label() }}
+                                    </x-badge>
+                                    @if($row->reason)
+                                        <span class="why">{{ $row->reason }}</span>
+                                    @endif
+                                </span>
                             @endif
                         </div>
-                    </div>
-                @endforeach
-            </div>
-        </x-card>
-    @endforeach
+                    @endforeach
+                </div>
+            </section>
+        @endforeach
+    </div>
 @endsection

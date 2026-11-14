@@ -25,190 +25,200 @@
     @php
         $backUrl = route('customer.workspaces.businesses.gbp.index', [$workspaceUid, $businessUid]);
         $claimedProviderNames = $boundByLocationId->pluck('provider_location_resource_name')->all();
+        // A lone, still-unlinked platform location needs no visible choice; it is posted as a hidden field and the
+        // server binds it exactly as before. Any other shape keeps the explicit platform-location selector.
+        $eligibleLocations = $locations->filter(fn ($platformLocation) => ! isset($boundByLocationId[$platformLocation->id]))->values();
+        $soleLocation = ($locations->count() === 1 && $eligibleLocations->count() === 1) ? $eligibleLocations->first() : null;
     @endphp
 
-    <div class="gbp-narrow mb-2">
-        <a href="{{ $backUrl }}" class="gbp-link d-inline-flex align-items-center gap-50 mb-50"><x-ds-icon name="arrow-left" :size="14" /> Google Business Profile</a>
-        <h1 class="h3 mb-25">Pick your Google listing</h1>
-        <p class="text-caption mb-0">Choose the one that belongs to {{ $business->name }}. Nothing is linked until you choose and confirm.</p>
-    </div>
+    <div class="gbp-page gbp-main">
+        <div class="gbp-title-block gbp-wrap-sm">
+            <a href="{{ $backUrl }}" class="gbp-back"><x-ds-icon name="arrow-left" :size="14" /> Google Business Profile</a>
+            <h1 class="gbp-h1">Pick your Google listing</h1>
+            <p class="gbp-sub">Choose the one that belongs to {{ $business->name }}. Nothing is linked until you choose and confirm.</p>
+        </div>
 
-    <x-flash-alert class="mb-2" />
+        <x-flash-alert class="gbp-wrap-sm" />
 
-    @if($errors->any())
-        <x-alert variant="danger" class="mb-2 gbp-narrow" data-role="validation-summary">
-            @foreach($errors->all() as $error)
-                <div>{{ $error }}</div>
-            @endforeach
-        </x-alert>
-    @endif
+        @if($errors->any())
+            <x-alert variant="danger" class="gbp-wrap-sm mb-0" data-role="validation-summary">
+                @foreach($errors->all() as $error)
+                    <div>{{ $error }}</div>
+                @endforeach
+            </x-alert>
+        @endif
 
-    @if(count($offers) === 0)
-        <x-card :padded="true" class="gbp-narrow">
-            <x-empty-state icon="search" title="No Google locations found"
-                           description="The connected Google account does not manage any Business Profile locations that this platform can read." />
-            <div class="d-flex flex-wrap justify-content-center gap-1 mt-2">
-                <a class="btn btn-outline-primary" href="{{ route('customer.workspaces.businesses.gbp.locations', [$workspaceUid, $businessUid]) }}">Check again</a>
-                <a class="btn btn-outline-secondary" href="{{ route('customer.workspaces.businesses.gbp.settings', [$workspaceUid, $businessUid]) }}">Use a different Google account</a>
-            </div>
-        </x-card>
-    @elseif($locations->isEmpty())
-        <x-card :padded="true" class="gbp-narrow">
-            <x-empty-state icon="alert-triangle" title="No platform location to link to"
-                           description="Add a location to this business first; a Google location is linked to one of your own locations." />
-        </x-card>
-    @else
-        {{-- Google account identification --}}
-        <x-card :padded="false" class="gbp-narrow mb-2">
-            <div class="gbp-account">
-                <span class="gbp-match-icon" aria-hidden="true"><x-ds-icon name="check" :size="16" /></span>
-                <div>
-                    <strong class="d-block">Google connected</strong>
-                    <span class="text-caption">
-                        Accounts reachable with this authorization:
-                        @foreach($accounts as $account)
-                            {{ $account->displayName() }} ({{ $account->roleLabel() }})@if(! $loop->last), @endif
-                        @endforeach
+        @if(count($offers) === 0)
+            <section class="gbp-list-card gbp-wrap-sm">
+                <div class="gbp-pick-msg" style="padding: 32px 20px; text-align: center">
+                    <x-empty-state icon="search" title="No Google locations found"
+                                   description="The connected Google account does not manage any Business Profile locations that this platform can read." />
+                    <div class="d-flex flex-wrap justify-content-center gap-1 mt-2">
+                        <a class="gbp-btn is-outline" href="{{ route('customer.workspaces.businesses.gbp.locations', [$workspaceUid, $businessUid]) }}">Check again</a>
+                        <a class="gbp-btn is-outline" href="{{ route('customer.workspaces.businesses.gbp.settings', [$workspaceUid, $businessUid]) }}">Use a different Google account</a>
+                    </div>
+                </div>
+            </section>
+        @elseif($locations->isEmpty())
+            <section class="gbp-list-card gbp-wrap-sm">
+                <div class="gbp-pick-msg" style="padding: 32px 20px; text-align: center">
+                    <x-empty-state icon="alert-triangle" title="No platform location to link to"
+                                   description="Add a location to this business first; a Google location is linked to one of your own locations." />
+                </div>
+            </section>
+        @else
+            {{-- Google account identification --}}
+            <section class="gbp-acct gbp-wrap-sm">
+                <span class="gbp-acct-ok" aria-hidden="true"><x-ds-icon name="check" :size="16" /></span>
+                <div class="gbp-acct-text">
+                    <b>Google connected</b>
+                    <span>
+                        @if(! empty($connection?->google_account_email))
+                            Signed in as {{ $connection->google_account_email }}
+                        @else
+                            Accounts reachable with this authorization:
+                            @foreach($accounts as $account){{ $account->displayName() }} ({{ $account->roleLabel() }})@if(! $loop->last), @endif @endforeach
+                        @endif
                     </span>
                 </div>
-                <a class="gbp-link" href="{{ route('customer.workspaces.businesses.gbp.settings', [$workspaceUid, $businessUid]) }}">Use a different account</a>
-            </div>
-        </x-card>
+                <a class="gbp-textlink" href="{{ route('customer.workspaces.businesses.gbp.settings', [$workspaceUid, $businessUid]) }}">Use a different account</a>
+            </section>
 
-        <form method="POST" action="{{ route('customer.workspaces.businesses.gbp.bind', [$workspaceUid, $businessUid]) }}" data-gbp-picker>
-            @csrf
+            <form method="POST" action="{{ route('customer.workspaces.businesses.gbp.bind', [$workspaceUid, $businessUid]) }}" data-gbp-picker class="gbp-wrap-sm">
+                @csrf
 
-            {{-- MULTI-LOCATION CORRECTION — the COMPLETE existing binding
-                 set arrives keyed by local business_locations.id, so each
-                 platform location is shown as already bound or still
-                 bindable. One existing binding never prevents another
-                 eligible BusinessLocation from being bound: only the
-                 locations that are actually taken are disabled, and a
-                 Business may hold one binding per location. --}}
-            <x-card :padded="true" class="gbp-narrow mb-2">
-                <label class="form-label" for="business_location_uid">Link to this platform location</label>
-                <select class="form-select" id="business_location_uid" name="business_location_uid" required>
-                    <option value="">Choose one&hellip;</option>
-                    @foreach($locations as $platformLocation)
-                        @php($existing = $boundByLocationId[$platformLocation->id] ?? null)
-                        <option value="{{ $platformLocation->uid }}" @disabled($existing !== null)>
-                            {{ $platformLocation->name }}@if($platformLocation->is_primary) (primary)@endif
-                            @if($existing)
-                                &mdash; already linked to {{ $existing->provider_location_resource_name }}
-                            @endif
-                        </option>
-                    @endforeach
-                </select>
-                <span class="text-caption d-block mt-50">{{ $boundByLocationId->count() }} of {{ $locations->count() }} {{ $locations->count() === 1 ? 'location is' : 'locations are' }} already linked to Google.</span>
-                <span class="text-caption d-block">
-                    Unlink one from connection settings to link it to a different Google location.
-                </span>
-            </x-card>
-
-            <x-card :padded="false" class="gbp-narrow">
-                <div class="gbp-pick-head">
-                    <div>
-                        <strong class="d-block">Your Google listings</strong>
-                        <span class="text-caption">{{ count($offers) }} found on this account</span>
-                    </div>
-                    <input type="search" class="form-control gbp-pick-search" placeholder="Search listings" aria-label="Search listings" data-gbp-pick-search>
-                </div>
-
-                <div class="gbp-pick-list" role="radiogroup" aria-label="Google listings">
-                    @foreach($offers as $offer)
-                        @php($candidate = $offer['candidate'])
-                        @php($alreadyClaimed = in_array($candidate->resourceName, $claimedProviderNames, true))
-                        <label class="gbp-pick-row {{ $alreadyClaimed ? 'is-disabled' : '' }}" data-gbp-pick-row>
-                            {{-- Deliberately never `checked`: the user
-                                 chooses, always (contract §8.5). --}}
-                            {{-- Item 5: the VALUE is the signed candidate token, not a
-                                 raw resource name. Both provider names are derived
-                                 server-side from it, so there is nothing to substitute. --}}
-                            <input class="form-check-input flex-shrink-0 m-0" type="radio" name="candidate_token"
-                                   value="{{ $offer['token'] }}" @disabled($alreadyClaimed) required>
-                            <span class="gbp-letter" aria-hidden="true">{{ mb_strtoupper(mb_substr($candidate->displayTitle(), 0, 1)) }}</span>
-                            <span class="gbp-pick-body">
-                                <span class="d-flex flex-wrap align-items-center gap-50">
-                                    <strong class="gbp-break">{{ $candidate->displayTitle() }}</strong>
-                                    @if($alreadyClaimed)
-                                        <x-badge variant="secondary">Already linked</x-badge>
-                                    @elseif($candidate->matchScore >= 50)
-                                        <x-badge variant="info">Likely match</x-badge>
-                                    @endif
-                                </span>
-                                <span class="text-caption gbp-break">
-                                    {{ $candidate->resourceName }}
-                                    @if($candidate->storeCode) &middot; store code {{ $candidate->storeCode }} @else &middot; No store code @endif
-                                    @if($candidate->localityHint) &middot; {{ $candidate->localityHint }} @endif
-                                    @if($candidate->regionCode) &middot; {{ $candidate->regionCode }} @endif
-                                </span>
-                            </span>
+                <section class="gbp-list-card">
+                    <div class="gbp-list-head">
+                        <div>
+                            <b>Your Google listings</b>
+                            <span>{{ count($offers) }} found on this account</span>
+                        </div>
+                        <label class="gbp-search">
+                            <x-ds-icon name="search" :size="16" />
+                            <input type="search" placeholder="Search listings" aria-label="Search listings" data-gbp-pick-search>
                         </label>
-                    @endforeach
-                    <p class="text-danger p-2 mb-0 d-none" role="alert" data-gbp-pick-notice>Select a listing from the list before linking.</p>
-                    <p class="text-caption p-2 mb-0 d-none" data-gbp-pick-empty>No listings match your search.</p>
-                </div>
-
-                {{-- Item 5: there is deliberately NO hidden raw account or
-                     location field. Both are inside the signed candidate token
-                     above, so a tampered or substituted pair cannot be posted. --}}
-                <div class="gbp-pick-foot">
-                    <span class="text-caption">Linking to <strong>{{ $business->name }}</strong> in MotionGrove</span>
-                    <div class="d-flex flex-wrap gap-1">
-                        <a href="{{ $backUrl }}" class="btn btn-outline-secondary">Cancel</a>
-                        <button type="submit" class="btn btn-primary">Link this location</button>
                     </div>
-                </div>
-            </x-card>
-        </form>
 
-        <script>
-            (function () {
-                var input = document.querySelector('[data-gbp-pick-search]');
-                if (!input) { return; }
-                var rows = document.querySelectorAll('[data-gbp-pick-row]');
-                var empty = document.querySelector('[data-gbp-pick-empty]');
-                input.addEventListener('input', function () {
-                    var q = input.value.trim().toLowerCase(), shown = 0;
-                    rows.forEach(function (row) {
-                        var hit = q === '' || row.textContent.toLowerCase().indexOf(q) !== -1;
-                        row.classList.toggle('d-none', !hit);
-                        if (hit) { shown++; }
-                        // A hidden listing must never stay selected: only a visibly chosen listing may be submitted.
-                        if (!hit) {
-                            var radio = row.querySelector('input[type="radio"]');
-                            if (radio && radio.checked) { radio.checked = false; }
-                        }
-                    });
-                    if (empty) { empty.classList.toggle('d-none', shown !== 0); }
-                });
+                    <div class="gbp-rows" role="radiogroup" aria-label="Google listings">
+                        @foreach($offers as $offer)
+                            @php
+                                $candidate = $offer['candidate'];
+                                $alreadyClaimed = in_array($candidate->resourceName, $claimedProviderNames, true);
+                            @endphp
+                            <label class="gbp-row {{ $alreadyClaimed ? 'is-disabled' : '' }}" data-gbp-pick-row>
+                                {{-- Deliberately never `checked`: the user chooses, always (contract §8.5). --}}
+                                {{-- Item 5: the VALUE is the signed candidate token, not a raw resource name. Both provider names are
+                                     derived server-side from it, so there is nothing to substitute. --}}
+                                <input type="radio" name="candidate_token" value="{{ $offer['token'] }}" @disabled($alreadyClaimed) required>
+                                <span class="lt" aria-hidden="true">{{ mb_strtoupper(mb_substr($candidate->displayTitle(), 0, 1)) }}</span>
+                                <span class="body">
+                                    <span class="name">
+                                        <b>{{ $candidate->displayTitle() }}</b>
+                                        @if($alreadyClaimed)
+                                            <span class="gbp-tag">Already linked</span>
+                                        @elseif($candidate->matchScore >= 50)
+                                            <span class="gbp-tag is-brand">Likely match</span>
+                                        @endif
+                                    </span>
+                                    <small>
+                                        @if($candidate->storeCode)Store code {{ $candidate->storeCode }}@else No store code @endif
+                                        @if($candidate->localityHint) &middot; {{ $candidate->localityHint }} @endif
+                                        @if($candidate->regionCode) &middot; {{ $candidate->regionCode }} @endif
+                                        &middot; {{ $candidate->resourceName }}
+                                    </small>
+                                </span>
+                                <span class="rd" aria-hidden="true"></span>
+                            </label>
+                        @endforeach
+                        <p class="gbp-pick-msg is-error d-none" role="alert" data-gbp-pick-notice>Select a listing from the list before linking.</p>
+                        <p class="gbp-pick-msg d-none" data-gbp-pick-empty>No listings match your search.</p>
+                    </div>
 
-                // Block submission unless a visible listing is selected (a required radio hidden by the filter
-                // would otherwise fail validation silently).
-                var form = document.querySelector('[data-gbp-picker]');
-                var notice = document.querySelector('[data-gbp-pick-notice]');
-                if (form) {
-                    form.addEventListener('submit', function (event) {
-                        var chosen = form.querySelector('input[name="candidate_token"]:checked');
-                        if (!chosen || chosen.closest('[data-gbp-pick-row]').classList.contains('d-none')) {
-                            event.preventDefault();
-                            if (notice) { notice.classList.remove('d-none'); }
-                            input.focus();
-                        }
+                    {{-- MULTI-LOCATION CORRECTION — the COMPLETE existing binding set arrives keyed by local business_locations.id, so
+                         each platform location is shown as already bound or still bindable. One existing binding never prevents
+                         another eligible BusinessLocation from being bound. A single unlinked location is posted as a hidden field. --}}
+                    @if($soleLocation)
+                        <input type="hidden" name="business_location_uid" value="{{ $soleLocation->uid }}">
+                    @else
+                        <div class="gbp-loc">
+                            <label for="business_location_uid">Link to this platform location</label>
+                            <select id="business_location_uid" name="business_location_uid" required>
+                                <option value="">Choose one&hellip;</option>
+                                @foreach($locations as $platformLocation)
+                                    @php $existing = $boundByLocationId[$platformLocation->id] ?? null; @endphp
+                                    <option value="{{ $platformLocation->uid }}" @disabled($existing !== null)>
+                                        {{ $platformLocation->name }}@if($platformLocation->is_primary) (primary)@endif
+                                        @if($existing)
+                                            &mdash; already linked to {{ $existing->provider_location_resource_name }}
+                                        @endif
+                                    </option>
+                                @endforeach
+                            </select>
+                            <small>
+                                {{ $boundByLocationId->count() }} of {{ $locations->count() }} {{ $locations->count() === 1 ? 'location is' : 'locations are' }} already linked to Google.
+                                Unlink one from connection settings to link it to a different Google location.
+                            </small>
+                        </div>
+                    @endif
+
+                    {{-- Item 5: there is deliberately NO hidden raw account or location field. Both are inside the signed candidate
+                         token above, so a tampered or substituted pair cannot be posted. --}}
+                    <div class="gbp-foot">
+                        <span>Linking to <b>{{ $soleLocation ? $business->name . ' · ' . $soleLocation->name : $business->name }}</b> in MotionGrove</span>
+                        <a href="{{ $backUrl }}" class="gbp-btn is-outline">Cancel</a>
+                        <button type="submit" class="gbp-btn is-primary">Link this listing</button>
+                    </div>
+                </section>
+            </form>
+
+            <script>
+                (function () {
+                    var input = document.querySelector('[data-gbp-pick-search]');
+                    if (!input) { return; }
+                    var rows = document.querySelectorAll('[data-gbp-pick-row]');
+                    var empty = document.querySelector('[data-gbp-pick-empty]');
+                    input.addEventListener('input', function () {
+                        var q = input.value.trim().toLowerCase(), shown = 0;
+                        rows.forEach(function (row) {
+                            var hit = q === '' || row.textContent.toLowerCase().indexOf(q) !== -1;
+                            row.classList.toggle('d-none', !hit);
+                            if (hit) { shown++; }
+                            // A hidden listing must never stay selected: only a visibly chosen listing may be submitted.
+                            if (!hit) {
+                                var radio = row.querySelector('input[type="radio"]');
+                                if (radio && radio.checked) { radio.checked = false; }
+                            }
+                        });
+                        if (empty) { empty.classList.toggle('d-none', shown !== 0); }
                     });
-                    // Native `required` validation fires first when nothing is selected; surface the same notice.
-                    form.addEventListener('invalid', function (event) {
-                        if (event.target.name === 'candidate_token') {
-                            event.preventDefault();
-                            if (notice) { notice.classList.remove('d-none'); }
-                            input.focus();
-                        }
-                    }, true);
-                    form.addEventListener('change', function (event) {
-                        if (notice && event.target.name === 'candidate_token') { notice.classList.add('d-none'); }
-                    });
-                }
-            })();
-        </script>
-    @endif
+
+                    // Block submission unless a visible listing is selected (a required radio hidden by the filter
+                    // would otherwise fail validation silently).
+                    var form = document.querySelector('[data-gbp-picker]');
+                    var notice = document.querySelector('[data-gbp-pick-notice]');
+                    if (form) {
+                        form.addEventListener('submit', function (event) {
+                            var chosen = form.querySelector('input[name="candidate_token"]:checked');
+                            if (!chosen || chosen.closest('[data-gbp-pick-row]').classList.contains('d-none')) {
+                                event.preventDefault();
+                                if (notice) { notice.classList.remove('d-none'); }
+                                input.focus();
+                            }
+                        });
+                        // Native `required` validation fires first when nothing is selected; surface the same notice.
+                        form.addEventListener('invalid', function (event) {
+                            if (event.target.name === 'candidate_token') {
+                                event.preventDefault();
+                                if (notice) { notice.classList.remove('d-none'); }
+                                input.focus();
+                            }
+                        }, true);
+                        form.addEventListener('change', function (event) {
+                            if (notice && event.target.name === 'candidate_token') { notice.classList.add('d-none'); }
+                        });
+                    }
+                })();
+            </script>
+        @endif
+    </div>
 @endsection
