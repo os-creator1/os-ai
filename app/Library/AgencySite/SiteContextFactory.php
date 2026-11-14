@@ -27,8 +27,9 @@ final class SiteContextFactory
     /**
      * @param  array<string, mixed>  $values  the answers to render (draft or a published revision)
      * @param  string|null  $previewWorkspaceUid  set for the authenticated draft preview
+     * @param  string|null  $pageBase  a landing page's own path (e.g. "dogs"): page links then stay under it
      */
-    public function make(AgencySite $site, array $values, ?string $previewWorkspaceUid = null): SiteContext
+    public function make(AgencySite $site, array $values, ?string $previewWorkspaceUid = null, ?string $pageBase = null): SiteContext
     {
         $agency = $site->agencyWorkspace ?? Workspace::query()->findOrFail($site->agency_workspace_id);
         $brand = AgencyWhiteLabelSetting::query()->where('agency_workspace_id', $agency->id)->first();
@@ -42,7 +43,11 @@ final class SiteContextFactory
         $publicId = (string) $site->public_id;
         $preview = $previewWorkspaceUid !== null;
 
-        $pageUrl = function (string $page) use ($publicId, $preview, $previewWorkspaceUid): string {
+        $pageUrl = function (string $page) use ($publicId, $preview, $previewWorkspaceUid, $pageBase): string {
+            if ($pageBase !== null) {
+                return $page === 'home' ? url($pageBase) : url($pageBase.'/'.$page);
+            }
+
             if ($preview) {
                 return route('customer.workspaces.agency.site.preview', [$previewWorkspaceUid, $page === 'home' ? 'home' : $page]);
             }

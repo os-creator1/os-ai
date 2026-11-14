@@ -50,6 +50,34 @@ class AgencySiteController extends Controller
             ->header('Referrer-Policy', 'strict-origin-when-cross-origin');
     }
 
+    /**
+     * A published Agency site served as a "Book a call" landing page under the platform's own URL (e.g. /dogs).
+     *
+     * The Agency is chosen by the platform's configuration, never by the request. Only the published revision is read
+     * (same eligibility checks as the hosted site), and the call-only presentation is applied to a COPY of the values:
+     * the Agency's saved selling mode is not changed. A landing page whose booking calendar does not work is a 404,
+     * never a page with dead buttons.
+     */
+    public function landing(string $publicId, string $page, string $base): Response
+    {
+        [$site, $values] = $this->live($publicId);
+        $values['x.goal'] = 'book_call';
+        unset($values['x.pricing_mode']);
+
+        abort_if($this->renderer->site($site, $values, null, $base)->bookDemoUrl() === null, 404);
+
+        if (($to = $this->renderer->redirectFor($site, $values, $page, null, $base)) !== null) {
+            return redirect()->away($to, 302)->header('Cache-Control', 'no-store');
+        }
+
+        $html = $this->renderer->page($site, $values, $page, null, $base);
+        abort_if($html === null, 404);
+
+        return response($html)->header('Content-Type', 'text/html; charset=UTF-8')
+            ->header('X-Content-Type-Options', 'nosniff')
+            ->header('Referrer-Policy', 'strict-origin-when-cross-origin');
+    }
+
     /** The marketing stylesheet in the Agency's colours. */
     public function css(string $publicId): Response
     {

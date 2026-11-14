@@ -22,34 +22,34 @@ final class SiteRenderer
     ) {
     }
 
-    public function site(AgencySite $site, array $values, ?string $previewWorkspaceUid = null): AgencyMarketingSite
+    public function site(AgencySite $site, array $values, ?string $previewWorkspaceUid = null, ?string $pageBase = null): AgencyMarketingSite
     {
-        return $this->builder->site($values, $this->contexts->make($site, $values, $previewWorkspaceUid));
+        return $this->builder->site($values, $this->contexts->make($site, $values, $previewWorkspaceUid, $pageBase));
     }
 
     /**
      * Where a request for a page this site no longer offers should go instead. Only Pricing on a call-only site has a
      * destination (the booking page, else home); every other hidden page is a plain 404.
      */
-    public function redirectFor(AgencySite $site, array $values, string $page, ?string $previewWorkspaceUid = null): ?string
+    public function redirectFor(AgencySite $site, array $values, string $page, ?string $previewWorkspaceUid = null, ?string $pageBase = null): ?string
     {
         if ($page !== 'pricing') {
             return null;
         }
 
-        $mg = $this->site($site, $values, $previewWorkspaceUid);
+        $mg = $this->site($site, $values, $previewWorkspaceUid, $pageBase);
 
         return $mg->context()->callOnly() ? $mg->url('pricing') : null;
     }
 
     /** @return string|null the HTML, or null when this site does not offer that page */
-    public function page(AgencySite $site, array $values, string $page, ?string $previewWorkspaceUid = null): ?string
+    public function page(AgencySite $site, array $values, string $page, ?string $previewWorkspaceUid = null, ?string $pageBase = null): ?string
     {
         if (! in_array($page, SiteSchema::PAGES, true)) {
             return null;
         }
 
-        $mg = $this->site($site, $values, $previewWorkspaceUid);
+        $mg = $this->site($site, $values, $previewWorkspaceUid, $pageBase);
 
         if ($page !== 'home' && ! $mg->pageVisible($page)) {
             return null;
