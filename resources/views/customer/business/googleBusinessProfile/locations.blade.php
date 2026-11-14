@@ -145,6 +145,7 @@
                             </span>
                         </label>
                     @endforeach
+                    <p class="text-danger p-2 mb-0 d-none" role="alert" data-gbp-pick-notice>Select a listing from the list before linking.</p>
                     <p class="text-caption p-2 mb-0 d-none" data-gbp-pick-empty>No listings match your search.</p>
                 </div>
 
@@ -173,9 +174,40 @@
                         var hit = q === '' || row.textContent.toLowerCase().indexOf(q) !== -1;
                         row.classList.toggle('d-none', !hit);
                         if (hit) { shown++; }
+                        // A hidden listing must never stay selected: only a visibly chosen listing may be submitted.
+                        if (!hit) {
+                            var radio = row.querySelector('input[type="radio"]');
+                            if (radio && radio.checked) { radio.checked = false; }
+                        }
                     });
                     if (empty) { empty.classList.toggle('d-none', shown !== 0); }
                 });
+
+                // Block submission unless a visible listing is selected (a required radio hidden by the filter
+                // would otherwise fail validation silently).
+                var form = document.querySelector('[data-gbp-picker]');
+                var notice = document.querySelector('[data-gbp-pick-notice]');
+                if (form) {
+                    form.addEventListener('submit', function (event) {
+                        var chosen = form.querySelector('input[name="candidate_token"]:checked');
+                        if (!chosen || chosen.closest('[data-gbp-pick-row]').classList.contains('d-none')) {
+                            event.preventDefault();
+                            if (notice) { notice.classList.remove('d-none'); }
+                            input.focus();
+                        }
+                    });
+                    // Native `required` validation fires first when nothing is selected; surface the same notice.
+                    form.addEventListener('invalid', function (event) {
+                        if (event.target.name === 'candidate_token') {
+                            event.preventDefault();
+                            if (notice) { notice.classList.remove('d-none'); }
+                            input.focus();
+                        }
+                    }, true);
+                    form.addEventListener('change', function (event) {
+                        if (notice && event.target.name === 'candidate_token') { notice.classList.add('d-none'); }
+                    });
+                }
             })();
         </script>
     @endif
