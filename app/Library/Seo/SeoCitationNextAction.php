@@ -73,14 +73,15 @@ final class SeoCitationNextAction
                     continue;
                 }
 
-                $isNiche = $row->nicheGuidance !== null;
+                // A niche recommendation exists when the row carries the niche label; its guidance text is optional.
+                $isNiche = $row->nicheLabel !== null;
                 $important = in_array($row->importance(), [SeoDirectoryImportance::Essential, SeoDirectoryImportance::Recommended], true);
 
                 if (($kind === self::PRIORITY_DIRECTORY && $important) || ($kind === self::NICHE_DIRECTORY && $isNiche)) {
                     $evidence = [self::recordedEvidence($row)];
 
                     if ($isNiche) {
-                        $evidence[] = ($section->nicheLabel ?? 'Your industry') . ' guidance: ' . $row->nicheGuidance;
+                        $evidence[] = ($section->nicheLabel ?? 'Your industry') . ($row->nicheGuidance !== null ? ' guidance: ' . $row->nicheGuidance : ' recommends this directory.');
                     }
 
                     return self::make($kind, 'Check ' . $item['name'], 'Customers use this directory to find businesses like yours. ' . self::WHY_NAP, self::directoryAction($row, $canManage)['label'], 'directory', $row, $evidence, $canManage, $section);

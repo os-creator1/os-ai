@@ -257,6 +257,36 @@ class SeoCitationsNextActionTest extends TestCase
         $this->assertStringNotContainsString('99 Secret Lane', $html);
     }
 
+    public function test_an_optional_niche_recommendation_without_guidance_is_still_the_niche_next_action(): void
+    {
+        [$business, $workspace, $location] = $this->tenant();
+        $business->forceFill(['industry' => \App\Enums\Business\BusinessIndustry::PhotoBoothService])->save();
+
+        // Only one directory is offered, and only because the niche recommends it (Optional, no guidance).
+        $yelp = $this->directory('yelp');
+        \App\Models\SeoCitationDirectory::query()->whereNull('business_id')->update(['is_platform_core' => false, 'is_active' => false]);
+        \App\Models\SeoCitationDirectory::query()->whereKey($yelp->id)->update(['is_active' => true]);
+        \App\Models\SeoNicheCitationRecommendation::query()->delete();
+        \App\Models\SeoNicheCitationRecommendation::query()->forceCreate([
+            'uid' => (string) \Illuminate\Support\Str::uuid(),
+            'niche_key' => 'photo_booth_service',
+            'seo_citation_directory_id' => $yelp->id,
+            'importance' => 'optional',
+            'guidance' => null,
+            'is_enabled' => true,
+        ]);
+
+        $html = $this->page($workspace, $business, $location);
+
+        $this->assertSame(SeoCitationNextAction::NICHE_DIRECTORY, $this->bestKind($html));
+        $this->assertStringContainsString('Check Yelp for Business', $html);
+        $this->assertStringContainsString('recommends this directory.', $html);
+
+        // Disabled recommendation: the directory is no longer offered, so nothing is recommended.
+        \App\Models\SeoNicheCitationRecommendation::query()->update(['is_enabled' => false]);
+        $this->assertSame(SeoCitationNextAction::CLEAR, $this->bestKind($this->page($workspace, $business, $location)));
+    }
+
     private function noClaimUrlEverywhere(): void
     {
         \App\Models\SeoCitationDirectory::query()->update(['claim_url' => null]);
