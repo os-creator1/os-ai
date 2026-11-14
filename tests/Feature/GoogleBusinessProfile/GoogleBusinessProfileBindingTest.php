@@ -63,7 +63,12 @@ class GoogleBusinessProfileBindingTest extends TestCase
 
         $response->assertOk();
         $this->assertDatabaseCount('business_google_locations', 0);
-        $this->assertStringNotContainsString('checked', explode('candidate_token', $response->getContent())[1] ?? '');
+        // No radio is pre-selected: assert on the radio inputs themselves (the picker script legitimately mentions `checked`).
+        preg_match_all('/<input\b[^>]*name="candidate_token"[^>]*>/i', $response->getContent(), $radios);
+        $this->assertNotEmpty($radios[0]);
+        foreach ($radios[0] as $radio) {
+            $this->assertDoesNotMatchRegularExpression('/\schecked(\s|=|>|\/)/i', $radio);
+        }
     }
 
     /**
