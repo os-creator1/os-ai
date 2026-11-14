@@ -911,6 +911,8 @@ class GoogleBusinessProfileController extends CustomerBaseController
     private function shareManageability(array $resolved): array
     {
         view()->share('canManageGoogle', app(WorkspaceManagementAuthority::class)->mayManage($resolved[0], 'manage_google_business_profile'));
+        // The EFFECTIVE mirror retention (0 = nothing is kept between requests), so views describe the real configuration.
+        view()->share('mirrorRetentionDays', app(\App\Library\GoogleBusinessProfile\GoogleBusinessProfileRetention::class)->mirrorRetentionDays());
 
         return $resolved;
     }
