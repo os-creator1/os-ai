@@ -193,4 +193,49 @@ class GoogleBusinessProfileOverviewRedesignTest extends TestCase
         $this->get(route('customer.workspaces.businesses.gbp.comparison', [$workspace->uid, $business->uid, $binding->uid]))->assertOk()
             ->assertSee('7-day retention window', false);
     }
+
+    public function test_management_links_are_generic_and_name_the_linked_listing(): void
+    {
+        [$customer, $business, $workspace] = $this->entitledTenant();
+        $business->forceFill(['name' => 'Chicago Booth Co', 'phone' => '+1 312-555-0192', 'website_url' => null])->save();
+        $this->bound($business, $this->mirror(['maps_uri' => 'https://maps.google.com/?cid=12345', 'website_uri' => null]));
+        $this->authenticateAsCustomer($customer);
+
+        $html = $this->overview($workspace, $business)->assertOk()->getContent();
+
+        // Honest labels: the generic manager, never "manage this listing".
+        $this->assertStringContainsString('Open Google Business Profile Manager', $html);
+        $this->assertStringNotContainsString('Manage photos on Google', $html);
+        $this->assertStringNotContainsString('Manage reviews on Google', $html);
+        $this->assertStringNotContainsString('>Open Google<', $html);
+
+        // Customers are told which account and which listing to pick.
+        $this->assertStringContainsString('Sign in as owner@example.test', $html);
+        $this->assertStringContainsString('select “Chicago Booth Co | Photo Booth Rental”', $html);
+        $this->assertStringContainsString('In the manager, select “Chicago Booth Co | Photo Booth Rental”', $html);
+
+        // Every management link is exactly the generic manager URL: nothing derived from provider ids.
+        preg_match_all('#href="(https://business\.google\.com[^"]*)"#', $html, $links);
+        $this->assertNotEmpty($links[1]);
+        foreach ($links[1] as $href) {
+            $this->assertSame('https://business.google.com/', $href);
+        }
+        $this->assertStringNotContainsString('L-INTERNAL-1', implode(' ', $links[1]));
+
+        // The public Maps view stays a separate, view-only link.
+        $this->assertStringContainsString('href="https://maps.google.com/?cid=12345"', $html);
+        $this->assertStringContainsString('Public Google Maps listing (view only)', $html);
+    }
+
+    public function test_the_guidance_names_the_platform_location_when_the_listing_title_is_not_retained(): void
+    {
+        [$customer, $business, $workspace] = $this->entitledTenant();
+        $this->bound($business, $this->mirror(), ['mirror_expires_at' => now()->subDay(), 'bound_title_snapshot' => null]);
+        $this->authenticateAsCustomer($customer);
+
+        $html = $this->overview($workspace, $business)->assertOk()->getContent();
+
+        $this->assertStringContainsString('select the Google listing linked to “Chicago Booth Co Studio”', $html);
+        $this->assertStringNotContainsString('Manage photos on Google', $html);
+    }
 }

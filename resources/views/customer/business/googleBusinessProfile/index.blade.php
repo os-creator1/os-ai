@@ -45,7 +45,19 @@
         $locationsUrl = route('customer.workspaces.businesses.gbp.locations', [$workspaceUid, $businessUid]);
         $refreshUrl = route('customer.workspaces.businesses.gbp.refresh', [$workspaceUid, $businessUid]);
         $settingsUrl = route('customer.workspaces.businesses.gbp.settings', [$workspaceUid, $businessUid]);
+        // Google's Business Profile API returns only a PUBLIC Maps link (mapsUri) and a customer "write a review" link (newReviewUri).
+        // It returns no listing-specific management URL, and none may be built from resource ids, so management links go to Google's
+        // generic manager with explicit instructions naming the linked listing.
         $googleManageUrl = 'https://business.google.com/';
+        $googleManageLabel = 'Open Google Business Profile Manager';
+        $managerListings = [];
+        foreach ($bindings as $managerItem) {
+            $managerTitle = trim((string) ($managerItem['profile']['title'] ?? '')) ?: trim((string) ($managerItem['binding']->bound_title_snapshot ?? ''));
+            $managerListings[] = $managerTitle !== ''
+                ? '“' . $managerTitle . '”'
+                : 'the Google listing linked to “' . ($managerItem['location']?->name ?? 'this location') . '”';
+        }
+        $managerListings = array_values(array_unique($managerListings));
         $retentionDays = (int) ($mirrorRetentionDays ?? 0);
         $firstMaps = null;
         foreach ($bindings as $candidateItem) {
@@ -80,7 +92,7 @@
                     </form>
                 @endif
                 @if($firstMaps)
-                    <a class="gbp-btn is-primary" href="{{ $firstMaps }}" target="_blank" rel="noopener noreferrer"><x-ds-icon name="map-pin" :size="16" /> View on Google Maps</a>
+                    <a class="gbp-btn is-primary" href="{{ $firstMaps }}" target="_blank" rel="noopener noreferrer" title="Public Google Maps listing (view only)"><x-ds-icon name="map-pin" :size="16" /> View on Google Maps</a>
                 @endif
                 <a class="gbp-btn is-outline" href="{{ $settingsUrl }}"><x-ds-icon name="settings" :size="16" /> Connection settings</a>
             @endif
@@ -202,6 +214,8 @@
                         $p = $item['profile'];
                         $where = count($bindings) > 1 ? ($item['location']?->name ?? 'A linked location') . ': ' : '';
                         $cmpUrl = $item['comparisonUrl'];
+                        $listingTitle = trim((string) ($p['title'] ?? '')) ?: trim((string) ($b->bound_title_snapshot ?? ''));
+                        $listingLabel = $listingTitle !== '' ? '“' . $listingTitle . '”' : 'the Google listing linked to “' . ($item['location']?->name ?? 'this location') . '”';
                         if (! $p['fresh']) {
                             $actions[] = ['icon' => 'refresh-cw', 'tone' => 'warn', 'title' => $where . ($retentionDays === 0 ? 'Read this listing from Google' : 'Refresh Google data'), 'text' => 'Without a current read of this listing we cannot check it for gaps or mismatches.', 'url' => null, 'cta' => $retentionDays === 0 ? 'View live' : 'Refresh', 'refresh' => true];
                             continue;
@@ -210,22 +224,22 @@
                             $actions[] = ['icon' => 'arrow-left-right', 'tone' => 'warn', 'title' => $where . $row->field . ' doesn’t match', 'text' => 'Stored here: ' . ($row->platformValue ?? 'Not set') . ' · On Google: ' . ($row->googleValue ?? 'Not set'), 'url' => $cmpUrl, 'cta' => 'Review'];
                         }
                         if ($p['website'] === null && ! collect($p['differences'])->contains(fn ($r) => $r->field === 'Website')) {
-                            $actions[] = ['icon' => 'globe', 'tone' => 'warn', 'title' => $where . 'Google shows no website', 'text' => 'Customers cannot reach your site from the listing.', 'url' => $googleManageUrl, 'cta' => 'Open Google'];
+                            $actions[] = ['icon' => 'globe', 'tone' => 'warn', 'title' => $where . 'Google shows no website', 'text' => 'Customers cannot reach your site from the listing.', 'url' => $googleManageUrl, 'cta' => $googleManageLabel, 'manager' => $listingLabel];
                         }
                         if ($p['phone'] === null && ! collect($p['differences'])->contains(fn ($r) => $r->field === 'Phone')) {
-                            $actions[] = ['icon' => 'phone', 'tone' => 'warn', 'title' => $where . 'Google shows no phone number', 'text' => 'Customers cannot call you from the listing.', 'url' => $googleManageUrl, 'cta' => 'Open Google'];
+                            $actions[] = ['icon' => 'phone', 'tone' => 'warn', 'title' => $where . 'Google shows no phone number', 'text' => 'Customers cannot call you from the listing.', 'url' => $googleManageUrl, 'cta' => $googleManageLabel, 'manager' => $listingLabel];
                         }
                         if ($p['category'] === null) {
-                            $actions[] = ['icon' => 'tag', 'tone' => 'warn', 'title' => $where . 'No primary category on Google', 'text' => 'A category helps Google show you for the right searches.', 'url' => $googleManageUrl, 'cta' => 'Open Google'];
+                            $actions[] = ['icon' => 'tag', 'tone' => 'warn', 'title' => $where . 'No primary category on Google', 'text' => 'A category helps Google show you for the right searches.', 'url' => $googleManageUrl, 'cta' => $googleManageLabel, 'manager' => $listingLabel];
                         }
                         if ($b->verification_state && $b->verification_state->value !== 'verified') {
-                            $actions[] = ['icon' => 'shield-alert', 'tone' => 'warn', 'title' => $where . 'Listing is ' . strtolower($b->verification_state->label()), 'text' => 'Google decides what an unverified listing can show.', 'url' => $googleManageUrl, 'cta' => 'Open Google'];
+                            $actions[] = ['icon' => 'shield-alert', 'tone' => 'warn', 'title' => $where . 'Listing is ' . strtolower($b->verification_state->label()), 'text' => 'Google decides what an unverified listing can show.', 'url' => $googleManageUrl, 'cta' => $googleManageLabel, 'manager' => $listingLabel];
                         }
                         if ($b->has_pending_edits) {
                             $actions[] = ['icon' => 'clock', 'tone' => 'info', 'title' => $where . 'Edits are pending review', 'text' => 'Google is reviewing a change to this listing.', 'url' => null, 'cta' => null];
                         }
                         if ($b->duplicate_of_resource_name) {
-                            $actions[] = ['icon' => 'copy', 'tone' => 'warn', 'title' => $where . 'Possible duplicate listing', 'text' => 'Google reports a duplicate; resolve it in Google.', 'url' => $googleManageUrl, 'cta' => 'Open Google'];
+                            $actions[] = ['icon' => 'copy', 'tone' => 'warn', 'title' => $where . 'Possible duplicate listing', 'text' => 'Google reports a duplicate; resolve it in Google.', 'url' => $googleManageUrl, 'cta' => $googleManageLabel, 'manager' => $listingLabel];
                         }
                         if ($item['addressContradiction']) {
                             $actions[] = ['icon' => 'map-pin', 'tone' => 'info', 'title' => $where . 'Address privacy conflicts with storefront', 'text' => 'The address is not sent to Google while it is private.', 'url' => null, 'cta' => null];
@@ -352,7 +366,7 @@
                         <section class="gbp-cd is-clip" data-role="gbp-reviews">
                             <div class="gbp-ch" style="padding-bottom:14px">
                                 <b>Reviews</b>
-                                <a href="https://business.google.com/reviews" target="_blank" rel="noopener noreferrer">Manage reviews on Google</a>
+                                <a href="{{ $googleManageUrl }}" target="_blank" rel="noopener noreferrer">{{ $googleManageLabel }}</a>
                             </div>
                             <div class="gbp-rv-sum" aria-hidden="true">
                                 <div class="gbp-rv-big"><b>N/A</b><span class="gbp-stars">&#9733;&#9733;&#9733;&#9733;&#9733;</span><span class="s">No rating read</span></div>
@@ -367,6 +381,7 @@
                                 <div>
                                     <b>Reviews are not shown here yet</b>
                                     <p>MotionGrove does not read your Google rating, review breakdown or recent reviews today, so none are displayed rather than guessed. Read and answer reviews in Google.</p>
+                                    <p class="gbp-manage-note" data-role="gbp-manage-guidance">Google opens the manager for the account and business you used last, which may not be this one. Sign in as {{ $connection?->google_account_email ?? 'the connected Google account' }}, then select {{ implode(' or ', $managerListings) }} before you change anything.</p>
                                 </div>
                             </div>
                         </section>
@@ -385,14 +400,14 @@
                                     <span class="gbp-tile {{ $action['tone'] === 'warn' ? 'is-warn' : 'is-info' }}"><x-ds-icon :name="$action['icon']" :size="16" /></span>
                                     <div>
                                         <b>{{ $action['title'] }}</b>
-                                        <p>{{ $action['text'] }}</p>
+                                        <p>{{ $action['text'] }}@if(! empty($action['manager'])) In the manager, select {{ $action['manager'] }}.@endif</p>
                                     </div>
                                     @if(! empty($action['refresh']))
                                         @if(! empty($canManageGoogle))
                                             <form method="POST" action="{{ $refreshUrl }}">@csrf<button type="submit" class="gbp-op-link">{{ $action['cta'] }}</button></form>
                                         @endif
                                     @elseif($action['url'])
-                                        <a class="gbp-op-link" href="{{ $action['url'] }}" @if(str_starts_with($action['url'], 'https://')) target="_blank" rel="noopener noreferrer" @endif>{{ $action['cta'] }}</a>
+                                        <a class="gbp-op-link is-wrap" href="{{ $action['url'] }}" @if(str_starts_with($action['url'], 'https://')) target="_blank" rel="noopener noreferrer" @endif>{{ $action['cta'] }}</a>
                                     @endif
                                 </div>
                             @empty
@@ -444,7 +459,8 @@
                                 </div>
                                 <span class="gbp-ph-note">
                                     <strong>Photos are not shown here yet.</strong> MotionGrove does not read your Google cover, logo or gallery today, so no images are displayed.
-                                    <a class="gbp-textlink" href="https://business.google.com/" target="_blank" rel="noopener noreferrer">Manage photos on Google</a>
+                                    <a class="gbp-textlink" href="{{ $googleManageUrl }}" target="_blank" rel="noopener noreferrer">{{ $googleManageLabel }}</a>
+                                    <span class="gbp-manage-note" data-role="gbp-manage-guidance">Google opens the manager for the account and business you used last, which may not be this one. Sign in as {{ $connection?->google_account_email ?? 'the connected Google account' }}, then select {{ implode(' or ', $managerListings) }} before you change anything.</span>
                                 </span>
                             </div>
                         </section>
