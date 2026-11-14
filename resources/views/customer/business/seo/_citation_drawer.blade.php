@@ -155,7 +155,7 @@
                     <a class="btn btn-sm btn-outline-secondary d-inline-flex align-items-center gap-50" href="{{ $row->safeListingUrl }}" target="_blank" rel="{{ SeoLinkSafety::EXTERNAL_REL }}" data-role="drawer-listing-link"><x-ds-icon name="external-link" size="14" />Open listing</a>
                 @endif
                 @if($claimUrl !== null)
-                    <a class="btn btn-sm btn-outline-secondary d-inline-flex align-items-center gap-50" href="{{ $claimUrl }}" target="_blank" rel="{{ SeoLinkSafety::EXTERNAL_REL }}" data-role="drawer-claim-link"><x-ds-icon name="external-link" size="14" />Claim or update on {{ $directory->name }}</a>
+                    <a class="btn btn-sm btn-outline-secondary d-inline-flex align-items-center gap-50" href="{{ $claimUrl }}" target="_blank" rel="{{ SeoLinkSafety::EXTERNAL_REL }}" data-role="drawer-claim-link"><x-ds-icon name="external-link" size="14" />{{ \App\Library\Seo\SeoCitationNextAction::directoryAction($row)['label'] }} · {{ $directory->name }}</a>
                 @endif
                 @if($row->safeListingUrl === null && $claimUrl === null)
                     <span class="text-caption">No official claim link is recorded for this directory. Search for your business on {{ $directory->name }} and record its link below.</span>

@@ -1,5 +1,18 @@
 {{-- Citations dashboard behaviour: static, no dynamic output. Opens a drawer for a clicked row and re-opens a rejected save's drawer. --}}
 <script>
+        // Listing kit: copy one confirmed value. Falls back to a textarea where the Clipboard API is unavailable.
+        document.addEventListener('click', function (e) {
+            var btn = e.target.closest ? e.target.closest('[data-copy]') : null;
+            if (!btn) { return; }
+            var value = btn.getAttribute('data-copy');
+            var done = function () { var t = btn.textContent; btn.textContent = 'Copied'; setTimeout(function () { btn.textContent = t; }, 1500); };
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                navigator.clipboard.writeText(value).then(done, function () {});
+            } else {
+                var ta = document.createElement('textarea'); ta.value = value; document.body.appendChild(ta); ta.select();
+                try { document.execCommand('copy'); done(); } catch (err) {} document.body.removeChild(ta);
+            }
+        });
         (function () {
             if (typeof bootstrap === 'undefined' || !bootstrap.Offcanvas) { return; }
 
