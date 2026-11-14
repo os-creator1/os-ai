@@ -7,31 +7,26 @@
     impressions (how often the business appeared for a search), NOT ranking positions. Escaped Blade output only.
 --}}
 
-<x-card :padded="false" class="gbp-card" data-role="gbp-performance">
-    <div class="gbp-card-body">
-        <div class="gbp-section-head">
-            <div>
-                <p class="gbp-eyebrow mb-25">On Google</p>
-                <h2 class="h5 mb-25">Google performance</h2>
-                <p class="text-caption mb-0">How people found and contacted your business through Google Search and Maps.</p>
-            </div>
-            @if (! empty($canManageGoogle))
-                <form method="POST" data-gbp-perf-refresh action="{{ route('customer.workspaces.businesses.gbp.performance', [$workspaceUid, $businessUid]) }}">
-                    @csrf
-                    <input type="hidden" name="refresh" value="1">
-                    <button type="submit" class="btn btn-outline-primary"><x-ds-icon name="refresh-cw" :size="14" /> Refresh Google performance</button>
-                </form>
-            @endif
-        </div>
-
-        <div id="gbp-performance-body"
-             data-csrf="{{ csrf_token() }}"
-             data-url="{{ route('customer.workspaces.businesses.gbp.performance', [$workspaceUid, $businessUid]) }}"
-             @if (! empty($performanceAuto)) data-auto="1" @endif>
-            @include('customer.business.googleBusinessProfile._performance-body')
-        </div>
+<section class="gbp-cd is-clip" data-role="gbp-performance">
+    <div class="gbp-ch">
+        <b>Google performance</b>
+        <span class="gbp-ch-note">vs previous period</span>
+        @if (! empty($canManageGoogle))
+            <form method="POST" data-gbp-perf-refresh action="{{ route('customer.workspaces.businesses.gbp.performance', [$workspaceUid, $businessUid]) }}">
+                @csrf
+                <input type="hidden" name="refresh" value="1">
+                <button type="submit" class="gbp-btn is-outline" style="min-height:34px;padding:0 12px;font-size:13px"><x-ds-icon name="refresh-cw" :size="14" /> Refresh Google performance</button>
+            </form>
+        @endif
     </div>
-</x-card>
+
+    <div id="gbp-performance-body" class="gbp-perf-body"
+         data-csrf="{{ csrf_token() }}"
+         data-url="{{ route('customer.workspaces.businesses.gbp.performance', [$workspaceUid, $businessUid]) }}"
+         @if (! empty($performanceAuto)) data-auto="1" @endif>
+        @include('customer.business.googleBusinessProfile._performance-body')
+    </div>
+</section>
 
 <script>
     (function () {
@@ -42,7 +37,7 @@
             var body = new FormData();
             if (refresh) { body.append('refresh', '1'); }
             box.setAttribute('aria-busy', 'true');
-            if (refresh) { box.insertAdjacentHTML('afterbegin', '<p class="text-caption mb-1" role="status">Refreshing from Google&hellip;</p>'); }
+            if (refresh) { box.insertAdjacentHTML('afterbegin', '<p class="gbp-perf-msg" role="status">Refreshing from Google&hellip;</p>'); }
 
             return fetch(box.getAttribute('data-url'), {
                 method: 'POST', body: body, credentials: 'same-origin',
@@ -53,7 +48,7 @@
             }).then(function (html) {
                 box.innerHTML = html;
             }).catch(function () {
-                box.innerHTML = '<p class="text-caption mb-0">Google performance could not be loaded right now. Use Refresh to try again.</p>';
+                box.innerHTML = '<p class="gbp-perf-msg is-warn">Google performance could not be loaded right now. Use Refresh to try again.</p>';
             }).then(function () { box.removeAttribute('aria-busy'); });
         }
 
