@@ -432,7 +432,7 @@
                         <section class="gbp-cd" data-role="gbp-photos">
                             <div class="gbp-ch">
                                 <b>Photos</b>
-                                <span class="gbp-ch-note">Not available</span>
+                                <span class="gbp-ch-note">Not read from Google yet</span>
                             </div>
                             <div class="gbp-ph">
                                 <div class="gbp-ph-top" aria-hidden="true">

@@ -58,10 +58,10 @@
                     <b>{{ $fmtNumber($kpi['current']) }}</b>
                     @if ($kpi['comparable'])
                         @if ($kpi['delta'] === 0)
-                            <span class="dl" data-role="change">Same as before</span>
+                            <span class="dl" data-role="change">No change</span>
                         @else
                             <span class="dl {{ $kpi['delta'] > 0 ? 'is-up' : 'is-down' }}" data-role="change">
-                                {{ $kpi['delta'] > 0 ? '▲' : '▼' }} {{ $fmtNumber(abs($kpi['delta'])) }} vs {{ $fmtNumber($kpi['previous']) }}@if ($kpi['percent'] !== null) ({{ $kpi['percent'] > 0 ? '+' : '' }}{{ $kpi['percent'] }}%)@endif
+                                {{ $kpi['delta'] > 0 ? '▲ +' : '▼ −' }}{{ $fmtNumber(abs($kpi['delta'])) }}@if ($kpi['percent'] !== null) ({{ $kpi['percent'] > 0 ? '+' : '' }}{{ $kpi['percent'] }}%)@endif vs {{ $fmtNumber($kpi['previous']) }}
                             </span>
                         @endif
                     @else
