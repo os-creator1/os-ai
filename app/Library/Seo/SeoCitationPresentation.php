@@ -3,6 +3,7 @@
 namespace App\Library\Seo;
 
 use App\Enums\Seo\SeoCitationDisplayState;
+use App\Enums\Seo\SeoCitationStatus;
 
 /**
  * Presentation helpers for the Citations page: pure functions of a SeoCitationRow / section. They choose
@@ -49,6 +50,9 @@ final class SeoCitationPresentation
             $row->isNotApplicable() => 'na',
             $row->needsAttention() => 'attention',
             $row->displayState() === SeoCitationDisplayState::InProgress => 'progress',
+            // An owner can mark a row Listed without recording any details. That is not complete
+            // under SeoCitationRow::isComplete(), so never inflate the green listed progress.
+            $row->status === SeoCitationStatus::Listed && ! $row->isComplete() => 'unchecked',
             $row->displayState() === SeoCitationDisplayState::NotStarted => 'unchecked',
             default => 'listed',
         };
