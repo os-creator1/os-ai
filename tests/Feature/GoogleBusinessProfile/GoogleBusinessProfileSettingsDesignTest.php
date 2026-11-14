@@ -3,6 +3,10 @@
 namespace Tests\Feature\GoogleBusinessProfile;
 
 use App\Enums\GoogleBusinessProfile\GoogleLocationHealth;
+use App\Enums\GoogleBusinessProfile\GoogleOperationType;
+use App\Enums\GoogleBusinessProfile\GoogleOperationStatus;
+use App\Models\BusinessGoogleOperation;
+use Illuminate\Support\Str;
 use App\Enums\Workspace\WorkspaceMembershipRole;
 use App\Models\BusinessGoogleLocation;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -64,6 +68,29 @@ class GoogleBusinessProfileSettingsDesignTest extends TestCase
             ->assertSee('binding_uid" value="' . $binding->uid . '"', false)
             ->assertDontSee('table-responsive', false)
             ->assertDontSee('plain-refresh-token-value', false);
+    }
+
+    public function test_a_pending_refresh_is_not_presented_as_completed(): void
+    {
+        [$customer, $business, $workspace] = $this->entitledTenant();
+        $this->activeConnection($business);
+        BusinessGoogleOperation::create([
+            'uid' => (string) Str::uuid(),
+            'business_id' => $business->id,
+            'operation_type' => GoogleOperationType::MirrorRefreshed,
+            'local_operation_key' => 'settings-pending-' . Str::uuid(),
+            'status' => GoogleOperationStatus::Pending,
+            'summary' => 'Google listing refresh requested',
+            'started_at' => now(),
+        ]);
+        $this->authenticateAsCustomer($customer);
+
+        $this->get(route('customer.workspaces.businesses.gbp.settings', [$workspace->uid, $business->uid]))
+            ->assertOk()
+            ->assertSee('Refreshing listing details', false)
+            ->assertSee('Pending — not completed yet', false)
+            ->assertSee('In progress', false)
+            ->assertDontSee('Listing details refreshed', false);
     }
 
     public function test_disconnected_page_keeps_compact_layout_and_no_destructive_action(): void
