@@ -116,6 +116,8 @@
                 ];
             @endphp
 
+            @include('customer.business.seo._citation_next_best')
+
             {{-- Metrics: counts of stored rows only. No score, no visibility %. --}}
             <div class="cz-stats mb-2" data-role="citation-summary">
                 <div class="cz-stat" data-stat="tracked">
@@ -161,7 +163,7 @@
                 {{-- "What should I do next?": the real actions, most important first. --}}
                 <x-card :padded="true" data-section="citation-actions">
                     <div class="cz-card-head">
-                        <p class="text-section-heading mb-0">What to do next</p>
+                        <p class="text-section-heading mb-0">Also worth reviewing</p>
                         <span class="cz-card-meta" data-role="next-meta">{{ $summary['needsSetup'] }} need setup · {{ $summary['notChecked'] }} not checked</span>
                     </div>
                     @if(count($next) > 0)
@@ -237,7 +239,9 @@
                 </div>
             </div>
 
-            {{-- Directory listings --}}
+            {{-- Directory listings: the full inventory, secondary to the next move above. --}}
+            <details class="cz-inventory mb-2" data-role="directory-inventory" @if($section->rows === [] ) open @endif>
+            <summary class="text-section-heading mb-1" style="cursor:pointer">Full directory inventory</summary>
             <div class="d-flex justify-content-between align-items-end flex-wrap gap-1 mb-1">
                 <div>
                     <p class="text-section-heading mb-0">Directory listings</p>
@@ -378,6 +382,8 @@
                     <p class="mb-0 text-caption">No directories match this filter.</p>
                 </div>
             </div>
+
+            </details>
 
             @foreach($section->rows as $row)
                 @include('customer.business.seo._citation_drawer', ['row' => $row])

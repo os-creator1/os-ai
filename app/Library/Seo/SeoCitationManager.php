@@ -643,6 +643,7 @@ final class SeoCitationManager
             $this->googleNap($canonical, $canonicalWebsite, $google, $business, $location, $phoneComparable),
             $phoneComparable,
             $reachesEveryLocation,
+            filled($business->description) ? trim((string) $business->description) : null,
         );
     }
 
