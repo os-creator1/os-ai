@@ -239,6 +239,24 @@ class SeoCitationsNextActionTest extends TestCase
         $this->assertStringNotContainsString('verified', strtolower($evidence));
     }
 
+    public function test_service_area_lists_the_main_city_first_with_extra_cities_deduplicated(): void
+    {
+        [$business, $workspace] = $this->tenant();
+        $private = $this->privateLocation($business, 'Home Office'); // city: Springfield
+
+        // Main city only.
+        $private->forceFill(['service_area_cities' => []])->save();
+        $html = $this->page($workspace, $business, $private);
+        $this->assertMatchesRegularExpression('/data-kit="service_area".*?data-copy="Springfield"/s', $html);
+        $this->assertStringNotContainsString('Service area</dt>' . "\n" . '                    <dd class="cz-muted" data-kit-missing', $html);
+
+        // Extra cities, with a duplicate (different case/space) of the main city and of each other.
+        $private->forceFill(['service_area_cities' => [' Shelbyville ', 'springfield', 'Capital City', 'shelbyville', '']])->save();
+        $html = $this->page($workspace, $business, $private);
+        $this->assertStringContainsString('data-copy="Springfield, Shelbyville, Capital City"', $html);
+        $this->assertStringNotContainsString('99 Secret Lane', $html);
+    }
+
     private function noClaimUrlEverywhere(): void
     {
         \App\Models\SeoCitationDirectory::query()->update(['claim_url' => null]);

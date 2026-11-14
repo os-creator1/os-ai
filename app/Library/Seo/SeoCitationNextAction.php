@@ -163,8 +163,19 @@ final class SeoCitationNextAction
      */
     public static function listingKit(SeoCitationLocationSection $section): array
     {
-        $areas = $section->location->service_area_cities;
-        $areas = is_array($areas) ? implode(', ', array_filter(array_map(fn ($c) => trim((string) $c), $areas))) : '';
+        // Main city first, then the additional cities; trimmed, de-duplicated case-insensitively. City names
+        // are public service-area facts; the street address is never part of this.
+        $cities = [];
+
+        foreach (array_merge([$section->location->city], is_array($section->location->service_area_cities) ? $section->location->service_area_cities : []) as $city) {
+            $city = trim((string) $city);
+
+            if ($city !== '' && ! array_key_exists(mb_strtolower($city), $cities)) {
+                $cities[mb_strtolower($city)] = $city;
+            }
+        }
+
+        $areas = implode(', ', $cities);
 
         if ($section->addressPermitted) {
             $place = ['key' => 'address', 'label' => 'Public address', 'value' => $section->canonical['address'] ?? null, 'note' => null];
