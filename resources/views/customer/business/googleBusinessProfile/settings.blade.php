@@ -16,21 +16,24 @@
 
 @section('title', 'Google connection settings')
 
+@section('page-style')
+    @include('customer.business.googleBusinessProfile._overview-style')
+@endsection
+
 @section('content')
-    <div class="row mb-2">
-        <div class="col-12 d-flex justify-content-between align-items-center flex-wrap">
-            <h4 class="mb-0">Google connection settings</h4>
-            <a href="{{ route('customer.workspaces.businesses.gbp.index', [$workspaceUid, $businessUid]) }}" class="text-caption">Back</a>
-        </div>
+    <div class="gbp-narrow mb-2">
+        <a href="{{ route('customer.workspaces.businesses.gbp.index', [$workspaceUid, $businessUid]) }}" class="gbp-link d-inline-flex align-items-center gap-50 mb-50"><x-ds-icon name="arrow-left" :size="14" /> Google Business Profile</a>
+        <h1 class="h3 mb-25">Google connection settings</h1>
+        <p class="text-caption mb-0">{{ $business->name }} &middot; manage the connection, linked locations and recent activity.</p>
     </div>
 
     <x-flash-alert class="mb-2" />
 
-    <x-card :padded="true" class="mb-2">
+    <x-card :padded="true" class="mb-2 gbp-narrow">
         <p class="text-section-heading mb-1">Connection</p>
 
         @if($connection)
-            <dl class="row mb-0">
+            <dl class="row mb-0 gbp-break">
                 <dt class="col-sm-4">Status</dt>
                 <dd class="col-sm-8">{{ ucfirst($connection->state->value) }}</dd>
 
@@ -62,7 +65,7 @@
          leaves the others untouched. --}}
     @foreach($bindings as $item)
         @php($binding = $item['binding'])
-        <x-card :padded="true" class="mb-2">
+        <x-card :padded="true" class="mb-2 gbp-narrow">
             <p class="text-section-heading mb-1">Linked location</p>
             <dl class="row mb-2">
                 <dt class="col-sm-4">Google location</dt>
@@ -82,7 +85,8 @@
                     @if($item['mirrorIsFresh'] && $binding->mirror_fetched_at)
                         Refreshed {{ $binding->mirror_fetched_at->toDayDateTimeString() }}
                     @else
-                        Refresh required
+                        <x-badge variant="warning">Refresh required</x-badge>
+                        <span class="text-caption d-block">Use Refresh from the overview to read this listing from Google again.</span>
                     @endif
                 </dd>
             </dl>
@@ -104,7 +108,7 @@
     @endforeach
 
     @if($connection && $connection->state->value !== 'disconnected')
-        <x-card :padded="true" class="mb-2">
+        <x-card :padded="true" class="mb-2 gbp-narrow">
             <p class="text-section-heading mb-1">Disconnect</p>
             <p class="text-caption mb-2">
                 Disconnecting deletes the stored authorization and every linked location for this business. It cannot be undone &mdash;
@@ -122,7 +126,7 @@
         </x-card>
     @endif
 
-    <x-card :padded="true">
+    <x-card :padded="true" class="gbp-narrow">
         <p class="text-section-heading mb-1">Recent activity</p>
 
         @if($operations->isEmpty())

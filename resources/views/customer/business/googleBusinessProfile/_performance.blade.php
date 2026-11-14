@@ -7,9 +7,9 @@
     impressions (how often the business appeared for a search), NOT ranking positions. Escaped Blade output only.
 --}}
 
-<x-card :padded="false" class="gbp-card mb-2" data-role="gbp-performance">
+<x-card :padded="false" class="gbp-card" data-role="gbp-performance">
     <div class="gbp-card-body">
-        <div class="gbp-diff-head">
+        <div class="gbp-section-head">
             <div>
                 <p class="gbp-eyebrow mb-25">On Google</p>
                 <h2 class="h5 mb-25">Google performance</h2>
@@ -19,7 +19,7 @@
                 <form method="POST" data-gbp-perf-refresh action="{{ route('customer.workspaces.businesses.gbp.performance', [$workspaceUid, $businessUid]) }}">
                     @csrf
                     <input type="hidden" name="refresh" value="1">
-                    <button type="submit" class="btn btn-outline-primary">Refresh Google performance</button>
+                    <button type="submit" class="btn btn-outline-primary"><x-ds-icon name="refresh-cw" :size="14" /> Refresh Google performance</button>
                 </form>
             @endif
         </div>

@@ -69,6 +69,25 @@
                         </div>
                     @endforeach
                 </div>
+                {{-- Simple trend: Google's own totals for the two periods, drawn as bars. Only metrics with both periods complete. --}}
+                @php
+                    $trend = collect($data['kpis'])->filter(fn ($kpi) => $kpi['current'] !== null && $kpi['comparable'] && isset($kpi['previous']) && $kpi['previous'] !== null);
+                    $trendMax = max(1, (int) $trend->map(fn ($kpi) => max((int) $kpi['current'], (int) $kpi['previous']))->max());
+                @endphp
+                @if ($trend->isNotEmpty())
+                    <div class="gbp-trend" data-role="gbp-trend" role="img" aria-label="Previous period compared with current period for each Google metric">
+                        @foreach ($trend as $kpi)
+                            <div class="gbp-trend-row">
+                                <span>{{ $kpi['label'] }}</span>
+                                <span class="gbp-trend-bars">
+                                    <span class="gbp-trend-bar"><span style="width: {{ round(max((int) $kpi['current'], 0) / $trendMax * 100) }}%"></span><span class="text-caption">{{ $fmtNumber($kpi['current']) }}</span></span>
+                                    <span class="gbp-trend-bar is-prev"><span style="width: {{ round(max((int) $kpi['previous'], 0) / $trendMax * 100) }}%"></span><span class="text-caption">{{ $fmtNumber($kpi['previous']) }}</span></span>
+                                </span>
+                            </div>
+                        @endforeach
+                        <div class="gbp-trend-legend text-caption"><span>Top bar: this period</span><span>Bottom bar: previous period</span></div>
+                    </div>
+                @endif
                 @if (collect($data['kpis'])->every(fn ($kpi) => $kpi['current'] === 0))
                     <p class="text-caption mt-1 mb-0">Google reported no activity for this period. A new or quiet profile can show zero.</p>
                 @endif
