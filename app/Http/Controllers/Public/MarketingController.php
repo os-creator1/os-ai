@@ -76,18 +76,20 @@ class MarketingController extends Controller
      * and self-service signup, with every conversion button going to the existing demo-booking flow. Request-scoped;
      * the normal homepage, /pricing and signup are untouched.
      */
-    public function photobooth(): View
+    public function photobooth(): \Illuminate\Http\Response
     {
         abort_unless($this->site->servesRequest(request()), 404);
 
         $landing = new CallOnlyMarketingSite('photobooth');
         abort_unless($landing->canBook(), 404);
 
-        return view('marketing.pages.home', [
+        // An outreach landing page that near-duplicates the homepage: kept out of search results, while the normal
+        // marketing pages keep their own canonicals and indexing.
+        return response()->view('marketing.pages.home', [
             'mg' => $landing,
             'page' => 'home',
             'meta' => $landing->meta('home'),
-        ]);
+        ])->header('X-Robots-Tag', 'noindex, nofollow');
     }
 
     /**

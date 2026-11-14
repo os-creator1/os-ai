@@ -67,13 +67,14 @@ class AgencySiteController extends Controller
         abort_if($this->renderer->site($site, $values, null, $base)->bookDemoUrl() === null, 404);
 
         if (($to = $this->renderer->redirectFor($site, $values, $page, null, $base)) !== null) {
-            return redirect()->away($to, 302)->header('Cache-Control', 'no-store');
+            return redirect()->away($to, 302)->header('Cache-Control', 'no-store')->header('X-Robots-Tag', 'noindex, nofollow');
         }
 
         $html = $this->renderer->page($site, $values, $page, null, $base);
         abort_if($html === null, 404);
 
         return response($html)->header('Content-Type', 'text/html; charset=UTF-8')
+            ->header('X-Robots-Tag', 'noindex, nofollow')
             ->header('X-Content-Type-Options', 'nosniff')
             ->header('Referrer-Policy', 'strict-origin-when-cross-origin');
     }

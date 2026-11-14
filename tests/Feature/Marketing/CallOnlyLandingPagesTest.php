@@ -110,19 +110,83 @@ class CallOnlyLandingPagesTest extends TestCase
         $this->assertSame(1, preg_match('/<a href="' . preg_quote(self::BOOKING, '/') . '" class="btn btn-p hero-btn">Book a call/', $landing));
     }
 
-    public function test_photobooth_seo_is_its_own_canonical_and_internal_links_work(): void
+    /** Internal (same-site) hrefs of a page, split into path and fragment. @return list<array{0: string, 1: string}> */
+    private function internalLinks(string $html): array
+    {
+        $out = [];
+        foreach ($this->hrefs($html) as $href) {
+            if (str_starts_with($href, '#')) {
+                $out[] = [rtrim(url('/'), '/') . '/__same__', substr($href, 1)];
+            } elseif (str_starts_with($href, rtrim(url('/'), '/'))) {
+                $parts = explode('#', $href, 2);
+                $out[] = [$parts[0], $parts[1] ?? ''];
+            }
+        }
+
+        return $out;
+    }
+
+    public function test_photobooth_seo_is_noindex_with_its_own_canonical_and_the_normal_site_is_unchanged(): void
     {
         config(['marketing.cta.book_demo_url' => self::BOOKING]);
-        $landing = $this->get('/photobooth')->assertOk()->getContent();
+        $response = $this->get('/photobooth')->assertOk();
+        $landing = $response->getContent();
 
+        $this->assertStringContainsString('noindex', (string) $response->headers->get('X-Robots-Tag'));
         $this->assertStringContainsString('<link rel="canonical" href="' . url('photobooth') . '">', $landing);
         $this->assertStringContainsString('<meta property="og:url" content="' . url('photobooth') . '">', $landing);
 
-        foreach (['product', 'solutions', 'how-it-works', 'customers'] as $page) {
-            $this->assertStringContainsString('href="' . route("marketing.{$page}") . '"', $landing);
-            $this->get(route("marketing.{$page}"))->assertOk();
+        $home = $this->get('/')->assertOk();
+        $this->assertNull($home->headers->get('X-Robots-Tag'), 'the normal homepage stays indexable');
+        $this->assertStringContainsString('<link rel="canonical" href="' . rtrim(route('marketing.home'), '/') . '/">', $home->getContent());
+        $this->assertNull($this->get('/pricing')->headers->get('X-Robots-Tag'));
+        $this->assertNull($this->get('/product')->headers->get('X-Robots-Tag'));
+    }
+
+    public function test_every_photobooth_navigation_link_stays_in_a_call_only_experience(): void
+    {
+        config(['marketing.cta.book_demo_url' => self::BOOKING]);
+        $landing = $this->get('/photobooth')->assertOk()->getContent();   // desktop nav, mobile menu, both footers: one document
+        $normalPages = [route('marketing.product'), route('marketing.solutions'), route('marketing.how-it-works'), route('marketing.customers'), url('pricing'), route('marketing.home')];
+        $allowedOther = array_merge(['login', 'legal', 'support', 'docs/zoom'], array_keys((array) config('legal.documents')));
+        $anchors = 0;
+        $paths = [];
+
+        foreach ($this->internalLinks($landing) as [$path, $fragment]) {
+            $this->assertNotContains(rtrim($path, '/'), array_map(fn ($u) => rtrim($u, '/'), $normalPages), "{$path}: no link back to the normal site's sales pages");
+            $this->assertStringNotContainsString('register', $path);
+            $this->assertStringNotContainsString('signup', $path);
+
+            if ($fragment !== '') {
+                $anchors++;
+                $this->assertStringContainsString('id="' . $fragment . '"', $landing, "#{$fragment} is not a dead anchor");
+            }
+
+            $slug = trim((string) parse_url($path, PHP_URL_PATH), '/');
+            if ($slug !== '' && $slug !== 'photobooth' && $slug !== '__same__') {
+                $this->assertContains($slug, $allowedOther, "{$path}: only login and the legal documents leave the landing page");
+                $paths[$slug] = $path;
+            }
         }
-        $this->assertStringContainsString('href="' . url('photobooth') . '#faq"', $landing, 'in-page links stay on the landing page');
+
+        $this->assertGreaterThanOrEqual(4, $anchors, 'navigation uses section anchors');
+        foreach (['cap-h', 'how-h', 'trust-h', 'faq'] as $id) {
+            $this->assertStringContainsString('href="' . url('photobooth') . '#' . $id . '"', $landing);
+        }
+
+        // The mobile menu and the phone footer carry the same call-only links.
+        preg_match('/<details class="mg-menu.*?<\/details>/s', $landing, $menu);
+        $this->assertNotEmpty($menu);
+        foreach ($this->hrefs($menu[0]) as $href) {
+            $this->assertStringNotContainsString('/pricing', $href);
+            $this->assertStringNotContainsString('/register', $href);
+            $this->assertStringNotContainsString('/product', $href);
+        }
+
+        // Everything that is linked works.
+        foreach ($paths as $slug => $path) {
+            $this->get($path)->assertOk();
+        }
     }
 
     public function test_photobooth_is_not_served_without_a_working_booking_destination(): void
@@ -246,5 +310,50 @@ class CallOnlyLandingPagesTest extends TestCase
 
         app(\App\Library\Calendar\BookingTypeManager::class)->setActive($type, false);
         $this->get('/dogs')->assertNotFound();
+    }
+
+    public function test_every_dogs_navigation_link_stays_call_only_and_works(): void
+    {
+        [, , $type, $site] = $this->dogAgency();
+        config(['marketing.landing.dogs_site' => $site->public_id]);
+        $booking = route('public.booking.show', $type->public_booking_uuid);
+
+        $queue = [url('dogs')];
+        $seen = [];
+        $followed = 0;
+
+        while ($queue !== []) {
+            $page = array_shift($queue);
+            if (isset($seen[$page])) {
+                continue;
+            }
+            $seen[$page] = true;
+
+            $response = $this->get($page);
+            if ($response->isRedirect()) {
+                $this->assertSame($booking, $response->headers->get('Location'), "{$page} redirects only to the calendar");
+                continue;
+            }
+            $this->assertSame(200, $response->getStatusCode(), "{$page} is a dead link");
+            $this->assertStringContainsString('noindex', (string) $response->headers->get('X-Robots-Tag'), "{$page}: noindex");
+            $followed++;
+            $html = $response->getContent();
+
+            foreach ($this->hrefs($html) as $href) {
+                $this->assertDoesNotMatchRegularExpression('#/(signup|register|pricing)(/|$|\\?)#', $href, "{$page} links to {$href}");
+
+                if (str_starts_with($href, '#')) {
+                    $this->assertStringContainsString('id="' . substr($href, 1) . '"', $html, "{$page}: {$href} is not a dead anchor");
+                } elseif (str_starts_with($href, url('dogs'))) {
+                    $queue[] = explode('#', $href, 2)[0];
+                } elseif (str_starts_with($href, rtrim(url('/'), '/'))) {
+                    $this->assertContains(explode('#', $href, 2)[0], [route('agency.site.login', $site->public_id), route('agency.site.css', $site->public_id), $booking], "{$page}: {$href} leaves the landing page");
+                }
+            }
+        }
+
+        $this->assertGreaterThanOrEqual(4, $followed, 'home plus the product, solutions and how-it-works pages');
+        $this->assertArrayHasKey(url('dogs/product'), $seen);
+        $this->get('/dogs/pricing')->assertRedirect($booking)->assertHeader('X-Robots-Tag', 'noindex, nofollow');
     }
 }

@@ -18,6 +18,18 @@ use Illuminate\Support\Arr;
  */
 final class CallOnlyMarketingSite extends MarketingSite
 {
+    /**
+     * Where each normal-site page lives on this landing page: the home section that covers it, and the element id of
+     * that section's heading. The normal pages carry pricing and signup, so navigation points at these instead; an item
+     * whose section is not rendered is hidden rather than left as a dead anchor.
+     */
+    private const SECTION_ANCHORS = [
+        'product' => ['capabilities', 'cap-h'],
+        'solutions' => ['trust', 'trust-h'],
+        'how-it-works' => ['how', 'how-h'],
+        'customers' => ['videos', 'vid-h'],
+    ];
+
     /** @var array<string, mixed> */
     private array $tree;
 
@@ -50,6 +62,12 @@ final class CallOnlyMarketingSite extends MarketingSite
         return $this->bookDemoUrl() !== null;
     }
 
+    /** This IS MotionGrove's own site, so its Support center and Zoom guide are real pages. */
+    public function hasPlatformSupportPages(): bool
+    {
+        return true;
+    }
+
     public function sellsOnline(): bool
     {
         return false;
@@ -67,7 +85,15 @@ final class CallOnlyMarketingSite extends MarketingSite
 
     public function pageVisible(string $key): bool
     {
-        return $key !== 'pricing' && parent::pageVisible($key);
+        if ($key === 'pricing') {
+            return false;
+        }
+
+        if (isset(self::SECTION_ANCHORS[$key]) && ! in_array(self::SECTION_ANCHORS[$key][0], $this->homeSections(), true)) {
+            return false;
+        }
+
+        return parent::pageVisible($key);
     }
 
     /** Pricing and the plan comparison are sales tables; the setup commitment is a promise tied to a subscribed plan. */
@@ -81,6 +107,7 @@ final class CallOnlyMarketingSite extends MarketingSite
         return match ($page) {
             'pricing' => $this->bookDemoUrl() ?? url($this->landingPath),
             'home' => url($this->landingPath),
+            'product', 'solutions', 'how-it-works', 'customers' => url($this->landingPath).'#'.self::SECTION_ANCHORS[$page][1],
             default => parent::url($page),
         };
     }
