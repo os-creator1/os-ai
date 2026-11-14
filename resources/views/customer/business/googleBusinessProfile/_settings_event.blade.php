@@ -3,6 +3,7 @@
     $type = $operation->operation_type->value;
     $state = $operation->status->value;
     $failed = in_array($state, ['failed', 'unknown', 'deferred'], true);
+    $pending = $state === 'pending';
     $neutral = in_array($type, ['disconnected', 'location_unbound', 'mirror_purged'], true);
     $title = match ($type) {
         'mirror_refreshed' => 'Listing details refreshed',
@@ -19,6 +20,15 @@
         'metrics_synced' => 'Google metrics updated',
         default => ucfirst(str_replace('_', ' ', $type)),
     };
+    if ($pending) {
+        $title = match ($type) {
+            'mirror_refreshed' => 'Refreshing listing details',
+            'connect_initiated' => 'Sign-in started, not finished',
+            'connect_completed' => 'Connecting to Google',
+            'token_refreshed' => 'Renewing Google access',
+            default => 'In progress: ' . $title,
+        };
+    }
     $icon = match ($type) {
         'mirror_refreshed', 'token_refreshed' => 'refresh-cw',
         'locations_enumerated', 'accounts_enumerated' => 'search',
@@ -32,14 +42,14 @@
     };
 @endphp
 <div class="gbps-event" data-role="gbp-operation">
-    <span class="gbps-event-icon {{ $failed ? 'is-warn' : ($neutral ? 'is-neutral' : '') }}" aria-hidden="true"><x-ds-icon :name="$icon" :size="15" /></span>
+    <span class="gbps-event-icon {{ $failed || $pending ? 'is-warn' : ($neutral ? 'is-neutral' : '') }}" aria-hidden="true"><x-ds-icon :name="$icon" :size="15" /></span>
     <div class="gbps-event-main">
         <strong>{{ $title }}</strong>
         @if($operation->summary)
             <span>{{ $operation->summary }}</span>
         @endif
-        @if($failed)
-            <span>{{ ucfirst($state) }}@if($operation->failure_classification) &middot; {{ str_replace('_', ' ', $operation->failure_classification) }}@endif</span>
+        @if($failed || $pending)
+            <span>{{ $pending ? 'Pending — not completed yet' : ucfirst($state) }}@if($operation->failure_classification) &middot; {{ str_replace('_', ' ', $operation->failure_classification) }}@endif</span>
         @endif
     </div>
     <time class="gbps-event-time" datetime="{{ $operation->created_at?->toIso8601String() }}">{{ $operation->created_at?->format('g:i A') ?? '—' }}</time>
