@@ -8,7 +8,7 @@
                     <h3 class="h6 mt-2 mb-1">{{ $entry['location'] }}</h3>
                 @endif
 
-                @php($data = $entry['data'])
+                @php $data = $entry['data']; @endphp
 
                 @if ($data === null)
                     @if ($entry['error'])
