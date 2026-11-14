@@ -95,6 +95,7 @@
         $visibleOperations = $operations->take(7);
         $moreOperations = $operations->skip(7);
         $hasRecentProblems = $visibleOperations->contains(fn ($op) => in_array($op->status->value, ['failed', 'unknown', 'deferred'], true));
+        $hasRecentPending = $visibleOperations->contains(fn ($op) => $op->status->value === 'pending');
     @endphp
 
     <div class="gbp-page gbp-settings-page" data-role="gbp-settings">
@@ -209,7 +210,7 @@
             <div class="gbps-card-heading">
                 <strong>Recent activity</strong>
                 @if($operations->isNotEmpty())
-                    <span class="gbps-good"><span class="dot" style="{{ $hasRecentProblems ? 'background:var(--g-warn)' : '' }}"></span>{{ $hasRecentProblems ? 'Needs review' : 'No recent errors' }}</span>
+                    <span class="gbps-good"><span class="dot" style="{{ $hasRecentProblems || $hasRecentPending ? 'background:var(--g-warn)' : '' }}"></span>{{ $hasRecentProblems ? 'Needs review' : ($hasRecentPending ? 'In progress' : 'No recent errors') }}</span>
                 @endif
             </div>
             @if($operations->isEmpty())
