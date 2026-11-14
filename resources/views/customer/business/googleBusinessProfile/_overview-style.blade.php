@@ -268,6 +268,8 @@
     .gbp-op p { margin: 2px 0 0; font-size: 12.5px; line-height: 1.45; color: var(--g-text-2); overflow-wrap: anywhere; }
     .gbp-op-link { font-size: 12.5px; font-weight: 600; color: var(--g-ink); white-space: nowrap; margin-top: 2px; background: none; border: 0; padding: 0; cursor: pointer; font-family: inherit; }
     .gbp-op-link:hover { color: var(--g-brand); }
+    .gbp-op-link.is-wrap { white-space: normal; text-align: right; max-width: 8.5rem; }
+    .gbp-manage-note { display: block; margin-top: 6px; font-size: 12.5px; line-height: 1.45; color: var(--g-muted); }
     .gbp-improve-sub { margin: 0; padding: 0 20px 12px; font-size: 12.5px; color: var(--g-muted); }
     .gbp-ok-row { display: flex; align-items: center; gap: 12px; padding: 14px 20px; border-top: 1px solid var(--g-border-soft); font-size: 13.5px; color: var(--g-text-2); }
     .gbp-cmp-foot { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 12px; padding: 12px 20px 16px; border-top: 1px solid var(--g-border-soft); font-size: 12.5px; color: var(--g-muted); }
