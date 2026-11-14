@@ -249,6 +249,42 @@ class SeoCitationsDashboardTest extends TestCase
         $this->assertMatchesRegularExpression('/data-jump="unchecked" data-count="15"/', $html);
     }
 
+    public function test_a_listed_record_without_details_is_not_counted_as_a_completed_directory(): void
+    {
+        $this->bindFakeGoogleClient();
+        [, $business, $workspace, $location] = $this->tenant();
+        $this->makeCitation($business, $location, $this->directory('apple_business'), [
+            'status' => \App\Enums\Seo\SeoCitationStatus::Listed->value,
+        ]);
+
+        $html = $this->page($workspace, $business, $location);
+
+        // A customer-entered Listed status alone is not evidence of a listing.
+        // The underlying row's isComplete() is false until at least one
+        // listing detail, safe URL or check date is recorded.
+        $this->assertSame('0 of 16 directories listed', $this->stat($html, 'listed'));
+        $this->assertMatchesRegularExpression(
+            '/data-directory="apple_business"[^>]*data-bucket="unchecked"/',
+            $html,
+        );
+        $this->assertMatchesRegularExpression('/data-jump="unchecked" data-count="16"/', $html);
+        $this->assertStringNotContainsString('data-filter="listed"', $html);
+
+        // Recording real detail makes it complete; the displayed totals and
+        // the listing's filter bucket must then change together.
+        \App\Models\SeoCitation::query()
+            ->where('business_id', $business->id)
+            ->where('business_location_id', $location->id)
+            ->update(['listed_name' => $business->name]);
+
+        $updated = $this->page($workspace, $business, $location);
+        $this->assertSame('1 of 16 directories listed', $this->stat($updated, 'listed'));
+        $this->assertMatchesRegularExpression(
+            '/data-directory="apple_business"[^>]*data-bucket="listed"/',
+            $updated,
+        );
+    }
+
     // -----------------------------------------------------------------
     // Google Business Profile
     // -----------------------------------------------------------------
