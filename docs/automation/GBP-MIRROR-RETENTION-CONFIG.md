@@ -1,8 +1,11 @@
 # Google Business Profile profile-cache (mirror) retention
 
-**Current production state:** `GOOGLE_BUSINESS_PROFILE_MIRROR_RETENTION_DAYS` is unset, so the effective retention is **0**.
-At 0 the platform stores no Google profile content between requests. "Refresh" reads Google live and shows the result for that
-single response (the Platform vs Google page); the overview stays on "Refresh required" by design. This is not a defect.
+**Default behavior:** `config/google_business_profile.php` leaves `GOOGLE_BUSINESS_PROFILE_MIRROR_RETENTION_DAYS` unset, and an unset or invalid value means
+effective retention of **0**. At 0 the platform stores no Google profile content between requests: "Refresh" reads Google live and shows the result
+for that single response (the Platform vs Google page), and the overview stays on "Refresh required" by design.
+
+**Production value is not verified here.** The owner must confirm what the production environment actually sets (for example by checking its
+environment file or `php artisan tinker` -> `config('google_business_profile.mirror.retention_days')`) before relying on either behavior.
 
 ## To enable a 7-day profile cache (owner decision)
 
