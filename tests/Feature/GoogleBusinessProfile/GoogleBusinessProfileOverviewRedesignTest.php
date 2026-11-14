@@ -149,7 +149,7 @@ class GoogleBusinessProfileOverviewRedesignTest extends TestCase
 
         $response = $this->overview($workspace, $business)->assertOk();
 
-        $response->assertSee('Connect Google Business Profile', false);
+        $response->assertSee('See how you look on Google', false);
         $response->assertSee('Connect Google', false);
         $response->assertDontSee('Connection settings', false);
         $response->assertDontSee('Show all details', false);

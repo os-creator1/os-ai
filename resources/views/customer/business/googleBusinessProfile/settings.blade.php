@@ -21,15 +21,15 @@
 @endsection
 
 @section('content')
-    <div class="gbp-narrow mb-2">
-        <a href="{{ route('customer.workspaces.businesses.gbp.index', [$workspaceUid, $businessUid]) }}" class="gbp-link d-inline-flex align-items-center gap-50 mb-50"><x-ds-icon name="arrow-left" :size="14" /> Google Business Profile</a>
-        <h1 class="h3 mb-25">Google connection settings</h1>
-        <p class="text-caption mb-0">{{ $business->name }} &middot; manage the connection, linked locations and recent activity.</p>
+    <div class="gbp-page gbp-title-block gbp-wrap-sm mb-2">
+        <a href="{{ route('customer.workspaces.businesses.gbp.index', [$workspaceUid, $businessUid]) }}" class="gbp-back"><x-ds-icon name="arrow-left" :size="14" /> Google Business Profile</a>
+        <h1 class="gbp-h1">Google connection settings</h1>
+        <p class="gbp-sub">{{ $business->name }} &middot; manage the connection, linked locations and recent activity.</p>
     </div>
 
     <x-flash-alert class="mb-2" />
 
-    <x-card :padded="true" class="mb-2 gbp-narrow">
+    <x-card :padded="true" class="mb-2 gbp-page gbp-wrap-sm">
         <p class="text-section-heading mb-1">Connection</p>
 
         @if($connection)
@@ -65,7 +65,7 @@
          leaves the others untouched. --}}
     @foreach($bindings as $item)
         @php($binding = $item['binding'])
-        <x-card :padded="true" class="mb-2 gbp-narrow">
+        <x-card :padded="true" class="mb-2 gbp-page gbp-wrap-sm">
             <p class="text-section-heading mb-1">Linked location</p>
             <dl class="row mb-2">
                 <dt class="col-sm-4">Google location</dt>
@@ -108,7 +108,7 @@
     @endforeach
 
     @if($connection && $connection->state->value !== 'disconnected')
-        <x-card :padded="true" class="mb-2 gbp-narrow">
+        <x-card :padded="true" class="mb-2 gbp-page gbp-wrap-sm">
             <p class="text-section-heading mb-1">Disconnect</p>
             <p class="text-caption mb-2">
                 Disconnecting deletes the stored authorization and every linked location for this business. It cannot be undone &mdash;
@@ -126,7 +126,7 @@
         </x-card>
     @endif
 
-    <x-card :padded="true" class="gbp-narrow">
+    <x-card :padded="true" class="gbp-page gbp-wrap-sm">
         <p class="text-section-heading mb-1">Recent activity</p>
 
         @if($operations->isEmpty())

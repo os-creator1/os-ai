@@ -438,6 +438,7 @@ class GoogleBusinessProfileController extends CustomerBaseController
             'workspaceUid' => $workspaceUid,
             'businessUid' => $businessUid,
             'business' => $business,
+            'connection' => $connection,
             'accounts' => $result['accounts'],
             'offers' => $offers,
             'locations' => BusinessLocation::query()
