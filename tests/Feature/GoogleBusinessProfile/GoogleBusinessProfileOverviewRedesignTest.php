@@ -170,4 +170,27 @@ class GoogleBusinessProfileOverviewRedesignTest extends TestCase
         $response->assertDontSee('from Google</button>', false);
         $response->assertDontSee('Link another location', false);
     }
+
+    public function test_a_stale_listing_describes_the_actual_retention_configuration(): void
+    {
+        [$customer, $business, $workspace] = $this->entitledTenant();
+        $binding = $this->bound($business, $this->mirror(), ['mirror_expires_at' => now()->subDay()]);
+        $this->authenticateAsCustomer($customer);
+
+        config(['google_business_profile.mirror.retention_days' => null]);
+        $this->overview($workspace, $business)->assertOk()
+            ->assertSee('does not keep your Google listing between visits', false)
+            ->assertSee('View live from Google', false)
+            ->assertDontSee('retention window', false);
+        $this->get(route('customer.workspaces.businesses.gbp.comparison', [$workspace->uid, $business->uid, $binding->uid]))->assertOk()
+            ->assertSee('not kept between visits', false)
+            ->assertDontSee('30-day', false);
+
+        config(['google_business_profile.mirror.retention_days' => 7]);
+        $this->overview($workspace, $business)->assertOk()
+            ->assertSee('7-day retention window', false)
+            ->assertDontSee('30-day', false);
+        $this->get(route('customer.workspaces.businesses.gbp.comparison', [$workspace->uid, $business->uid, $binding->uid]))->assertOk()
+            ->assertSee('7-day retention window', false);
+    }
 }

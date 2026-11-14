@@ -39,6 +39,8 @@ final class GoogleBusinessProfileOverviewPresenter
      *     website: ?string,
      *     category: ?string,
      *     location: ?string,
+     *     mapsUri: ?string,
+     *     additionalCategories: array<int, string>,
      *     details: array<int, array{label: string, value: string}>,
      *     differences: array<int, GoogleComparisonRow>,
      *     matchCount: int
@@ -80,6 +82,11 @@ final class GoogleBusinessProfileOverviewPresenter
             'website' => $this->clean($mirror['website_uri'] ?? null),
             'category' => $this->clean($mirror['primary_category_name'] ?? null),
             'location' => $place,
+            'mapsUri' => $this->safeUrl($mirror['maps_uri'] ?? null),
+            'additionalCategories' => array_values(array_filter(array_map(
+                fn ($name) => $this->clean($name),
+                (array) ($mirror['additional_category_names'] ?? []),
+            ))),
             'details' => $details,
             'differences' => $differences,
             'matchCount' => $matchCount,
@@ -98,6 +105,14 @@ final class GoogleBusinessProfileOverviewPresenter
             GoogleComparisonStatus::NotSetOnGoogle => $row->platformValue !== null || $row->googleValue !== null,
             default => false,
         };
+    }
+
+    /** Only an https URL is ever linked to; anything else is dropped. */
+    private function safeUrl(mixed $value): ?string
+    {
+        $value = $this->clean($value);
+
+        return ($value !== null && str_starts_with(strtolower($value), 'https://')) ? $value : null;
     }
 
     private function clean(mixed $value): ?string
