@@ -70,6 +70,7 @@ jobs:
         run: >-
           php artisan test
           tests/Feature/GoogleBusinessProfile/GoogleBusinessProfileOverviewRedesignTest.php
+          tests/Feature/GoogleBusinessProfile/GoogleBusinessProfileSettingsDesignTest.php
           tests/Feature/GoogleBusinessProfile/GoogleBusinessProfileCustomerAcceptanceTest.php
           tests/Feature/GoogleBusinessProfile/GoogleBusinessProfileMultiLocationTest.php
           tests/Feature/GoogleBusinessProfile/GoogleBusinessProfileReadOnlyTest.php
