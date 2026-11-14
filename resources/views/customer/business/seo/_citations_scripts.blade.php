@@ -1,11 +1,21 @@
 {{-- Citations dashboard behaviour: static, no dynamic output. Opens a drawer for a clicked row and re-opens a rejected save's drawer. --}}
 <script>
-        // Listing kit: copy one confirmed value. Falls back to a textarea where the Clipboard API is unavailable.
+        // Listing kit: copy one confirmed value (or all available ones). Falls back to a textarea where the
+        // Clipboard API is unavailable. Shows the design's confirmation state.
         document.addEventListener('click', function (e) {
             var btn = e.target.closest ? e.target.closest('[data-copy]') : null;
             if (!btn) { return; }
             var value = btn.getAttribute('data-copy');
-            var done = function () { var t = btn.textContent; btn.textContent = 'Copied'; setTimeout(function () { btn.textContent = t; }, 1500); };
+            var all = btn.hasAttribute('data-all');
+            var toast = document.getElementById('cgToast');
+            var done = function () {
+                if (!all) {
+                    var label = btn.querySelector('span'); var use = btn.querySelector('use'); var t = label ? label.textContent : '';
+                    btn.classList.add('cg-done'); if (use) { use.setAttribute('href', '#cg-i-check'); } if (label) { label.textContent = 'Copied'; }
+                    setTimeout(function () { btn.classList.remove('cg-done'); if (use) { use.setAttribute('href', '#cg-i-copy'); } if (label) { label.textContent = t; } }, 1600);
+                }
+                if (toast) { toast.querySelector('span').textContent = all ? 'All available details copied' : 'Copied to clipboard'; toast.classList.add('cg-show'); clearTimeout(toast._h); toast._h = setTimeout(function () { toast.classList.remove('cg-show'); }, 2200); }
+            };
             if (navigator.clipboard && navigator.clipboard.writeText) {
                 navigator.clipboard.writeText(value).then(done, function () {});
             } else {
@@ -14,32 +24,30 @@
             }
         });
         (function () {
-            if (typeof bootstrap === 'undefined' || !bootstrap.Offcanvas) { return; }
-
             // A rejected save re-opens that directory's drawer with its errors.
-            document.querySelectorAll('[data-open-on-load]').forEach(function (el) {
-                bootstrap.Offcanvas.getOrCreateInstance(el).show();
-            });
+            if (typeof bootstrap !== 'undefined' && bootstrap.Offcanvas) {
+                document.querySelectorAll('[data-open-on-load]').forEach(function (el) {
+                    bootstrap.Offcanvas.getOrCreateInstance(el).show();
+                });
+            }
 
             // Filters and search are local: every row is already on the page.
-            var rows = Array.prototype.slice.call(document.querySelectorAll('.cz-list .cz-row[data-importance]'));
-            var buttons = document.querySelectorAll('.cz-filter');
+            var page = document.querySelector('.cg-page');
+            var rows = Array.prototype.slice.call(document.querySelectorAll('.cg-rows .cg-row[data-bucket]'));
+            var chips = document.querySelectorAll('.cg-chip[data-filter]');
             var search = document.querySelector('[data-role=citation-search]');
             var emptyNote = document.querySelector('[data-role=citation-filter-empty]');
+            var inv = document.getElementById('cgInv');
             var active = 'all';
 
             var matches = function (row) {
                 var term = search ? search.value.trim().toLowerCase() : '';
                 if (term !== '' && (row.getAttribute('data-name') || '').indexOf(term) === -1) { return false; }
                 switch (active) {
-                    case 'essential': return row.getAttribute('data-importance') === 'essential' && row.getAttribute('data-custom') !== '1';
-                    case 'recommended': return row.getAttribute('data-importance') === 'recommended' && row.getAttribute('data-custom') !== '1';
-                    case 'attention': return row.getAttribute('data-attention') === '1';
-                    case 'setup': return row.getAttribute('data-setup-needed') === '1';
-                    case 'notchecked': return row.getAttribute('data-notchecked') === '1';
-                    case 'accurate': return row.getAttribute('data-state') === 'accurate';
+                    case 'niche': return row.getAttribute('data-niche') === '1';
                     case 'custom': return row.getAttribute('data-custom') === '1';
-                    default: return true;
+                    case 'all': return true;
+                    default: return row.getAttribute('data-bucket') === active;
                 }
             };
 
@@ -50,29 +58,53 @@
                     row.style.display = show ? '' : 'none';
                     if (show) { visible++; }
                 });
-                document.querySelectorAll('.cz-group').forEach(function (group) {
-                    var any = Array.prototype.some.call(group.querySelectorAll('.cz-row[data-importance]'), function (r) { return r.style.display !== 'none'; });
+                document.querySelectorAll('.cg-group').forEach(function (group) {
+                    var any = Array.prototype.some.call(group.querySelectorAll('.cg-row[data-bucket]'), function (r) { return r.style.display !== 'none'; });
                     group.style.display = any ? '' : 'none';
                 });
-                if (emptyNote) { emptyNote.classList.toggle('d-none', visible !== 0); }
+                if (emptyNote) { emptyNote.style.display = visible === 0 ? '' : 'none'; }
             };
 
-            buttons.forEach(function (button) {
-                button.addEventListener('click', function () {
-                    active = button.getAttribute('data-filter');
-                    buttons.forEach(function (b) { b.classList.toggle('is-active', b === button); });
-                    apply();
-                });
-            });
+            var setFilter = function (key) {
+                active = key;
+                chips.forEach(function (c) { c.setAttribute('aria-pressed', c.getAttribute('data-filter') === key ? 'true' : 'false'); });
+                apply();
+            };
+
+            chips.forEach(function (chip) { chip.addEventListener('click', function () { setFilter(chip.getAttribute('data-filter')); }); });
             if (search) { search.addEventListener('input', apply); }
 
-            // The whole row opens its drawer; real links and buttons keep working.
-            document.querySelectorAll('.cz-row[data-drawer]').forEach(function (row) {
-                row.addEventListener('click', function (event) {
-                    if (event.target.closest('a, button, input, select, textarea, label')) { return; }
-                    var target = document.querySelector(row.getAttribute('data-drawer'));
-                    if (target) { bootstrap.Offcanvas.getOrCreateInstance(target).toggle(); }
+            // The progress legend opens the inventory on that status.
+            document.querySelectorAll('[data-jump]').forEach(function (btn) {
+                btn.addEventListener('click', function () {
+                    if (inv) { inv.open = true; }
+                    setFilter(btn.getAttribute('data-jump'));
+                    if (inv && inv.scrollIntoView) { inv.scrollIntoView({ behavior: 'smooth', block: 'start' }); }
                 });
             });
+
+            // Expandable rows (one real <button> per row, keyboard accessible).
+            document.querySelectorAll('[data-cg-row-toggle]').forEach(function (btn) {
+                btn.addEventListener('click', function () {
+                    var row = btn.closest('.cg-row');
+                    var open = !row.classList.contains('cg-open');
+                    row.classList.toggle('cg-open', open);
+                    btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+                });
+            });
+
+            // Location menu.
+            var locBtn = document.getElementById('cgLocBtn');
+            var locMenu = document.getElementById('cgLocMenu');
+            if (locBtn && locMenu) {
+                locBtn.addEventListener('click', function (e) {
+                    e.stopPropagation();
+                    var o = !locMenu.classList.contains('cg-open');
+                    locMenu.classList.toggle('cg-open', o);
+                    locBtn.setAttribute('aria-expanded', o ? 'true' : 'false');
+                });
+                document.addEventListener('click', function (e) { if (!locMenu.contains(e.target)) { locMenu.classList.remove('cg-open'); locBtn.setAttribute('aria-expanded', 'false'); } });
+                document.addEventListener('keydown', function (e) { if (e.key === 'Escape') { locMenu.classList.remove('cg-open'); locBtn.setAttribute('aria-expanded', 'false'); } });
+            }
         })();
     </script>

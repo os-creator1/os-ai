@@ -39,7 +39,7 @@ final class SeoCitationNextAction
     private const WHY_NAP = 'Directories and Google compare your name, address and phone, so keeping them consistent helps customers trust and find the right details. Listings do not guarantee any ranking change.';
 
     /**
-     * @return array{kind: string, title: string, why: string, action: ?string, target: string, row: ?SeoCitationRow, evidence: array<int, string>, directory: ?array, google_note: ?string}
+     * @return array{kind: string, title: string, why: string, action: ?string, target: string, row: ?SeoCitationRow, evidence: array<int, string>, directory: ?array, mode: string, google_note: ?string, unverified: array<int, string>}
      *   target: 'settings' | 'google' | 'directory' | 'none'
      */
     public static function for(SeoCitationLocationSection $section, bool $canManage = false): array
@@ -189,12 +189,12 @@ final class SeoCitationNextAction
             // The phone is business-wide: for a secondary location it is not confirmed as that location's own
             // number, so it is withheld (never guessed) and the owner is told to confirm the branch number.
             $section->phoneComparable
-                ? ['key' => 'phone', 'label' => 'Business phone', 'value' => $section->canonical['phone'] ?? null, 'note' => null]
+                ? ['key' => 'phone', 'label' => 'Phone', 'value' => $section->canonical['phone'] ?? null, 'note' => null]
                 : ['key' => 'phone', 'label' => 'Location phone', 'value' => null, 'note' => 'Your business has one phone number for all locations. Confirm this location\'s own number before using it in a listing.'],
             ['key' => 'website', 'label' => 'Website', 'value' => $section->canonicalWebsite, 'note' => null],
             $place,
-            ['key' => 'category', 'label' => 'Business category', 'value' => $section->nicheLabel, 'note' => null],
-            ['key' => 'description', 'label' => 'Service description', 'value' => $section->businessDescription, 'note' => null],
+            ['key' => 'category', 'label' => 'Category', 'value' => $section->nicheLabel, 'note' => null],
+            ['key' => 'description', 'label' => 'Description', 'value' => $section->businessDescription, 'note' => null],
         ];
     }
 
@@ -279,6 +279,42 @@ final class SeoCitationNextAction
             ? 'Google is connected, but no current Google details are available to compare, so your Google listing is not verified here.'
             : null;
 
-        return compact('kind', 'title', 'why', 'action', 'target', 'row', 'evidence', 'directory') + ['google_note' => $googleNote];
+        // The hero's visual mode comes from real state only: all clear, a listing the owner has started, or a next move.
+        $mode = $kind === self::CLEAR ? 'clear' : ($row !== null && $row->displayState() === SeoCitationDisplayState::InProgress ? 'progress' : 'next');
+
+        return compact('kind', 'title', 'why', 'action', 'target', 'row', 'evidence', 'directory', 'mode')
+            + ['google_note' => $googleNote, 'unverified' => self::unverified($kind, $row, $section, $googleNote)];
+    }
+
+    /**
+     * What MotionGrove has NOT confirmed about this recommendation — shown beside "What we know" so a
+     * recorded or connected fact is never read as a verified one.
+     *
+     * @return array<int, string>
+     */
+    private static function unverified(string $kind, ?SeoCitationRow $row, SeoCitationLocationSection $section, ?string $googleNote): array
+    {
+        $out = [];
+
+        if ($row !== null) {
+            $out[] = $row->hasRecordedDetails()
+                ? 'Whether the live ' . $row->directory->name . ' listing still matches what you recorded. MotionGrove does not read this directory.'
+                : 'Whether you already have a ' . $row->directory->name . ' listing. MotionGrove does not read this directory.';
+        } elseif ($kind === self::MISSING_INFO) {
+            $out[] = 'Whether your directory listings already show these details.';
+        } elseif ($kind === self::CLEAR) {
+            $notChecked = $section->summary()['notChecked'];
+            $out[] = $notChecked > 0
+                ? 'Listings you have not checked yet (' . $notChecked . '). Not checked does not mean missing.'
+                : 'Anything a directory shows that you have not recorded.';
+        } elseif ($kind === self::GOOGLE) {
+            $out[] = 'What customers currently see on Google beyond the details Google shares with MotionGrove.';
+        }
+
+        if ($googleNote !== null) {
+            $out[] = $googleNote;
+        }
+
+        return $out;
     }
 }

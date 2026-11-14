@@ -1,6 +1,6 @@
-{{-- One best next move + the reusable listing kit. Inputs: $section, $canManage, $gbpUrl, $settingsUrl.
-     All text is escaped; external links only from SeoLinkSafety-checked catalog URLs. Opening a link never
-     marks a directory Listed. --}}
+{{-- Hero ("Your best next move") + Listing kit. Inputs: $section, $canManage, $gbpUrl, $settingsUrl.
+     All text is escaped; external links only from SeoLinkSafety-checked catalog or recorded URLs. Opening a link
+     never marks a directory Listed. --}}
 @php
     use App\Library\Seo\SeoCitationNextAction;
     use App\Library\Seo\SeoLinkSafety;
@@ -12,55 +12,98 @@
     $kit = SeoCitationNextAction::listingKit($section);
     $canOpenDrawer = $bestRow !== null && $canManage && $bestRow->writable;
     $drawerPrimary = $dir !== null && $dir['kind'] === 'drawer';
+    $mode = $best['mode'];
+    $eyebrow = ['clear' => 'All clear', 'progress' => 'In progress', 'next' => 'Your best next move'][$mode];
+    $eyebrowIcon = ['clear' => 'check', 'progress' => 'clock', 'next' => 'spark'][$mode];
+    $heroClass = ['clear' => 'cg-clear', 'progress' => 'cg-prog', 'next' => ''][$mode];
+    $kitAll = collect($kit)->filter(fn ($f) => filled($f['value']))->map(fn ($f) => $f['label'] . ': ' . $f['value'])->implode("\n");
+    $privateAddress = ! $section->addressPermitted;
+    $canEditProfile = \Illuminate\Support\Facades\Gate::allows('access_backend');
 @endphp
-<div class="cz-split mb-2">
-    <x-card :padded="true" data-section="citation-next-best" data-kind="{{ $best['kind'] }}">
-        <p class="text-section-heading mb-25">Your best next move</p>
-        <h5 class="mb-50" data-role="next-best-title">{{ $best['title'] }}</h5>
-        <p class="mb-1" data-role="next-best-why">{{ $best['why'] }}</p>
-        @if($bestHint)<p class="text-caption" data-role="next-best-hint">{{ $bestHint }}</p>@endif
-        @if($best['google_note'])<p class="text-caption" data-role="next-best-google-note">{{ $best['google_note'] }}</p>@endif
-        @if($best['evidence'] !== [])
-            <p class="text-caption mb-25"><strong>What we know</strong></p>
-            <ul class="text-caption ps-2 mb-1" data-role="next-best-evidence">
-                @foreach($best['evidence'] as $line)<li>{{ $line }}</li>@endforeach
-            </ul>
-        @endif
-        <div class="d-flex flex-wrap gap-50" data-role="next-best-actions">
+<div class="cg-grid-top" data-role="citation-top">
+    <section class="cg-card cg-hero {{ $heroClass }}" data-section="citation-next-best" data-kind="{{ $best['kind'] }}" data-mode="{{ $mode }}" @if($best['kind'] === SeoCitationNextAction::GOOGLE) data-action="google" @endif aria-live="polite">
+        <span class="cg-eyebrow"><span class="cg-dot"><svg class="cg-ic" viewBox="0 0 24 24" style="width:13px;height:13px"><use href="#cg-i-{{ $eyebrowIcon }}"/></svg></span>{{ $eyebrow }}</span>
+        <div style="display:flex;flex-direction:column;gap:10px">
+            <h2 data-role="next-best-title">{{ $best['title'] }}</h2>
+            <p class="cg-why" data-role="next-best-why">{{ $best['why'] }}</p>
+        </div>
+        <div class="cg-facts">
+            <div class="cg-k">
+                <h3>What we know</h3>
+                <ul data-role="next-best-evidence">
+                    @forelse($best['evidence'] as $line)
+                        <li><svg class="cg-ic" viewBox="0 0 24 24"><use href="#cg-i-check"/></svg>{{ $line }}</li>
+                    @empty
+                        <li><svg class="cg-ic" viewBox="0 0 24 24"><use href="#cg-i-check"/></svg>No known differences in what you have recorded.</li>
+                    @endforelse
+                </ul>
+            </div>
+            <div class="cg-u">
+                <h3>Not verified</h3>
+                <ul data-role="next-best-unverified">
+                    @foreach($best['unverified'] as $line)
+                        <li @if($line === $best['google_note']) data-role="next-best-google-note" @endif><svg class="cg-ic" viewBox="0 0 24 24"><use href="#cg-i-dash"/></svg>{{ $line }}</li>
+                    @endforeach
+                </ul>
+            </div>
+        </div>
+        <div class="cg-cta-row" data-role="next-best-actions">
             @if($best['target'] === 'settings')
-                @can('access_backend')<x-button :href="$settingsUrl" variant="primary" size="sm" data-role="next-best-action">{{ $best['action'] }}</x-button>@else<span class="text-caption">Ask an account owner to complete the business profile.</span>@endcan
+                @if($canEditProfile)
+                    <a class="cg-btn cg-primary cg-lg" href="{{ $settingsUrl }}" data-role="next-best-action">{{ $best['action'] }}</a>
+                @else
+                    <span class="cg-hint">Ask an account owner to complete the business profile.</span>
+                @endif
             @elseif($best['target'] === 'google')
-                <x-button :href="$gbpUrl" variant="primary" size="sm" data-role="next-best-action">{{ $best['action'] }}</x-button>
+                <a class="cg-btn cg-primary cg-lg" href="{{ $gbpUrl }}" data-role="next-best-action">{{ $best['action'] }}</a>
             @elseif($best['target'] === 'directory' && $dir !== null && $dir['url'] !== null)
-                <a class="btn btn-sm btn-primary d-inline-flex align-items-center gap-50" href="{{ $dir['url'] }}" target="_blank" rel="{{ SeoLinkSafety::EXTERNAL_REL }}" data-role="next-best-action" data-action-kind="{{ $dir['kind'] }}"><x-ds-icon name="external-link" size="14" />{{ $dir['label'] }}</a>
+                <a class="cg-btn cg-primary cg-lg" href="{{ $dir['url'] }}" target="_blank" rel="{{ SeoLinkSafety::EXTERNAL_REL }}" data-role="next-best-action" data-action-kind="{{ $dir['kind'] }}">{{ $dir['label'] }}<svg class="cg-ic" viewBox="0 0 24 24"><use href="#cg-i-ext"/></svg></a>
             @endif
             @if($canOpenDrawer)
-                <button type="button" class="btn btn-sm {{ $drawerPrimary ? 'btn-primary' : 'btn-outline-secondary' }}" data-bs-toggle="offcanvas" data-bs-target="#citation-drawer-{{ $bestRow->directory->key }}" data-role="{{ $drawerPrimary ? 'next-best-action' : 'next-best-record' }}" @if($drawerPrimary) data-action-kind="drawer" @endif>{{ $drawerPrimary ? $dir['label'] : 'Record what you find' }}</button>
+                <button type="button" class="cg-btn {{ $drawerPrimary ? 'cg-primary cg-lg' : 'cg-ghost' }}" data-bs-toggle="offcanvas" data-bs-target="#citation-drawer-{{ $bestRow->directory->key }}" data-role="{{ $drawerPrimary ? 'next-best-action' : 'next-best-record' }}" @if($drawerPrimary) data-action-kind="drawer" @endif>{{ $drawerPrimary ? $dir['label'] : 'Record what you find' }}</button>
+            @endif
+            @if($bestHint)
+                <span class="cg-hint" data-role="next-best-hint">{{ $bestHint }}</span>
+            @elseif($best['target'] === 'directory' && $dir !== null && $dir['url'] !== null)
+                <span class="cg-hint" data-role="next-best-note">Opening the page does not change your status here. Come back and record the result once you have finished.</span>
             @endif
         </div>
-        @if($best['target'] === 'directory' && $dir !== null && $dir['url'] !== null)
-            <p class="text-caption mt-1 mb-0" data-role="next-best-note">Opening the page does not change your status here. Come back and record the result once you have finished.</p>
+        @if($bestHint && $best['target'] === 'directory' && $dir !== null && $dir['url'] !== null)
+            <span class="cg-hint" data-role="next-best-note">Opening the page does not change your status here. Come back and record the result once you have finished.</span>
         @endif
-    </x-card>
+    </section>
 
-    <x-card :padded="true" data-section="listing-kit">
-        <p class="text-section-heading mb-0">Listing kit</p>
-        <p class="text-caption">Your confirmed details, ready to paste into any directory form.</p>
-        <dl class="cz-profile mb-0" data-role="listing-kit">
+    <section class="cg-card cg-kit" data-section="listing-kit" aria-label="Business listing kit">
+        <div class="cg-kit-h">
+            <div><h2>Listing kit</h2><p>Your details, ready to paste into any directory.</p></div>
+            @if($kitAll !== '')
+                <button type="button" class="cg-btn cg-ghost cg-sm" data-copy="{{ $kitAll }}" data-all="1" data-role="kit-copy-all"><svg class="cg-ic" viewBox="0 0 24 24" style="width:14px;height:14px"><use href="#cg-i-copy"/></svg><span>Copy all</span></button>
+            @endif
+        </div>
+        <div data-role="listing-kit">
             @foreach($kit as $field)
-                <div data-kit="{{ $field['key'] }}">
-                    <dt>{{ $field['label'] }}</dt>
-                    @if($field['value'] !== null && $field['value'] !== '')
-                        <dd class="d-flex align-items-start justify-content-between gap-50">
-                            <span data-kit-value>{{ $field['value'] }}</span>
-                            <button type="button" class="btn btn-sm btn-outline-secondary flex-shrink-0" data-copy="{{ $field['value'] }}" aria-label="Copy {{ $field['label'] }}">Copy</button>
-                        </dd>
-                    @else
-                        <dd class="cz-muted" data-kit-missing>Not set</dd>
+                <div class="cg-kf" data-kit="{{ $field['key'] }}">
+                    <div class="cg-grow">
+                        <span class="cg-lab">{{ $field['label'] }}</span>
+                        @if(filled($field['value']))
+                            @php $first = $field['key'] === 'service_area' ? trim(explode(',', $field['value'])[0]) : null; @endphp
+                            <span class="cg-val" data-kit-value>{{ $field['key'] === 'service_area' ? $first : \Illuminate\Support\Str::limit($field['value'], 68, '…') }}@if($field['key'] === 'service_area' && str_contains($field['value'], ','))<small>Also serves {{ trim(substr($field['value'], strlen($first) + 1), ' ,') }}</small>@endif</span>
+                        @elseif($field['key'] === 'phone' && $field['note'])
+                            <span class="cg-val cg-miss" data-kit-withheld data-role="phone-not-compared">{{ $field['note'] }}</span>
+                        @else
+                            <span class="cg-val cg-miss" data-kit-missing>Not set</span>
+                        @endif
+                    </div>
+                    @if(filled($field['value']))
+                        <button type="button" class="cg-copy" data-copy="{{ $field['value'] }}" aria-label="Copy {{ strtolower($field['label']) }}"><svg class="cg-ic" viewBox="0 0 24 24" style="width:14px;height:14px"><use href="#cg-i-copy"/></svg><span>Copy</span></button>
+                    @elseif($field['key'] === 'phone' && $field['note'])
+                        <span class="cg-pill cg-p-amber">Needs confirming</span>
+                    @elseif($canEditProfile && in_array($field['key'], ['name', 'phone', 'website', 'address', 'description'], true))
+                        <a href="{{ $settingsUrl }}" class="cg-add">Add</a>
                     @endif
-                    @if($field['note'])<dd class="cz-muted">{{ $field['note'] }}</dd>@endif
                 </div>
             @endforeach
-        </dl>
-    </x-card>
+        </div>
+        <div class="cg-priv" @if($privateAddress) data-role="address-withheld" @endif><svg class="cg-ic" viewBox="0 0 24 24"><use href="#cg-i-lock"/></svg><span>{{ $privateAddress ? 'Your street address is private for this location, so it is never shown or copied. Use your service area instead.' : 'Only the address this location publishes is shown here.' }}</span></div>
+    </section>
 </div>

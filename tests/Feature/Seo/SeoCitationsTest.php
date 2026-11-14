@@ -470,7 +470,7 @@ class SeoCitationsTest extends TestCase
         // time); a member granted one sees exactly one, with no switcher.
         $ownerHtml = $this->get($this->citationsUrl($workspace, $business))->getContent();
         $this->assertSame(1, substr_count($ownerHtml, 'data-section="citation-location"'));
-        $this->assertSame(3, preg_match_all('/<option value="[0-9a-f]{13}"/', $ownerHtml), 'The owner\'s switcher lists all three accessible Locations.');
+        $this->assertSame(3, preg_match_all('/data-location-option="[0-9a-f]{13}"/', $ownerHtml), 'The owner\'s switcher lists all three accessible Locations.');
 
         $this->authenticateAsSeoCustomer($this->selectedScopeMember($workspace, [$granted]));
         $memberHtml = $this->get($this->citationsUrl($workspace, $business))->getContent();

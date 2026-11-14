@@ -134,8 +134,8 @@ class SeoCitationsV1Test extends TestCase
         $this->assertMatchesRegularExpression('/data-group="setup".*?data-directory="bing_places"/s', $html);
         $this->assertLessThan(strpos($html, 'data-group="recommended"'), strpos($html, 'data-group="setup"'));
         $this->assertStringContainsString('No listing details recorded yet', $html);
-        // The chips show names only; the real counts stay in the page for the filter script.
-        $this->assertMatchesRegularExpression('/data-filter="setup">Needs setup<span class="cz-count visually-hidden" data-progress="setup">\d+<\/span>/', $html);
+        // The chips carry their real counts for the filter script.
+        $this->assertMatchesRegularExpression('/data-filter="unchecked" aria-pressed="false">Not checked<span>\d+<\/span>/', $html);
     }
 
     public function test_a_niche_never_shows_another_niches_directories(): void
@@ -433,8 +433,8 @@ class SeoCitationsV1Test extends TestCase
 
         $html = strtolower($this->page($workspace, $business, $location));
 
-        $this->assertStringContainsString('data-progress="essential"', $html);
-        $this->assertStringContainsString('data-progress="recommended"', $html);
+        $this->assertStringContainsString('data-role="citation-summary"', $html);
+        $this->assertStringContainsString('directories listed', $html);
         foreach (['visibility score', 'citation authority', 'seo score', 'guaranteed', 'rank higher', 'improve your rankings'] as $myth) {
             $this->assertStringNotContainsString($myth, $html);
         }
@@ -637,7 +637,7 @@ class SeoCitationsV1Test extends TestCase
 
         $html = $this->page($workspace, $business, $location);
 
-        foreach (['all', 'essential', 'recommended', 'attention', 'notchecked', 'accurate', 'custom'] as $filter) {
+        foreach (['all', 'unchecked'] as $filter) {
             $this->assertStringContainsString('data-filter="' . $filter . '"', $html);
         }
         $this->assertStringContainsString('data-role="citation-search"', $html);
