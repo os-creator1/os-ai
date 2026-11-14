@@ -77,7 +77,7 @@ final class SeoCitationNextAction
                 $important = in_array($row->importance(), [SeoDirectoryImportance::Essential, SeoDirectoryImportance::Recommended], true);
 
                 if (($kind === self::PRIORITY_DIRECTORY && $important) || ($kind === self::NICHE_DIRECTORY && $isNiche)) {
-                    $evidence = ['No details recorded for this directory yet — it has not been checked, which does not mean it is missing.'];
+                    $evidence = [self::recordedEvidence($row)];
 
                     if ($isNiche) {
                         $evidence[] = ($section->nicheLabel ?? 'Your industry') . ' guidance: ' . $row->nicheGuidance;
@@ -174,12 +174,46 @@ final class SeoCitationNextAction
 
         return [
             ['key' => 'name', 'label' => 'Business name', 'value' => $section->canonical['name'] ?? null, 'note' => null],
-            ['key' => 'phone', 'label' => 'Business phone', 'value' => $section->canonical['phone'] ?? null, 'note' => null],
+            // The phone is business-wide: for a secondary location it is not confirmed as that location's own
+            // number, so it is withheld (never guessed) and the owner is told to confirm the branch number.
+            $section->phoneComparable
+                ? ['key' => 'phone', 'label' => 'Business phone', 'value' => $section->canonical['phone'] ?? null, 'note' => null]
+                : ['key' => 'phone', 'label' => 'Location phone', 'value' => null, 'note' => 'Your business has one phone number for all locations. Confirm this location\'s own number before using it in a listing.'],
             ['key' => 'website', 'label' => 'Website', 'value' => $section->canonicalWebsite, 'note' => null],
             $place,
             ['key' => 'category', 'label' => 'Business category', 'value' => $section->nicheLabel, 'note' => null],
             ['key' => 'description', 'label' => 'Service description', 'value' => $section->businessDescription, 'note' => null],
         ];
+    }
+
+    /** Honest description of what is on record for a not-yet-complete directory. Never says verified. */
+    private static function recordedEvidence(SeoCitationRow $row): string
+    {
+        $inProgress = $row->displayState() === SeoCitationDisplayState::InProgress;
+        $checked = $row->citation?->last_verified_at;
+
+        if (! $row->hasRecordedDetails()) {
+            return $inProgress
+                ? 'Setup is in progress, but no listing details are recorded yet.'
+                : 'No details recorded for this directory yet — it has not been checked, which does not mean it is missing.';
+        }
+
+        $parts = [];
+
+        if ($row->safeListingUrl !== null) {
+            $parts[] = 'a listing link';
+        }
+
+        if ($row->listedName !== null || $row->listedPhone !== null || $row->listedAddress !== null || $row->listedWebsite !== null) {
+            $parts[] = 'listing details';
+        }
+
+        if ($checked !== null) {
+            $parts[] = 'a check date (' . $checked->format('M j, Y') . ')';
+        }
+
+        return ($inProgress ? 'Setup is in progress. ' : 'Not marked as listed yet. ')
+            . 'You have recorded ' . implode(', ', $parts) . '; this has not been confirmed as accurate here.';
     }
 
     /** @return array<int, string> labels of required canonical details that are not set */

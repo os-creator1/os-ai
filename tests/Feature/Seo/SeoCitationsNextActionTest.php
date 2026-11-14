@@ -200,6 +200,45 @@ class SeoCitationsNextActionTest extends TestCase
         $this->assertSame(SeoCitationNextAction::GOOGLE, $this->bestKind($this->page($workspace, $business, $location)));
     }
 
+    public function test_a_secondary_location_withholds_the_business_wide_phone_but_the_primary_keeps_it(): void
+    {
+        [$business, $workspace, $primary] = $this->tenant();
+        $primary->forceFill(['is_primary' => true])->save();
+        $secondary = $this->publicStorefront($business, 'Branch');
+        $secondary->forceFill(['is_primary' => false])->save();
+
+        $html = $this->page($workspace, $business, $secondary);
+        $this->assertMatchesRegularExpression('/data-kit="phone".*?Confirm this location/s', $html);
+        $this->assertDoesNotMatchRegularExpression('/data-kit="phone"[^>]*>.*?data-copy="\+15550101234"/s', explode('data-kit="website"', $html)[0]);
+
+        $html = $this->page($workspace, $business, $primary);
+        $this->assertMatchesRegularExpression('/data-kit="phone".*?data-copy="\+15550101234"/s', $html);
+    }
+
+    public function test_in_progress_and_recorded_listings_are_not_described_as_unchecked(): void
+    {
+        [$business, $workspace, $location] = $this->tenant();
+        $apple = $this->directory('apple_business');
+
+        $this->makeCitation($business, $location, $apple, ['status' => SeoCitationStatus::InProgress->value, 'listing_url' => null]);
+        $html = $this->page($workspace, $business, $location);
+        $this->assertStringContainsString('Setup is in progress, but no listing details are recorded yet.', $html);
+        $this->assertStringNotContainsString('it has not been checked', $html);
+
+        SeoCitation::query()->delete();
+        $this->makeCitation($business, $location, $apple, [
+            'status' => SeoCitationStatus::InProgress->value,
+            'listing_url' => 'https://maps.example-directory.com/place/acme',
+            'last_verified_at' => now(),
+        ]);
+        $html = $this->page($workspace, $business, $location);
+        $this->assertStringContainsString('Setup is in progress. You have recorded a listing link, a check date', $html);
+        $this->assertStringContainsString('has not been confirmed as accurate here', $html);
+        $this->assertStringNotContainsString('it has not been checked', $html);
+        $evidence = explode('</ul>', explode('data-role="next-best-evidence"', $html)[1] ?? '')[0];
+        $this->assertStringNotContainsString('verified', strtolower($evidence));
+    }
+
     private function noClaimUrlEverywhere(): void
     {
         \App\Models\SeoCitationDirectory::query()->update(['claim_url' => null]);
