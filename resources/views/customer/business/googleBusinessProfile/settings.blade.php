@@ -41,7 +41,12 @@
         .gbps-details > summary::-webkit-details-marker, .gbps-disconnect > summary::-webkit-details-marker { display: none; }
         .gbps-details[open] > summary .ds-icon, .gbps-disconnect[open] > summary .ds-icon { transform: rotate(180deg); }
         .gbps-technical { padding: 4px 0 8px; color: var(--g-text-2); font-size: 12.5px; line-height: 1.65; overflow-wrap: anywhere; font-family: ui-monospace, Menlo, Consolas, monospace; }
-        .gbps-change { display: inline-flex; align-items: center; min-height: 44px; color: var(--g-ink); font-weight: 600; font-size: 13.5px; }
+        .gbps-change { display: inline-flex; align-items: center; gap: 6px; min-height: 44px; color: var(--g-ink); font-weight: 600; font-size: 13.5px; cursor: pointer; list-style: none; }
+        .gbps-change::-webkit-details-marker { display: none; }
+        .gbps-change-flow[open] { flex: 1 1 100%; }
+        .gbps-change-flow[open] > summary .ds-icon { transform: rotate(180deg); }
+        .gbps-change-confirm { padding: 12px 0 6px; display: flex; flex-wrap: wrap; align-items: center; gap: 14px; border-top: 1px solid var(--g-border-soft); }
+        .gbps-change-confirm p { flex: 1 1 300px; margin: 0; }
         .gbps-card-heading { padding: 16px 20px; display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
         .gbps-card-heading > strong { flex: 1 1 auto; font-size: 16px; font-weight: 700; }
         .gbps-good { display: inline-flex; align-items: center; gap: 6px; color: var(--g-muted); font-size: 12.5px; }
@@ -174,20 +179,22 @@
                         </div>
                     </details>
                     @if(! empty($canManageGoogle))
-                        <a class="gbps-change" href="{{ $locationsUrl }}">Change listing</a>
+                        {{-- A bound platform location cannot be replaced directly in the picker.
+                             Expose the existing authorized unlink POST first; the new listing
+                             can be chosen after that binding is removed. --}}
+                        <details class="gbps-change-flow" data-role="gbp-change-listing">
+                            <summary class="gbps-change">Change listing <x-ds-icon name="chevron-down" :size="14" /></summary>
+                            <div class="gbps-change-confirm">
+                                <p class="gbps-desc">To change this listing, unlink it first. Only this location's Google link is removed; your Google account stays connected. You can then choose a new listing.</p>
+                                <form method="POST" action="{{ route('customer.workspaces.businesses.gbp.unbind', [$workspaceUid, $businessUid]) }}">
+                                    @csrf
+                                    <input type="hidden" name="binding_uid" value="{{ $binding->uid }}">
+                                    <button type="submit" class="gbp-btn is-outline gbps-disconnect-btn">Unlink to choose another listing</button>
+                                </form>
+                            </div>
+                        </details>
                     @endif
                 </div>
-                @if(! empty($canManageGoogle))
-                    <details class="gbps-details" style="padding: 0 20px; border-top: 1px solid var(--g-border-soft);">
-                        <summary>Unlink this location <x-ds-icon name="chevron-down" :size="14" /></summary>
-                        <form method="POST" action="{{ route('customer.workspaces.businesses.gbp.unbind', [$workspaceUid, $businessUid]) }}" style="padding: 0 0 14px;">
-                            @csrf
-                            <input type="hidden" name="binding_uid" value="{{ $binding->uid }}">
-                            <p class="gbps-desc">Only this linked location will be removed. Your Google account will stay connected.</p>
-                            <button type="submit" class="gbp-btn is-outline">Unlink this location</button>
-                        </form>
-                    </details>
-                @endif
             </section>
         @empty
             @if($isActive)
