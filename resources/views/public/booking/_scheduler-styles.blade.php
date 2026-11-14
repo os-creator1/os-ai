@@ -94,9 +94,10 @@
     .pb-main { padding: 28px 32px 32px; min-width: 0; }
     .pb-heading { margin: 0 0 18px; font-size: 19px; font-weight: 650; }
 
-    .pb-stage { display: flex; gap: 28px; align-items: flex-start; }
-    .pb-calendar { flex: 1 1 340px; min-width: 0; }
-    .pb-times { flex: 0 0 200px; min-width: 0; }
+    .pb-stage { display: flex; flex-wrap: wrap; gap: 20px 28px; align-items: flex-start; }
+    /* Non-growing basis: the date grid keeps one compact width whether or not the times column is shown. */
+    .pb-calendar { flex: 0 1 366px; min-width: 0; }
+    .pb-times { flex: 1 1 200px; min-width: 0; }
 
     .pb-cal-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
     .pb-month { font-weight: 600; font-size: 16px; }
