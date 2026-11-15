@@ -65,15 +65,9 @@
     var more = list.querySelector('[data-role="crm-column-more"]');
 
     var badge = column.querySelector('[data-role="crm-column-count"]');
-    var label = Moves.totalLabel(count, value, currency);
-
-    if (badge) {
-      // The header shows the count in its own badge and the value alone beneath the name.
-      badge.textContent = String(count);
-      if (total) { total.textContent = label.indexOf(' · ') > -1 ? label.slice(label.indexOf(' · ') + 3) : ''; }
-    } else if (total) {
-      total.textContent = label;
-    }
+    if (badge) { badge.textContent = String(count); }
+    // The approved stage total is always shown, including when a column has no priced deals.
+    if (total) { total.textContent = Moves.formatMoney(value, currency); }
 
     if (shown === 0 && count === 0) {
       if (!empty) {
