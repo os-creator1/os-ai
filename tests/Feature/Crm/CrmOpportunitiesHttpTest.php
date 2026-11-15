@@ -86,7 +86,11 @@ class CrmOpportunitiesHttpTest extends TestCase
         $this->assertStringContainsString('class="crm-card-value-row"', $html);
         $this->assertStringContainsString('data-role="crm-card-title">Wedding booking</a>', $html);
         $this->assertStringContainsString('class="crm-card-value">—</strong>', $html, 'An unpriced deal must not show a fabricated USD 0.');
-        $this->assertStringContainsString('data-role="crm-column-total">USD 0</span>', $html);
+        $this->assertStringContainsString('data-role="crm-column-total">USD 0</div>', $html);
+        $this->assertMatchesRegularExpression('/<\/div>\s*<div class="crm-column-total" data-role="crm-column-total">/', $html, 'The stage total sits below the stage header, as in the artboard, not inside it.');
+        $this->assertStringContainsString('placeholder="Search by name, contact or phone"', $html);
+        $this->assertStringContainsString('data-role="crm-tasks-link"', $html, 'Tasks stays reachable from the header.');
+        $this->assertStringContainsString('data-role="crm-pipeline-settings"><svg', $html, 'Customize stages carries the artboard icon.');
         $this->assertStringNotContainsString('Maya Thompson', $html, 'The mockup is not production data.');
         $this->assertStringContainsString('data-role="crm-cards"', $html);
         $this->assertStringContainsString('data-role="crm-card-contact-status"', $html);

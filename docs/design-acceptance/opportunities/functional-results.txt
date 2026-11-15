@@ -1,0 +1,20 @@
+PASS 5 stages, every total formatted (including zero) ["USD 1,200","USD 949","USD 1,998","USD 0","USD 2,499"]
+PASS drag moves card into target column in the UI USD 3,699
+PASS source column count/total updated (zero shows USD 0) USD 0
+PASS source column shows empty state 
+PASS move request saved (HTTP 2xx) [200]
+PASS move persisted after reload 
+PASS reverse move restores original counts and totals [["1","USD 1,200"],["1","USD 949"],["2","USD 1,998"],["0","USD 0"],["1","USD 2,499"]]
+PASS search "Priya" narrows to one card ["Priya Nair — Daughter's graduation party"]
+PASS summary reflects filter 1 open in Sales pipeline · USD 699 total · matching these filters
+PASS status Won -> no cards 
+PASS contact status In contact -> no cards (none set) 
+PASS contact status No contact -> every card on the board (5) 
+PASS switch to Weddings pipeline shows its deal ["New inquiry","Qualified","Proposal sent","Negotiating"]
+PASS URL carries pipeline http://127.0.0.1:8081/workspaces/e1004178-3248-4f6c-9f57-adfa9e8d9cce/businesses/6af9b49e5fbb7/opportunities?pipeline=ce54e0dd-f9d2-408a-98d2-f5395f81555a&q=&status=open&contact_status=any
+PASS Customize stages link follows pipeline 
+PASS Create returns to the pipeline board 
+PASS created deal appears on board with its USD 500 value 
+PASS new pipeline appears in selector Sales pipeline,Weddings,QA Pipeline
+PASS no page errors 
+SUMMARY 19 pass 0 fail
