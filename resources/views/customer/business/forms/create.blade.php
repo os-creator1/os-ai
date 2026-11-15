@@ -3,36 +3,23 @@
 @section('title', 'New form')
 
 @section('content')
-    @php $scope = [$workspace->uid, $business->uid]; @endphp
-
+    {{-- No-JavaScript / direct-link fallback for the New form dialog: the same card, as a page. --}}
+    @include('customer.business.forms._assets')
     @include('customer.business.forms._messages')
 
-    <div class="card">
-        <div class="card-body">
-            <h4 class="card-title">New form</h4>
-            <p class="card-text text-muted">Name it and pick a starting point. You'll design it visually next — it starts as a draft until you activate it.</p>
-
-            <form method="POST" action="{{ route('customer.workspaces.businesses.forms.store', $scope) }}" data-role="forms-create-form">
-                @csrf
-
-                <div class="form-group">
-                    <label for="name">Form name</label>
-                    <input type="text" id="name" name="name" class="form-control" value="{{ old('name') }}" placeholder="e.g. Check availability" required autofocus>
-                </div>
-
-                <div class="form-group">
-                    <label class="d-block">Starting point</label>
-                    @foreach ($starters as $id => $label)
-                        <div class="custom-control custom-radio mb-50">
-                            <input type="radio" class="custom-control-input" id="starter-{{ $id }}" name="starter" value="{{ $id }}" @checked(old('starter', $loop->first ? $id : null) === $id)>
-                            <label class="custom-control-label" for="starter-{{ $id }}">{{ $label }}</label>
-                        </div>
-                    @endforeach
-                </div>
-
-                <button type="submit" class="btn btn-primary">Create and open builder</button>
-                <a href="{{ route('customer.workspaces.businesses.forms.index', $scope) }}" class="btn btn-outline-secondary">Cancel</a>
-            </form>
+    <div class="mgf" data-role="forms-new-page">
+        <div class="mgf-pagehead">
+            <div>
+                <h1 class="sr-only">New form</h1>
+                <a class="mgf-back" href="{{ route('customer.workspaces.businesses.forms.index', [$workspace->uid, $business->uid]) }}">@include('customer.business.forms._icon', ['n' => 'back', 'style' => 'width:14px;height:14px']) Forms</a>
+            </div>
+        </div>
+        <div style="max-width:620px" data-role="forms-new-card-wrap">
+            @include('customer.business.forms._new_form', ['dialog' => false])
         </div>
     </div>
+@endsection
+
+@section('page-script')
+    <script src="{{ asset('js/forms/new-form-dialog.js') }}?v={{ filemtime(public_path('js/forms/new-form-dialog.js')) }}"></script>
 @endsection

@@ -105,6 +105,7 @@ class FormsHttpTest extends TestCase
             'builder.save' => ['POST', $this->formsRoute('builder.save', $w, $b, [$this->form->uid]), $this->builderDocument(['base_version' => (int) $this->form->current_version])],
             'builder.preview' => ['POST', $this->formsRoute('builder.preview', $w, $b, [$this->form->uid]), $this->builderDocument()],
             'notifications' => ['GET', $this->formsRoute('notifications', $w, $b, [$this->form->uid]), []],
+            'notifications.start' => ['POST', $this->formsRoute('notifications.start', $w, $b, [$this->form->uid, 'team']), []],
             'analytics' => ['GET', $this->formsRoute('analytics', $w, $b, [$this->form->uid]), []],
         ];
     }

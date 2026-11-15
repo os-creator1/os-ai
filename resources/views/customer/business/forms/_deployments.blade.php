@@ -1,53 +1,39 @@
-{{-- Where a form is offered: one row per Location the actor may reach. The same
-     markup the classic editor had (data-role contract preserved). Each toggle posts
-     to the Location-scoped route, which runs the full gate chain again; the form
-     submit flushes any pending autosave first (fb-nav-form). --}}
+{{-- Where a form is offered: one card per Location the actor may reach (design:
+     FormSettings.dc.html "Where it's offered"). Each toggle posts to the
+     Location-scoped route, which runs the full gate chain again; the form submit
+     flushes any pending autosave first (fb-nav-form). data-role contract kept. --}}
 @if (count($locations) === 0)
     <p class="mb-0" data-role="forms-no-locations">You don't have access to any locations for this business.</p>
 @else
-    <ul class="list-group" data-role="forms-locations">
+    <div style="display:flex;flex-direction:column;gap:12px" data-role="forms-locations">
         @foreach ($locations as $location)
             @php
                 $deployment = $deployments->get($location->id);
                 $on = $deployment !== null && $deployment->is_enabled;
+                $url = $on ? route('public.forms.show', [$deployment->uid]) : null;
+                $embedCode = $url ? '<iframe src="'.$url.'" title="'.e($form->name ?? 'Form').'" width="100%" height="720" style="border:0" loading="lazy"></iframe>' : null;
             @endphp
-            <li class="list-group-item" data-location="{{ $location->uid }}">
-                <div class="d-flex justify-content-between align-items-center">
-                    <span>
-                        {{ $location->name ?: 'Unnamed location' }}
-                        @if ($location->isArchived())
-                            <span class="badge badge-light-secondary">Archived</span>
-                        @endif
-                    </span>
+            <div class="mgf-loc" data-location="{{ $location->uid }}">
+                <div class="mgf-loc-head">
+                    <b>{{ $location->name ?: 'Unnamed location' }}@if ($location->isArchived()) <span class="mgf-pill">Archived</span>@endif</b>
+                    <span class="mgf-offered {{ $on ? '' : 'is-off' }}">{{ $on ? 'Offered' : 'Not offered' }}</span>
                     <form method="POST" action="{{ route('customer.workspaces.businesses.forms.locations.set', array_merge($formScope, [$location->uid])) }}" class="fb-nav-form">
                         @csrf
                         <input type="hidden" name="enabled" value="{{ $on ? 0 : 1 }}">
-                        <button type="submit" class="btn btn-sm {{ $on ? 'btn-outline-danger' : 'btn-outline-primary' }}" data-role="forms-location-toggle">
-                            {{ $on ? 'Stop offering here' : 'Offer here' }}
-                        </button>
+                        <button type="submit" class="mgf-btn is-sm is-outline" data-role="forms-location-toggle">{{ $on ? 'Stop offering here' : 'Offer here' }}</button>
                     </form>
                 </div>
                 @if ($on)
-                    <div class="mt-1">
-                        <small class="text-muted">Link:</small>
-                        <a href="{{ route('public.forms.show', [$deployment->uid]) }}" data-role="forms-public-link">{{ route('public.forms.show', [$deployment->uid]) }}</a>
-                    </div>
-                    @php
-                        $embedUrl = route('public.forms.show', [$deployment->uid]);
-                        $embedCode = '<iframe src="' . $embedUrl . '" title="' . e($form->name ?? 'Form') . '" width="100%" height="720" style="border:0" loading="lazy"></iframe>';
-                    @endphp
-                    <div class="mt-1" data-role="forms-embed">
-                        <small class="text-muted">Embed on any web page:</small>
-                        <div class="input-group input-group-sm">
-                            <input type="text" class="form-control" readonly value="{{ $embedCode }}" data-role="forms-embed-code" onclick="this.select()" aria-label="Embed code for {{ $location->name ?: 'this location' }}">
-                            <div class="input-group-append">
-                                <button type="button" class="btn btn-outline-secondary" data-role="forms-embed-copy"
-                                    onclick="var i=this.closest('[data-role=forms-embed]').querySelector('input');i.select();navigator.clipboard&&navigator.clipboard.writeText(i.value);this.textContent='Copied';">Copy</button>
-                            </div>
+                    <div class="mgf-loc-body" data-role="forms-embed">
+                        <div class="mgf-link-box">
+                            <span><a href="{{ $url }}" data-role="forms-public-link" target="_blank" rel="noopener" style="color:inherit">{{ $url }}</a></span>
+                            <button type="button" class="mgf-btn is-sm is-outline" data-copy="{{ $url }}">@include('customer.business.forms._icon', ['n' => 'copy', 'style' => 'width:14px;height:14px']) Copy link</button>
                         </div>
+                        <button type="button" class="mgf-btn is-outline" data-copy="{{ $embedCode }}" data-role="forms-embed-copy">@include('customer.business.forms._icon', ['n' => 'code']) Copy embed code</button>
+                        <input type="text" class="sr-only" readonly value="{{ $embedCode }}" data-role="forms-embed-code" aria-label="Embed code for {{ $location->name ?: 'this location' }}" tabindex="-1">
                     </div>
                 @endif
-            </li>
+            </div>
         @endforeach
-    </ul>
+    </div>
 @endif

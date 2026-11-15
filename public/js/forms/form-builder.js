@@ -33,8 +33,9 @@
     var $ = function (id) { return document.getElementById(id); };
     var csrf = (document.querySelector('meta[name="csrf-token"]') || {}).content || '';
 
-    var ACCENTS = ['#2563eb', '#7c3aed', '#db2777', '#dc2626', '#ea580c', '#16a34a', '#0f766e', '#111827'];
-    var RADII = { none: '0px', sm: '4px', md: '8px', lg: '16px' };
+    var DEFAULT_ACCENT = '#2563eb';
+    var ACCENTS = ['#b4514a', '#2563eb', '#7c3aed', '#db2777', '#ea580c', '#16a34a', '#0f766e', '#1f1a19'];
+    var RADII = { none: '0px', sm: '4px', md: '8px', lg: '16px', pill: '999px' };
     var WIDTHS = { narrow: '30rem', medium: '40rem', wide: '52rem' };
     var GLYPH = {
         user: 'Aa', mail: '@', phone: '☎', type: 'T', 'align-left': '¶', hash: '#', 'dollar-sign': '$', calendar: '▦',
@@ -131,10 +132,21 @@
     // ------------------------------------------------------------- save state
     var saveEl = $('fb-save');
     var bannerEl = $('fb-banner');
+    var noteEl = $('fb-settings-note');
     function setSave(state, text) {
         if (!saveEl) { return; }
         saveEl.setAttribute('data-state', state);
         saveEl.textContent = text;
+        if (noteEl) {
+            noteEl.setAttribute('data-state', state);
+            var label = noteEl.querySelector('span');
+            if (label) {
+                label.textContent = state === 'saving' ? 'Unsaved changes — saving…'
+                    : state === 'failed' ? 'Could not save — your latest change is not stored yet'
+                    : state === 'conflict' ? 'Not saved — this form changed somewhere else'
+                    : 'Changes save automatically';
+            }
+        }
     }
     function banner(msg, opts) {
         opts = opts || {};
@@ -195,6 +207,7 @@
         clearTimeout(timer);
         timer = setTimeout(save, 1500);
         if (previewOpen) { schedulePreview(); }
+        if (settingsOpen) { scheduleSettingsPreview(); }
     }
 
     function save() {
@@ -505,7 +518,7 @@
 
     function applyCanvasTheme() {
         var d = doc.design || {};
-        canvasEl.style.setProperty('--pf-accent', d.accent || '#2563eb');
+        canvasEl.style.setProperty('--pf-accent', d.accent || DEFAULT_ACCENT);
         canvasEl.style.setProperty('--pf-radius', RADII[d.radius || 'md']);
         canvasEl.style.setProperty('--pf-width', WIDTHS[d.width || 'medium']);
         canvasEl.style.background = d.background || '';
@@ -783,8 +796,14 @@
             var k = box.getAttribute('data-design-seg');
             [].forEach.call(box.querySelectorAll('button'), function (b) { b.classList.toggle('is-on', (doc.design || {})[k] === b.getAttribute('data-v') || (!(doc.design || {})[k] && b.getAttribute('data-v') === { button_align: 'left', radius: 'md', width: 'medium' }[k])); });
         });
-        var sw = $('fb-swatches'); if (sw) { [].forEach.call(sw.querySelectorAll('.fb-swatch'), function (b) { b.classList.toggle('is-on', ((doc.design || {}).accent || '#2563eb') === b.getAttribute('data-c')); }); }
-        var bg = $('fb-s-bg'); if (bg) { bg.value = (doc.design || {}).background || '#f3f5f9'; }
+        var accent = ((doc.design || {}).accent || DEFAULT_ACCENT).toLowerCase();
+        var sw = $('fb-swatches'); if (sw) { [].forEach.call(sw.querySelectorAll('.mgf-cl'), function (b) { var on = accent === b.getAttribute('data-c'); b.classList.toggle('is-on', on); b.setAttribute('aria-pressed', on ? 'true' : 'false'); }); }
+        var custom = $('fb-s-accent-custom'); if (custom) { var known = ACCENTS.indexOf(accent) > -1; custom.classList.toggle('is-on', !known); custom.firstElementChild.value = accent; if (!known) { custom.style.background = accent; custom.style.color = '#fff'; } else { custom.style.background = ''; custom.style.color = ''; } }
+        var bgValue = (doc.design || {}).background || '';
+        var bg = $('fb-s-bg'); if (bg) { bg.value = bgValue || '#f6f4f1'; }
+        var chip = $('fb-s-bg-chip'); if (chip) { chip.style.background = bgValue || '#f6f4f1'; }
+        var opp = $('fb-s-opp'); if (opp) { opp.setAttribute('aria-checked', doc.create_opportunity ? 'true' : 'false'); }
+        var pl = $('fb-s-pipeline'); if (pl) { pl.disabled = !doc.create_opportunity; var wrap = $('fb-s-pipeline-wrap'); if (wrap) { wrap.style.opacity = doc.create_opportunity ? '' : '.5'; } }
     }
     function initSettings() {
         var pl = $('fb-s-pipeline');
@@ -803,11 +822,13 @@
         top.addEventListener('input', function () { doc.name = top.value; renderCanvas(); syncSettings(); touch(); });
         var sw = $('fb-swatches');
         ACCENTS.forEach(function (c) {
-            sw.appendChild(h('button', { type: 'button', class: 'fb-swatch', style: 'background:' + c, 'data-c': c, title: c, 'aria-label': 'Accent ' + c, onclick: function () { setDesign('accent', c === '#2563eb' ? '' : c); } }));
+            sw.appendChild(h('button', { type: 'button', class: 'mgf-cl', style: 'background:' + c, 'data-c': c, title: c, 'aria-label': 'Accent ' + c, 'aria-pressed': 'false', onclick: function () { setDesign('accent', c === DEFAULT_ACCENT ? '' : c); } }));
         });
-        var custom = h('input', { type: 'color', value: (doc.design || {}).accent || '#2563eb', 'aria-label': 'Custom accent color' });
-        custom.addEventListener('input', function () { setDesign('accent', custom.value); });
-        sw.appendChild(custom);
+        var customInput = h('input', { type: 'color', value: (doc.design || {}).accent || DEFAULT_ACCENT, 'aria-label': 'Custom accent color' });
+        customInput.addEventListener('input', function () { setDesign('accent', customInput.value.toLowerCase()); });
+        sw.appendChild(h('label', { class: 'mgf-btn is-sm mgf-custom', id: 'fb-s-accent-custom', style: 'border:1px dashed #CFC6BE;background:#fff;color:#5E5652;font-weight:500' }, [customInput, document.createTextNode('Custom')]));
+        var oppBtn = $('fb-s-opp');
+        oppBtn.addEventListener('click', function () { doc.create_opportunity = !doc.create_opportunity; renderCanvas(); syncSettings(); touch(); });
         [].forEach.call(document.querySelectorAll('[data-design-seg]'), function (box) {
             var k = box.getAttribute('data-design-seg');
             [].forEach.call(box.querySelectorAll('button'), function (b) { b.addEventListener('click', function () { setDesign(k, b.getAttribute('data-v')); }); });
@@ -823,12 +844,35 @@
         });
     }
 
+    // ------------------------------------------------- settings live preview
+    // Same endpoint and partials as the Preview dialog: the UNSAVED document is rendered
+    // through the public form's own markup, so the card always reflects what is edited.
+    var settingsOpen = false;
+    var settingsTimer = null;
+    var settingsSeq = 0;
+    function scheduleSettingsPreview() { clearTimeout(settingsTimer); settingsTimer = setTimeout(loadSettingsPreview, 350); }
+    function loadSettingsPreview() {
+        var frame = $('fb-settings-preview');
+        if (!frame) { return; }
+        var mine = ++settingsSeq;
+        post(C.previewUrl, payload()).then(function (res) {
+            return res.text().then(function (text) { return { res: res, text: text }; });
+        }).then(function (r) {
+            if (mine !== settingsSeq) { return; }
+            if (r.res.ok) { frame.srcdoc = r.text; return; }
+            var m = 'The preview could not be built.';
+            try { m = JSON.parse(r.text).message || m; } catch (x) { /* keep default */ }
+            frame.srcdoc = '<p style="font:14px system-ui;padding:16px;color:#B42318">' + m.replace(/[<>&]/g, '') + '</p>';
+        }).catch(function () { /* keep the last good preview */ });
+    }
+
     // ----------------------------------------------------------------- tabs
     function showTab(name) {
+        settingsOpen = name === 'settings';
         [].forEach.call(document.querySelectorAll('[data-fb-pane]'), function (p) { p.hidden = p.getAttribute('data-fb-pane') !== name; });
         [].forEach.call(document.querySelectorAll('[data-fb-tab]'), function (b) { b.classList.toggle('is-active', b.getAttribute('data-fb-tab') === name); });
         try { history.replaceState(null, '', name === 'edit' ? location.pathname + location.search : '#' + name); } catch (x) { /* ignore */ }
-        if (name === 'settings') { syncSettings(); }
+        if (name === 'settings') { syncSettings(); loadSettingsPreview(); }
     }
     [].forEach.call(document.querySelectorAll('[data-fb-tab]'), function (b) { b.addEventListener('click', function () { showTab(b.getAttribute('data-fb-tab')); }); });
 
@@ -888,7 +932,7 @@
     [].forEach.call(document.querySelectorAll('[data-copy]'), function (b) { b.addEventListener('click', function () { copy(b.getAttribute('data-copy'), b); }); });
     [].forEach.call(document.querySelectorAll('[data-copy-prev]'), function (b) { b.addEventListener('click', function () { copy(b.previousElementSibling.value, b); }); });
     function copy(text, btn) {
-        var done = function () { var t = btn.textContent; btn.textContent = 'Copied'; setTimeout(function () { btn.textContent = t; }, 1400); };
+        var done = function () { var t = btn.innerHTML; btn.textContent = 'Copied'; setTimeout(function () { btn.innerHTML = t; }, 1400); };
         if (navigator.clipboard && navigator.clipboard.writeText) { navigator.clipboard.writeText(text).then(done, done); return; }
         var ta = h('textarea', { style: 'position:fixed;opacity:0' }); ta.value = text; document.body.appendChild(ta); ta.select();
         try { document.execCommand('copy'); } catch (x) { /* ignore */ } document.body.removeChild(ta); done();

@@ -15,6 +15,22 @@ final class FormStarterTemplates
 
     public const AVAILABILITY = 'availability';
 
+    /**
+     * The New form dialog's cards: a short title, a one-line description and the
+     * element labels the card's thumbnail is drawn from. Display copy only — what a
+     * starter actually creates is content().
+     *
+     * @return array<string, array{title: string, description: string, lines: list<int>}>
+     */
+    public static function cards(): array
+    {
+        return [
+            self::CONTACT => ['title' => 'Contact me', 'description' => 'Name, email, phone and a message', 'lines' => [60, 85, 85, 70]],
+            self::AVAILABILITY => ['title' => 'Check availability', 'description' => 'Event date and type, plus contact details', 'lines' => [60, 85, 85, 70]],
+            self::BLANK => ['title' => 'Blank', 'description' => 'Just name, email and phone', 'lines' => [60, 85]],
+        ];
+    }
+
     /** @return array<string, string> id => label */
     public static function choices(): array
     {

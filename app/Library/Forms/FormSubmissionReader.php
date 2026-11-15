@@ -89,4 +89,29 @@ final class FormSubmissionReader
 
         return $query->paginate(self::PAGE_SIZE, ['*'], 'page', max(1, $page));
     }
+
+    /**
+     * Response counts per form, bounded to the Locations this actor may reach — never a
+     * count that includes a Location they cannot see.
+     *
+     * @param  array<int, BusinessLocation>  $visible  the result of visibleLocations() for this actor
+     * @param  list<int>  $formIds
+     * @return array<int, int> form id => count
+     */
+    public function countsByForm(Business $business, array $visible, array $formIds): array
+    {
+        if ($formIds === [] || $visible === []) {
+            return [];
+        }
+
+        return FormSubmission::query()
+            ->where('business_id', $business->id)
+            ->whereIn('form_id', $formIds)
+            ->whereIn('business_location_id', array_keys($visible))
+            ->selectRaw('form_id, COUNT(*) as n')
+            ->groupBy('form_id')
+            ->pluck('n', 'form_id')
+            ->map(static fn ($n) => (int) $n)
+            ->all();
+    }
 }

@@ -17,11 +17,12 @@
     @endphp
 
     <link rel="stylesheet" href="{{ asset('css/forms/form-builder.css') }}?v={{ filemtime(public_path('css/forms/form-builder.css')) }}">
+    @include('customer.business.forms._assets')
     @include('public.forms._style', ['design' => []])
 
     @include('customer.business.forms._messages')
 
-    <div class="fb pf-scope" id="fb-root" data-role="forms-builder">
+    <div class="fb pf-scope mgf" id="fb-root" data-role="forms-builder">
         @include('customer.business.forms._builder_header', ['tab' => 'edit'])
 
         <div class="fb-banner" id="fb-banner" role="alert" data-role="forms-banner">
@@ -44,104 +45,7 @@
 
         {{-- ================= SETTINGS ================= --}}
         <div id="fb-pane-settings" data-fb-pane="settings" hidden>
-            <div class="fb-settings">
-                <section>
-                    <h5>Basics</h5>
-                    <div class="fb-field">
-                        <label for="fb-s-name">Form name</label>
-                        <input type="text" id="fb-s-name" class="form-control" maxlength="120" data-bind="name">
-                    </div>
-                    <div class="fb-field">
-                        <label for="fb-s-intro">Introduction <span class="text-muted">(optional, shown above the first page)</span></label>
-                        <textarea id="fb-s-intro" class="form-control" rows="3" maxlength="1000" data-bind="intro"></textarea>
-                    </div>
-                    <div class="fb-field mb-0">
-                        <label>Status</label>
-                        <div class="d-flex align-items-center" style="gap:.6rem">
-                            <span class="fb-badge {{ $form->isActive() ? 'is-active' : '' }}" data-role="forms-status-badge">{{ $form->lifecycle_state->label() }}</span>
-                            @if ($form->isActive())
-                                <form method="POST" action="{{ route('customer.workspaces.businesses.forms.deactivate', $formScope) }}" class="d-inline fb-nav-form">
-                                    @csrf
-                                    <button type="submit" class="btn btn-outline-danger btn-sm" data-role="forms-deactivate">Switch off</button>
-                                </form>
-                            @else
-                                <form method="POST" action="{{ route('customer.workspaces.businesses.forms.activate', $formScope) }}" class="d-inline fb-nav-form">
-                                    @csrf
-                                    <button type="submit" class="btn btn-primary btn-sm" data-role="forms-activate">{{ $form->lifecycle_state->value === 'inactive' ? 'Switch on again' : 'Activate' }}</button>
-                                </form>
-                            @endif
-                        </div>
-                        <small class="text-muted">Only an active form accepts responses.</small>
-                    </div>
-                </section>
-
-                <section>
-                    <h5>After the visitor submits</h5>
-                    <div class="fb-field mb-0">
-                        <label for="fb-s-success">Confirmation message</label>
-                        <input type="text" id="fb-s-success" class="form-control" maxlength="300" data-bind="success_message">
-                        <small>Shown on the thank-you page. Redirecting to another URL isn't supported yet.</small>
-                    </div>
-                </section>
-
-                <section data-role="forms-style">
-                    <h5>Form style</h5>
-                    <div class="fb-field">
-                        <label for="fb-s-button">Button label</label>
-                        <input type="text" id="fb-s-button" class="form-control" maxlength="40" data-bind="submit_label">
-                    </div>
-                    <div class="fb-field">
-                        <label>Accent color</label>
-                        <div class="fb-swatches" id="fb-swatches"></div>
-                    </div>
-                    <div class="fb-field">
-                        <label>Button alignment</label>
-                        <div class="fb-seg" data-design-seg="button_align">
-                            <button type="button" data-v="left">Left</button><button type="button" data-v="center">Center</button><button type="button" data-v="right">Right</button><button type="button" data-v="full">Full width</button>
-                        </div>
-                    </div>
-                    <div class="fb-field">
-                        <label>Corners</label>
-                        <div class="fb-seg" data-design-seg="radius">
-                            <button type="button" data-v="none">Square</button><button type="button" data-v="sm">Slight</button><button type="button" data-v="md">Rounded</button><button type="button" data-v="lg">Very round</button>
-                        </div>
-                    </div>
-                    <div class="fb-field">
-                        <label>Form width</label>
-                        <div class="fb-seg" data-design-seg="width">
-                            <button type="button" data-v="narrow">Narrow</button><button type="button" data-v="medium">Medium</button><button type="button" data-v="wide">Wide</button>
-                        </div>
-                    </div>
-                    <div class="fb-field mb-0">
-                        <label for="fb-s-bg">Page background</label>
-                        <div class="d-flex align-items-center" style="gap:.5rem">
-                            <input type="color" id="fb-s-bg" value="#f3f5f9" aria-label="Page background color">
-                            <button type="button" class="btn btn-sm btn-outline-secondary" id="fb-s-bg-reset">Reset</button>
-                        </div>
-                    </div>
-                </section>
-
-                <section>
-                    <h5>Opportunities</h5>
-                    <div class="custom-control custom-checkbox">
-                        <input type="checkbox" class="custom-control-input" id="fb-s-opp" data-bind="create_opportunity">
-                        <label class="custom-control-label" for="fb-s-opp">Create an opportunity for each response</label>
-                    </div>
-                    <small class="text-muted d-block mb-1">Needs a phone number question, so the response can be tied to a person.</small>
-                    <div class="fb-field mb-0">
-                        <label for="fb-s-pipeline">Pipeline for new opportunities</label>
-                        <select id="fb-s-pipeline" class="form-control" data-bind="opportunity_pipeline_id"></select>
-                    </div>
-                </section>
-
-                <section>
-                    <h5>Where it is offered</h5>
-                    <p class="text-muted mb-1">
-                        The form is one Business-wide definition. Each location gets its own link, so every response is tied to the location it came through. Only locations you can access are listed.
-                    </p>
-                    @include('customer.business.forms._deployments', ['formScope' => $formScope])
-                </section>
-            </div>
+            @include('customer.business.forms._settings_pane')
         </div>
     </div>
 

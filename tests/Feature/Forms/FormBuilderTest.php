@@ -802,7 +802,7 @@ class FormBuilderTest extends TestCase
         $this->submit($deployment);
 
         $page = $this->get($this->formsRoute('analytics', $this->workspace, $this->business, [$form->uid]))->assertOk();
-        $page->assertSee('data-role="stat-total"', false)->assertSee('Not measured yet')->assertDontSee('Views')->assertDontSee('Conversion');
+        $page->assertSee('data-role="stat-total"', false)->assertSee('data-role="forms-analytics-note"', false)->assertDontSee('Views')->assertDontSee('Conversion');
         $this->assertSame(1, preg_match('#data-role="stat-total">(\d+)<#', $page->getContent(), $m));
         $this->assertSame('1', $m[1]);
     }
@@ -828,7 +828,7 @@ class FormBuilderTest extends TestCase
         $form = $this->makeForm($this->business);
 
         $this->get($this->formsRoute('notifications', $this->workspace, $this->business, [$form->uid]))
-            ->assertOk()->assertSee('data-role="forms-notifications"', false)->assertSee('A form is submitted')->assertSee('Not available yet');
+            ->assertOk()->assertSee('data-role="forms-notifications"', false)->assertSee('A form is submitted')->assertSee('Coming later');
     }
 
     public function test_integrate_lists_location_links_and_embed_code_for_enabled_deployments_only(): void
@@ -848,7 +848,7 @@ class FormBuilderTest extends TestCase
 
     public function test_a_new_form_is_created_from_a_starting_point_and_opens_in_the_builder(): void
     {
-        $this->get($this->formsRoute('create', $this->workspace, $this->business))->assertOk()->assertSee('Starting point')->assertSee('Check availability');
+        $this->get($this->formsRoute('create', $this->workspace, $this->business))->assertOk()->assertSee('Start from')->assertSee('Check availability');
 
         $response = $this->post($this->formsRoute('store', $this->workspace, $this->business), ['name' => 'Photo Booth', 'starter' => 'availability']);
         $form = Form::where('name', 'Photo Booth')->firstOrFail();

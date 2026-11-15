@@ -2169,6 +2169,7 @@
             Route::post('/{formUid}/builder', 'Business\FormBuilderController@save')->name('builder.save');
             Route::post('/{formUid}/builder/preview', 'Business\FormBuilderController@preview')->name('builder.preview');
             Route::get('/{formUid}/notifications', 'Business\FormBuilderController@notifications')->name('notifications');
+            Route::post('/{formUid}/notifications/{action}', 'Business\FormBuilderController@startNotification')->whereIn('action', ['team', 'sms', 'email'])->name('notifications.start');
             Route::get('/{formUid}/analytics', 'Business\FormBuilderController@analytics')->name('analytics');
         });
 

@@ -91,7 +91,7 @@ final class FormDefinitionNormalizer
 
     public const BUTTON_ALIGNS = ['left', 'center', 'right', 'full'];
 
-    public const RADII = ['none', 'sm', 'md', 'lg'];
+    public const RADII = ['none', 'sm', 'md', 'lg', 'pill'];
 
     public const WIDTHS = ['narrow', 'medium', 'wide'];
 
