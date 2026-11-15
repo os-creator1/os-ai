@@ -28,7 +28,7 @@
 .mgx-filter{position:relative;display:inline-flex;align-items:center}
 .mgx-filter select{appearance:none;-webkit-appearance:none;field-sizing:content;min-height:46px;padding:0 38px 0 16px;border:1px solid #E0DAD4;border-radius:10px;background:#fff;color:var(--mg-ink2);font:inherit;font-size:14px;font-weight:500;cursor:pointer;max-width:16rem}
 .mgx-filter .mgx-ic{position:absolute;right:14px;width:14px;height:14px;color:#8A817C;pointer-events:none}
-.mgx-row{display:grid;grid-template-columns:minmax(0,2.2fr) 1.3fr 1fr 1.1fr .9fr 96px;align-items:center;gap:14px;min-height:63px;padding:0 20px;border-top:1px solid #F0EBE6;font-size:14px;color:var(--mg-ink)}
+.mgx-row{display:grid;grid-template-columns:minmax(0,2.2fr) 1.3fr 1fr 1.1fr .9fr 114px;align-items:center;gap:14px;min-height:63px;padding:0 20px;border-top:1px solid #F0EBE6;font-size:14px;color:var(--mg-ink)}
 .mgx-row.is-head{min-height:42px;border-top:0;background:#FBF9F7;font-size:11.5px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:var(--mg-mute)}
 .mgx-row:not(.is-head):hover{background:#fdfbfa}
 .mgx-who{display:flex;align-items:center;gap:12px;min-width:0}
@@ -53,7 +53,7 @@
 .mgx-flash{padding:10px 14px;border-radius:10px;font-size:14px;font-weight:600;background:#E3F3EA;color:#17693F}
 .mgx-period{margin:0;padding:10px 16px 0;font-size:13px;color:var(--mg-mute)}
 @media (max-width:991.98px){
- .mgx-row{grid-template-columns:minmax(0,2fr) 1.2fr 96px}
+ .mgx-row{grid-template-columns:minmax(0,2fr) 1.2fr 114px}
  .mgx-row>:nth-child(3),.mgx-row>:nth-child(4),.mgx-row>:nth-child(5){display:none}
 }
 @media (max-width:575.98px){
@@ -121,3 +121,19 @@ select.mgx-in{appearance:none;-webkit-appearance:none;cursor:pointer;padding-rig
 @media (max-width:575.98px){.mgx-modal{padding-top:16px}.mgx-db{padding:14px 16px 16px}.mgx-dh{padding:18px 16px 4px}.mgx-df{padding:12px 16px}.mgx-row2{flex-direction:column}}
 .mgx-row2{display:flex;gap:12px}
 .mgx-row2>.mgx-fl{flex:1;min-width:0}
+
+/* ---- Edit contact modal (ContactEdit design): same dialog, a delete link on the left of the footer ---- */
+.mgx-modal.is-edit{padding-top:56px}
+.mgx-fs{border:0;margin:0;padding:0;min-width:0}
+.mgx-fs[disabled] .mgx-db{opacity:.55}
+.mgx-df-spacer{flex:1}
+.mgx-del{flex:0 0 auto;min-height:44px;padding:0;border:0;background:transparent;font:inherit;font-size:13.5px;font-weight:600;color:#A3352A;cursor:pointer;text-decoration:none}
+.mgx-del:hover{text-decoration:underline}
+.mgx-del:focus-visible{outline:2px solid #A3352A;outline-offset:2px;border-radius:6px}
+.mgx-del[hidden],.mgx-del-confirm[hidden]{display:none}
+.mgx-del-confirm{display:inline-flex;flex-wrap:wrap;align-items:center;gap:6px 10px;font-size:13.5px;font-weight:600;color:#A3352A}
+.mgx-btn.is-danger{background:#A3352A;color:#fff}
+.mgx-btn.is-danger:hover{background:#852B22;color:#fff}
+.mgx-modal.is-edit .mgx-df>.mgx-status{order:-1}
+.mgx-modal.is-edit .mgx-db>.mgx-status{width:100%}
+@media (max-width:575.98px){.mgx-modal.is-edit{padding-top:16px}.mgx-modal.is-edit .mgx-df .mgx-df-spacer{display:none}.mgx-modal.is-edit .mgx-df{justify-content:flex-end}}

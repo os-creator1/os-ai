@@ -87,9 +87,10 @@
 @endphp
 
 @section('content')
-    <div class="rv-header mb-2">
+  <div class="rv-page">
+    <div class="rv-header">
         <div>
-            <h1 class="h3 mb-25">Reviews</h1>
+            <h1>Reviews</h1>
             <p class="rv-sub mb-0">Keep each Location's review link in one place and note who you have asked.</p>
         </div>
         @if($writableSections->isNotEmpty())
@@ -185,14 +186,14 @@
             <x-empty-state icon="map-pin" title="No Locations to manage yet" description="There are no locations you can manage reviews for yet." data-role="review-empty" />
         </x-card>
     @else
-        <div class="row">
-            <div class="col-lg-4 order-lg-2 mb-2" data-section="review-links">
+        <div class="rv-layout">
+            <div class="rv-col-side" data-section="review-links">
                 @foreach($sections as $section)
                     @php
                         $location = $section->location;
                         $canWrite = $canManage && $section->writable;
                     @endphp
-                    <x-card class="rv-location mb-2" id="location-{{ $location->uid }}" data-section="review-location" data-location="{{ $location->uid }}">
+                    <x-card class="rv-location" id="location-{{ $location->uid }}" data-section="review-location" data-location="{{ $location->uid }}">
                         <div class="rv-location-head">
                             <div class="rv-location-title">
                                 <span class="rv-location-icon"><x-ds-icon name="map-pin" size="16" /></span>
@@ -222,7 +223,7 @@
                             </div>
                         </div>
 
-                        <div data-role="review-link">
+                        <div class="rv-link-wrap" data-role="review-link">
                             @if($section->effectiveLink !== null)
                                 <div class="rv-link-row">
                                     <div class="rv-link-box">
@@ -288,7 +289,7 @@
                 </div>
             </div>
 
-            <div class="col-lg-8 order-lg-1 mb-2">
+            <div class="rv-col-main">
                 <x-card :padded="false" class="rv-ledger" data-section="review-requests">
                     <div class="rv-ledger-head">
                         <div>
@@ -393,4 +394,5 @@
             </div>
         </div>
     @endif
+  </div>
 @endsection

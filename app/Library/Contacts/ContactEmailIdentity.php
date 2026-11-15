@@ -52,6 +52,7 @@ final class ContactEmailIdentity
                 'NOTES' => ['label' => 'Notes', 'type' => 'textarea'],
                 'FIRST_NAME' => ['label' => 'First name', 'type' => 'text'],
                 'LAST_NAME' => ['label' => 'Last name', 'type' => 'text'],
+                'COMPANY' => ['label' => 'Company', 'type' => 'text'],
                 default => throw new InvalidArgumentException('Unknown built-in contact field ' . $tag),
             };
 
