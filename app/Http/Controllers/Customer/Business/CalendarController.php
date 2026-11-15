@@ -16,6 +16,9 @@ use App\Library\Calendar\AppointmentBookingService;
 use App\Library\Calendar\BookingTypeManager;
 use App\Library\Calendar\CalendarLocationResolver;
 use App\Library\Calendar\CalendarScheduleService;
+use App\Library\Calendar\BookingLocationLabel;
+use App\Library\Calendar\StaffBookingSlots;
+use App\Library\Calendar\Zoom\ZoomHostResolver;
 use App\Models\Appointment;
 use App\Models\Business;
 use App\Models\BusinessLocation;
@@ -78,6 +81,7 @@ class CalendarController extends Controller
         private readonly BookingTypeManager $bookingTypes,
         private readonly CalendarLocationResolver $locations,
         private readonly CalendarScheduleService $schedule,
+        private readonly StaffBookingSlots $availability,
     ) {
     }
 
@@ -217,9 +221,18 @@ class CalendarController extends Controller
     }
 
     /**
-     * The booking form. Contact choice is a server-side search over EXISTING
-     * Contacts (Sub-slice E owns find-or-create), narrowed to those bookable at
-     * this Location.
+     * The "Book appointment" screen.
+     *
+     * The customer arrives preselected (`?contact=<uid>`, e.g. from a Contact
+     * profile) or is chosen with the server-side search below. A `contact` uid is
+     * resolved through findBookableContact(): this Business, and a Location this
+     * Location may book. One that is another Business's, a sibling Location's, or
+     * unknown is a 404 — never a hint that the row exists. After a validation or
+     * engine refusal the choice survives through the old `contact_uid` input.
+     *
+     * Everything shown is presentation of existing data. Offered times come from
+     * StaffBookingSlots (the canonical availability pair); the POST re-validates
+     * through AppointmentBookingService, so a stale page can never book.
      */
     public function create(Request $request, string $workspaceUid, string $businessUid, string $locationUid): View
     {
@@ -227,19 +240,85 @@ class CalendarController extends Controller
 
         $timezone = $this->timezoneFor($business);
         $search = (string) $request->query('q', '');
+        $changing = $request->boolean('change');
+
+        $requested = $request->query('contact');
+        $contactUid = is_string($requested) && $requested !== '' ? $requested : $request->old('contact_uid');
+        $contact = null;
+
+        if (is_string($contactUid) && $contactUid !== '' && ! $changing) {
+            $model = $this->schedule->findBookableContact($business, $location, $contactUid);
+
+            // An explicit link to a Contact this actor may not book here is a 404; a stale old() value is ignored.
+            abort_if($model === null && is_string($requested) && $requested !== '', 404);
+
+            $contact = $model === null ? null : $this->contactCard($business, $model);
+        }
+
+        $bookingTypes = $this->bookingTypes->forLocation($location)->where('is_active', true)->values();
+        $staff = $this->locations->eligibleStaff($workspace, $business, $location);
+
+        $screen = null;
+
+        if ($contact !== null && $bookingTypes->isNotEmpty()) {
+            $screen = $this->bookingState($request, $location, $bookingTypes, $staff, $timezone);
+        }
 
         return view('customer.business.calendar.create', [
             'workspace' => $workspace,
             'business' => $business,
             'location' => $location,
             'timezone' => $timezone,
-            'bookingTypes' => $this->bookingTypes->forLocation($location)->where('is_active', true)->values(),
-            'staff' => $this->locations->eligibleStaff($workspace, $business, $location),
+            'timezoneLabel' => $this->timezoneLabel($timezone),
+            'bookingTypes' => $bookingTypes,
+            'typeCards' => $bookingTypes->map(fn ($type): array => [
+                'uid' => (string) $type->uid,
+                'name' => (string) $type->name,
+                'minutes' => (int) $type->duration_minutes,
+                'where' => $this->whereLabel($type, $location),
+            ])->all(),
+            'staff' => $staff,
             'search' => $search,
-            'contacts' => $this->schedule->searchBookableContacts($business, $location, $search),
+            'contact' => $contact,
+            'contacts' => $contact === null ? $this->schedule->searchBookableContacts($business, $location, $search) : [],
+            'screen' => $screen,
             'prefillDate' => $this->anchorDate($request->query('date'), $timezone)->toDateString(),
             'prefillTime' => $this->validTime($request->query('time')) ?? '09:00',
         ]);
+    }
+
+    /**
+     * Offered days and times for one Booking Type + staff choice, as JSON, for the
+     * booking screen to redraw without a reload. Same three gates as every action
+     * here, the same canonical availability pair as the public scheduler, and
+     * advisory only: the booking POST still re-validates under lock.
+     */
+    public function slots(Request $request, string $workspaceUid, string $businessUid, string $locationUid): \Illuminate\Http\JsonResponse
+    {
+        [, $business, $location] = $this->scope($workspaceUid, $businessUid, $locationUid);
+
+        $validated = $request->validate([
+            'booking_type_uid' => ['required', 'string'],
+            'staff' => ['required', 'string'],
+            'date' => ['required', 'date_format:Y-m-d'],
+            'week' => ['nullable', 'date_format:Y-m-d'],
+        ]);
+
+        $type = $this->bookingTypes->findForLocation($location, $validated['booking_type_uid']) ?? abort(404);
+        abort_unless($type->isActive(), 404);
+
+        $timezone = $this->timezoneFor($business);
+        $staffIds = $this->availability->staffIds($type, $location, $validated['staff']);
+
+        return response()->json([
+            'date' => $validated['date'],
+            'timezone' => $timezone,
+            'days' => $this->availability->week($location, $type, $staffIds, $validated['week'] ?? $validated['date'], $timezone),
+            'slots' => $this->availability->day($location, $type, $staffIds, $validated['date'], $timezone),
+            'where' => $this->whereLabel($type, $location),
+            'minutes' => (int) $type->duration_minutes,
+            'has_staff' => $staffIds !== [],
+        ])->header('Cache-Control', 'no-store');
     }
 
     /**
@@ -618,6 +697,105 @@ class CalendarController extends Controller
         }
 
         return (int) $value;
+    }
+
+    /**
+     * The selected-customer card: name, display phone, Contact group and initials.
+     *
+     * @return array{uid: string, name: string, phone: string, group: ?string, initials: string}
+     */
+    private function contactCard(Business $business, \App\Models\Contacts $contact): array
+    {
+        $summary = app(\App\Library\Contacts\ContactDirectory::class)->summaries($business, [(int) $contact->id])[(int) $contact->id] ?? null;
+        $name = trim((string) ($summary['name'] ?? ''));
+        $group = $contact->contactGroup !== null && (int) $contact->contactGroup->business_id === (int) $business->id
+            ? (string) $contact->contactGroup->name
+            : null;
+        $label = $name !== '' ? $name : (string) ($summary['phone'] ?? 'Unnamed contact');
+        $parts = preg_split('/\s+/', $name, -1, PREG_SPLIT_NO_EMPTY) ?: [];
+        $initials = $parts === [] ? '#' : mb_strtoupper(mb_substr($parts[0], 0, 1) . (isset($parts[1]) ? mb_substr(end($parts), 0, 1) : ''));
+
+        return [
+            'uid' => (string) $contact->uid,
+            'name' => $label,
+            'first' => $parts[0] ?? $label,
+            'phone' => $this->formatPhone((string) ($summary['phone'] ?? '')),
+            'group' => $group,
+            'initials' => $initials,
+        ];
+    }
+
+    /** "+16016926705" → "+1 (601) 692-6705"; any other shape is shown as stored. */
+    private function formatPhone(string $phone): string
+    {
+        return preg_match('/^\+1(\d{3})(\d{3})(\d{4})$/', $phone, $m) === 1 ? "+1 ({$m[1]}) {$m[2]}-{$m[3]}" : $phone;
+    }
+
+    /** Where a Booking Type meets, from its own default, else the Location. */
+    private function whereLabel(\App\Models\BookingType $type, BusinessLocation $location): string
+    {
+        $effective = ZoomHostResolver::effective($type);
+
+        return match ($effective['type']) {
+            'zoom' => 'Zoom meeting',
+            'phone' => 'Phone call',
+            'in_person' => 'In person',
+            'custom' => filled($effective['custom']) ? (string) $effective['custom'] : 'Custom location',
+            default => BookingLocationLabel::for($location) ?? 'At this location',
+        };
+    }
+
+    /** "New York (EST)" style label for the Business zone; the IANA id when it cannot be read. */
+    private function timezoneLabel(string $timezone): string
+    {
+        try {
+            $name = (new \DateTimeZone($timezone))->getName();
+            $abbr = Carbon::now($timezone)->format('T');
+
+            $city = str_replace('_', ' ', str_contains($name, '/') ? substr($name, strrpos($name, '/') + 1) : $name);
+
+            return $city . ' (' . $abbr . ')';
+        } catch (\Throwable) {
+            return $timezone;
+        }
+    }
+
+    /**
+     * The first paint of the booking screen: the selected type / staff / day and the
+     * days and times the canonical availability pair offers for them. The browser
+     * redraws these through slots() on every change.
+     *
+     * @param  \Illuminate\Support\Collection<int, \App\Models\BookingType>  $types
+     * @param  \Illuminate\Support\Collection<int, \App\Models\User>  $staff
+     * @return array<string, mixed>
+     */
+    private function bookingState(Request $request, BusinessLocation $location, $types, $staff, string $timezone): array
+    {
+        $typeUid = (string) ($request->old('booking_type_uid') ?? $request->query('type', ''));
+        $type = $types->firstWhere('uid', $typeUid) ?? $types->first();
+
+        $staffChoice = (string) ($request->old('staff') ?? $request->query('staff', 'auto'));
+        $staffChoice = $staffChoice === 'auto' || $staff->contains(fn ($user) => (string) $user->id === $staffChoice) ? $staffChoice : 'auto';
+        $staffIds = $this->availability->staffIds($type, $location, $staffChoice);
+
+        $requestedDate = $request->old('date') ?? $request->query('date');
+        $date = $this->isCalendarDate($requestedDate)
+            ? $this->anchorDate($requestedDate, $timezone)->toDateString()
+            : ($this->availability->firstAvailableDate($location, $type, $staffIds, Carbon::now($timezone)->toDateString(), $timezone)
+                ?? Carbon::now($timezone)->toDateString());
+
+        $slots = $this->availability->day($location, $type, $staffIds, $date, $timezone);
+        $time = $this->validTime($request->old('time') ?? $request->query('time'));
+
+        return [
+            'type' => (string) $type->uid,
+            'staff' => $staffChoice,
+            'date' => $date,
+            'time' => collect($slots)->contains('time', $time) ? $time : null,
+            'slots' => $slots,
+            'days' => $this->availability->week($location, $type, $staffIds, $date, $timezone),
+            'hasStaff' => $staffIds !== [],
+        ];
     }
 
     // -----------------------------------------------------------------

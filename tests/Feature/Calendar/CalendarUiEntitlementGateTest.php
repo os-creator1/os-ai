@@ -32,6 +32,7 @@ class CalendarUiEntitlementGateTest extends TestCase
         $routes = [
             ['get', 'schedule', $scope],
             ['get', 'appointments.create', $scope],
+            ['get', 'appointments.slots', $scope],
             ['post', 'appointments.store', $scope],
             ['get', 'appointments.show', $appointment],
             ['post', 'appointments.reschedule', $appointment],

@@ -2054,6 +2054,7 @@
             // registered before `{appointmentUid}` so it is not swallowed.
             Route::get('/schedule', 'Business\CalendarController@show')->name('schedule');
             Route::get('/appointments/new', 'Business\CalendarController@create')->name('appointments.create');
+            Route::get('/appointments/slots', 'Business\CalendarController@slots')->name('appointments.slots');
             Route::post('/appointments', 'Business\CalendarController@store')->name('appointments.store');
             Route::get('/appointments/{appointmentUid}', 'Business\CalendarController@showAppointment')->name('appointments.show');
             Route::post('/appointments/{appointmentUid}/reschedule', 'Business\CalendarController@reschedule')->name('appointments.reschedule');
