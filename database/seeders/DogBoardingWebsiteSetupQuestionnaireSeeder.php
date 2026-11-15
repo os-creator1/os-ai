@@ -220,7 +220,7 @@ class DogBoardingWebsiteSetupQuestionnaireSeeder extends Seeder
                 templateHint: ['warm' => 'dog_boarding_warm', 'fresh' => 'dog_boarding_fresh', 'playful' => 'dog_boarding_playful']),
             self::step('primary_cta', 'What should visitors do first?', 'select', true, 'knowledge_profile', 'primary_conversion_goal',
                 helpText: 'A stay request is reviewed and confirmed by you. It is never an instant booking.',
-                options: ['quote_request' => 'Request a stay (recommended)', 'consultation_booking' => 'Request a meet & greet', 'call' => 'Call us', 'calendar_booking' => 'Book a meet & greet in my calendar (needs a connected calendar)']),
+                options: ['quote_request' => 'Request a stay (recommended)', 'consultation_booking' => 'Request a meet & greet', 'call' => 'Call us', 'calendar_booking' => 'Book a meet & greet in my calendar (only once you have activated a booking type)']),
             self::step('offers_meet_greet', 'Do you offer a meet & greet or facility tour?', 'boolean', true, 'answers', null),
             self::step('preferred_contact_channels', 'How do you prefer owners to contact you?', 'multi_select', false, 'answers', null, options: ['phone' => 'Phone call', 'text' => 'Text message', 'email' => 'Email']),
             self::step('contact_form_fields', 'What should your stay request form ask for?', 'multi_select', true, 'website_form', null,

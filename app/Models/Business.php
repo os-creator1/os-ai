@@ -16,6 +16,31 @@ class Business extends Model
 {
     use HasUid;
 
+    protected static function booted(): void
+    {
+        // A website's name is copied from its Business when the website is created. When the owner later confirms or
+        // changes the business name, a website that still carries the OLD name (never customised) follows it, so the header,
+        // footer and structured data never show a stale identity. A website the owner named differently is left alone, and
+        // only this Business's own websites are touched. A published revision stays frozen until the owner publishes again.
+        static::updated(function (Business $business): void {
+            if (! $business->wasChanged('name')) {
+                return;
+            }
+
+            $old = (string) $business->getOriginal('name');
+            $new = \Illuminate\Support\Str::limit((string) $business->name, 120, '');
+
+            if ($old === '' || $new === '') {
+                return;
+            }
+
+            \App\Models\Website::query()
+                ->where('business_id', $business->id)
+                ->where('name', \Illuminate\Support\Str::limit($old, 120, ''))
+                ->update(['name' => $new]);
+        });
+    }
+
     /**
      * The Home readiness policy of every Business created since the SEO-first onboarding (businesses.readiness_policy).
      * A NULL column is an established Business that predates it. Not mass-assignable: written only by

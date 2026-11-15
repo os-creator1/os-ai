@@ -162,4 +162,33 @@ class DogBoardingBlueprintInstallTest extends TestCase
         $this->assertSame([], array_intersect($firstIds, $secondIds));
         $this->assertSame(0, Form::query()->where('business_id', $second->id)->whereIn('id', Form::query()->where('business_id', $first->id)->pluck('id'))->count());
     }
+
+    public function test_the_meet_and_greet_booking_type_waits_for_a_location_instead_of_inventing_one(): void
+    {
+        $this->seedNiche('dog_boarding');
+        [, $business] = $this->businessInstalledFrom('dog_boarding');
+
+        $record = $this->installationRecords($business)->get('dogboard_booking_meet_greet');
+        $this->assertSame('failed', $record->state->value, 'A booking type belongs to a Location; with none the component is a retryable failure, never a fake one.');
+        $this->assertSame(0, \Illuminate\Support\Facades\DB::table('booking_types')->count());
+
+        // The rest of the niche still installed: a missing Location never blocks the request workflow.
+        $this->assertSame('installed', $this->installationRecords($business)->get('dogboard_form_stay_request')->state->value);
+    }
+
+    public function test_once_a_location_exists_the_booking_type_installs_inactive_and_never_publicly_bookable(): void
+    {
+        $this->seedNiche('dog_boarding');
+        [, $business] = $this->businessInstalledFrom('dog_boarding');
+        \App\Models\BusinessLocation::create(['business_id' => $business->id, 'name' => 'Main', 'service_mode' => 'storefront', 'country_code' => 'US']);
+
+        app(NicheBlueprintInstaller::class)->installForBusiness($business->fresh());
+
+        $this->assertSame('installed', $this->installationRecords($business)->get('dogboard_booking_meet_greet')->state->value);
+        $type = \Illuminate\Support\Facades\DB::table('booking_types')->first();
+        $this->assertNotNull($type);
+        $this->assertSame('Meet & greet', $type->name);
+        $this->assertSame(0, (int) $type->is_active, 'Installed inactive: it is bookable only after the owner reviews it, adds staff and activates it.');
+        $this->assertSame(1, \Illuminate\Support\Facades\DB::table('booking_types')->count());
+    }
 }

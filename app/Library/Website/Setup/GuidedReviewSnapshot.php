@@ -73,7 +73,7 @@ final class GuidedReviewSnapshot
             'book_now' => 'Book now',
             'quote_request' => $this->isDogBoarding($response) ? 'Request a stay' : 'Request a quote',
             'consultation_booking' => 'Request a meet & greet',
-            'calendar_booking' => 'Book a meet & greet',
+            'calendar_booking' => $this->isDogBoarding($response) ? 'Request a stay (a meet & greet booking button appears only once your booking type is active)' : 'Book a meet & greet',
             default => null,
         };
 

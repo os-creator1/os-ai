@@ -420,4 +420,184 @@ class DogBoardingWebsiteJourneyTest extends TestCase
         $keys = $this->get($this->url('start'))->getContent();
         $this->assertStringNotContainsString('photo_booth_modern', $keys);
     }
+
+    // --------------------------------------------------- correction round tests
+
+    public function test_the_website_identity_follows_the_business_name_the_owner_confirmed(): void
+    {
+        $website = $this->fullDogSite();
+
+        $this->assertSame('Maple Paws Boarding', $this->business->fresh()->name);
+        $this->assertSame('Maple Paws Boarding', $website->fresh()->name, 'The website no longer keeps the name the business had when the shell was created.');
+
+        app(WebsitePublisher::class)->publish($website->fresh(), (int) $this->customer->user_id);
+        $html = $this->get(route('public.website.home', $website->public_id))->getContent();
+        $this->assertStringContainsString('Maple Paws Boarding', $html);
+        $this->assertStringNotContainsString('Snap Booth Co', $html);
+    }
+
+    public function test_an_owner_chosen_website_name_is_never_overwritten_by_a_business_rename(): void
+    {
+        $website = $this->fullDogSite();
+        $website->forceFill(['name' => 'Maple Paws Retreat'])->save();
+
+        $this->business->fresh()->forceFill(['name' => 'Maple Paws LLC'])->save();
+
+        $this->assertSame('Maple Paws Retreat', $website->fresh()->name);
+    }
+
+    public function test_renaming_one_business_never_renames_another_tenants_website(): void
+    {
+        $website = $this->fullDogSite();
+        $first = $this->business;
+        $this->tenant(['name' => $first->getOriginal('name')], ['city' => 'Boise', 'region' => 'ID'], start: false);
+        $other = $this->business;
+        $this->assertNotSame($first->id, $other->id);
+        $otherSite = $this->createWebsite($other, ['name' => 'Maple Paws Boarding']);
+
+        $first->fresh()->forceFill(['name' => 'Maple Paws Renamed'])->save();
+
+        $this->assertSame('Maple Paws Boarding', $otherSite->fresh()->name, 'The rename is scoped to its own business.');
+        $this->assertSame('Maple Paws Renamed', $website->fresh()->name);
+    }
+
+    private function publishedFormContext(): array
+    {
+        $website = $this->fullDogSite();
+        app(WebsitePublisher::class)->publish($website->fresh(), (int) $this->customer->user_id);
+        $website = $website->fresh();
+        $form = $website->forms()->sole();
+        $page = $website->pages()->where('slug', 'request-a-stay')->firstOrFail();
+
+        return [$website, route('public.website.form.submit', [$website->public_id, $form->uid, $page->uid])];
+    }
+
+    private function customValues(\App\Models\Contacts $contact): array
+    {
+        return \App\Models\CustomFieldValue::query()->where('contact_id', $contact->id)->with('definition')->get()
+            ->mapWithKeys(fn ($v) => [$v->definition->label => $v->value_text ?? $v->value_number ?? $v->value_date ?? json_encode($v->getAttributes())])->all();
+    }
+
+    public function test_a_stay_request_fills_the_contacts_dog_custom_fields_and_never_the_private_notes(): void
+    {
+        [, $url] = $this->publishedFormContext();
+
+        $this->post($url, [
+            'name' => 'Jordan Rivera', 'phone' => '5095550101', 'email' => 'jordan@example.test', 'dog_name' => 'Biscuit',
+            'dog_breed_size' => 'Beagle, medium', 'dog_count' => '2', 'arrival_date' => '2026-12-20', 'departure_date' => '2026-12-27',
+            'services_requested' => 'Overnight boarding, daycare', 'message' => 'Takes thyroid medication twice a day.',
+        ])->assertRedirect();
+
+        $contact = \App\Models\Contacts::where('business_id', $this->business->id)->sole();
+        $values = $this->customValues($contact);
+        $this->assertSame('Biscuit', $values['Dog name']);
+        $this->assertSame('Beagle, medium', $values['Dog breed']);
+        $this->assertArrayHasKey('Number of dogs', $values);
+        $this->assertArrayHasKey('Requested arrival date', $values);
+        $this->assertArrayHasKey('Requested departure date', $values);
+        $this->assertArrayHasKey('Requested services', $values);
+        $this->assertStringNotContainsString('thyroid', json_encode($values), 'Care notes are never copied onto the contact.');
+        $this->assertSame(0, \Illuminate\Support\Facades\DB::table('custom_field_values')->where('business_id', '!=', $this->business->id)->count());
+    }
+
+    public function test_a_returning_contact_only_has_blank_dog_fields_filled(): void
+    {
+        [, $url] = $this->publishedFormContext();
+        $payload = ['name' => 'Jordan Rivera', 'phone' => '5095550101', 'dog_name' => 'Biscuit'];
+
+        $this->post($url, $payload)->assertRedirect();
+        $this->post($url, ['dog_name' => 'Pepper', 'dog_breed_size' => 'Corgi'] + $payload)->assertRedirect();
+
+        $contact = \App\Models\Contacts::where('business_id', $this->business->id)->sole();
+        $values = $this->customValues($contact);
+        $this->assertSame('Biscuit', $values['Dog name'], 'A second dog never overwrites what the owner already knows.');
+        $this->assertSame('Corgi', $values['Dog breed'], 'A blank field is filled.');
+        $this->assertSame(1, \App\Models\CrmOpportunity::where('business_id', $this->business->id)->count());
+    }
+
+    public function test_an_invalid_answer_never_blocks_the_inquiry(): void
+    {
+        [, $url] = $this->publishedFormContext();
+
+        $this->post($url, ['name' => 'Jordan Rivera', 'phone' => '5095550101', 'dog_count' => 'lots', 'services_requested' => 'Skydiving'])->assertRedirect();
+
+        $this->assertSame(1, WebsiteFormSubmission::count());
+        $this->assertSame(1, \App\Models\CrmOpportunity::where('business_id', $this->business->id)->count());
+        $values = $this->customValues(\App\Models\Contacts::where('business_id', $this->business->id)->sole());
+        $this->assertArrayNotHasKey('Number of dogs', $values);
+        $this->assertArrayNotHasKey('Requested services', $values);
+    }
+
+    public function test_an_interrupted_generation_is_retried_safely_once_the_lease_expires(): void
+    {
+        $this->dogTenant();
+        $this->completeDogSetup();
+        $this->uploadGalleryPhotos(3);
+        $website = Website::where('business_id', $this->business->id)->firstOrFail();
+        $coordinator = app(\App\Library\Website\GuidedGeneration\WebsiteGenerationCoordinator::class);
+
+        // Another worker holds a fresh lease (and then dies): the owner's generate is refused and commits nothing.
+        $dead = $coordinator->beginLease($website);
+        $this->post($this->url('generate'), ['answers_revision' => $this->wizardSession()->answers_revision]);
+        $this->assertSame(0, $website->pages()->count());
+
+        // The lease expires; the retry succeeds, replaces nothing twice, and the dead worker's token is useless.
+        Website::whereKey($website->id)->update(['generation_lease_started_at' => now()->subSeconds(\App\Library\Website\GuidedGeneration\WebsiteGenerationCoordinator::LEASE_SECONDS + 1)]);
+        $this->post($this->url('generate'), ['answers_revision' => $this->wizardSession()->answers_revision])->assertRedirect();
+
+        $this->assertGreaterThanOrEqual(8, $website->fresh()->pages()->count());
+        $this->assertSame(1, $website->fresh()->pages()->where('is_home', true)->count());
+        $this->assertNull($website->fresh()->generation_lease_token, 'The lease is released after the retry.');
+
+        $this->assertNotNull($dead);
+        $count = $website->fresh()->pages()->count();
+        $context = \App\Library\Website\Setup\WizardPresentationAnswers::blueprintContext(QuestionnaireResponse::where('business_id', $this->business->id)->latest('id')->firstOrFail());
+        $stale = app(\App\Library\Website\GuidedGeneration\GuidedGenerationCommitService::class)->generateFull(
+            $this->business, $website->fresh(), \App\Models\WebsiteTemplate::where('key', $website->fresh()->template_key)->firstOrFail(),
+            (int) $this->customer->user_id, 'idem-dead-worker', $dead, null, null, null, null, $context,
+        );
+        $this->assertSame(WebsiteGuidedGenerationAttempt::STATUS_FAILED, $stale->status);
+        $this->assertSame($count, $website->fresh()->pages()->count(), 'An obsolete worker never replaces newer pages.');
+    }
+
+    public function test_studio_edits_are_saved_protected_from_stale_overwrites_and_survive_a_look_only_change(): void
+    {
+        $website = $this->fullDogSite();
+        $page = $website->pages()->where('slug', 'about-us')->firstOrFail();
+        $edit = fn ($p, array $extra = []) => $this->put(route('customer.workspaces.businesses.website.pages.update', [$this->workspace->uid, $this->business->uid, $p->uid]), $extra + [
+            'title' => $p->title, 'slug' => $p->slug, 'sections' => json_encode($p->sections), 'seo_title' => $p->seo_title, 'meta_description' => $p->meta_description,
+        ]);
+
+        $sections = $page->sections;
+        $sections[1]['data']['body'] = 'Our own words about the farm.';
+        $edit($page, ['sections' => json_encode($sections), 'draft_token' => $page->draftToken()])->assertRedirect();
+        $this->assertStringContainsString('Our own words about the farm.', json_encode($page->fresh()->sections));
+
+        // A second tab holding the OLD token cannot overwrite the newer edit.
+        $stale = $sections;
+        $stale[1]['data']['body'] = 'Overwritten from a stale tab.';
+        $edit($page, ['sections' => json_encode($stale), 'draft_token' => $page->draftToken()])->assertRedirect();
+        $this->assertStringNotContainsString('Overwritten from a stale tab.', json_encode($page->fresh()->sections));
+
+        // Changing only the look keeps the owner's edit.
+        $this->post(route('customer.workspaces.businesses.website.rebuild', [$this->workspace->uid, $this->business->uid]), [
+            'template_key' => 'dog_boarding_playful', 'mode' => 'look_only', 'confirm_rebuild' => '1',
+        ])->assertRedirect();
+        $this->assertStringContainsString('Our own words about the farm.', json_encode($website->fresh()->pages()->where('slug', 'about-us')->firstOrFail()->sections));
+    }
+
+    public function test_a_full_rebuild_needs_explicit_confirmation_so_an_unconfirmed_request_cannot_discard_an_edit(): void
+    {
+        $website = $this->fullDogSite();
+        $page = $website->pages()->where('slug', 'about-us')->firstOrFail();
+        $sections = $page->sections;
+        $sections[1]['data']['body'] = 'Edited by the owner.';
+        $this->put(route('customer.workspaces.businesses.website.pages.update', [$this->workspace->uid, $this->business->uid, $page->uid]), [
+            'title' => $page->title, 'slug' => $page->slug, 'sections' => json_encode($sections), 'seo_title' => $page->seo_title, 'meta_description' => $page->meta_description,
+        ])->assertRedirect();
+
+        $this->post(route('customer.workspaces.businesses.website.rebuild', [$this->workspace->uid, $this->business->uid]), ['template_key' => 'dog_boarding_warm']);
+
+        $this->assertStringContainsString('Edited by the owner.', json_encode($website->fresh()->pages()->where('slug', 'about-us')->firstOrFail()->sections));
+    }
 }

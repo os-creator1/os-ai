@@ -24,7 +24,7 @@ Idempotent. It ensures: the `dog_boarding` vertical row, three website templates
 | Forms module forms | "Request a Stay", "Request a Meet & Greet" |
 | Tags | Boarding inquiry, Meet & greet requested, Confirmed stay, Past boarder, Review requested, Pet details needed |
 | Automation (all **drafts**, never published on install) | New Stay Request, New Meet & Greet Request, Missing Pet Details, Meet & Greet Scheduling, Pending Approval Review (internal only), Stay Confirmed, After the Stay |
-| Booking type | "Meet & greet" (30 min). Installs only where the `calendar` feature is available; it is currently *Planned*, so the installer reports `skipped_unavailable`. No provider is assumed connected. |
+| Booking type | "Meet & greet" (30 min), installed **inactive** with no staff, so it is never publicly bookable until the owner reviews, adds staff and activates it. A booking type needs a Location: with none the component is `failed` (retryable; `blueprint:install-missing` installs it once a Location exists). No calendar provider is assumed connected. |
 | SEO / citations | Keyword patterns (`dog boarding {city}` …), FAQ topics, schema notes, citation recommendations |
 
 Installation records template defaults separately from owner changes (existing installer behaviour); re-running it never
@@ -61,4 +61,4 @@ rules, supervision, capacity, credentials and prices appear **only as the owner 
   message is sent when the owner moves a request to Booking Confirmed.
 * Mapping the public website form's fields onto contact custom fields: the website form stores the submission privately; the
   Forms-module form (which does map custom fields) is not embeddable in the generated site today.
-* Calendar booking until the `calendar` feature is available.
+* Public calendar booking until the owner activates a booking type with staff. Until then the site offers only the request form.
