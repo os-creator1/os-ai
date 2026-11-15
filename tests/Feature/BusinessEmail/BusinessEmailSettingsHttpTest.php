@@ -88,6 +88,9 @@ class BusinessEmailSettingsHttpTest extends TestCase
 
         $this->assertStringContainsString('boss@corp.test', $html);
         $this->assertStringContainsString('Microsoft (Outlook / Microsoft 365)', $html);
+        $this->assertStringContainsString('data-role="email-account"', $html);
+        $this->assertStringContainsString('data-role="email-account-menu"', $html);
+        $this->assertStringContainsString('data-role="email-recent-empty"', $html);
         $this->assertStringContainsString('Disconnect', $html);
         $this->assertStringNotContainsString('stored-refresh-token', $html);
         $this->assertStringNotContainsString('refresh_token', $html);
@@ -108,6 +111,7 @@ class BusinessEmailSettingsHttpTest extends TestCase
 
         $this->assertStringContainsString('owner@corp.test', $html);
         $this->assertStringContainsString('Receiving is working. Last checked', $html);
+        $this->assertStringContainsString('data-role="email-health"', $html);
         // (The phrase "Something went wrong" is shared layout markup, so it is not asserted against.)
         $this->assertStringContainsString('Disconnect', $html);
     }
@@ -144,6 +148,8 @@ class BusinessEmailSettingsHttpTest extends TestCase
 
         $this->assertStringContainsString('owner@business.test', $html);
         $this->assertStringNotContainsString('Disconnect', $html);
+        $this->assertStringNotContainsString('data-role="email-account-menu"', $html);
+        $this->assertStringContainsString('data-role="email-no-contacts"', $html);
         $this->assertStringContainsString('Send an email to a contact', $html);
     }
 
@@ -171,7 +177,10 @@ class BusinessEmailSettingsHttpTest extends TestCase
         $this->assertSame(1, $this->fakeGoogle->callCount('send'));
         $this->assertSame('pat@example.com', $this->fakeGoogle->sent[0]->toEmail);
 
-        $this->assertStringContainsString('accepted by your email provider', $this->get($this->showUrl($workspace, $business))->getContent());
+        $afterSend = $this->get($this->showUrl($workspace, $business))->getContent();
+        $this->assertStringContainsString('accepted by your email provider', $afterSend);
+        $this->assertStringContainsString('data-role="email-recent"', $afterSend);
+        $this->assertStringContainsString('me-email-row', $afterSend);
     }
 
     public function test_the_same_form_submitted_twice_sends_exactly_once(): void

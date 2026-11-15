@@ -73,16 +73,20 @@
         @media (max-width: 767px) { .bemail-grid, .bemail-other { grid-template-columns: 1fr; } }
     </style>
 
-    <div class="bemail">
-        <div class="bemail-head">
-            <h4>Business email</h4>
-            <span class="bemail-pill {{ $state === 'active' && $pageBadge === 'Connected' ? 'ok' : ($state === 'pending' || $state === 'revoked' || $pageBadge === 'Needs reauthorization' ? 'warn' : '') }}" data-role="email-status-badge">{{ $pageBadge }}</span>
-        </div>
-        <p class="text-muted mb-2">
-            Connect the email account you already use. Emails to your contacts go out from it, so replies land in the inbox you already read.
-        </p>
+    <link rel="stylesheet" href="{{ asset('css/email/settings-redesign.css') }}?v={{ filemtime(public_path('css/email/settings-redesign.css')) }}">
 
-        @if ($isConnectFlow)
+    <div class="bemail mg-email">
+        <header class="me-head">
+            <a class="me-back" href="{{ route('customer.workspaces.businesses.settings.show', [$workspaceUid, $businessUid]) }}">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19 12H5M11 6l-6 6 6 6"/></svg>
+                Settings
+            </a>
+            <h1 class="me-heading">Email</h1>
+            <p class="me-subheading">Emails to contacts go out from your own inbox, so replies land where you already read.</p>
+            @if ($isConnectFlow)
+                <span class="bemail-pill {{ in_array($state, ['pending', 'revoked'], true) ? 'warn' : '' }}" data-role="email-status-badge" style="align-self:flex-start">{{ $pageBadge }}</span>
+            @endif
+        </header>        @if ($isConnectFlow)
             @if ($state === 'revoked')
                 <x-alert variant="warning" data-role="email-connection-revoked">Your email provider ended this connection. Reconnect to send email again.</x-alert>
             @elseif ($state === 'pending')
@@ -194,69 +198,193 @@
                 <p class="text-muted mb-0">You do not have permission to connect or change the email account. Ask the account owner to connect it or to grant you access.</p>
             @endif
             @else
-                <div class="bemail-card mb-1">
-                <p class="mb-2">
-                    Connected to <strong>{{ $connectedLabel }}</strong>
-                    @if ($account->mailbox_email)
-                        as <strong>{{ $account->mailbox_email }}</strong>
+                @php
+                    // "Connected" means the account is active, not necessarily that mail has been delivered or synced.
+                    $sendFailed = (bool) $account->failure_classification;
+                    $hasAcceptedSend = $messages->contains(fn ($message) => $message->direction === 'outbound' && $message->status->value === 'accepted');
+                    $receivingHealthy = $account->inbound_synced_at !== null && ! $account->inbound_failure;
+                @endphp
+                <section class="me-card me-account" aria-label="Connected email account" data-role="email-account">
+                    <span class="me-mail-icon" aria-hidden="true">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                            <rect x="3.5" y="5.5" width="17" height="13" rx="2"/><path d="M4 7l8 6 8-6"/>
+                        </svg>
+                    </span>
+                    <div class="me-account-info">
+                        <div class="me-account-line">
+                            <strong>{{ $account->mailbox_email ?: 'Connected email account' }}</strong>
+                            <span class="me-provider">
+                                Connected to <strong>{{ $connectedLabel }}</strong>
+                                @if ($account->connected_at)
+                                    · connected {{ $account->connected_at->diffForHumans() }}
+                                @endif
+                            </span>
+                            <span class="sr-only" data-role="email-status-badge">{{ $pageBadge }}</span>
+                        </div>
+                        <div class="me-states" data-role="email-health">
+                            @if ($sendFailed)
+                                <span class="me-state err" title="The last send had a problem."><span aria-hidden="true">!</span> Sending needs attention</span>
+                            @elseif ($hasAcceptedSend)
+                                <span class="me-state"><span aria-hidden="true">✓</span> Sending · provider accepted</span>
+                            @else
+                                <span class="me-state muted"><span aria-hidden="true">✓</span> Sending ready</span>
+                            @endif
+                            @if ($receivingHealthy)
+                                <span class="me-state" title="Receiving is working. Last checked {{ $account->inbound_synced_at->diffForHumans() }}.">
+                                    <span aria-hidden="true">✓</span> Receiving · checked {{ $account->inbound_synced_at->diffForHumans() }}
+                                </span>
+                            @elseif ($account->inbound_failure)
+                                <span class="me-state err">Receiving needs attention</span>
+                            @elseif ($inboundNeedsReauth)
+                                <span class="me-state warn">Receiving needs authorization</span>
+                            @elseif ($inboundReady)
+                                <span class="me-state warn">Receiving · awaiting first check</span>
+                            @else
+                                <span class="me-state muted">Receiving not available</span>
+                            @endif
+                            @if ((int) $account->inbound_skipped_count > 0)
+                                <span class="me-state warn">{{ (int) $account->inbound_skipped_count }} messages not imported</span>
+                            @endif
+                        </div>
+                    </div>
+                    @if ($canManage)
+                        <details class="me-account-more" data-role="email-account-menu">
+                            <summary aria-label="More email account options" title="Account options">
+                                <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                                    <circle cx="5" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="19" cy="12" r="1.5"/>
+                                </svg>
+                            </summary>
+                            <div class="me-account-menu">
+                                @if ($inboundNeedsReauth || $account->inbound_failure === 'reauthorization_required')
+                                    @if (in_array($account->provider->value, ['google', 'microsoft'], true))
+                                        <form method="POST" action="{{ route('customer.workspaces.businesses.email.connect', [$workspaceUid, $businessUid, $account->provider->value]) }}">
+                                            @csrf
+                                            <input type="hidden" name="reauthorize" value="1">
+                                            <button type="submit">Reauthorize to receive replies</button>
+                                        </form>
+                                    @endif
+                                @endif
+                                <form method="POST" action="{{ route('customer.workspaces.businesses.email.disconnect', [$workspaceUid, $businessUid]) }}">
+                                    @csrf
+                                    <button type="submit">Disconnect</button>
+                                </form>
+                            </div>
+                        </details>
                     @endif
-                    .
-                </p>
-                @if ($account->connected_at)
-                    <p class="text-muted mb-2">Connected {{ $account->connected_at->diffForHumans() }}.</p>
-                @endif
+                </section>
+
                 @if ($account->provider->value === 'imap' && $imapSummary !== null)
-                    <p class="text-muted mb-2" data-role="email-imap-summary">Receiving: {{ $imapSummary['imap'] }} · Sending: {{ $imapSummary['smtp'] }} (encrypted, certificate verified)</p>
+                    <div class="me-alert" data-role="email-imap-summary">
+                        Receiving: {{ $imapSummary['imap'] }} · Sending: {{ $imapSummary['smtp'] }} (encrypted, certificate verified)
+                    </div>
                 @endif
-                <p class="mb-2" data-role="email-health">
-                    @if ($account->inbound_failure)
-                        <span class="text-warning">Receiving problem:</span> {{ $inboundFailureText }}
-                    @elseif ($account->inbound_synced_at)
-                        Receiving is working. Last checked {{ $account->inbound_synced_at->diffForHumans() }}.
-                    @elseif ($inboundReady)
-                        Receiving is set up and will start shortly.
-                    @endif
-                    @if ((int) $account->inbound_skipped_count > 0)
-                        <span class="text-muted">· {{ (int) $account->inbound_skipped_count }} message(s) could not be imported.</span>
-                    @endif
-                </p>
-                @if ($account->failure_classification)
-                    <x-alert variant="warning" data-role="email-last-send-failed">The last send had a problem. If it keeps happening, reconnect your account.</x-alert>
+                @if ($sendFailed)
+                    <div class="me-alert" data-role="email-last-send-failed">The last send had a problem. If it keeps happening, reconnect your account.</div>
                 @endif
-
                 @if ($inboundNeedsReauth)
-                    <x-alert variant="info" data-role="email-inbound-reauth">
-                        Receiving replies from this mailbox needs one more permission from {{ $account->provider->value === 'microsoft' ? 'Microsoft' : 'Google' }}.
+                    <div class="me-alert" data-role="email-inbound-reauth">
+                        <strong>Receiving replies needs another permission</strong>
+                        {{ $account->provider->value === 'microsoft' ? 'Microsoft' : 'Google' }} needs you to approve reading this inbox.
                         @if ($canManage)
-                            <form method="POST" class="d-inline-block ms-2"
-                                  action="{{ route('customer.workspaces.businesses.email.connect', [$workspaceUid, $businessUid, $account->provider->value]) }}">
-                                @csrf
-                                <input type="hidden" name="reauthorize" value="1">
-                                <button type="submit" class="btn btn-sm btn-outline-primary">Reauthorize to receive replies</button>
-                            </form>
+                            @if (in_array($account->provider->value, ['google', 'microsoft'], true))
+                                <form method="POST" action="{{ route('customer.workspaces.businesses.email.connect', [$workspaceUid, $businessUid, $account->provider->value]) }}" style="margin-top:8px">
+                                    @csrf
+                                    <input type="hidden" name="reauthorize" value="1">
+                                    <button type="submit" class="btn btn-outline-primary btn-sm">Reauthorize to receive replies</button>
+                                </form>
+                            @endif
                         @else
-                            Ask the account owner to reauthorize the connection.
+                            Ask the account owner to reauthorize.
                         @endif
-                    </x-alert>
+                    </div>
+                @elseif ($account->inbound_failure)
+                    <div class="me-alert" data-role="email-inbound-failed">
+                        <strong>Receiving problem</strong> {{ $inboundFailureText }}
+                    </div>
                 @endif
-                @if ($account->inbound_failure === 'reauthorization_required' && $inboundReady)
-                    <x-alert variant="warning" data-role="email-inbound-failed">Your email provider no longer allows us to read this mailbox. Reauthorize the connection to keep receiving replies.</x-alert>
-                @endif
-
-                @if ($canManage)
-                    <form method="POST" action="{{ route('customer.workspaces.businesses.email.disconnect', [$workspaceUid, $businessUid]) }}">
-                        @csrf
-                        <button type="submit" class="btn btn-outline-danger">Disconnect</button>
-                    </form>
-                @endif
-                </div>
             @endif
-    </div>
+        @if ($canSend && count($contacts) === 0)
+            <div class="me-contacts-tip" data-role="email-no-contacts">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <circle cx="9" cy="8" r="3.5"/><path d="M3 20c0-3.3 2.7-5.5 6-5.5s6 2.2 6 5.5M17 8v6M14 11h6"/>
+                </svg>
+                <div class="me-contacts-copy">
+                    <b>No contacts have an email yet</b>
+                    <span>Add one to a contact and you can email them from Conversations.</span>
+                    <span class="sr-only">None of your contacts has an email address yet.</span>
+                </div>
+                <a href="{{ route('customer.workspaces.businesses.people.index', [$workspaceUid, $businessUid]) }}" class="me-outline-btn">Go to contacts</a>
+            </div>
+        @endif
+
+        @if ($messages->isNotEmpty() && ($canManage || $canSend))
+            <section class="me-card me-recent" aria-label="Recent emails" data-role="email-recent">
+                <div class="me-recent-head">
+                    <strong>Recent emails</strong>
+                    <a class="me-link" href="{{ route('customer.workspaces.businesses.conversations.index', [$workspaceUid, $businessUid]) }}">Open in Conversations</a>
+                </div>
+                @foreach ($messages as $message)
+                    @php
+                        // Messages do not store a verified sender display name; use only the actual address.
+                        $otherAddress = $message->direction === 'inbound' ? (string) $message->from_email : (string) $message->to_email;
+                        $avatarLetters = strtoupper(substr(preg_replace('/[^a-z0-9]/i', '', explode('@', $otherAddress)[0] ?? ''), 0, 2));
+                        $avatarLetters = $avatarLetters ?: 'EM';
+                        $statusValue = $message->status->value;
+                    @endphp
+                    <div class="me-email-row">
+                        <div class="me-email-main">
+                            <span class="me-avatar {{ $message->direction === 'outbound' ? 'out' : '' }}" aria-hidden="true">{{ $avatarLetters }}</span>
+                            <div class="me-email-content">
+                                <span class="me-email-subject" title="{{ $message->subject }}">{{ $message->subject ?: 'No subject' }}</span>
+                                <span class="me-email-from">{{ $message->direction === 'inbound' ? 'From' : 'To' }} · {{ $otherAddress }}</span>
+                            </div>
+                            @if ($message->direction === 'outbound')
+                                @if ($statusValue === 'accepted')
+                                    <span class="me-msg-status accepted" title="accepted by your email provider">Accepted</span>
+                                @elseif ($statusValue === 'failed')
+                                    <span class="me-msg-status failed" title="{{ $message->failure_category?->customerMessage() }}">Not sent</span>
+                                @elseif ($statusValue === 'unconfirmed')
+                                    <span class="me-msg-status">Unconfirmed</span>
+                                @else
+                                    <span class="me-msg-status">Sending</span>
+                                @endif
+                            @endif
+                            <time class="me-email-time" datetime="{{ $message->created_at?->toIso8601String() }}">{{ $message->created_at?->diffForHumans() }}</time>
+                        </div>
+                        @if ($canSend && $statusValue !== 'failed')
+                            <details class="me-email-reply">
+                                <summary>Reply</summary>
+                                <form method="POST" action="{{ route('customer.workspaces.businesses.email.reply', [$workspaceUid, $businessUid, $message->uid]) }}">
+                                    @csrf
+                                    <input type="hidden" name="send_token" value="{{ \Illuminate\Support\Str::uuid() }}">
+                                    <label class="sr-only" for="reply-subject-{{ $message->uid }}">Reply subject</label>
+                                    <input id="reply-subject-{{ $message->uid }}" class="form-control mb-1" type="text" name="subject" maxlength="200" required
+                                           value="{{ \Illuminate\Support\Str::startsWith(strtolower($message->subject), 're:') ? $message->subject : 'Re: ' . $message->subject }}">
+                                    <label class="sr-only" for="reply-body-{{ $message->uid }}">Reply message</label>
+                                    <textarea id="reply-body-{{ $message->uid }}" class="form-control mb-1" name="body" rows="4" maxlength="20000" required></textarea>
+                                    <button type="submit" class="btn btn-sm btn-primary">Send reply</button>
+                                </form>
+                            </details>
+                        @endif
+                    </div>
+                @endforeach
+            </section>
+        @elseif (! $isConnectFlow && ($canManage || $canSend))
+            <section class="me-card me-recent" data-role="email-recent-empty">
+                <div class="me-recent-head">
+                    <strong>Recent emails</strong>
+                    <a class="me-link" href="{{ route('customer.workspaces.businesses.conversations.index', [$workspaceUid, $businessUid]) }}">Open in Conversations</a>
+                </div>
+                <p class="me-empty-recent">No recent emails to show yet.</p>
+            </section>
+        @endif
 
     @if ($canSend)
+        <details class="me-compose" @if ($errors->any()) open @endif>
+            <summary>Send an email to a contact</summary>
         <div class="card">
             <div class="card-body">
-                <h5 class="card-title">Send an email to a contact</h5>
+                <h5 class="card-title sr-only">Send an email to a contact</h5>
 
                 @if (count($contacts) === 0)
                     <p class="text-muted mb-0">None of your contacts has an email address yet.</p>
@@ -298,49 +426,8 @@
                 @endif
             </div>
         </div>
+        </details>
     @endif
 
-    @if ($messages->isNotEmpty() && ($canManage || $canSend))
-        <div class="card">
-            <div class="card-body">
-                <h5 class="card-title">Recent emails</h5>
-                <ul class="list-unstyled mb-0">
-                    @foreach ($messages as $message)
-                        <li class="mb-1">
-                            <strong>{{ $message->subject }}</strong>
-                            @if ($message->direction === 'inbound')
-                                from {{ $message->from_email }} — received
-                            @else
-                                to {{ $message->to_email }} —
-                            @endif
-                            @if ($message->direction === 'inbound')
-                            @elseif ($message->status->value === 'accepted')
-                                accepted by your email provider
-                            @elseif ($message->status->value === 'failed')
-                                not sent: {{ $message->failure_category?->customerMessage() }}
-                            @elseif ($message->status->value === 'unconfirmed')
-                                could not be confirmed
-                            @else
-                                sending
-                            @endif
-                            <span class="text-muted">· {{ $message->created_at?->diffForHumans() }}</span>
-                            @if ($canSend && $message->status->value !== 'failed')
-                                <details class="mt-1">
-                                    <summary>Reply</summary>
-                                    <form method="POST" action="{{ route('customer.workspaces.businesses.email.reply', [$workspaceUid, $businessUid, $message->uid]) }}">
-                                        @csrf
-                                        <input type="hidden" name="send_token" value="{{ \Illuminate\Support\Str::uuid() }}">
-                                        <input class="form-control mb-1" type="text" name="subject" maxlength="200" required
-                                               value="{{ \Illuminate\Support\Str::startsWith(strtolower($message->subject), 're:') ? $message->subject : 'Re: ' . $message->subject }}">
-                                        <textarea class="form-control mb-1" name="body" rows="4" maxlength="20000" required></textarea>
-                                        <button type="submit" class="btn btn-sm btn-primary">Send reply</button>
-                                    </form>
-                                </details>
-                            @endif
-                        </li>
-                    @endforeach
-                </ul>
-            </div>
-        </div>
-    @endif
+    </div>
 @endsection
