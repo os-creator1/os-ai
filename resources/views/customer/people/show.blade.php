@@ -11,7 +11,25 @@
 @section('title', $profile['name'] ?? $profile['phone'])
 
 @section('page-style')
+    <link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700;800&display=swap" rel="stylesheet">
     <style>
+        /* No profile mockup was supplied: the page takes the approved Contacts design's language (Figtree, #B4514A, 16px cards, 44px actions). */
+        #contact-profile{font-family:'Figtree',var(--font-family-app,system-ui),system-ui,sans-serif}
+        #contact-profile .mg-cp-name{font-size:28px;font-weight:800;letter-spacing:-.02em;color:#1F1A19}
+        #contact-profile .mg-cp-card-title{color:#1F1A19}
+        #contact-profile .mg-cp-grid{grid-template-columns:minmax(340px,1fr) minmax(0,2fr)}
+        #contact-profile .mg-cp-info-value{overflow-wrap:break-word;word-break:normal;color:#1F1A19}
+        @media (max-width:991.98px){#contact-profile .mg-cp-grid{grid-template-columns:minmax(0,1fr)}}
+        #contact-profile .mg-cp-card{border-radius:16px;border-color:#E9E4DF;padding:20px 22px}
+        #contact-profile .mg-cp-card-title{font-size:16px;font-weight:700}
+        #contact-profile .mg-cp-avatar{width:56px;height:56px;font-size:18px;background:#F8E9E6;color:#8F3B35}
+        #contact-profile .mg-cp-actions .btn{min-height:44px;border-radius:10px;font-weight:600;font-size:14px}
+        #contact-profile .mg-cp-actions .btn-primary,#contact-profile .mg-cp-actions .btn[data-role=contact-send-email]{background:#B4514A;border-color:#B4514A;color:#fff}
+        #contact-profile .mg-cp-actions .btn-outline-primary,#contact-profile .mg-cp-actions .btn-outline{border-color:#D6CFC8;color:#2E2826;background:#fff}
+        #contact-profile .mg-cp-info-icon{background:#F8E9E6;color:#8F3B35;border-radius:10px;width:36px;height:36px}
+        #contact-profile .mg-cp-info-label{font-size:11.5px;letter-spacing:.07em;color:#6B625E}
+        #contact-profile .mg-cp-back{color:#6B625E;font-weight:500}
+        #contact-profile .mg-cp-back:hover{color:#8F3B35}
         .mg-cp{max-width:68rem}
         .mg-cp-back{display:inline-flex;align-items:center;gap:.4rem;font-size:.85rem;color:var(--color-text-muted,#6f6d67);text-decoration:none;margin-bottom:1rem}
         .mg-cp-back:hover{color:var(--color-primary,#b5524c)}
@@ -114,7 +132,14 @@
                     <x-button variant="outline" size="sm" icon="calendar" data-role="contact-book" :href="$actions['bookUrl']">Book appointment</x-button>
                 @endif
                 @if ($actions['messageUrl'] !== null)
-                    <x-button variant="primary" size="sm" icon="message-square" data-role="contact-message" :href="$actions['messageUrl']">Send message</x-button>
+                    <x-button variant="outline" size="sm" icon="message-square" data-role="contact-sms" :href="$actions['messageUrl']">Send SMS</x-button>
+                @endif
+                @if ($emailActions['sendUrl'] !== null)
+                    <x-button variant="primary" size="sm" icon="mail" data-role="contact-send-email" :href="$emailActions['sendUrl']">Send Email</x-button>
+                @elseif ($emailActions['connectUrl'] !== null)
+                    <x-button variant="outline" size="sm" icon="mail" data-role="contact-connect-email" :href="$emailActions['connectUrl']">Connect Email</x-button>
+                @elseif ($emailActions['state'] === 'none' && $emailActions['canEdit'])
+                    <x-button variant="outline" size="sm" icon="mail" data-role="contact-add-email" type="button" onclick="document.getElementById('mg-cp-email-form').hidden=false;document.getElementById('mg-cp-email-input').focus();">Add Email</x-button>
                 @endif
             </div>
         </div>
@@ -126,17 +151,39 @@
                     <ul class="mg-cp-info" data-role="contact-identity">
                         <li>
                             <span class="mg-cp-info-icon"><x-ds-icon name="smartphone" size="16" aria-hidden="true" /></span>
-                            <span class="mg-cp-info-body"><span class="mg-cp-info-label">Phone</span><span class="mg-cp-info-value text-numeric">{{ $profile['phone'] }}</span></span>
+                            <span class="mg-cp-info-body"><span class="mg-cp-info-label">Phone</span><span class="mg-cp-info-value text-numeric">{{ \App\Library\Contacts\ContactPhone::pretty($profile['phone']) }}</span></span>
                             @if (! empty($browserCalling))
-                                <button type="button" class="mg-cp-iconbtn mg-cp-callbtn" data-role="contact-call" aria-label="Call {{ $displayName }}" title="Call"><x-ds-icon name="phone" size="14" aria-hidden="true" /></button>
+                                <button type="button" class="mg-cp-iconbtn mg-cp-callbtn" data-role="contact-call" data-call-uid="{{ $contactUid }}" data-call-label="{{ $displayName }}" data-call-phone="{{ \App\Library\Contacts\ContactPhone::pretty($profile['phone']) }}" data-call-initials="{{ $initials }}" aria-label="Call {{ $displayName }}" title="Call"><x-ds-icon name="phone" size="14" aria-hidden="true" /></button>
                             @endif
                             <button type="button" class="mg-cp-iconbtn" data-copy="{{ $profile['phone'] }}" data-role="contact-copy-phone" aria-label="Copy phone number" title="Copy phone number"><x-ds-icon name="copy" size="14" aria-hidden="true" /></button>
                         </li>
-                        @if ($profile['email'] !== null)
-                            <li>
-                                <span class="mg-cp-info-icon"><x-ds-icon name="mail" size="16" aria-hidden="true" /></span>
-                                <span class="mg-cp-info-body"><span class="mg-cp-info-label">Email</span><span class="mg-cp-info-value">{{ $profile['email'] }}</span></span>
-                                <button type="button" class="mg-cp-iconbtn" data-copy="{{ $profile['email'] }}" data-role="contact-copy-email" aria-label="Copy email address" title="Copy email address"><x-ds-icon name="copy" size="14" aria-hidden="true" /></button>
+                        <li data-role="contact-email-row" data-email-state="{{ $emailActions['state'] }}">
+                            <span class="mg-cp-info-icon"><x-ds-icon name="mail" size="16" aria-hidden="true" /></span>
+                            <span class="mg-cp-info-body">
+                                <span class="mg-cp-info-label">Email</span>
+                                @if ($emailActions['state'] === 'valid')
+                                    <span class="mg-cp-info-value">{{ $emailActions['email'] }}</span>
+                                @elseif ($emailActions['state'] === 'ambiguous')
+                                    <span class="mg-cp-info-value text-warning">Several different emails are stored. Edit to choose one.</span>
+                                @else
+                                    <span class="mg-cp-info-value text-muted">No email yet</span>
+                                @endif
+                            </span>
+                            @if ($emailActions['state'] === 'valid')
+                                <button type="button" class="mg-cp-iconbtn" data-copy="{{ $emailActions['email'] }}" data-role="contact-copy-email" aria-label="Copy email address" title="Copy email address"><x-ds-icon name="copy" size="14" aria-hidden="true" /></button>
+                            @endif
+                            @if ($emailActions['canEdit'])
+                                <button type="button" class="mg-cp-iconbtn" data-role="contact-edit-email" aria-label="{{ $emailActions['state'] === 'none' ? 'Add email' : 'Edit email' }}" title="{{ $emailActions['state'] === 'none' ? 'Add email' : 'Edit email' }}" onclick="document.getElementById('mg-cp-email-form').hidden=false;document.getElementById('mg-cp-email-input').focus();"><x-ds-icon name="pencil" size="14" aria-hidden="true" /></button>
+                            @endif
+                        </li>
+                        @if ($emailActions['canEdit'])
+                            <li id="mg-cp-email-form" @if (! $errors->has('email')) hidden @endif>
+                                <form method="POST" action="{{ $emailActions['updateUrl'] }}" class="d-flex flex-wrap gap-50 w-100" data-role="contact-email-form">
+                                    @csrf
+                                    <input id="mg-cp-email-input" type="email" name="email" class="form-control" style="flex:1 1 14rem" maxlength="191" placeholder="name@example.com" aria-label="Email address" value="{{ old('email', $emailActions['email']) }}">
+                                    <x-button variant="primary" size="sm" type="submit">Save email</x-button>
+                                    @error('email')<div class="text-danger w-100" role="alert">{{ $message }}</div>@enderror
+                                </form>
                             </li>
                         @endif
                         @if ($profile['company'] !== null)

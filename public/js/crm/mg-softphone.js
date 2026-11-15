@@ -64,10 +64,41 @@
 
     // Functions that are NOT implemented yet. Their controls exist in the markup as hidden hooks
     // ([data-capability]) and stay hidden until a real implementation sets the flag to true.
-    var capabilities = { keypad: false, hold: false, record: false, transfer: false, note: false };
+    // Keypad (DTMF), hold and note are implemented below. Record and Transfer have no safe backend: their buttons are
+    // rendered disabled (with the reason in their title) instead of being hidden or pretending to work.
+    var capabilities = { keypad: true, hold: true, record: false, transfer: false, note: true };
     root.querySelectorAll('[data-capability]').forEach(function (el) {
-        el.hidden = !capabilities[el.getAttribute('data-capability')];
+        el.hidden = !capabilities[el.getAttribute('data-capability')] && !el.disabled;
     });
+    var keypadBtn = $('softphone-keypad');
+    var holdBtn = $('softphone-hold');
+    var holdLabelEl = $('softphone-hold-label');
+    var holdBanner = $('softphone-hold-banner');
+    var noteBtn = $('softphone-notebtn');
+    var noteView = $('softphone-note-view');
+    var noteText = $('softphone-note-text');
+    var keypadView = $('softphone-keypad-view');
+    var digitsEl = $('softphone-digits');
+    var fromEl = $('softphone-from');
+    var hintEl = $('softphone-hint');
+    var wrapEl = $('softphone-wrapup');
+    var wrapNote = $('softphone-wrap-note');
+    var saveMsg = $('softphone-save-msg');
+    var doneLabel = $('softphone-done-label');
+    var chooserEl = $('softphone-chooser');
+    var chooseRow = $('softphone-choose-row');
+    var chosenFrom = null;
+    var audioBtn = $('softphone-audio');
+    var audioList = $('softphone-audio-list');
+    var audioOpen = false;
+    var audioError = '';
+    var held = false;
+    var wasAnswered = false;
+    var keypadOpen = false;
+    var noteOpen = false;
+    var digits = '';
+    var disposition = null;
+    var fromNumber = '';
     var minimized = false;
     var audioEl = document.getElementById('mg-remote-audio');
 
@@ -98,6 +129,7 @@
         contact_call_in_progress: 'A call to this contact is already in progress.',
         rate_limited: 'Hourly call limit reached.',
         browser_session_required: 'The calling session expired. Try again.',
+        number_not_available: 'That calling number is not available any more. Choose another number.',
         browser_not_answered: 'Your browser did not connect the call. Check your microphone and try again.',
         browser_disconnected: 'Your browser disconnected before the call connected.',
         bridge_failed: 'The call could not be connected.',
@@ -141,27 +173,80 @@
     function dirLabel() { return direction === 'inbound' ? 'Incoming' : 'Outgoing'; }
 
     function setState(state, text, detail) {
-        root.setAttribute('data-state', state);
-        statusEl.textContent = text;
-        detailEl.textContent = detail || '';
-        detailEl.hidden = !detail;
         var incoming = state === 'incoming';
         var live = isLive(state);
-        if (!live) { minimized = false; }
-        hangRow.hidden = !live;
+        var inCall = state === 'connected';
+        if (!live) { minimized = false; held = false; keypadOpen = false; noteOpen = false; }
+        if (inCall && held) { text = 'On hold'; }
+        root.setAttribute('data-state', state);
+        root.setAttribute('data-held', inCall && held ? '1' : '0');
+        statusEl.textContent = text;
+        if (state !== 'connecting' && state !== 'ringing') { audioError = ''; }
+        detail = detail || audioError;
+        detailEl.textContent = detail || '';
+        detailEl.hidden = !detail || keypadOpen;
+        hangRow.hidden = !live || keypadOpen;
         hangLabelEl.textContent = state === 'connected' ? 'End call' : 'Cancel';
+        var choosing = state === 'choose';
+        if (chooserEl) { chooserEl.hidden = !choosing; }
+        if (chooseRow) { chooseRow.hidden = !choosing; }
         incomingRow.hidden = !incoming;
-        controlsEl.hidden = !live;
-        muteBtn.disabled = state !== 'connected';
-        pillMute.disabled = state !== 'connected';
+        controlsEl.hidden = !live || keypadOpen;
+        muteBtn.disabled = !inCall;
+        pillMute.disabled = !inCall;
+        if (keypadBtn) { keypadBtn.disabled = !inCall; keypadBtn.setAttribute('aria-pressed', keypadOpen ? 'true' : 'false'); }
+        if (holdBtn) {
+            holdBtn.disabled = !inCall;
+            holdBtn.classList.toggle('on', held);
+            holdBtn.setAttribute('aria-pressed', held ? 'true' : 'false');
+            if (holdLabelEl) { holdLabelEl.textContent = held ? 'Resume' : 'Hold'; }
+            var pause = holdBtn.querySelector('[data-role="hold-icon-pause"]');
+            var play = holdBtn.querySelector('[data-role="hold-icon-play"]');
+            if (pause) { pause.hidden = held; }
+            if (play) { play.hidden = !held; }
+        }
+        // Before the call connects only Mute and Keypad exist in the approved design; the rest appear once there is a live call.
+        // While taking a note the design shows four controls (Mute, Keypad, Hold, Note), so Record/Transfer step aside.
+        [holdBtn, noteBtn].forEach(function (b) { if (b) { b.hidden = !inCall; } });
+        [$('softphone-record'), $('softphone-transfer')].forEach(function (b) { if (b) { b.hidden = !inCall || noteOpen; } });
+        controlsEl.classList.toggle('is-four', noteOpen);
+        // The keypad view replaces the identity block (design state 4).
+        var whoEl = root.querySelector('.mg-sp-who');
+        if (whoEl) { whoEl.hidden = keypadOpen && live; }
+        // Audio output: real browser capability (setSinkId), offered while the call is being placed (design state 2).
+        if (audioBtn) {
+            var placing = state === 'connecting' || state === 'ringing';
+            audioBtn.hidden = !placing;
+            audioBtn.disabled = !audioSupported();
+            audioBtn.title = audioSupported() ? 'Choose where you hear the call' : 'This browser cannot choose an audio output.';
+            audioBtn.classList.toggle('on', audioOpen && placing);
+            if (!placing) { audioOpen = false; }
+            if (audioList) { audioList.hidden = !(audioOpen && placing); }
+        }
+        if (noteBtn) { noteBtn.disabled = !live; noteBtn.classList.toggle('on', noteOpen); noteBtn.setAttribute('aria-pressed', noteOpen ? 'true' : 'false'); }
+        if (keypadView) { keypadView.hidden = !(keypadOpen && live); }
+        if (noteView) { noteView.hidden = !(noteOpen && live); }
+        if (hintEl) { hintEl.hidden = !inCall || keypadOpen || noteOpen || held; }
+        if (holdBanner) {
+            holdBanner.hidden = !(held && inCall);
+            holdBanner.textContent = held ? 'The call is on hold. Call time: ' + (timerEl ? timerEl.textContent : '') : '';
+        }
+        if (fromEl) { fromEl.hidden = !fromNumber || incoming || keypadOpen; fromEl.textContent = fromNumber ? 'Calling from ' + fromNumber : ''; }
+        root.setAttribute('data-has-from', fromNumber && !incoming && !keypadOpen ? '1' : '0');
         minBtn.hidden = !live;
         closeBtn.hidden = live || incoming;
-        doneRow.hidden = live || incoming;
+        doneRow.hidden = live || incoming || choosing;
         againBtn.hidden = direction === 'inbound' || !(cfg.contactUid || cfg.conversationUid);
-        summaryEl.hidden = state !== 'ended' && state !== 'failed';
+        var ended = state === 'ended' || state === 'failed';
+        summaryEl.hidden = !ended || (state === 'ended' && !!callUid && !!cfg.wrapupUrl && !!wrapEl && wasAnswered);
+        if (choosing) { timerEl.hidden = true; }
+        // The wrap-up (How did it go? + note) is offered only for a call that was really answered and that the server recorded.
+        var wrapOk = state === 'ended' && !!callUid && !!cfg.wrapupUrl && !!wrapEl && wasAnswered;
+        if (wrapEl) { wrapEl.hidden = !wrapOk; }
+        if (doneLabel) { doneLabel.textContent = wrapOk ? 'Save' : 'Close'; }
         timerEl.hidden = state !== 'connected' && state !== 'ended';
         var sub = subEl.getAttribute('data-sub') || '';
-        subEl.textContent = (state === 'ended' || state === 'failed') ? dirLabel() + ' call' : (sub ? sub + ' \u00b7 ' : '') + dirLabel();
+        subEl.textContent = (state === 'ended' || state === 'failed') ? (wrapOk ? 'Saved to this contact' : dirLabel() + ' call') : (sub ? sub + ' \u00b7 ' : '') + dirLabel();
         applyMinimized();
     }
 
@@ -247,6 +332,7 @@
             return;
         }
         var connected = call.answered_at !== null;
+        wasAnswered = connected;
         var missed = direction === 'inbound' ? (call.outcome === 'declined' ? 'Declined' : 'Missed') : 'Not answered';
         showSummary(connected ? 'connected' : 'unanswered', connected ? 'Connected' : missed, connected ? seconds || 0 : 0);
         setState('ended', connected || direction !== 'inbound' ? 'Call ended' : (missed + ' call'), '');
@@ -256,11 +342,18 @@
     }
 
     function refreshHistory() {
-        var holder = document.querySelector('[data-role="contact-call-history"]');
+        // In the calling shell the contact page is in the app frame; otherwise it is this document.
+        var frame = document.getElementById('mg-app-frame');
+        var pageDoc = document;
+        try { if (frame && frame.contentDocument) { pageDoc = frame.contentDocument; } } catch (e) { pageDoc = document; }
+        var holder = pageDoc.querySelector('[data-role="contact-call-history"]');
         if (holder && holder.getAttribute('data-reload') === '1') {
             if (reloadTimer) { clearTimeout(reloadTimer); }
             // Never reload the page out from under a call the user has started in the meantime.
-            reloadTimer = setTimeout(function () { if (!active && !starting) { window.location.reload(); } }, 1200);
+            reloadTimer = setTimeout(function () {
+                if (active || starting) { return; }
+                try { (frame && frame.contentWindow ? frame.contentWindow : window).location.reload(); } catch (e) { window.location.reload(); }
+            }, 1200);
         }
     }
 
@@ -269,9 +362,10 @@
         switch (call.ui_state) {
             case 'connecting': setState('connecting', 'Connecting…', 'Setting up your call.'); break;
             case 'ringing':
-                if (direction === 'inbound') { setState('connecting', 'Connecting…', 'Connecting your call.'); } else { setState('ringing', 'Ringing…', 'Calling ' + peerName + '.'); }
+                if (call.from_number) { fromNumber = call.from_number; }
+                if (direction === 'inbound') { setState('connecting', 'Connecting…', 'Connecting your call.'); } else { setState('ringing', 'Calling…', ''); }
                 break;
-            case 'connected': setState('connected', 'Connected', 'You are speaking with ' + peerName + '.'); startTimer(); break;
+            case 'connected': if (call.from_number) { fromNumber = call.from_number; } setState('connected', 'On call', ''); startTimer(); break;
             default: finishFromServer(call);
         }
     }
@@ -316,7 +410,7 @@
         });
     }
 
-    function start() {
+    function begin() {
         if (active) { show(); return; }
         if (starting) {
             // A cancelled attempt is still unwinding (e.g. an open microphone prompt): do not overlap a new one with it.
@@ -335,6 +429,7 @@
         callUid = null;
         connectedAt = null;
         showTime('00:00');
+        resetCallUi();
         minimized = false;
         direction = 'outbound';
         setIdentity(cfg.contactLabel || '', cfg.contactPhone || '', cfg.contactInitials || '#');
@@ -368,10 +463,12 @@
         }).then(function () {
             if (stale()) { try { if (rtc !== sharedClient) { rtc.disconnect(); } } catch (e) {} if (client === rtc) { client = null; } throw CANCELLED; }
             expecting = true;
-            setState('connecting', 'Connecting…', 'Calling ' + peerName + ' from your business number.');
+            setState('connecting', 'Calling…', '');
             // A linked contact is called by its uid; an unlinked conversation by the conversation's own uid (the server resolves the number).
             var target = cfg.contactUid ? { contact_uid: cfg.contactUid } : { conversation_uid: cfg.conversationUid };
-            return api('POST', cfg.placeUrl, Object.assign(target, { idempotency_key: uuid(), channel: 'browser' }));
+            var placeBody = Object.assign(target, { idempotency_key: uuid(), channel: 'browser' });
+            if (chosenFrom) { placeBody.from = chosenFrom; }
+            return api('POST', cfg.placeUrl, placeBody);
         }).then(function (r) {
             if (!r.ok || !r.json || !r.json.data) {
                 if (stale()) { throw CANCELLED; }
@@ -395,6 +492,53 @@
             fail('Could not start the call. Check your connection and try again.');
         }).then(function () { starting = false; });
     }
+
+    // Entry point for every outbound call. With ONE eligible number (or no selector configured) it dials at once; with
+    // several, the person picks which of THIS business's voice-ready numbers to call from first.
+    var chooseGen = 0;
+    function start() {
+        if (active) { show(); return; }
+        if (starting) { begin(); return; }
+        if (!cfg.numbersUrl) { chosenFrom = null; begin(); return; }
+        var gen = ++chooseGen;
+        api('GET', cfg.numbersUrl).then(function (r) {
+            return r.ok && r.json && Array.isArray(r.json.data) ? r.json.data : null;
+        }, function () { return null; }).then(function (list) {
+            if (gen !== chooseGen || active || starting) { return; }
+            // The list could not be read: the server's own default (the primary number) applies; nothing else is guessed.
+            if (list === null || list.length < 2) { chosenFrom = null; begin(); return; }
+            showChooser(list);
+        });
+    }
+
+    function showChooser(list) {
+        var key = 'mg-call-from:' + cfg.numbersUrl, remembered = null;
+        try { remembered = window.localStorage.getItem(key); } catch (e) {}
+        var selected = list.some(function (n) { return n.id === remembered; }) ? remembered : list[0].id;
+        chooserEl.textContent = '';
+        list.forEach(function (n) {
+            var b = document.createElement('button');
+            b.type = 'button'; b.className = 'mg-sp-nr'; b.setAttribute('role', 'radio'); b.setAttribute('data-from', n.id);
+            var rd = document.createElement('i'); rd.className = 'rd';
+            var num = document.createElement('b'); num.textContent = n.number;
+            b.appendChild(rd); b.appendChild(num);
+            if (n.primary) { var p = document.createElement('span'); p.className = 'p'; p.textContent = 'Primary'; b.appendChild(p); }
+            b.addEventListener('click', function () { selected = n.id; paint(); });
+            chooserEl.appendChild(b);
+        });
+        function paint() {
+            chooserEl.querySelectorAll('[data-from]').forEach(function (b) { b.setAttribute('aria-checked', b.getAttribute('data-from') === selected ? 'true' : 'false'); });
+        }
+        paint();
+        direction = 'outbound';
+        setIdentity(cfg.contactLabel || '', cfg.contactPhone || '', cfg.contactInitials || '#');
+        show();
+        setState('choose', 'Call from', '');
+        var go = $('softphone-choose-go');
+        go.onclick = function () { chosenFrom = selected; try { window.localStorage.setItem(key, selected); } catch (e) {} begin(); };
+        $('softphone-choose-cancel').onclick = function () { chooseGen++; closePopup(); };
+    }
+
 
     // ------------------------------------------------------------------ inbound calls
 
@@ -562,6 +706,106 @@
         }).catch(function () { /* the next beat retries */ });
     }
 
+    function resetCallUi() {
+        held = false; keypadOpen = false; noteOpen = false; wasAnswered = false; fromNumber = '';
+        digits = ''; disposition = null;
+        if (digitsEl) { digitsEl.textContent = ''; }
+        if (noteText) { noteText.value = ''; }
+        if (wrapNote) { wrapNote.value = ''; }
+        if (saveMsg) { saveMsg.hidden = true; saveMsg.textContent = ''; }
+        root.querySelectorAll('[data-disposition]').forEach(function (b) { b.setAttribute('aria-pressed', 'false'); });
+    }
+
+    function audioSupported() {
+        return !!(audioEl && typeof audioEl.setSinkId === 'function' && navigator.mediaDevices && typeof navigator.mediaDevices.enumerateDevices === 'function');
+    }
+
+    function toggleAudio() {
+        if (!audioSupported()) { return; }
+        if (audioOpen) { audioOpen = false; setState(root.getAttribute('data-state'), statusEl.textContent, detailEl.hidden ? '' : detailEl.textContent); return; }
+        navigator.mediaDevices.enumerateDevices().then(function (devices) {
+            var outs = devices.filter(function (d) { return d.kind === 'audiooutput'; });
+            audioList.textContent = '';
+            var key = 'mg-audio-out', saved = null;
+            try { saved = window.localStorage.getItem(key); } catch (e) {}
+            outs.forEach(function (d, i) {
+                var b = document.createElement('button');
+                b.type = 'button'; b.className = 'mg-sp-nr'; b.setAttribute('role', 'radio');
+                b.setAttribute('aria-checked', (saved ? saved === d.deviceId : d.deviceId === 'default' || i === 0) ? 'true' : 'false');
+                var rd = document.createElement('i'); rd.className = 'rd';
+                var nm = document.createElement('b'); nm.textContent = d.label || ('Speaker ' + (i + 1));
+                b.appendChild(rd); b.appendChild(nm);
+                b.addEventListener('click', function () {
+                    audioEl.setSinkId(d.deviceId).then(function () {
+                        try { window.localStorage.setItem(key, d.deviceId); } catch (e) {}
+                        audioList.querySelectorAll('[role=radio]').forEach(function (o) { o.setAttribute('aria-checked', o === b ? 'true' : 'false'); });
+                        audioOpen = false; audioError = '';
+                        setState(root.getAttribute('data-state'), statusEl.textContent, '');
+                    }).catch(function () { audioError = 'That audio output could not be selected.'; setState(root.getAttribute('data-state'), statusEl.textContent, ''); });
+                });
+                audioList.appendChild(b);
+            });
+            if (!outs.length) { var none = document.createElement('p'); none.className = 'mg-sp-hint'; none.textContent = 'No other audio outputs were found.'; audioList.appendChild(none); }
+            audioOpen = true;
+            setState(root.getAttribute('data-state'), statusEl.textContent, detailEl.hidden ? '' : detailEl.textContent);
+        }).catch(function () { /* devices unreadable: the control simply does nothing */ });
+    }
+
+    function toggleKeypad(open) {
+        if (root.getAttribute('data-state') !== 'connected') { return; }
+        keypadOpen = open;
+        var nm = $('softphone-keypad-name');
+        if (nm) { nm.textContent = peerName; }
+        setState('connected', 'On call', detailEl.textContent);
+    }
+
+    function sendDigit(d) {
+        if (!sdkCall || root.getAttribute('data-state') !== 'connected') { return; }
+        try { sdkCall.dtmf(d); } catch (e) { return; }
+        digits += d;
+        if (digitsEl) { digitsEl.textContent = digits.split('').join(' '); }
+    }
+
+    function toggleHold() {
+        if (!sdkCall || root.getAttribute('data-state') !== 'connected') { return; }
+        var wanted = !held;
+        holdBtn.disabled = true;
+        var op;
+        try { op = wanted ? sdkCall.hold() : sdkCall.unhold(); } catch (e) { op = Promise.reject(e); }
+        Promise.resolve(op).then(function () {
+            held = wanted;
+        }).catch(function () {
+            // The SDK refused: say so, never pretend the call is held.
+            detailEl.textContent = wanted ? 'The call could not be put on hold.' : 'The call could not be resumed.';
+            detailEl.hidden = false;
+        }).then(function () { if (root.getAttribute('data-state') === 'connected') { setState('connected', 'On call', detailEl.hidden ? '' : detailEl.textContent); } });
+    }
+
+    function toggleNote() {
+        noteOpen = !noteOpen;
+        setState(root.getAttribute('data-state'), statusEl.textContent, detailEl.hidden ? '' : detailEl.textContent);
+        if (noteOpen && noteText) { noteText.focus(); }
+    }
+
+    // Save the post-call wrap-up (disposition + note). Never claims success unless the server confirmed it.
+    function saveWrapup() {
+        if (!wrapEl || wrapEl.hidden || !callUid) { closePopup(); return; }
+        var text = ((wrapNote && wrapNote.value) || (noteText && noteText.value) || '').trim();
+        if (wrapNote && !wrapNote.value && noteText && noteText.value) { wrapNote.value = noteText.value; }
+        var body = { note: ((wrapNote && wrapNote.value) || '').trim() || null, disposition: disposition };
+        if (!body.note && !body.disposition) { closePopup(); return; }
+        var button = $('softphone-done');
+        button.disabled = true;
+        api('POST', cfg.wrapupUrl.replace('__CALL__', encodeURIComponent(callUid)), body).then(function (r) {
+            if (r.ok) { closePopup(); return; }
+            saveMsg.textContent = (r.json && r.json.error && r.json.error.message) || 'The note could not be saved. Try again.';
+            saveMsg.hidden = false;
+        }).catch(function () {
+            saveMsg.textContent = 'The note could not be saved. Check your connection and try again.';
+            saveMsg.hidden = false;
+        }).then(function () { button.disabled = false; });
+    }
+
     function hangUp() {
         if (finished || !active) { return; }
         // Cancel on an incoming call that has not been claimed yet (e.g. the microphone prompt is still open): this is a
@@ -622,7 +866,25 @@
     minBtn.addEventListener('click', function () { minimized = true; applyMinimized(); });
     function closePopup() { minimized = false; root.classList.remove('is-open'); applyMinimized(); }
     closeBtn.addEventListener('click', closePopup);
-    $('softphone-done').addEventListener('click', closePopup);
+    $('softphone-done').addEventListener('click', saveWrapup);
+    if (keypadBtn) { keypadBtn.addEventListener('click', function () { toggleKeypad(true); }); }
+    var kpHide = $('softphone-keypad-hide');
+    if (kpHide) { kpHide.addEventListener('click', function () { toggleKeypad(false); }); }
+    var kpHang = $('softphone-keypad-hangup');
+    if (kpHang) { kpHang.addEventListener('click', hangUp); }
+    root.querySelectorAll('[data-digit]').forEach(function (b) { b.addEventListener('click', function () { sendDigit(b.getAttribute('data-digit')); }); });
+    if (holdBtn) { holdBtn.addEventListener('click', toggleHold); }
+    if (audioBtn) { audioBtn.addEventListener('click', toggleAudio); }
+    if (noteBtn) { noteBtn.addEventListener('click', toggleNote); }
+    root.querySelectorAll('[data-disposition]').forEach(function (b) {
+        b.addEventListener('click', function () {
+            var key = b.getAttribute('data-disposition');
+            disposition = disposition === key ? null : key;
+            root.querySelectorAll('[data-disposition]').forEach(function (o) { o.setAttribute('aria-pressed', o.getAttribute('data-disposition') === disposition ? 'true' : 'false'); });
+        });
+    });
+    // The in-call note carries over into the wrap-up once the call ends.
+    if (noteText && wrapNote) { noteText.addEventListener('input', function () { wrapNote.value = noteText.value; }); }
     $('softphone-answer').addEventListener('click', answerInbound);
     $('softphone-decline').addEventListener('click', declineInbound);
     // "Call again" reuses the exact same start sequence (and its server checks) as the contact's call button.

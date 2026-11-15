@@ -674,11 +674,18 @@
                 'status'   => 'success',
                 'pinned'   => $box->pinned ?? 0,
                 'composer' => app(\App\Library\Conversations\ConversationComposerOptions::class)
-                    ->for($business, $workspaceUid, $businessUid, (int) Auth::id(), true, $contact, $replyTo),
+                    ->for($business, $workspaceUid, $businessUid, (int) Auth::id(), true, $contact, $replyTo) + ['recipient_name' => $context->name],
                 'title'    => $context->title(),
+                // A name can be changed only where it is stored: on the linked Contact.
+                'can_rename' => $contact !== null && Gate::allows('update_contact'),
                 'call'     => $call,
                 'call_unavailable' => $call === null ? $this->callUnavailable($business, $box) : null,
                 'timeline' => view('customer.ChatBox.partials._timeline', [
+                    'contactName' => $context->name,
+                    'businessName' => (string) $business->name,
+                    // Inside a text conversation an email is a compact card that leads to the full email (approved design).
+                    'compactEmail' => true,
+                    'emailThreadUrl' => fn (string $key) => route('customer.workspaces.businesses.conversations.index', [$workspaceUid, $businessUid, 'channel' => 'email', 'thread' => $key]),
                     'page' => $timeline->forConversation($business, $box, $contact),
                 ])->render(),
                 'context'  => view('customer.ChatBox.partials._context', [
@@ -720,6 +727,11 @@
                 return $this->notFound();
             }
 
+            // Opening a thread reads it.
+            if ($messages->contains(fn ($m) => $m->marked_unread_at !== null)) {
+                \App\Models\BusinessEmailMessage::query()->whereIn('id', $messages->pluck('id'))->update(['marked_unread_at' => null]);
+            }
+
             $contactId = $messages->pluck('contact_id')->filter()->first();
             $contact = $contactId === null ? null : Contacts::query()->where('business_id', $business->id)->find($contactId);
 
@@ -745,11 +757,12 @@
                 'status'   => 'success',
                 'pinned'   => 0,
                 'channel'  => 'email',
-                'title'    => $name ?? $counterpart,
+                // The thread's subject heads the conversation; who it is with sits under it (approved Email design).
+                'title'    => trim((string) $messages->last()->subject) !== '' ? (string) $messages->last()->subject : ($name ?? $counterpart),
                 'call'     => $call,
                 'composer' => app(\App\Library\Conversations\ConversationComposerOptions::class)
-                    ->for($business, $workspaceUid, $businessUid, $userId, false, $contact, $replyTo),
-                'timeline' => view('customer.ChatBox.partials._timeline', ['page' => $page])->render(),
+                    ->for($business, $workspaceUid, $businessUid, $userId, false, $contact, $replyTo) + ['recipient_name' => $name],
+                'timeline' => view('customer.ChatBox.partials._timeline', ['page' => $page, 'contactName' => $name, 'businessName' => (string) $business->name])->render(),
                 'context'  => view('customer.ChatBox.partials._email_context', [
                     'call'        => $call,
                     'count'       => $messages->count(),
@@ -757,6 +770,7 @@
                     'subject'     => (string) $messages->last()->subject,
                     'name'        => $name,
                     'matched'     => $contact !== null,
+                    'profile'     => $contact !== null ? app(\App\Library\Contacts\ContactDirectory::class)->profile($business, $contact, false) : null,
                     'profileUrl'  => $contact !== null && Gate::allows('view_contact')
                         ? route('customer.workspaces.businesses.people.show', [$workspaceUid, $businessUid, $contact->uid])
                         : null,
@@ -765,6 +779,210 @@
                         : null,
                 ])->render(),
             ]);
+        }
+
+        /**
+         * "Send Email" from a Contact: opens the Email composer addressed to the Contact's canonical EMAIL
+         * identity, together with every email already exchanged with them. The Contact is resolved THROUGH the
+         * Business and the actor's Location reach (anything else is the same 404). Sending still goes through
+         * the existing Business-email send endpoint; this only prepares the conversation, and says precisely
+         * why Email is unavailable (no address, ambiguous address, mailbox not connected) instead of falling
+         * back to SMS.
+         */
+        public function emailCompose(ContactActivityTimeline $timeline, Request $request, string $workspaceUid, string $businessUid): JsonResponse
+        {
+            $resolved = $this->resolveBusiness($workspaceUid, $businessUid);
+
+            if ($resolved === null) {
+                return $this->notFound();
+            }
+
+            [, $business] = $resolved;
+            $userId = (int) Auth::id();
+
+            if (! Gate::allows('chat_box') || ! Gate::allows('view_contact')) {
+                return $this->notFound();
+            }
+
+            $contact = Contacts::query()->where('business_id', $business->id)->where('uid', (string) $request->input('contact', ''))->first();
+
+            if ($contact === null || ! app(\App\Library\BusinessEmail\BusinessEmailLocationScope::class)->contactAccessible($userId, $contact)) {
+                return $this->notFound();
+            }
+
+            $inbox = app(\App\Library\Conversations\UnifiedEmailInbox::class);
+            $identity = app(\App\Library\Contacts\ContactEmailIdentity::class)->status($contact);
+            $name = $inbox->contactNames($business, $userId, [(int) $contact->id])[(int) $contact->id] ?? null;
+            $label = $name ?? ($identity['email'] ?? (string) $contact->phone);
+
+            $composer = app(\App\Library\Conversations\ConversationComposerOptions::class)
+                ->for($business, $workspaceUid, $businessUid, $userId, false, $contact, null);
+
+            $profileUrl = route('customer.workspaces.businesses.people.show', [$workspaceUid, $businessUid, $contact->uid]);
+
+            // Why Email is not usable, with the one action that fixes it. Never silently another channel.
+            $composer['blocked'] = null;
+            $composer['recipient_name'] = $name;
+
+            if (! $composer['email']) {
+                $composer['blocked'] = match (true) {
+                    $identity['state'] === 'none' => ['message' => 'This contact has no email address yet.', 'label' => 'Add Email', 'url' => $profileUrl],
+                    $identity['state'] === 'ambiguous' => ['message' => 'This contact has several different emails stored, so we will not guess one.', 'label' => 'Fix email', 'url' => $profileUrl],
+                    ! $composer['email_connected'] => ['message' => 'Your business mailbox is not connected.', 'label' => 'Connect Email', 'url' => $composer['settings_url']],
+                    default => ['message' => 'Email cannot be sent from here right now.', 'label' => null, 'url' => null],
+                };
+            }
+
+            $messages = $inbox->visible($business, $userId)->where('contact_id', $contact->id)->orderBy('id')->limit(100)
+                ->get(['id', 'uid', 'direction', 'contact_id', 'location_id', 'provider_thread_id', 'from_email', 'from_name', 'to_email', 'subject', 'body_text', 'status', 'received_at', 'created_at']);
+
+            $items = $messages->map(fn ($m) => \App\Library\Timeline\Sources\BusinessEmailMessagesSource::item($m))->sortBy(fn ($i) => [$i->at->getTimestamp(), $i->sequence])->values()->all();
+            $page = new \App\Library\Timeline\TimelinePage(new \App\Library\Timeline\TimelineSubject($business, '', null, $contact), $items, false);
+            $call = $this->callTarget($workspaceUid, $business, $contact, $label);
+
+            return response()->json([
+                'status'   => 'success',
+                'pinned'   => 0,
+                'channel'  => 'email',
+                'title'    => $label,
+                'call'     => $call,
+                'composer' => $composer,
+                'timeline' => $messages->isEmpty()
+                    ? view('customer.ChatBox.partials._email_compose_empty', ['label' => $label, 'email' => $identity['email']])->render()
+                    : view('customer.ChatBox.partials._timeline', ['page' => $page, 'contactName' => $name, 'businessName' => (string) $business->name])->render(),
+                'context'  => view('customer.ChatBox.partials._email_context', [
+                    'call'          => $call,
+                    'count'         => $messages->count(),
+                    'counterpart'   => (string) ($identity['email'] ?? ''),
+                    'subject'       => '',
+                    'name'          => $name ?? $label,
+                    'matched'       => true,
+                    'profile'       => app(\App\Library\Contacts\ContactDirectory::class)->profile($business, $contact, false),
+                    'profileUrl'    => $profileUrl,
+                    'addContactUrl' => null,
+                ])->render(),
+            ]);
+        }
+
+        /**
+         * The rows of ONE email thread this actor may act on: the Business, the Location ACL and the chat permission, all
+         * through UnifiedEmailInbox::visible(). Anything else is an empty set, answered as 404.
+         */
+        private function emailThreadRows(Request $request, string $workspaceUid, string $businessUid): ?\Illuminate\Database\Eloquent\Builder
+        {
+            $resolved = $this->resolveBusiness($workspaceUid, $businessUid);
+            $key = (string) $request->input('thread', '');
+
+            if ($resolved === null || ! Gate::allows('chat_box') || $key === '' || strlen($key) > 255) {
+                return null;
+            }
+
+            $rows = app(\App\Library\Conversations\UnifiedEmailInbox::class)->visible($resolved[1], (int) Auth::id())
+                ->where(fn ($q) => $q->where('provider_thread_id', $key)->orWhere('uid', $key));
+
+            return (clone $rows)->exists() ? $rows : null;
+        }
+
+        /** Archive: hides the thread from the list. A newer message in it (a reply) brings it back. */
+        public function emailThreadArchive(Request $request, string $workspaceUid, string $businessUid): JsonResponse
+        {
+            $rows = $this->emailThreadRows($request, $workspaceUid, $businessUid);
+
+            if ($rows === null) {
+                return $this->notFound();
+            }
+
+            $rows->update(['archived_at' => now()]);
+
+            return response()->json(['status' => 'success', 'action' => 'archived']);
+        }
+
+        public function emailThreadUnarchive(Request $request, string $workspaceUid, string $businessUid): JsonResponse
+        {
+            $rows = $this->emailThreadRows($request, $workspaceUid, $businessUid);
+
+            if ($rows === null) {
+                return $this->notFound();
+            }
+
+            $rows->update(['archived_at' => null]);
+
+            return response()->json(['status' => 'success', 'action' => 'unarchived']);
+        }
+
+        /** Mark unread: flags the thread (bold in the list) until it is opened again. */
+        public function emailThreadUnread(Request $request, string $workspaceUid, string $businessUid): JsonResponse
+        {
+            $rows = $this->emailThreadRows($request, $workspaceUid, $businessUid);
+
+            if ($rows === null) {
+                return $this->notFound();
+            }
+
+            $rows->update(['marked_unread_at' => now()]);
+
+            return response()->json(['status' => 'success', 'action' => 'unread']);
+        }
+
+        /**
+         * Delete from MotionGrove: the thread's rows are soft-deleted and disappear from every MotionGrove view. The mail
+         * stays in the connected mailbox; inbound sync does not bring it back (the rows still exist, so provider ids dedupe).
+         */
+        public function emailThreadDelete(Request $request, string $workspaceUid, string $businessUid): JsonResponse
+        {
+            $rows = $this->emailThreadRows($request, $workspaceUid, $businessUid);
+
+            if ($rows === null) {
+                return $this->notFound();
+            }
+
+            $rows->update(['deleted_at' => now()]);
+
+            return response()->json(['status' => 'success', 'action' => 'deleted']);
+        }
+
+        /**
+         * Rename the person an SMS conversation is with. The only persistent name in the data model is the linked Contact's
+         * first/last name, so that is what changes (Business + Location scoped, update_contact required); a conversation
+         * with no linked Contact has no safe target and is refused.
+         */
+        public function rename(Request $request, string $workspaceUid, string $businessUid, string $uid): JsonResponse
+        {
+            $box = $this->resolveConversation($workspaceUid, $businessUid, $uid);
+
+            if ($box === null) {
+                return $this->notFound();
+            }
+
+            $business = $box->business;
+            $contact = $box->resolveDisplayContact($business);
+
+            if ($contact === null || ! Gate::allows('update_contact')
+                || ! app(\App\Library\BusinessEmail\BusinessEmailLocationScope::class)->contactAccessible((int) Auth::id(), $contact)) {
+                return response()->json(['status' => 'error', 'message' => 'This conversation is not linked to a contact, so there is no name to change.'], 422);
+            }
+
+            $name = trim((string) preg_replace('/[\x00-\x1F\x7F\s]+/u', ' ', (string) $request->input('name', '')));
+
+            if ($name === '' || mb_strlen($name) > 120) {
+                return response()->json(['status' => 'error', 'message' => 'Enter a name of up to 120 characters.'], 422);
+            }
+
+            [$first, $last] = array_pad(explode(' ', $name, 2), 2, '');
+            $group = $contact->contactGroup;
+            $identity = app(\App\Library\Contacts\ContactEmailIdentity::class);
+
+            \Illuminate\Support\Facades\DB::transaction(function () use ($contact, $group, $identity, $first, $last): void {
+                foreach (['FIRST_NAME' => $first, 'LAST_NAME' => trim($last)] as $tag => $value) {
+                    $fieldId = $identity->ensureField($group, $tag);
+                    $row = \App\Models\ContactsCustomField::query()->where('contact_id', $contact->id)->where('field_id', $fieldId)->first()
+                        ?? new \App\Models\ContactsCustomField(['contact_id' => $contact->id, 'field_id' => $fieldId]);
+                    $row->value = $value;
+                    $row->save();
+                }
+            });
+
+            return response()->json(['status' => 'success', 'name' => $name]);
         }
 
         /**

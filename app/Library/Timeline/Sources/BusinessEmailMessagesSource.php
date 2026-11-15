@@ -66,6 +66,7 @@ final class BusinessEmailMessagesSource implements TimelineSource
             detail: $failed ? 'Not delivered' : ($status === 'unconfirmed' ? 'Delivery not confirmed' : null),
             tone: $failed ? TimelineTone::Warning : TimelineTone::Neutral,
             sequence: (int) $message->id,
+            threadKey: UnifiedEmailInbox::threadKey($message),
         );
     }
 }

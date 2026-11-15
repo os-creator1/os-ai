@@ -64,7 +64,7 @@ class ContactsPersonFirstTest extends TestCase
         $page->assertSee('Ana Petrauskaite');
         $page->assertSee('ana@example.test');
         $page->assertSee('Harbor Bakery');
-        $page->assertSee('+' . $ana->phone);
+        $page->assertSee(\App\Library\Contacts\ContactPhone::pretty((string) $ana->phone));
         $page->assertSee('Customers');
         $page->assertSee('Leads');
         $page->assertSee('Ben');
@@ -81,13 +81,13 @@ class ContactsPersonFirstTest extends TestCase
 
         $people = $this->get($this->peopleUrl($workspace, $business))->assertOk();
         $people->assertSee('href="' . $groupsUrl . '"', false);
-        $people->assertSee('+ Add contact');
+        $people->assertSee('Add contact');
         $people->assertDontSee('New group');
 
         $groups = $this->get($groupsUrl)->assertOk();
         $groups->assertSee('href="' . $this->peopleUrl($workspace, $business) . '"', false);
         $groups->assertSee('New group');
-        $groups->assertDontSee('+ Add contact');
+        $groups->assertDontSee('Add contact');
     }
 
     public function test_the_list_holds_only_the_selected_businesss_contacts(): void
@@ -159,7 +159,7 @@ class ContactsPersonFirstTest extends TestCase
 
         $page = $this->get($url)->assertOk();
         $page->assertDontSee('data-role="contacts-group-filter"', false);
-        $page->assertDontSee('Group: Customers')->assertDontSee('Group: Leads');
+        $page->assertDontSee('All groups');
         $page->assertDontSee($customers->uid)->assertDontSee($leads->uid);
 
         // A hand-written group uid neither narrows the list nor confirms the group exists.
@@ -182,8 +182,8 @@ class ContactsPersonFirstTest extends TestCase
         // The owner reaches both Locations: groups with contacts are offered, the empty one is not.
         $this->authenticateAs($owner);
         $ownerPage = $this->get($this->peopleUrl($workspace, $business))->assertOk();
-        $ownerPage->assertSee('Group: Shared list')->assertSee('Group: Uptown VIPs');
-        $ownerPage->assertDontSee('Group: Empty list')->assertDontSee($empty->uid);
+        $ownerPage->assertSee('Shared list')->assertSee('Uptown VIPs');
+        $ownerPage->assertDontSee('Empty list')->assertDontSee($empty->uid);
 
         // A member limited to Downtown never learns the Uptown-only group exists.
         $staff = $this->createCustomer();
@@ -194,9 +194,9 @@ class ContactsPersonFirstTest extends TestCase
 
         $url = $this->peopleUrl($workspace, $business);
         $page = $this->get($url)->assertOk();
-        $page->assertSee('Group: Shared list')->assertSee('Harbor Bakery');
+        $page->assertSee('Shared list')->assertSee('Harbor Bakery');
         $page->assertDontSee('Uptown VIPs')->assertDontSee($uptownOnly->uid)->assertDontSee('Hilltop Florist');
-        $page->assertDontSee('Group: Empty list');
+        $page->assertDontSee('Empty list');
 
         // Naming the hidden group by uid is ignored: no narrowing, no disclosure.
         $this->get($url . '?group=' . $uptownOnly->uid)->assertOk()

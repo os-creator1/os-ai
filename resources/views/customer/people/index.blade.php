@@ -8,63 +8,8 @@
 @section('title', 'Contacts')
 
 @section('page-style')
-    @include('partials.cx._styles')
-    <style>
-        .contacts-filters { display: flex; flex-wrap: wrap; gap: .5rem .75rem; align-items: center; width: 100%; }
-        .contacts-group { position: relative; display: inline-flex; align-items: center; flex: 0 0 auto; }
-        .contacts-group > .ds-icon { position: absolute; left: .625rem; pointer-events: none; color: var(--color-icon-muted, var(--color-text-muted)); }
-        .contacts-group select { padding-left: 2rem; min-width: 10rem; max-width: 16rem; }
-        .contacts-table { width: 100%; margin: 0; border-collapse: collapse; font-size: .78125rem; }
-        .contacts-table th {
-            padding: .625rem 1.125rem;
-            font-size: .625rem;
-            font-weight: 600;
-            letter-spacing: .06em;
-            text-transform: uppercase;
-            color: var(--color-text-muted);
-            text-align: left;
-            white-space: nowrap;
-            border-bottom: 1px solid var(--color-border-subtle, var(--color-border));
-        }
-        .contacts-table td {
-            padding: .75rem 1.125rem;
-            color: var(--color-text-primary);
-            vertical-align: middle;
-            border-bottom: 1px solid var(--color-border-subtle, var(--color-border));
-        }
-        .contacts-table tbody tr:last-child td { border-bottom: 0; }
-        .contacts-table tbody tr:hover { background: var(--color-row-hover, var(--color-surface-secondary)); }
-        .contacts-name { display: flex; align-items: center; gap: .625rem; min-width: 11rem; }
-        .contacts-name a { font-weight: 600; color: var(--color-text-primary); overflow-wrap: anywhere; }
-        .contacts-name a:hover { color: var(--color-primary); }
-        .contacts-email { overflow-wrap: anywhere; }
-        .contacts-table .text-numeric { font-size: inherit; }
-        .contacts-empty { color: var(--color-text-disabled, var(--color-text-muted)); }
-        .contacts-foot { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .5rem; }
-        .contacts-foot .ds-pagination { width: 100%; }
-
-        /* Phones: each contact becomes a compact card; labels come from data-label. */
-        @media (max-width: 767.98px) {
-            .contacts-table thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); }
-            .contacts-table, .contacts-table tbody, .contacts-table tr, .contacts-table td { display: block; width: 100%; }
-            .contacts-table tr { padding: .75rem .875rem; border-bottom: 1px solid var(--color-border-subtle, var(--color-border)); }
-            .contacts-table tbody tr:last-child { border-bottom: 0; }
-            .contacts-table td { display: flex; gap: .75rem; padding: .1875rem 0; border: 0; }
-            .contacts-table td[data-label]::before {
-                content: attr(data-label);
-                flex: 0 0 6.5rem;
-                font-size: .625rem;
-                font-weight: 600;
-                letter-spacing: .06em;
-                text-transform: uppercase;
-                color: var(--color-text-muted);
-                padding-top: .125rem;
-            }
-            .contacts-table td.contacts-name-cell { padding-bottom: .5rem; }
-            .contacts-group { flex: 1 1 100%; }
-            .contacts-group select { max-width: none; width: 100%; }
-        }
-    </style>
+    <link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="{{ asset('css/crm/mgx-contacts.css') }}?v=1">
 @endsection
 
 @section('content')
@@ -83,136 +28,135 @@
 
             return mb_strtoupper(mb_substr($parts[0], 0, 1) . (isset($parts[1]) ? mb_substr($parts[1], 0, 1) : ''));
         };
-        // Newest first, so on the unfiltered first page the first row is the latest addition.
-        $newest = ! $filtered && $contacts->onFirstPage() ? collect($contacts->items())->first()['added'] ?? null : null;
-        $noun = \Illuminate\Support\Str::plural('contact', $contacts->total());
+        $tone = static fn (string $seed): int => abs(crc32($seed)) % 5;
+        $todayAdded = $filtered ? 0 : collect($contacts->items())->filter(fn ($c) => $c['added'] !== null && $c['added']->isToday())->count();
+        $noun = \Illuminate\Support\Str::plural('person', $contacts->total());
+        $noun = $contacts->total() === 1 ? 'person' : 'people';
         $summaryText = $filtered
-            ? number_format($contacts->total()).' '.$noun.' match'
-            : number_format($contacts->total()).' '.$noun.($newest ? ' · newest added '.$newest->format('M j, Y') : '');
+            ? number_format($contacts->total()).' '.($contacts->total() === 1 ? 'match' : 'matches')
+            : number_format($contacts->total()).' '.$noun.($todayAdded > 0 ? ' · '.$todayAdded.' added today' : '');
+        $canCall = ! empty($browserCalling);
     @endphp
 
-    <section id="contacts-people">
-        <header class="cx-page-head">
+    <section id="contacts-people" class="mgx-contacts">
+        @if (session('flash_success') || session('message'))
+            <div class="mgx-flash" role="status">{{ session('flash_success') ?? session('message') }}</div>
+        @endif
+        <div class="mgx-head">
             <div>
-                <h1 class="cx-page-title">Contacts</h1>
-                <p class="cx-page-sub" data-role="contacts-summary">{{ $summaryText }}</p>
+                <h1 class="mgx-title">Contacts</h1>
+                <p class="mgx-sub" data-role="contacts-summary">{{ $summaryText }}</p>
             </div>
             @can('create_contact')
-                <div class="cx-page-actions" data-role="contacts-actions">
-                    <x-button variant="secondary" icon="download" :href="route('customer.workspaces.businesses.people.import', [$workspaceUid, $businessUid])">Import</x-button>
-                    <x-button variant="primary" :href="route('customer.workspaces.businesses.people.add', [$workspaceUid, $businessUid])">+ Add contact</x-button>
+                <div data-role="contacts-actions" style="display:contents">
+                    <a class="mgx-btn is-secondary" href="{{ route('customer.workspaces.businesses.people.import', [$workspaceUid, $businessUid]) }}"><svg class="mgx-ic" viewBox="0 0 24 24"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></svg>Import</a>
+                    <a class="mgx-btn is-primary" data-mgx-open-contact href="{{ route('customer.workspaces.businesses.people.add', [$workspaceUid, $businessUid]) }}"><svg class="mgx-ic" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>Add contact</a>
                 </div>
             @endcan
-        </header>
-
-        <div class="mb-2">
-            @include('customer.people._tabs', $filtered ? [] : ['contactsTotal' => $contacts->total()])
         </div>
 
-        <div class="cx-card">
-            {{-- Searching, filtering and paging only change which contacts are listed, so they
-                 update the list below in place (window.AsyncRegion) and keep the
-                 address bar in step. The form sits outside the list on purpose: what
-                 someone is typing is never replaced while the results change. Without
-                 JavaScript both are an ordinary GET to the same URL. --}}
+        <nav class="mgx-tabs" aria-label="Contacts" data-role="contacts-tabs">
+            <a class="mgx-tab is-on" aria-current="page" href="{{ $listUrl }}">All contacts @unless ($filtered)<span class="mgx-count">{{ number_format($contacts->total()) }}</span>@endunless</a>
+            <a class="mgx-tab" href="{{ route('customer.workspaces.businesses.contacts.index', [$workspaceUid, $businessUid]) }}">Groups</a>
+        </nav>
+
+        <div class="mgx-card">
             @if(($added ?? null) !== null)
-                <p class="px-1 pt-1 mb-0 text-caption" data-role="period-scope">Added {{ $added->startLocal->format('M j') }} – {{ $added->endLocal->format('M j') }} · <a href="{{ $listUrl }}">Show all contacts</a></p>
+                <p class="mgx-period" data-role="period-scope">Added {{ $added->startLocal->format('M j') }} – {{ $added->endLocal->format('M j') }} · <a href="{{ $listUrl }}">Show all contacts</a></p>
             @endif
-            <form method="GET" action="{{ $listUrl }}" role="search" class="cx-toolbar" data-role="contacts-search" data-async-form="contacts-list">
+            <form method="GET" action="{{ $listUrl }}" role="search" class="mgx-bar" data-role="contacts-search" data-async-form="contacts-list">
                 @if(($added ?? null) !== null)
                     <input type="hidden" name="created_from" value="{{ $added->startLocal->format('Y-m-d') }}">
                     <input type="hidden" name="created_to" value="{{ $added->endLocal->format('Y-m-d') }}">
                 @endif
-                <div class="contacts-filters">
-                    <div class="cx-search">
-                        <x-ds-icon name="search" size="15" aria-hidden="true" />
-                        <label for="contacts-search" class="visually-hidden">Search contacts</label>
-                        <input type="search" class="form-control" id="contacts-search" name="q" value="{{ $search }}" placeholder="Search by name, phone, email or company" maxlength="100">
-                    </div>
-                    @if ($groups->isNotEmpty())
-                        <div class="contacts-group">
-                            <x-ds-icon name="filter" size="14" aria-hidden="true" />
-                            <label for="contacts-group" class="visually-hidden">Group</label>
-                            <select id="contacts-group" name="group" class="form-select form-control" data-role="contacts-group-filter">
-                                <option value="">Group: All</option>
-                                @foreach ($groups as $group)
-                                    <option value="{{ $group->uid }}" @selected($selectedGroup?->uid === $group->uid)>Group: {{ $group->name }}</option>
-                                @endforeach
-                            </select>
-                        </div>
-                    @endif
-                    <button type="submit" class="visually-hidden">Search</button>
-                </div>
+                <label class="mgx-search" for="contacts-search">
+                    <svg class="mgx-ic" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5"/></svg>
+                    <span class="visually-hidden">Search contacts</span>
+                    <input type="search" id="contacts-search" name="q" value="{{ $search }}" placeholder="Search name, phone or email" maxlength="100">
+                </label>
+                @if ($groups->isNotEmpty())
+                    <span class="mgx-filter">
+                        <label for="contacts-group" class="visually-hidden">Group</label>
+                        <select id="contacts-group" name="group" data-role="contacts-group-filter">
+                            <option value="">All groups</option>
+                            @foreach ($groups as $group)
+                                <option value="{{ $group->uid }}" @selected($selectedGroup?->uid === $group->uid)>{{ $group->name }}</option>
+                            @endforeach
+                        </select>
+                        <svg class="mgx-ic" viewBox="0 0 24 24"><path d="M7 10l5 5 5-5"/></svg>
+                    </span>
+                @endif
+                <button type="submit" class="visually-hidden">Search</button>
             </form>
 
             <div data-async-region="contacts-list">
-            {{-- Read by the script below after an in-place update, so the header line stays true. --}}
             <span hidden data-contacts-summary-source="{{ $summaryText }}" @unless ($filtered) data-contacts-total="{{ number_format($contacts->total()) }}" @endunless></span>
             @if ($contacts->total() === 0)
-                <div class="cx-card-body">
+                <div class="mgx-empty">
                     @if ($search !== '')
-                        <x-empty-state icon="search" title="No contacts match “{{ $search }}”." description="Try a name, a phone number, an email or a company." />
+                        <b>No contacts match “{{ $search }}”.</b>Try a name, a phone number or an email.
                     @elseif ($selectedGroup !== null)
-                        <x-empty-state icon="users" title="No contacts in this group." description="Choose another group, or show all contacts." />
+                        <b>No contacts in this group.</b>Choose another group, or show all contacts.
                     @else
-                        <x-empty-state icon="users" title="No contacts yet." description="Add your first contact, or import a list you already have." />
+                        <b>No contacts yet.</b>Add your first contact, or import a list you already have.
                     @endif
                 </div>
             @else
-                <table class="contacts-table">
-                    <thead>
-                        <tr>
-                            <th scope="col">Name</th>
-                            <th scope="col">Phone</th>
-                            <th scope="col">Email</th>
-                            <th scope="col">Company</th>
-                            <th scope="col">Group</th>
-                            <th scope="col">Last activity</th>
-                            <th scope="col">Added</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        @foreach ($contacts as $contact)
-                            <tr data-role="contact-row">
-                                <td class="contacts-name-cell">
-                                    <span class="contacts-name">
-                                        <span class="cx-avatar" aria-hidden="true">{{ $initials($contact['name']) }}</span>
-                                        <span>
-                                            <a href="{{ route('customer.workspaces.businesses.people.show', [$workspaceUid, $businessUid, $contact['uid']]) }}">{{ $contact['name'] ?? $contact['phone'] }}</a>
-                                            @unless ($contact['subscribed'])
-                                                <span class="cx-pill ms-25">Unsubscribed</span>
-                                            @endunless
-                                        </span>
-                                    </span>
-                                </td>
-                                <td class="text-numeric cx-nowrap" data-label="Phone">{{ $contact['phone'] }}</td>
-                                <td class="contacts-email" data-label="Email">{!! $contact['email'] !== null ? e($contact['email']) : '<span class="contacts-empty">—</span>' !!}</td>
-                                <td data-label="Company">{!! $contact['company'] !== null ? e($contact['company']) : '<span class="contacts-empty">—</span>' !!}</td>
-                                <td data-label="Group">
-                                    @if ($contact['group'] !== null)
-                                        <span class="cx-pill is-accent">{{ $contact['group'] }}</span>
-                                    @else
-                                        <span class="contacts-empty">—</span>
-                                    @endif
-                                </td>
-                                <td class="cx-nowrap" data-label="Last activity">{!! $contact['last_activity'] !== null ? e($contact['last_activity']->diffForHumans()) : '<span class="contacts-empty">—</span>' !!}</td>
-                                <td class="cx-nowrap" data-label="Added">{{ $contact['added']?->format('M j, Y') }}</td>
-                            </tr>
-                        @endforeach
-                    </tbody>
-                </table>
+                <div class="mgx-row is-head" role="row"><span>Name</span><span>Phone</span><span>Group</span><span>Last activity</span><span>Added</span><span></span></div>
+                @foreach ($contacts as $contact)
+                    @php
+                        $showUrl = route('customer.workspaces.businesses.people.show', [$workspaceUid, $businessUid, $contact['uid']]);
+                        $label = $contact['name'] ?? $contact['phone'];
+                    @endphp
+                    <div class="mgx-row" data-role="contact-row">
+                        <div class="mgx-who">
+                            <span class="mgx-av t{{ $tone($contact['uid']) }}" aria-hidden="true">{{ $initials($contact['name']) }}</span>
+                            <div>
+                                <a class="mgx-name" href="{{ $showUrl }}">{{ $label }}</a>
+                                @if ($contact['email'] !== null)
+                                    <small data-role="contact-email">{{ $contact['email'] }}@if ($contact['company'] !== null) · {{ $contact['company'] }}@endif</small>
+                                @else
+                                    <small class="is-none">No email @if ($contact['company'] !== null)<span style="color:var(--mg-mute)">· {{ $contact['company'] }}</span>@endif</small>
+                                @endif
+                            </div>
+                        </div>
+                        <span class="mgx-num" data-label="Phone">{{ \App\Library\Contacts\ContactPhone::pretty($contact['phone']) }}</span>
+                        <span data-label="Group">
+                            @if ($contact['group'] !== null)
+                                <span class="mgx-gp">{{ $contact['group'] }}</span>
+                            @else
+                                <span class="mgx-gp is-none">No group</span>
+                            @endif
+                        </span>
+                        <span class="{{ $contact['last_activity'] === null ? 'mgx-mu' : '' }}" data-label="Last activity">{{ $contact['last_activity'] !== null ? ($contact['last_activity_type'] ?? 'Texted') . ' · ' . $contact['last_activity']->diffForHumans(['short' => true]) : '—' }}</span>
+                        <span class="mgx-mu" data-label="Added">{{ $contact['added']?->format('M j') }}</span>
+                        <div class="mgx-ra">
+                            @if ($canCall)
+                                <button type="button" aria-label="Call {{ $label }}" data-mgx-call data-uid="{{ $contact['uid'] }}" data-label="{{ $label }}" data-phone="{{ \App\Library\Contacts\ContactPhone::pretty($contact['phone']) }}" data-initials="{{ $initials($contact['name']) }}"><svg class="mgx-ic" viewBox="0 0 24 24"><path d="M5 4h4l2 5-2.5 1.5a11 11 0 0 0 5 5L15 13l5 2v4a1 1 0 0 1-1 1A16 16 0 0 1 4 5a1 1 0 0 1 1-1z"/></svg></button>
+                            @endif
+                            <a href="{{ $showUrl }}" aria-label="Message {{ $label }}" title="Open contact to send an SMS or email"><svg class="mgx-ic" viewBox="0 0 24 24"><path d="M4 5h16v11H9l-5 4z"/></svg></a>
+                        </div>
+                    </div>
+                @endforeach
 
-                <div class="cx-card-foot contacts-foot">
+                <div class="mgx-foot">
                     @if ($contacts->hasPages())
                         <x-pagination :paginator="$contacts" async-region="contacts-list" />
                     @else
-                        <span>Showing {{ $contacts->count() }} of {{ number_format($contacts->total()) }} {{ \Illuminate\Support\Str::plural('contact', $contacts->total()) }}</span>
+                        <span>Showing {{ $contacts->count() }} of {{ number_format($contacts->total()) }}</span>
                     @endif
                 </div>
             @endif
             </div>
         </div>
     </section>
+
+    @if (($modal ?? null) !== null)
+        @include('customer.people._new-contact-modal', ['modal' => $modal])
+    @endif
+    @if (! empty($browserCalling))
+        @include('customer.people._softphone')
+    @endif
 @endsection
 
 @section('page-script')
@@ -225,10 +169,10 @@
                     if (!source || !summary) { return; }
                     summary.textContent = source.getAttribute('data-contacts-summary-source');
                     var tab = document.querySelector('[data-role="contacts-tabs"] a[aria-current="page"]');
-                    var count = tab ? tab.querySelector('.cx-count') : null;
+                    var count = tab ? tab.querySelector('.mgx-count') : null;
                     var total = source.getAttribute('data-contacts-total');
                     if (tab && total !== null) {
-                        if (!count) { count = document.createElement('span'); count.className = 'cx-count'; tab.appendChild(count); }
+                        if (!count) { count = document.createElement('span'); count.className = 'mgx-count'; tab.appendChild(count); }
                         count.textContent = total;
                         count.hidden = false;
                     } else if (count) {

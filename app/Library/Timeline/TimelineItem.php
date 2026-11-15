@@ -58,6 +58,7 @@ final class TimelineItem
         public readonly int $sequence = 0,
         public readonly ?string $retrySendUid = null,
         public readonly bool $retryable = false,
+        public readonly ?string $threadKey = null,
     ) {
     }
 

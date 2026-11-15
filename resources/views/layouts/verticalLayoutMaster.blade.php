@@ -66,6 +66,7 @@
 
 {{-- inbound browser calls (renders nothing unless enabled for this user and Business) --}}
 @include('panels.softphone-global')
+@include('panels.softphone-frame-bridge')
 
 {{-- include footer --}}
 @include('panels/footer')

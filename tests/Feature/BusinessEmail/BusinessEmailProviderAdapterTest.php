@@ -393,10 +393,46 @@ class BusinessEmailProviderAdapterTest extends TestCase
         foreach ([$this->google(), $this->microsoft()] as $provider) {
             $capabilities = $provider->capabilities();
             $this->assertTrue($capabilities->plainTextSend);
-            $this->assertFalse($capabilities->htmlSend);
+            // Both OAuth adapters send a sanitized HTML alternative (multipart/alternative; Graph contentType HTML).
+            $this->assertTrue($capabilities->htmlSend);
             $this->assertFalse($capabilities->attachments);
             // Google and Microsoft both read mail now (delta / history).
             $this->assertTrue($capabilities->inboundSync);
         }
     }
+
+    public function test_google_builds_multipart_alternative_with_both_parts_and_plain_mail_is_unchanged(): void
+    {
+        $google = $this->google();
+        [$mime] = $google->buildMime(new \App\DTO\BusinessEmail\BusinessEmailOutbound('o@b.test', 'O', 'p@x.test', 'Subj', 'Hello Pat', bodyHtml: 'Hello <strong>Pat</strong>'));
+
+        $this->assertStringContainsString('Content-Type: multipart/alternative; boundary="', $mime);
+        $this->assertSame(1, preg_match_all('/Content-Type: text\/plain; charset=UTF-8/', $mime));
+        $this->assertSame(1, preg_match_all('/Content-Type: text\/html; charset=UTF-8/', $mime));
+        $parts = preg_split('/\r\n\r\n/', $mime);
+        $decoded = collect($parts)->map(fn ($p) => base64_decode(str_replace("\r\n", '', preg_replace('/--mg_[0-9a-f]+(--)?\r\n?.*/s', '', $p)), true))->filter()->implode('|');
+        $this->assertStringContainsString('Hello Pat', $decoded);
+        $this->assertStringContainsString('Hello <strong>Pat</strong>', $decoded);
+
+        [$plain] = $google->buildMime(new \App\DTO\BusinessEmail\BusinessEmailOutbound('o@b.test', 'O', 'p@x.test', 'Subj', 'Hello Pat'));
+        $this->assertStringContainsString('Content-Type: text/plain; charset=UTF-8', $plain);
+        $this->assertStringNotContainsString('multipart', $plain);
+    }
+
+    public function test_microsoft_sends_html_content_type_only_for_formatted_mail(): void
+    {
+        $ms = $this->microsoft();
+        Http::fake([
+            'graph.microsoft.com/v1.0/me/messages' => Http::response(['id' => 'draft-1'], 201),
+            'graph.microsoft.com/v1.0/me/messages/draft-1/send' => Http::response('', 202),
+            'graph.microsoft.com/*' => Http::response(['value' => [], 'id' => 'x', 'internetMessageId' => '<i@x>', 'conversationId' => 'c'], 200),
+        ]);
+
+        $ms->send('tok', new \App\DTO\BusinessEmail\BusinessEmailOutbound('o@b.test', 'O', 'p@x.test', 'S', 'plain', bodyHtml: '<strong>rich</strong>'));
+        Http::assertSent(fn ($r) => str_ends_with($r->url(), '/me/messages') && $r['body'] === ['contentType' => 'HTML', 'content' => '<strong>rich</strong>']);
+
+        $ms->send('tok', new \App\DTO\BusinessEmail\BusinessEmailOutbound('o@b.test', 'O', 'p@x.test', 'S', 'plain only'));
+        Http::assertSent(fn ($r) => str_ends_with($r->url(), '/me/messages') && $r['body'] === ['contentType' => 'Text', 'content' => 'plain only']);
+    }
+
 }

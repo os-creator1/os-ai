@@ -37,30 +37,51 @@
     @endif
 
     @if ($item->isMessage() && $item->channel === 'email')
-        {{-- An email reads like an email: a header (who, when), the subject, the body on the page — not a chat bubble. --}}
+        {{-- An email reads like an email (approved design): a card with who/when, the subject once, the body. Older messages of a
+             thread are collapsed to one line and expand on click; the newest is open. --}}
         @php
-            $emailFrom = $item->isInbound() ? ($item->via ?: 'Unknown sender') : 'You';
-            $emailInitial = mb_strtoupper(mb_substr(trim((string) $emailFrom) !== '' ? (string) $emailFrom : '?', 0, 1));
+            // Who it is from, in the words the design uses: the Contact's name (or the sender), and the Business for what it sent.
+            $emailFrom = $item->isInbound() ? (($contactName ?? null) ?: ($item->via ?: 'Unknown sender')) : (($businessName ?? null) ?: 'You');
+            $emailWords = preg_split('/\s+/u', trim((string) $emailFrom), -1, PREG_SPLIT_NO_EMPTY) ?: [];
+            $emailInitial = mb_strtoupper(implode('', array_map(fn ($w) => mb_substr($w, 0, 1), array_slice($emailWords, 0, 2)))) ?: '?';
+            $emailTo = $item->isInbound() ? null : (($contactName ?? null) ? preg_split('/\s+/u', trim((string) $contactName))[0] : null);
+            $emailOpen = $loop->last;
+            $emailSnippet = \Illuminate\Support\Str::limit(trim(preg_replace('/\s+/', ' ', (string) $item->body)), 120);
+            $emailWarn = $item->tone->value === 'warning';
         @endphp
-        <article class="email-message email-message-{{ $item->isInbound() ? 'inbound' : 'outbound' }} {{ $item->tone->value === 'warning' ? 'timeline-message-warning' : '' }}" data-role="timeline-message" data-direction="{{ $item->direction?->value }}" data-channel="email">
-            <header class="email-message-head">
-                <span class="avatar email-message-avatar" aria-hidden="true">{{ $emailInitial }}</span>
-                <div class="email-message-from">
-                    <strong class="email-message-sender">{{ $emailFrom }}</strong>
-                    <span class="email-message-direction">{{ $item->isInbound() ? 'to you' : 'sent from ' . $item->via }}</span>
+        @if (($compactEmail ?? false) === true)
+            {{-- Inside a text conversation: a compact email card with its state, leading to the full email in the Email tab. --}}
+            <div class="mgx-em-compact mgx-em-compact-{{ $item->isInbound() ? 'in' : 'out' }}" data-role="timeline-message" data-direction="{{ $item->direction?->value }}" data-channel="email">
+                <div class="mgx-emc-head">
+                    <span class="mgx-emc-ic" aria-hidden="true"><x-ds-icon name="mail" size="17" /></span>
+                    <span class="mgx-emc-t"><b data-role="timeline-email-subject">{{ $item->title !== '' ? $item->title : '(no subject)' }}</b><small>{{ $item->via !== null && str_starts_with((string) $item->via, 'Imported') ? $item->via : 'Email · ' . ($item->isInbound() ? 'Received' : 'Sent') }}</small></span>
+                    @if ($item->detail !== null)<span class="mgx-em-chip {{ $emailWarn ? 'is-warn' : '' }}" data-role="timeline-detail">{{ $item->detail }}</span>@endif
                 </div>
-                <time class="email-message-time" datetime="{{ $local->toIso8601String() }}">{{ $local->format('M j, ' . config('app.time_format')) }}</time>
-            </header>
-            @if ($item->title !== '')
-                <h3 class="email-message-subject timeline-email-subject" data-role="timeline-email-subject">{{ $item->title }}</h3>
-            @endif
+                @if ($emailSnippet !== '')<div class="mgx-emc-body">{{ $emailSnippet }}</div>@endif
+                @if ($item->threadKey !== null && isset($emailThreadUrl))
+                    <a class="mgx-emc-link" href="{{ $emailThreadUrl($item->threadKey) }}" data-role="timeline-view-email">View full email <x-ds-icon name="chevron-right" size="14" aria-hidden="true" /></a>
+                @endif
+                <time class="mgx-emc-time" datetime="{{ $local->toIso8601String() }}">{{ $local->format(config('app.time_format')) }}</time>
+            </div>
+        @else
+        <details class="mgx-em mgx-em-{{ $item->isInbound() ? 'in' : 'out' }} {{ $emailWarn ? 'is-warn' : '' }}" data-role="timeline-message" data-direction="{{ $item->direction?->value }}" data-channel="email" @if ($emailOpen) open @endif>
+            <summary class="mgx-em-head">
+                <span class="mgx-em-av" aria-hidden="true">{{ $emailInitial }}</span>
+                <span class="mgx-em-from">
+                    <b class="email-message-sender">{{ $emailFrom }}@if ($emailTo !== null) <span class="mgx-em-to">to {{ $emailTo }}</span>@endif</b>
+                    <span class="mgx-em-sub">{{ $item->isInbound() ? ($item->via ?: 'to you') : $item->via }}@if ($item->title !== '') · <span data-role="timeline-email-subject">{{ $item->title }}</span>@endif</span>
+                    <span class="mgx-em-snippet">{{ $emailSnippet }}</span>
+                </span>
+                <span class="mgx-em-meta">
+                    @if ($item->detail !== null)<span class="mgx-em-chip {{ $emailWarn ? 'is-warn' : '' }}" data-role="timeline-detail">{{ $item->detail }}</span>@endif
+                    <time datetime="{{ $local->toIso8601String() }}">{{ $local->format('M j, ' . config('app.time_format')) }}</time>
+                </span>
+            </summary>
             @if ($item->body !== null)
-                <div class="email-message-body timeline-message-body">{{ $item->body }}</div>
+                <div class="mgx-em-body timeline-message-body">{{ $item->body }}</div>
             @endif
-            @if ($item->detail !== null)
-                <p class="email-message-status" data-role="timeline-detail">{{ $item->detail }}</p>
-            @endif
-        </article>
+        </details>
+        @endif
     @elseif ($item->isMessage())
         <div class="chat {{ $item->isInbound() ? 'chat-left' : '' }} timeline-message {{ $item->tone->value === 'warning' ? 'timeline-message-warning' : '' }}" data-role="timeline-message" data-direction="{{ $item->direction?->value }}" data-channel="{{ $item->channel }}">
             <div class="chat-body">
