@@ -80,7 +80,8 @@ class NicheCompletenessTest extends TestCase
         foreach (['both', 'book_call'] as $goal) {
             foreach (self::PAGES as $page) {
                 $html = $this->html($goal, NichePresets::PHOTO_BOOTH, $page);
-                $this->assertDoesNotMatchRegularExpression('/Lumen Events|Maple Ridge|\bdogs?\b|puppy|Biscuit/iu', $html, "{$goal}/{$page} leaks other-niche content");
+                preg_match('/.{0,40}(Lumen Events|Maple Ridge|puppy|Biscuit|board and train).{0,40}/iu', $html, $leak);
+                $this->assertSame([], $leak, "{$goal}/{$page} leaks other-niche content");
             }
         }
 

@@ -34,9 +34,14 @@ final class SiteContextFactory
         $agency = $site->agencyWorkspace ?? Workspace::query()->findOrFail($site->agency_workspace_id);
         $brand = AgencyWhiteLabelSetting::query()->where('agency_workspace_id', $agency->id)->first();
 
-        $name = trim((string) ($brand?->display_name ?: $agency->name));
-        $primary = $brand?->accent_color ?: self::DEFAULT_PRIMARY;
         $values = SiteSchema::canonicalValues($values);
+        // Original edition: MotionGrove's own identity. The workspace name and white-label branding are NOT read, so
+        // neither can leak into (or be changed by) this site.
+        $original = ($values['x.edition'] ?? null) === SiteSchema::EDITION_ORIGINAL;
+        $brand = $original ? null : $brand;
+
+        $name = $original ? (string) config('marketing.site.name', 'MotionGrove') : trim((string) ($brand?->display_name ?: $agency->name));
+        $primary = $brand?->accent_color ?: self::DEFAULT_PRIMARY;
         $goal = (string) ($values['x.goal'] ?? 'both');
         $goal = in_array($goal, array_keys(SiteSchema::GOALS), true) ? $goal : 'both';
 
@@ -57,7 +62,7 @@ final class SiteContextFactory
 
         return new SiteContext(
             brandName: $name,
-            legalName: $brand?->legal_name,
+            legalName: $original ? (string) (config('marketing.site.legal_name') ?: $name) : $brand?->legal_name,
             primaryColor: $primary,
             secondaryColor: $brand?->secondary_color,
             logo: $this->asset($brand?->logo_path),
@@ -67,7 +72,7 @@ final class SiteContextFactory
             supportEmail: $brand?->support_email,
             supportUrl: $brand?->support_url,
             social: $this->social($brand),
-            plans: $this->plans($agency, $values, $name),
+            plans: $original ? [] : $this->plans($agency, $values, $name),
             bookingUrl: $this->booking->publicUrl($agency, $values['x.booking_type_uid'] ?? null),
             goal: $goal,
             pricingMode: $goal,
@@ -77,6 +82,7 @@ final class SiteContextFactory
             cssUrl: ($preview ? route('customer.workspaces.agency.site.preview-css', [$previewWorkspaceUid]) : route('agency.site.css', $publicId))
                 .'?v='.substr(md5($primary.($brand?->secondary_color ?? '')), 0, 8),
             preview: $preview,
+            original: $original,
         );
     }
 

@@ -294,10 +294,15 @@ final class AgencySiteManager
             $items[] = compact('key', 'label', 'status', 'detail', 'step');
         };
 
-        $add('brand', 'Brand identity', $brand !== null ? 'pass' : 'warn', $brand !== null ? 'Name, logo and colours come from the Branding tab.' : 'No brand saved yet — the site uses your workspace name and the default colour. Set it up on the Branding tab.', 1);
-        $add('logo', 'Logo', $context->logo !== null || $context->logoDark !== null ? 'pass' : 'warn', $context->logo !== null || $context->logoDark !== null ? 'Logo set.' : 'No logo uploaded — the site shows your name as text.', 1);
+        if ($context->original) {
+            $add('brand', 'Brand identity', 'pass', 'Original MotionGrove branding, logo, colours and legal links.', 1);
+            $add('logo', 'Logo', 'pass', 'The MotionGrove logo is used.', 1);
+        } else {
+            $add('brand', 'Brand identity', $brand !== null ? 'pass' : 'warn', $brand !== null ? 'Name, logo and colours come from the Branding tab.' : 'No brand saved yet — the site uses your workspace name and the default colour. Set it up on the Branding tab.', 1);
+            $add('logo', 'Logo', $context->logo !== null || $context->logoDark !== null ? 'pass' : 'warn', $context->logo !== null || $context->logoDark !== null ? 'Logo set.' : 'No logo uploaded — the site shows your name as text.', 1);
+        }
 
-        if (SiteRenderer::contrastWithWhite($context->primaryColor) < 3.0) {
+        if (! $context->original && SiteRenderer::contrastWithWhite($context->primaryColor) < 3.0) {
             $add('contrast', 'Button contrast', 'warn', 'Your primary colour is quite light for white button text. Choose a darker colour on the Branding tab.', 1);
         }
 
@@ -319,7 +324,7 @@ final class AgencySiteManager
             $terms = $this->hasLink($values, 'links.terms');
             $add('legal', 'Privacy policy and terms', $privacy && $terms ? 'pass' : 'fail', $privacy && $terms ? 'Both links are set.' : 'Add your privacy policy and terms of service links in the Footer section — required before taking sign-ups.', 2);
         } else {
-            $add('legal', 'Privacy policy and terms', $this->hasLink($values, 'links.privacy') && $this->hasLink($values, 'links.terms') ? 'pass' : 'warn', 'Add your privacy policy and terms of service links in the Footer section.', 2);
+            $add('legal', 'Privacy policy and terms', $context->original || ($this->hasLink($values, 'links.privacy') && $this->hasLink($values, 'links.terms')) ? 'pass' : 'warn', 'Add your privacy policy and terms of service links in the Footer section.', 2);
         }
 
         // Booking.

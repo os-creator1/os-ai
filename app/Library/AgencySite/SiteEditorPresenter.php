@@ -29,7 +29,7 @@ final class SiteEditorPresenter
         $values = AgencySiteManager::values($site);
         $context = $this->contexts->make($site, $values);
         // The defaults the editor shows (and "reset" returns to) are those of the selected industry, not the general ones.
-        [$defaultTree] = $this->builder->build(array_intersect_key($values, ['x.niche' => 1]), $context);
+        [$defaultTree] = $this->builder->build(array_intersect_key($values, ['x.niche' => 1, 'x.edition' => 1]), $context);
         [$tree, $homeOrder] = $this->builder->build($values, $context);
 
         $groups = [];
