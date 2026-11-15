@@ -48,6 +48,9 @@ class GuidedWebsiteGenerationClient
      */
     public const MAX_OUTPUT_TOKENS = 8_000;
 
+    /** @var ?array<string, mixed> */
+    private ?array $lastDiagnostic = null;
+
     private const SENSITIVE_FIELDS = [
         BusinessKnowledgeProfileFieldKey::Credentials,
         BusinessKnowledgeProfileFieldKey::YearsOperating,
@@ -71,16 +74,54 @@ class GuidedWebsiteGenerationClient
      */
     public function generate(Business $business, array $plan, ?int $actorUserId = null, ?string $idempotencyKey = null): ?array
     {
+        $this->lastDiagnostic = null;
         $messages = $this->buildMessages($business, $plan);
 
         $raw = $this->client->complete($messages, $business, $actorUserId, self::MAX_OUTPUT_TOKENS, $idempotencyKey);
         if ($raw === null) {
+            $this->lastDiagnostic = [
+                'stage' => GenerationBatchDiagnostics::STAGE_PROVIDER_NO_CONTENT,
+                'refusal' => $this->client->lastRefusalReason()?->value,
+            ];
+
             return null;
         }
 
         $decoded = json_decode($raw, true);
 
-        return is_array($decoded['pages'] ?? null) ? $decoded['pages'] : null;
+        if (! is_array($decoded)) {
+            // A response cut off by the output-token ceiling is the typical cause: valid-looking JSON that stops mid-page.
+            $this->lastDiagnostic = [
+                'stage' => GenerationBatchDiagnostics::STAGE_RESPONSE_NOT_JSON,
+                'json_error' => json_last_error_msg(),
+                'response_chars' => strlen($raw),
+                'max_output_tokens' => self::MAX_OUTPUT_TOKENS,
+            ];
+
+            return null;
+        }
+
+        if (! is_array($decoded['pages'] ?? null)) {
+            $this->lastDiagnostic = [
+                'stage' => GenerationBatchDiagnostics::STAGE_RESPONSE_MISSING_PAGES,
+                'response_chars' => strlen($raw),
+            ];
+
+            return null;
+        }
+
+        return $decoded['pages'];
+    }
+
+    /**
+     * Why the last generate() call returned null, as sanitized scalars only (never response text): a fixed `stage`
+     * plus counts / a fixed json error string / a refusal enum value. Null after a call that produced a pages array.
+     *
+     * @return ?array<string, mixed>
+     */
+    public function lastGenerationDiagnostic(): ?array
+    {
+        return $this->lastDiagnostic;
     }
 
     public function lastCallWasBudgetExhausted(): bool
