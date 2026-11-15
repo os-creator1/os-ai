@@ -13,8 +13,10 @@ use App\Models\Currency;
 use Illuminate\Contracts\View\View;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Validation\Rule;
+use Illuminate\Validation\ValidationException;
 
 /**
  * Implementation Contract 16 §6, §12.E — the Business-wide Packages & Products
@@ -61,6 +63,10 @@ class CatalogItemsController extends Controller
             'business' => $business,
             'activeItems' => $all->filter(fn (CatalogItem $item) => $item->isActive())->values(),
             'archivedItems' => $all->filter(fn (CatalogItem $item) => $item->isArchived())->values(),
+            // The "Add to catalog" dialog is rendered by the list page itself.
+            'types' => CatalogItemType::cases(),
+            'defaultCurrency' => $business->currency_code,
+            'currencies' => Currency::query()->where('status', true)->orderBy('name')->get(['code', 'name', 'format']),
         ]);
     }
 
@@ -77,21 +83,61 @@ class CatalogItemsController extends Controller
         ]);
     }
 
-    public function store(Request $request, string $workspaceUid, string $businessUid): RedirectResponse
+    /**
+     * The same action serves the full-page form (redirects, the non-JavaScript
+     * fallback) and the catalog's "Add to catalog" dialog, which asks for JSON
+     * and gets a 201 with where to reload, or a 422 with field errors worded
+     * exactly as the manager or the request validator worded them.
+     */
+    public function store(Request $request, string $workspaceUid, string $businessUid): RedirectResponse|JsonResponse
     {
         [, $business] = $this->catalogScope($workspaceUid, $businessUid);
 
-        $data = $this->validated($request);
+        try {
+            $data = $this->validated($request);
+        } catch (ValidationException $exception) {
+            if (! $request->expectsJson()) {
+                throw $exception;
+            }
+
+            // The application's global JSON renderer reduces a validation
+            // failure to one message; the dialog needs the field it belongs to.
+            return response()->json([
+                'message' => collect($exception->errors())->flatten()->first(),
+                'errors' => $exception->errors(),
+            ], 422);
+        }
 
         try {
             $item = $this->items->create($business, $this->attributes($data), (int) Auth::id());
         } catch (CatalogRuleException $exception) {
+            if ($request->expectsJson()) {
+                return response()->json([
+                    'message' => $exception->getMessage(),
+                    'errors' => ['catalog' => [$exception->getMessage()]],
+                ], 422);
+            }
+
             return $this->refused($exception);
+        }
+
+        $added = '"' . $item->name . '" added to your catalog.';
+
+        if ($request->expectsJson()) {
+            // Survives the reload the dialog performs, so the list shows the
+            // new item together with the confirmation.
+            $request->session()->flash('flash_success', $added);
+
+            return response()->json([
+                'message' => $added,
+                'uid' => $item->uid,
+                'redirect' => route('customer.workspaces.businesses.catalog.index', [$workspaceUid, $businessUid]),
+            ], 201);
         }
 
         return redirect()
             ->route('customer.workspaces.businesses.catalog.edit', [$workspaceUid, $businessUid, $item->uid])
-            ->with('flash_success', '"' . $item->name . '" added to your catalog.');
+            ->with('flash_success', $added);
     }
 
     public function edit(string $workspaceUid, string $businessUid, string $catalogItemUid): View
@@ -192,13 +238,25 @@ class CatalogItemsController extends Controller
      */
     private function validated(Request $request): array
     {
-        return $request->validate([
+        $data = $request->validate([
             'type' => ['required', 'string', Rule::in(array_column(CatalogItemType::cases(), 'value'))],
             'name' => ['required', 'string', 'max:1000'],
             'description' => ['nullable', 'string', 'max:20000'],
             'price' => ['nullable', 'string', 'max:40'],
             'currency_code' => ['nullable', 'string', 'max:8'],
+            // Only the "Add to catalog" dialog sends this: which of its two
+            // price modes the person chose. Absent for the classic forms.
+            'pricing' => ['nullable', 'string', Rule::in(['fixed', 'quote'])],
         ]);
+
+        // "Fixed price" with no figure typed must never quietly become a
+        // quote-only item: that would save something the person did not ask
+        // for. (The manager cannot see this — by then the mode is gone.)
+        if (($data['pricing'] ?? null) === 'fixed' && trim((string) ($data['price'] ?? '')) === '') {
+            throw ValidationException::withMessages(['price' => 'Enter a price, or choose Quote only.']);
+        }
+
+        return $data;
     }
 
     /**
@@ -213,6 +271,12 @@ class CatalogItemsController extends Controller
      */
     private function attributes(array $data): array
     {
+        // "Quote only" is no price at all — whatever else was posted.
+        if (($data['pricing'] ?? null) === 'quote') {
+            $data['price'] = null;
+            $data['currency_code'] = null;
+        }
+
         return [
             'type' => $data['type'],
             'name' => $data['name'],

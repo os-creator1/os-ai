@@ -4,6 +4,7 @@
 
 @section('page-style')
     @include('partials.cx._styles')
+    @include('customer.business.catalog._styles')
     <link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700;800&display=swap" rel="stylesheet">
     <style>
         /* Packages & Products — values from the approved design (Catalog.dc.html). Scoped to .cat-page. */
@@ -128,7 +129,7 @@
         </div>
         <div class="cat-actions">
             <a class="cat-btn is-quiet" href="{{ route('customer.workspaces.businesses.catalog.locations.index', $scope) }}" data-role="catalog-locations"><x-ds-icon name="map-pin" class="cat-ic" size="16" aria-hidden="true" />Manage by location</a>
-            <a class="cat-btn is-primary" href="{{ $createUrl }}" data-role="catalog-add"><x-ds-icon name="plus" class="cat-ic" size="16" aria-hidden="true" />Add package or product</a>
+            <a class="cat-btn is-primary" href="{{ $createUrl }}" data-role="catalog-add" data-catalog-add><x-ds-icon name="plus" class="cat-ic" size="16" aria-hidden="true" />Add package or product</a>
         </div>
     </header>
 
@@ -218,7 +219,7 @@
             </ul>
         @endif
 
-        <a href="{{ $createUrl }}" class="cat-add"><x-ds-icon name="plus" class="cat-ic" size="16" aria-hidden="true" />Add package or product</a>
+        <a href="{{ $createUrl }}" class="cat-add" data-catalog-add><x-ds-icon name="plus" class="cat-ic" size="16" aria-hidden="true" />Add package or product</a>
     </section>
 
     @if ($archivedItems->isNotEmpty())
@@ -246,5 +247,10 @@
             </ul>
         </section>
     @endif
+
+    {{-- The "Add to catalog" dialog. The links above still point at the full-page create URL (non-JavaScript fallback). --}}
+    <div class="cg" style="display: contents">
+        @include('customer.business.catalog._add-modal')
+    </div>
     </div>
 @endsection
