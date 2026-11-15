@@ -31,6 +31,7 @@
 
 @section('page-style')
     <style>
+        @import url('https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700&display=swap');
         #crm-opportunities { display: flex; flex-direction: column; gap: var(--space-3, .75rem); min-width: 0; }
         #crm-opportunities [data-role="crm-board"] { display: contents; }
         #crm-opportunities .crm-head { order: 1; display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: var(--space-3, .75rem); }
@@ -100,7 +101,7 @@
         }
 
         /* Approved Opportunities design — scoped to this page and preserving the existing CRM data hooks. */
-        @import url('https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700&display=swap');
+        
         #crm-opportunities {
             font-family: 'Figtree', system-ui, sans-serif;
             color: #1F1A19;
