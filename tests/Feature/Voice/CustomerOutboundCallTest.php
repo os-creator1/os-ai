@@ -310,4 +310,188 @@ class CustomerOutboundCallTest extends TestCase
 
         $this->getJson(route('customer.workspaces.businesses.calls.show', [$this->workspace->uid, $this->business->uid, $uid]))->assertNotFound();
     }
+
+    // ---- post-call wrap-up (the call popup's "How did it go?" + note) ----
+
+    private function wrapup(string $callUid, array $body, ?array $uids = null)
+    {
+        [$ws, $biz] = $uids ?? [$this->workspace->uid, $this->business->uid];
+
+        return $this->postJson(route('customer.workspaces.businesses.calls.wrapup', [$ws, $biz, $callUid]), $body);
+    }
+
+    private function finishedCall(): BusinessVoiceCall
+    {
+        $this->place()->assertStatus(202);
+        $call = BusinessVoiceCall::firstOrFail();
+        $call->forceFill(['status' => BusinessVoiceCall::STATUS_ENDED, 'answered_at' => now(), 'ended_at' => now(), 'duration_seconds' => 252])->save();
+
+        return $call->fresh();
+    }
+
+    public function test_the_calling_number_is_the_businesss_own_and_is_reported_for_the_popup(): void
+    {
+        $this->place()->assertStatus(202)->assertJsonPath('data.from_number', fn ($n) => is_string($n) && str_starts_with($n, '+'));
+    }
+
+    public function test_wrapup_saves_the_disposition_and_appends_the_note_to_the_contact_once(): void
+    {
+        $call = $this->finishedCall();
+
+        $this->wrapup($call->uid, ['note' => 'Wants a 360 booth quote.', 'disposition' => 'interested'])
+            ->assertOk()->assertJsonPath('data.saved', true)->assertJsonPath('data.on_contact', true);
+
+        $call->refresh();
+        $this->assertSame('interested', $call->wrapup_disposition);
+        $this->assertSame('Wants a 360 booth quote.', $call->wrapup_note);
+
+        $notes = \DB::table('contacts_custom_field as v')->join('contact_group_fields as f', 'f.id', '=', 'v.field_id')
+            ->where('v.contact_id', $this->contact->id)->where('f.tag', 'NOTES')->pluck('v.value');
+        $this->assertCount(1, $notes);
+        $this->assertStringContainsString('Wants a 360 booth quote.', $notes[0]);
+
+        // A second submit (double click / retry) is acknowledged and appends nothing.
+        $this->wrapup($call->uid, ['note' => 'Wants a 360 booth quote.', 'disposition' => 'interested'])->assertOk()->assertJsonPath('data.duplicate', true);
+        $this->assertSame(1, \DB::table('contacts_custom_field as v')->join('contact_group_fields as f', 'f.id', '=', 'v.field_id')->where('v.contact_id', $this->contact->id)->where('f.tag', 'NOTES')->count());
+        $this->assertSame(1, substr_count((string) \DB::table('contacts_custom_field as v')->join('contact_group_fields as f', 'f.id', '=', 'v.field_id')->where('v.contact_id', $this->contact->id)->where('f.tag', 'NOTES')->value('v.value'), 'Wants a 360'));
+    }
+
+    public function test_wrapup_decides_once_only_under_a_row_lock_on_the_call(): void
+    {
+        $call = $this->finishedCall();
+        \DB::enableQueryLog();
+
+        $this->wrapup($call->uid, ['note' => 'Locked save.', 'disposition' => 'booked'])->assertOk();
+
+        $locking = collect(\DB::getQueryLog())->pluck('query')->filter(fn ($q) => str_contains($q, 'business_voice_calls') && str_contains(strtolower($q), 'for update'));
+        $this->assertCount(1, $locking, 'The once-only check re-reads the call row FOR UPDATE inside the transaction.');
+        $this->assertSame('booked', $call->fresh()->wrapup_disposition);
+
+        // Another request that raced past an earlier read still finds the saved marker under the lock and appends nothing.
+        \DB::table('business_voice_calls')->where('id', $call->id)->update(['wrapup_note' => 'first']);
+        $this->wrapup($call->uid, ['note' => 'Second submit.'])->assertOk()->assertJsonPath('data.duplicate', true);
+        $this->assertSame('first', $call->fresh()->wrapup_note);
+        $this->assertSame(0, \DB::table('contacts_custom_field')->where('value', 'like', '%Second submit.%')->count());
+    }
+
+    public function test_wrapup_is_refused_while_the_call_is_live_and_for_unknown_dispositions(): void
+    {
+        $this->place()->assertStatus(202);
+        $call = BusinessVoiceCall::firstOrFail();
+
+        $this->wrapup($call->uid, ['note' => 'too early'])->assertStatus(409)->assertJsonPath('error.code', 'call_not_finished');
+
+        $call->forceFill(['status' => BusinessVoiceCall::STATUS_ENDED])->save();
+        $this->wrapup($call->uid, ['disposition' => 'sold_a_boat'])->assertStatus(422);
+        $this->assertNull($call->fresh()->wrapup_saved_at);
+    }
+
+    public function test_wrapup_of_another_businesss_call_is_not_found(): void
+    {
+        $call = $this->finishedCall();
+        [, $otherBusiness, $otherWorkspace] = $this->tenant(WorkspacePlanTier::Growth, 'Other Biz', 'Other WS');
+        $this->authenticateAs($this->customer);
+
+        $this->wrapup($call->uid, ['note' => 'x'], [$otherWorkspace->uid, $otherBusiness->uid])->assertNotFound();
+        $this->assertNull($call->fresh()->wrapup_saved_at);
+    }
+
+    // ---- outbound calling-number selection (several eligible numbers) ----
+
+    private function secondNumber(bool $voiceReady = true, string $status = 'active', bool $local = true): \App\Models\BusinessMessagingNumber
+    {
+        $identity = \App\Models\BusinessMessagingIdentity::query()->where('business_id', $this->business->id)->firstOrFail();
+        $number = $this->attachNumber($identity, $this->uniqueNumber(), false, \App\Enums\Messaging\BusinessMessagingNumberStatus::Active, 'num_ref_' . uniqid());
+
+        if ($voiceReady) {
+            $this->voiceReady($number->id);
+        }
+        if (! $local) {
+            \DB::table('business_messaging_numbers')->where('id', $number->id)->update(['number_type' => 'toll_free']);
+        }
+        if ($status !== 'active') {
+            \DB::table('business_messaging_numbers')->where('id', $number->id)->update(['status' => $status]);
+        }
+
+        return $number->fresh();
+    }
+
+    private function numbersList(?array $uids = null)
+    {
+        [$ws, $biz] = $uids ?? [$this->workspace->uid, $this->business->uid];
+
+        return $this->getJson(route('customer.workspaces.businesses.calls.numbers', [$ws, $biz]));
+    }
+
+    public function test_the_selector_lists_only_this_businesss_voice_ready_numbers_primary_first(): void
+    {
+        $second = $this->secondNumber();
+        $this->secondNumber(voiceReady: false);          // not confirmed on the voice connection
+        $this->secondNumber(local: false);               // not a local number
+        $this->secondNumber(status: 'released');         // not active
+
+        [, $otherBusiness] = $this->tenant(WorkspacePlanTier::Growth, 'Other Biz', 'Other WS');
+        $otherIdentity = $this->attachIdentity($otherBusiness);
+        $foreign = $this->attachNumber($otherIdentity, $this->uniqueNumber(), true, \App\Enums\Messaging\BusinessMessagingNumberStatus::Active, 'num_ref_foreign');
+        $this->voiceReady($foreign->id);
+        $this->authenticateAs($this->customer);
+
+        $json = $this->numbersList()->assertOk()->json('data');
+        $this->assertCount(2, $json);
+        $this->assertTrue($json[0]['primary']);
+        $this->assertFalse($json[1]['primary']);
+        $body = json_encode($json);
+        $this->assertStringNotContainsString((string) $foreign->phone_number, $body);
+        $this->assertStringNotContainsString((string) $second->phone_number . 'x', $body);
+        $this->assertSame(32, strlen($json[0]['id']), 'Opaque 32-character tokens, never database ids.');
+    }
+
+    public function test_a_chosen_number_is_the_one_dialled_and_recorded_while_the_default_stays_the_primary(): void
+    {
+        $second = $this->secondNumber();
+        $token = collect($this->numbersList()->json('data'))->firstWhere('primary', false)['id'];
+
+        $this->postJson(route('customer.workspaces.businesses.calls.store', [$this->workspace->uid, $this->business->uid]), [
+            'contact_uid' => $this->contact->uid, 'idempotency_key' => 'req-key-from-1', 'from' => $token,
+        ])->assertStatus(202);
+
+        Http::assertSent(fn (Request $r) => $r->url() === 'https://api.telnyx.com/v2/calls' && $r['from'] === $second->phone_number);
+        $this->assertSame($second->id, (int) BusinessVoiceCall::firstOrFail()->business_messaging_number_id);
+
+        // Without a choice the primary number is still used.
+        $this->postJson(route('customer.workspaces.businesses.calls.store', [$this->workspace->uid, $this->business->uid]), [
+            'contact_uid' => $this->makeContact($this->business->id, '14155552999')->uid, 'idempotency_key' => 'req-key-from-2',
+        ])->assertStatus(202);
+        $this->assertSame($this->number->id, (int) BusinessVoiceCall::query()->orderByDesc('id')->first()->business_messaging_number_id);
+    }
+
+    public function test_a_token_for_another_business_unknown_tokens_and_ineligible_numbers_dial_nothing(): void
+    {
+        [$otherCustomer, $otherBusiness, $otherWorkspace] = $this->tenant(WorkspacePlanTier::Growth, 'Other Biz', 'Other WS');
+        $otherIdentity = $this->attachIdentity($otherBusiness);
+        $foreign = $this->attachNumber($otherIdentity, $this->uniqueNumber(), true, \App\Enums\Messaging\BusinessMessagingNumberStatus::Active, 'num_ref_foreign');
+        $this->voiceReady($foreign->id);
+        $foreignToken = app(\App\Library\Voice\CustomerCallPlacer::class)->selectorToken($otherBusiness, $foreign);
+        $notReady = $this->secondNumber(voiceReady: false);
+        $notReadyToken = app(\App\Library\Voice\CustomerCallPlacer::class)->selectorToken($this->business, $notReady);
+        $this->authenticateAs($this->customer);
+        $url = route('customer.workspaces.businesses.calls.store', [$this->workspace->uid, $this->business->uid]);
+
+        foreach (['foreign' => $foreignToken, 'unknown' => 'deadbeef', 'not-ready' => $notReadyToken] as $label => $token) {
+            $this->postJson($url, ['contact_uid' => $this->contact->uid, 'idempotency_key' => 'req-key-bad-' . $label, 'from' => $token])
+                ->assertStatus(422)->assertJsonPath('error.code', 'number_not_available');
+        }
+
+        // A token minted for the other business is not valid for this one even when it is a real number there.
+        $this->numbersList([$otherWorkspace->uid, $otherBusiness->uid])->assertNotFound();
+        $this->noDial();
+        $this->assertSame(0, BusinessVoiceCall::count());
+    }
+
+    public function test_the_numbers_endpoint_requires_calling_permission(): void
+    {
+        \DB::table('workspaces')->where('id', $this->workspace->id)->update(['owner_user_id' => $this->platformAdminId()]);
+        $this->authenticateAs($this->customer, ['view_numbers']);
+        $this->assertContains($this->numbersList()->getStatusCode(), [401, 403]);
+    }
 }

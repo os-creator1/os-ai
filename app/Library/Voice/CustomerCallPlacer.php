@@ -34,7 +34,7 @@ final class CustomerCallPlacer
     }
 
     /** @return array{0: BusinessVoiceCall, 1: bool} the call, and whether it is a replay of an earlier identical request */
-    public function place(Business $business, ?Contacts $contact, int $userId, string $idempotencyKey, string $channel = 'server', ?string $number = null): array
+    public function place(Business $business, ?Contacts $contact, int $userId, string $idempotencyKey, string $channel = 'server', ?string $number = null, ?string $fromToken = null): array
     {
         $cfg = (array) config('messaging.voice.customer_calls');
         $apiKey = trim((string) config('services.telnyx.api_key'));
@@ -80,20 +80,23 @@ final class CustomerCallPlacer
             throw new CustomerCallRefusedException('contact_blocked', 'This number is on the do-not-contact list.', 403);
         }
 
-        $number = $this->resolveVoiceReadyNumber($business, $connectionId);
+        $number = $fromToken !== null && $fromToken !== ''
+            ? $this->resolveSelectedNumber($business, $fromToken, $connectionId)
+            : $this->resolveVoiceReadyNumber($business, $connectionId);
+        $selected = $fromToken !== null && $fromToken !== '';
         $toHash = BusinessVoiceCall::hashDestination($destination);
         $token = bin2hex(random_bytes(32));
         $window = now()->subSeconds((int) $cfg['ring_timeout_secs'] + (int) $cfg['max_duration_secs'] + 60);
 
-        [$call, $replay] = DB::transaction(function () use ($destination, $business, $contact, $userId, $idempotencyKey, $number, $toHash, $token, $window, $cfg, $connectionId, $channel): array {
+        [$call, $replay] = DB::transaction(function () use ($destination, $business, $contact, $userId, $idempotencyKey, $number, $toHash, $token, $window, $cfg, $connectionId, $channel, $selected): array {
             // Serialise every placement for this number: the checks below and the insert are one atomic step.
             $locked = BusinessMessagingNumber::query()->whereKey($number->id)->lockForUpdate()->first();
             // Re-validate on the LOCKED row: a renewal may have suspended the number after it was first read.
-            $this->assertVoiceReady($locked, $connectionId);
+            $this->assertVoiceReady($locked, $connectionId, ! $selected);
 
             $existing = BusinessVoiceCall::query()->where('business_id', $business->id)->where('idempotency_key', $idempotencyKey)->first();
             if ($existing !== null) {
-                if ($existing->to_hash !== $toHash || (int) $existing->contact_id !== (int) $contact?->id) {
+                if ($existing->to_hash !== $toHash || (int) $existing->contact_id !== (int) $contact?->id || (int) $existing->business_messaging_number_id !== (int) $number->id) {
                     throw new CustomerCallRefusedException('idempotency_key_reused', 'That request key was already used for a different call.', 409);
                 }
 
@@ -186,11 +189,62 @@ final class CustomerCallPlacer
         return $number;
     }
 
-    private function assertVoiceReady(?BusinessMessagingNumber $number, string $connectionId): void
+    /**
+     * Every number of THIS Business a call may be placed from: active, local, provider-backed, and confirmed on the
+     * configured Voice Connection. Reached only through the Business's own messaging identity, so another Business's
+     * numbers can never appear. The primary number is listed first.
+     *
+     * @return \Illuminate\Support\Collection<int, BusinessMessagingNumber>
+     */
+    public function eligibleNumbers(Business $business): \Illuminate\Support\Collection
+    {
+        $connectionId = trim((string) config('messaging.voice.connection_id'));
+        $identity = $this->identities->resolveForBusiness($business);
+
+        if ($identity === null || $connectionId === '') {
+            return collect();
+        }
+
+        return BusinessMessagingNumber::query()
+            ->where('business_messaging_identity_id', (int) $identity->id)
+            ->orderByDesc('is_primary')
+            ->orderBy('id')
+            ->get()
+            ->filter(function (BusinessMessagingNumber $number) use ($connectionId): bool {
+                try {
+                    $this->assertVoiceReady($number, $connectionId, false);
+
+                    return true;
+                } catch (CustomerCallRefusedException) {
+                    return false;
+                }
+            })
+            ->values();
+    }
+
+    /** The opaque, business-bound token the browser sends instead of a database id. */
+    public function selectorToken(Business $business, BusinessMessagingNumber $number): string
+    {
+        return substr(hash_hmac('sha256', 'callfrom:' . $business->id . ':' . $number->id, (string) config('app.key')), 0, 32);
+    }
+
+    private function resolveSelectedNumber(Business $business, string $token, string $connectionId): BusinessMessagingNumber
+    {
+        foreach ($this->eligibleNumbers($business) as $number) {
+            if (hash_equals($this->selectorToken($business, $number), $token)) {
+                return $number;
+            }
+        }
+
+        // Unknown, another Business's, or no longer eligible: all the same answer, and nothing is dialled.
+        throw new CustomerCallRefusedException('number_not_available', 'That calling number is not available for this business.', 422);
+    }
+
+    private function assertVoiceReady(?BusinessMessagingNumber $number, string $connectionId, bool $requirePrimary = true): void
     {
         if ($number === null
             || ! $number->isActive()
-            || ! $number->is_primary
+            || ($requirePrimary && ! $number->is_primary)
             || $number->number_type !== PhoneNumberType::Local
             || trim((string) $number->provider_number_reference) === ''
             || $number->voice_assigned_at === null

@@ -81,7 +81,8 @@ final class ContactDirectory
             'group' => $this->groupNameFor($business, $contact),
             'subscribed' => $contact->status === Contacts::STATUS_SUBSCRIBE,
             'added' => $contact->created_at,
-            'last_activity' => $lastActivity[$contact->id] ?? null,
+            'last_activity' => ($lastActivity[$contact->id] ?? null)['at'] ?? null,
+            'last_activity_type' => ($lastActivity[$contact->id] ?? null)['type'] ?? null,
         ]);
     }
 
@@ -352,11 +353,12 @@ final class ContactDirectory
     }
 
     /**
-     * The latest campaign message or conversation update per contact, for a
-     * page of contacts, in two queries.
+     * The latest activity per contact across the channels the data model records for a contact, in a FIXED number of
+     * queries for the page (never one per row): text campaign messages and text conversations ("Texted"), email in the
+     * email ledger ("Emailed"), and customer/inbound calls ("Called").
      *
      * @param  Collection<int, Contacts>  $contacts
-     * @return array<int, \Illuminate\Support\Carbon> contact id => latest activity
+     * @return array<int, array{at: \Illuminate\Support\Carbon, type: string}> contact id => latest activity
      */
     private function lastActivityFor(Business $business, Collection $contacts): array
     {
@@ -365,18 +367,31 @@ final class ContactDirectory
         }
 
         $latest = [];
-
-        $campaignActivity = DB::table('tracking_logs')
-            ->where('business_id', $business->id)
-            ->whereIn('contact_id', $contacts->pluck('id')->all())
-            ->groupBy('contact_id')
-            ->selectRaw('contact_id, max(created_at) as at')
-            ->get();
-
-        foreach ($campaignActivity as $row) {
-            if ($row->at !== null) {
-                $latest[(int) $row->contact_id] = \Illuminate\Support\Carbon::parse($row->at);
+        $note = function (int $contactId, $at, string $type) use (&$latest): void {
+            if ($at === null) {
+                return;
             }
+
+            $at = \Illuminate\Support\Carbon::parse($at);
+
+            if (! isset($latest[$contactId]) || $at->greaterThan($latest[$contactId]['at'])) {
+                $latest[$contactId] = ['at' => $at, 'type' => $type];
+            }
+        };
+        $ids = $contacts->pluck('id')->all();
+
+        foreach (DB::table('tracking_logs')->where('business_id', $business->id)->whereIn('contact_id', $ids)->groupBy('contact_id')->selectRaw('contact_id, max(created_at) as at')->get() as $row) {
+            $note((int) $row->contact_id, $row->at, 'Texted');
+        }
+
+        foreach (DB::table('business_email_messages')->where('business_id', $business->id)->whereNull('deleted_at')->whereIn('contact_id', $ids)
+            ->groupBy('contact_id')->selectRaw('contact_id, max(coalesce(received_at, created_at)) as at')->get() as $row) {
+            $note((int) $row->contact_id, $row->at, 'Emailed');
+        }
+
+        foreach (DB::table('business_voice_calls')->where('business_id', $business->id)->whereIn('kind', ['customer', 'inbound'])->whereIn('contact_id', $ids)
+            ->groupBy('contact_id')->selectRaw('contact_id, max(created_at) as at')->get() as $row) {
+            $note((int) $row->contact_id, $row->at, 'Called');
         }
 
         $byPhone = [];
@@ -393,24 +408,11 @@ final class ContactDirectory
             $numbers = array_keys($byPhone);
             $variants = array_merge($numbers, array_map(fn (string $phone) => '+' . $phone, $numbers));
 
-            $boxes = DB::table('chat_boxes')
-                ->where('business_id', $business->id)
-                ->whereIn('to', $variants)
-                ->get(['to', 'updated_at']);
-
-            foreach ($boxes as $box) {
+            foreach (DB::table('chat_boxes')->where('business_id', $business->id)->whereIn('to', $variants)->get(['to', 'updated_at']) as $box) {
                 $phone = ChatBoxBusinessBackfillV1::normalizeCounterparty((string) $box->to);
 
-                if ($box->updated_at === null || ! isset($byPhone[$phone])) {
-                    continue;
-                }
-
-                $at = \Illuminate\Support\Carbon::parse($box->updated_at);
-
-                foreach ($byPhone[$phone] as $contactId) {
-                    if (! isset($latest[$contactId]) || $at->greaterThan($latest[$contactId])) {
-                        $latest[$contactId] = $at;
-                    }
+                foreach ($byPhone[$phone] ?? [] as $contactId) {
+                    $note($contactId, $box->updated_at, 'Texted');
                 }
             }
         }

@@ -1,0 +1,99 @@
+<?php
+
+namespace Tests\_dev;
+
+use App\Models\BusinessEmailMessage;
+use App\Models\ContactGroupFields;
+use App\Models\ContactGroups;
+use App\Models\Contacts;
+use App\Models\ContactsCustomField;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
+use Tests\Feature\BusinessEmail\Concerns\CreatesBusinessEmailFixtures;
+use Tests\Feature\Messaging\Concerns\CreatesMessagingFixtures;
+use Tests\TestCase;
+
+/** DEV ONLY (git-excluded): persists a realistic tenant into the disposable DB and prints a logged-in session cookie. */
+class SeedVisualFixtureTest extends TestCase
+{
+    use CreatesBusinessEmailFixtures;
+    use CreatesMessagingFixtures;
+
+    public function test_seed(): void
+    {
+        [$owner, $business, $workspace] = $this->emailTenant('Lumina Aura Events');
+        $this->activeAccount($business, mailbox: 'hello@luminaauraevents.com');
+        $business->forceFill(['timezone' => 'America/Denver'])->save();
+
+        $leads = ContactGroups::create(['customer_id' => $business->customer_id, 'business_id' => $business->id, 'name' => 'Leads & Clients', 'status' => true]);
+        $vendors = ContactGroups::create(['customer_id' => $business->customer_id, 'business_id' => $business->id, 'name' => 'Vendors', 'status' => true]);
+
+        $make = function (ContactGroups $g, string $phone, array $vals) use ($business) {
+            $c = Contacts::create(['customer_id' => $g->customer_id, 'business_id' => $business->id, 'group_id' => $g->id, 'phone' => $phone, 'status' => 'subscribe']);
+            foreach ($vals as $tag => $v) {
+                $f = ContactGroupFields::query()->firstOrCreate(['contact_group_id' => $g->id, 'tag' => $tag], ['label' => ucfirst(strtolower($tag)), 'type' => 'text', 'visible' => true, 'required' => false]);
+                ContactsCustomField::create(['contact_id' => $c->id, 'field_id' => $f->id, 'value' => $v]);
+            }
+
+            return $c;
+        };
+
+        $amira = $make($leads, '19708259551', ['FIRST_NAME' => 'Amira', 'LAST_NAME' => 'Misurati', 'EMAIL' => 'amirat878@gmail.com']);
+        $karina = $make($leads, '17035872036', ['FIRST_NAME' => 'Karina', 'LAST_NAME' => 'Alvarez', 'EMAIL' => 'karina@hey.com']);
+        $stef = $make($leads, '17208185627', ['FIRST_NAME' => 'Stef', 'LAST_NAME' => 'Aguilar']);
+        $gabby = $make($leads, '17205550110', ['FIRST_NAME' => 'Gabby', 'LAST_NAME' => 'Barrett', 'EMAIL' => 'gabby@example.com']);
+        $make($vendors, '13035550177', ['FIRST_NAME' => 'Backdrop', 'LAST_NAME' => 'Bros', 'EMAIL' => 'orders@backdropbros.co']);
+
+        $box = function (string $phone, array $msgs, int $notification = 0) use ($business) {
+            $id = DB::table('chat_boxes')->insertGetId(['uid' => (string) Str::uuid(), 'user_id' => $business->customer_id, 'business_id' => $business->id, 'from' => '17205028306', 'to' => $phone, 'notification' => $notification, 'created_at' => now()->subDays(30), 'updated_at' => now()->subMinutes(5)]);
+            foreach ($msgs as [$dir, $text, $ago]) {
+                DB::table('chat_box_messages')->insert(['box_id' => $id, 'message' => $text, 'send_by' => $dir === 'incoming' ? 'to' : 'from', 'direction' => $dir, 'created_at' => now()->subMinutes($ago), 'updated_at' => now()->subMinutes($ago)]);
+            }
+        };
+        $box('19708259551', [['incoming', 'Thank you! Can we add the 360 booth too?', 600], ['outgoing', 'Amira, sorry for the delay — yes! I will send an updated quote tonight.', 500]]);
+        $box('17035872036', [['incoming', 'Good evening! Just checking in about the holiday party.', 2000]], 1);
+        $box('17208185627', [['incoming', 'Sending a few backdrop ideas.', 3000]]);
+
+        foreach ([
+            ['inbound', 'amirat878@gmail.com', 'Your booth quote — June 14 wedding', "Hi! We're getting married June 14 at Denver Botanic Gardens and would love a booth.", 900, $amira, 't-quote'],
+            ['outbound', 'amirat878@gmail.com', 'Re: Your booth quote — June 14 wedding', "Hi Amira,\n\nThanks for reaching out! Here's the quote for your June 14 wedding — 4 hours, open-air booth, custom backdrop and unlimited prints.\n\nTalk soon, Lumina Aura Events", 800, $amira, 't-quote'],
+            ['inbound', 'amirat878@gmail.com', 'Re: Your booth quote — June 14 wedding', 'Thank you! Could we add the 360 booth for the first hour?', 700, $amira, 't-quote'],
+            ['inbound', 'gabby@example.com', 'Deposit received', 'Wonderful, we got your deposit and are all set.', 4000, $gabby, 't-dep'],
+            ['inbound', 'laiskai@verslozinios.lt', 'Dienos akcentai: pasaulinio masto „Microsoft“ sutrikimas', 'Dienos akcentai ...', 5000, null, 't-lt'],
+        ] as [$dir, $addr, $subject, $body, $ago, $contact, $thread]) {
+            BusinessEmailMessage::create([
+                'business_id' => $business->id, 'direction' => $dir, 'contact_id' => $contact?->id, 'operation_key' => 'seed-' . Str::uuid(), 'provider' => 'google',
+                'provider_message_id' => 'pm-' . Str::uuid(), 'provider_thread_id' => $thread, 'internet_message_id' => '<' . Str::uuid() . '@x.test>',
+                'from_email' => $dir === 'inbound' ? $addr : 'hello@luminaauraevents.com', 'from_name' => $dir === 'inbound' ? null : 'Lumina Aura Events',
+                'to_email' => $dir === 'inbound' ? 'hello@luminaauraevents.com' : $addr, 'subject' => $subject, 'body_text' => $body,
+                'status' => $dir === 'inbound' ? 'received' : 'accepted', 'received_at' => now()->subMinutes($ago),
+            ]);
+        }
+
+        // Two voice-ready numbers (fixture connection id; no real provider is configured anywhere).
+        $identity = $this->attachIdentity($business);
+        foreach ([[true, 'ref_a'], [false, 'ref_b']] as [$primary, $ref]) {
+            $n = $this->attachNumber($identity, $this->uniqueNumber(), $primary, \App\Enums\Messaging\BusinessMessagingNumberStatus::Active, $ref);
+            DB::table('business_messaging_numbers')->where('id', $n->id)->update(['number_type' => 'local', 'voice_connection_id' => 'conn_fixture', 'voice_assigned_at' => now()]);
+        }
+
+        $user = $owner->user;
+        $user->forceFill(['email_verified_at' => now(), 'password' => bcrypt('Passw0rd!seed'), 'timezone' => 'America/Denver', 'first_name' => 'Gvidas', 'last_name' => 'Austin'])->save();
+
+        // A logged-in session cookie, built exactly as the app would.
+        config(['session.driver' => 'file']);
+        $store = $this->app['session']->driver();
+        $store->start();
+        $store->put($this->app['auth']->guard('web')->getName(), $user->id);
+        $store->put('permissions', collect(array_merge(['access_backend'], array_keys(config('customer-permissions')))));
+        $store->save();
+        $name = config('session.cookie');
+        $cookie = \Illuminate\Support\Facades\Crypt::encryptString(\Illuminate\Cookie\CookieValuePrefix::create($name, app('encrypter')->getKey()) . $store->getId());
+
+        file_put_contents('/tmp/seed.json', json_encode([
+            'cookieName' => $name, 'cookie' => $cookie, 'ws' => $workspace->uid, 'biz' => $business->uid,
+            'amira' => $amira->uid, 'karina' => $karina->uid, 'stef' => $stef->uid,
+        ]));
+        $this->assertTrue(true);
+    }
+}

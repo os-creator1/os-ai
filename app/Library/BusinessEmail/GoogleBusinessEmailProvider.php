@@ -61,7 +61,7 @@ final class GoogleBusinessEmailProvider implements BusinessEmailProvider, Inboun
 
     public function capabilities(): BusinessEmailProviderCapabilities
     {
-        return new BusinessEmailProviderCapabilities(inboundSync: true, revocableGrant: true);
+        return new BusinessEmailProviderCapabilities(htmlSend: true, inboundSync: true, revocableGrant: true);
     }
 
     public function authorizationUrl(string $state, bool $forceConsent): string
@@ -537,10 +537,23 @@ final class GoogleBusinessEmailProvider implements BusinessEmailProvider, Inboun
             'Date: ' . now()->toRfc2822String(),
             ...$this->threadHeaders($email),
             'MIME-Version: 1.0',
-            'Content-Type: text/plain; charset=UTF-8',
-            'Content-Transfer-Encoding: base64',
         ];
 
+        // Formatted mail is multipart/alternative: the plain-text part always travels too, so a client that cannot (or will
+        // not) render HTML still shows the same message.
+        if ($email->bodyHtml !== null && trim($email->bodyHtml) !== '') {
+            $boundary = 'mg_' . str_replace('-', '', (string) Str::uuid());
+            $headers[] = 'Content-Type: multipart/alternative; boundary="' . $boundary . '"';
+            $part = static fn (string $type, string $content): string => "Content-Type: {$type}; charset=UTF-8\r\nContent-Transfer-Encoding: base64\r\n\r\n" . chunk_split(base64_encode($content), 76, "\r\n");
+            $body = '--' . $boundary . "\r\n" . $part('text/plain', $email->bodyText)
+                . '--' . $boundary . "\r\n" . $part('text/html', $email->bodyHtml)
+                . '--' . $boundary . "--\r\n";
+
+            return [implode("\r\n", $headers) . "\r\n\r\n" . $body, $messageId];
+        }
+
+        $headers[] = 'Content-Type: text/plain; charset=UTF-8';
+        $headers[] = 'Content-Transfer-Encoding: base64';
         $body = chunk_split(base64_encode($email->bodyText), 76, "\r\n");
 
         return [implode("\r\n", $headers) . "\r\n\r\n" . $body, $messageId];

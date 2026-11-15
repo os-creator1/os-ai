@@ -24,7 +24,7 @@
     <div class="chat-info flex-grow-1">
         <div class="conv-row-top">
             <h6 class="mb-0 text-truncate" data-role="conversation-row-title">{{ !empty($displayName) ? $displayName : $chat->to }}</h6>
-            <small class="chat-time">{{ \App\Library\Tool::customerDateTime($activityAt ?? $chat->updated_at) }}</small>
+            <small class="chat-time">{{ \App\Library\Conversations\RowTime::format(\Illuminate\Support\Carbon::parse($activityAt ?? $chat->updated_at)) }}</small>
         </div>
         <div class="conv-row-bottom">
             @if(! empty($emailPreview))

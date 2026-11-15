@@ -13,14 +13,14 @@
         }
     }
 @endphp
-<li class="conv-row email-row" data-id="email:{{ $thread['key'] }}" data-channel="email" data-email-thread="{{ $thread['key'] }}" title="{{ $thread['counterpart'] }}">
+<li class="conv-row email-row {{ ! empty($thread['unread']) ? 'conv-unread' : '' }}" data-id="email:{{ $thread['key'] }}" data-channel="email" data-email-thread="{{ $thread['key'] }}" title="{{ $thread['counterpart'] }}">
     <span class="avatar bg-light-primary conversation-row-avatar email-row-avatar" aria-hidden="true">
         {{ $emailInitials !== '' ? $emailInitials : mb_strtoupper(mb_substr($thread['counterpart'], 0, 1)) }}
     </span>
     <div class="email-row-main">
         <div class="email-row-top">
             <h6 class="mb-0 text-truncate email-row-sender" data-role="conversation-row-title">{{ $emailTitle }}</h6>
-            <small class="chat-time email-row-time">{{ \App\Library\Tool::customerDateTime($thread['at']) }}</small>
+            <small class="chat-time email-row-time">{{ \App\Library\Conversations\RowTime::format(\Illuminate\Support\Carbon::parse($thread['at'])) }}</small>
         </div>
         <div class="email-row-subject text-truncate">
             {{ $thread['subject'] !== '' ? $thread['subject'] : '(no subject)' }}

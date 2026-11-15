@@ -32,6 +32,8 @@ final class BusinessEmailSendRequest
         public readonly ?int $automationStepRunId = null,
         /** Makes this a reply: same thread, RFC reply headers, counterpart address. */
         public readonly ?BusinessEmailMessage $inResponseTo = null,
+        /** Sanitized HTML alternative (App\Library\BusinessEmail\SafeEmailMarkup), only when the person used formatting. */
+        public readonly ?string $bodyHtml = null,
     ) {
     }
 }

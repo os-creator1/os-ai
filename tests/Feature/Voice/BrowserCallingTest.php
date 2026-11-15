@@ -338,12 +338,16 @@ class BrowserCallingTest extends TestCase
             ->assertSee('data-role="softphone-answer"', false)
             ->assertSee('data-role="softphone-again"', false)
             ->assertSee('html.dark-layout .mg-softphone', false);
-        // Unsupported functions are present only as hidden hooks that the script keeps hidden (capability flags off).
+        // Every control hook exists in the markup; Record and Transfer are rendered disabled with the reason (asserted below).
         foreach (['keypad', 'hold', 'record', 'transfer', 'note'] as $capability) {
             $page->assertSee('data-capability="'.$capability.'"', false);
         }
         $js = file_get_contents(public_path('js/crm/mg-softphone.js'));
-        $this->assertStringContainsString('keypad: false, hold: false, record: false, transfer: false, note: false', $js);
+        // Keypad (DTMF), hold and note are implemented; record and transfer have no safe backend and stay disabled, never silently clickable.
+        $this->assertStringContainsString('keypad: true, hold: true, record: false, transfer: false, note: true', $js);
+        $page->assertSee('data-role="softphone-record"', false)->assertSee('data-role="softphone-transfer"', false);
+        $this->assertMatchesRegularExpression('/data-role="softphone-record"[^>]*\sdisabled\s[^>]*title="[^"]+"/', $page->getContent());
+        $this->assertMatchesRegularExpression('/data-role="softphone-transfer"[^>]*\sdisabled\s[^>]*title="[^"]+"/', $page->getContent());
 
         config(['messaging.voice.browser.enabled' => false]);
         $this->get($url)->assertOk()->assertDontSee('data-role="contact-call"', false)->assertDontSee('id="mg-softphone"', false);

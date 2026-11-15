@@ -66,7 +66,7 @@ final class MicrosoftBusinessEmailProvider implements BusinessEmailProvider, Inb
 
     public function capabilities(): BusinessEmailProviderCapabilities
     {
-        return new BusinessEmailProviderCapabilities(inboundSync: true, revocableGrant: false);
+        return new BusinessEmailProviderCapabilities(htmlSend: true, inboundSync: true, revocableGrant: false);
     }
 
     public function authorizationUrl(string $state, bool $forceConsent): string
@@ -153,6 +153,14 @@ final class MicrosoftBusinessEmailProvider implements BusinessEmailProvider, Inb
         );
     }
 
+    /** Graph body: sanitized HTML when the message was formatted, otherwise the plain text exactly as before. */
+    private function bodyPayload(BusinessEmailOutbound $email): array
+    {
+        return $email->bodyHtml !== null && trim($email->bodyHtml) !== ''
+            ? ['contentType' => 'HTML', 'content' => $email->bodyHtml]
+            : ['contentType' => 'Text', 'content' => $email->bodyText];
+    }
+
     public function send(string $accessToken, BusinessEmailOutbound $email): BusinessEmailProviderSendResult
     {
         if ($email->replyToProviderMessageId !== null && $email->replyToProviderMessageId !== '') {
@@ -170,7 +178,7 @@ final class MicrosoftBusinessEmailProvider implements BusinessEmailProvider, Inb
         try {
             $draft = $this->http($accessToken)->asJson()->post(self::GRAPH . '/me/messages', [
                 'subject' => $email->subject,
-                'body' => ['contentType' => 'Text', 'content' => $email->bodyText],
+                'body' => $this->bodyPayload($email),
                 'toRecipients' => [['emailAddress' => ['address' => $email->toEmail]]],
             ]);
         } catch (ConnectionException $exception) {
@@ -241,7 +249,7 @@ final class MicrosoftBusinessEmailProvider implements BusinessEmailProvider, Inb
         try {
             $patched = $this->http($accessToken)->asJson()->patch(self::GRAPH . '/me/messages/' . rawurlencode($draftId), [
                 'subject' => $email->subject,
-                'body' => ['contentType' => 'Text', 'content' => $email->bodyText],
+                'body' => $this->bodyPayload($email),
                 'toRecipients' => [['emailAddress' => ['address' => $email->toEmail]]],
             ]);
         } catch (ConnectionException $exception) {

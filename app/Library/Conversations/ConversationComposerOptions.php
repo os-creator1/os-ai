@@ -72,6 +72,8 @@ class ConversationComposerOptions
             'email' => $email,
             'default' => $sms ? 'sms' : 'email',
             'email_connected' => $connected,
+            // Formatting (bold / italic / link) is offered only when the connected provider can really send an HTML alternative.
+            'rich' => $email && $this->providerSendsHtml($business),
             // Guidance is only worth showing where there is somebody to email.
             'email_guidance' => ! $connected && $mayEmail && ($recipient !== null || $replyTo !== null),
             'settings_url' => route('customer.workspaces.businesses.email.show', [$workspaceUid, $businessUid]),
@@ -85,6 +87,14 @@ class ConversationComposerOptions
             'contact_uid' => $email && ! $canReply ? $contact->uid : null,
             'locations' => $choices->map(fn ($l) => ['uid' => $l->uid, 'name' => $l->name])->values()->all(),
         ];
+    }
+
+    private function providerSendsHtml(Business $business): bool
+    {
+        $account = $this->accounts->findForBusiness($business);
+
+        return $account !== null && $account->isActive()
+            && app(\App\Library\BusinessEmail\BusinessEmailProviderRegistry::class)->for($account->provider)->capabilities()->htmlSend;
     }
 
     /** Is this a valid ACTIVE Location of the Business, so the sender needs no explicit choice? */

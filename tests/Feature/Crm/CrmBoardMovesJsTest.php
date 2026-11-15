@@ -21,7 +21,7 @@ class CrmBoardMovesJsTest extends TestCase
             $this->markTestSkipped('node is not installed on this machine.');
         }
 
-        $run = new Process(['node', '--test', 'tests/Js/crm-board-moves.test.js'], base_path(), null, null, 60);
+        $run = new Process(['node', '--test', '--test-reporter=spec', 'tests/Js/crm-board-moves.test.js'], base_path(), null, null, 60);
         $run->run();
         $output = $run->getOutput() . $run->getErrorOutput();
 

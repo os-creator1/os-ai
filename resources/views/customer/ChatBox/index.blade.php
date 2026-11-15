@@ -1731,6 +1731,8 @@
             }
         }
     </style>
+    {{-- Approved Conversations designs: restyles the structure above; loaded last on purpose. --}}
+    <link rel="stylesheet" href="{{ asset('css/crm/mgx-conversations.css') }}?v=1">
 
 @endsection
 
@@ -1786,6 +1788,16 @@
                             <x-ds-icon name="phone" aria-hidden="true" />
                         </button>
 
+                        {{-- SMS conversation with a linked contact: rename (changes the contact's name). --}}
+                        <button type="button" class="conv-hb" data-role="conversation-rename" aria-label="Rename" title="Rename" hidden><svg class="ds-icon" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 20h4L19 9l-4-4L4 16zM13.5 6.5l4 4"/></svg></button>
+
+                        {{-- Email thread actions (real, persisted): shown only while an email thread is open. --}}
+                        <span class="mgx-email-actions" data-role="email-thread-actions" hidden>
+                            <button type="button" class="conv-hb" data-email-action="archive" aria-label="Archive" title="Archive"><svg class="ds-icon" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 4.5h17v4h-17zM5 8.5V19h14V8.5M10 12.5h4"/></svg></button>
+                            <button type="button" class="conv-hb" data-email-action="unread" aria-label="Mark unread" title="Mark unread"><svg class="ds-icon" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 5.5h17v13h-17zM4 7l8 6 8-6"/></svg></button>
+                            <button type="button" class="conv-hb conv-hb-danger" data-email-action="delete" aria-label="Delete" title="Delete from MotionGrove"><svg class="ds-icon" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/></svg></button>
+                        </span>
+
                         <x-tooltip text="{{ __('locale.labels.block') }}" placement="top" class="add-to-blacklist">
                             <x-ds-icon name="shield" class="cursor-pointer font-medium-2 mx-1 text-primary" />
                         </x-tooltip>
@@ -1827,7 +1839,7 @@
                         </div>
                         <div class="composer-email-fields" data-role="composer-email-fields" hidden>
                             <div class="composer-email-to" data-role="composer-email-to"><span class="composer-email-label">To</span><span class="composer-email-recipient" data-role="composer-email-recipient"></span></div>
-                            <input type="text" id="email-subject" class="form-control form-control-sm" maxlength="200" placeholder="Subject" aria-label="Email subject" autocomplete="off">
+                            <div class="composer-email-subject-row"><span class="composer-email-label">Subject</span><input type="text" id="email-subject" class="form-control form-control-sm" maxlength="200" placeholder="Subject" aria-label="Email subject" autocomplete="off"></div>
                             <select id="email-location" class="form-select form-select-sm" aria-label="Which location is this for?" hidden></select>
                         </div>
                         <p class="composer-guidance text-caption mb-0" data-role="composer-guidance" hidden></p>
@@ -1847,6 +1859,14 @@
                             <x-ds-icon name="paperclip" size="14" aria-hidden="true" />
                             <span id="media-name"></span>
                             <button type="button" id="media-remove" aria-label="Remove attachment">Remove</button>
+                        </div>
+
+                        {{-- Formatting toolbar: written as visible markup (**bold**, _italic_, [label](url)) that the server turns into a
+                             safe HTML alternative. Offered only when the connected provider can send HTML. --}}
+                        <div class="composer-email-toolbar" data-role="composer-email-toolbar" role="toolbar" aria-label="Formatting" hidden>
+                            <button type="button" class="conv-hb" data-format="bold" aria-label="Bold" title="Bold (**text**)"><b>B</b></button>
+                            <button type="button" class="conv-hb" data-format="italic" aria-label="Italic" title="Italic (_text_)"><i class="mgx-italic">I</i></button>
+                            <button type="button" class="conv-hb" data-format="link" aria-label="Link" title="Link ([label](https://…))"><svg class="ds-icon" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/></svg></button>
                         </div>
 
                         <div class="composer-template-select me-1">
@@ -1951,6 +1971,14 @@
         pin: "{{ route('customer.workspaces.businesses.conversations.pin', [$workspaceUid, $businessUid, '__UID__']) }}",
         load: "{{ route('customer.workspaces.businesses.conversations.load', [$workspaceUid, $businessUid]) }}",
         emailThread: "{{ route('customer.workspaces.businesses.conversations.email_thread', [$workspaceUid, $businessUid]) }}",
+        emailCompose: "{{ route('customer.workspaces.businesses.conversations.email_compose', [$workspaceUid, $businessUid]) }}",
+        emailAction: {
+          archive: "{{ route('customer.workspaces.businesses.conversations.email_thread_archive', [$workspaceUid, $businessUid]) }}",
+          unarchive: "{{ route('customer.workspaces.businesses.conversations.email_thread_unarchive', [$workspaceUid, $businessUid]) }}",
+          unread: "{{ route('customer.workspaces.businesses.conversations.email_thread_unread', [$workspaceUid, $businessUid]) }}",
+          delete: "{{ route('customer.workspaces.businesses.conversations.email_thread_delete', [$workspaceUid, $businessUid]) }}"
+        },
+        rename: "{{ route('customer.workspaces.businesses.conversations.rename', [$workspaceUid, $businessUid, '__UID__']) }}",
       };
       const conversationUrl = (name, uid) => conversationRoutes[name].replace('__UID__', encodeURIComponent(uid));
 
@@ -2081,7 +2109,8 @@
         });
         $(".chat-app-form").toggleClass("is-email-channel", email);
         $("[data-role=composer-email-fields]").prop("hidden", !(email && usable));
-        $("[data-role=composer-email-recipient]").text(c.recipient || "");
+        $("[data-role=composer-email-toolbar]").prop("hidden", !(email && usable && c.rich === true));
+        $("[data-role=composer-email-recipient]").text(c.recipient ? ((c.recipient_name ? c.recipient_name + " · " : "") + c.recipient) : "");
         $("[data-role=composer-email-to]").prop("hidden", !c.recipient);
         if (email && usable && !$("#email-subject").val()) {
           $("#email-subject").val(c.subject || "");
@@ -2089,22 +2118,35 @@
 
         // Guidance instead of a silent switch: an unusable selected channel is disabled and explained.
         let guidance = "";
+        if (email && !usable && c.blocked) {
+          // "Send Email" from a Contact: say exactly why, with the one action that fixes it (never an SMS fallback).
+          const $blocked = $("[data-role=composer-guidance]").prop("hidden", false).empty().attr("data-reason", "blocked");
+          $blocked.text(c.blocked.message + " ");
+          if (c.blocked.url && c.blocked.label) {
+            $blocked.append($("<a></a>").attr({ href: c.blocked.url, "data-role": "composer-blocked-action" }).addClass("fw-bold").text(c.blocked.label));
+          }
+          syncSendAvailability();
+          $("#message").attr("placeholder", "Write your email");
+          return;
+        }
+        $("[data-role=composer-guidance]").removeAttr("data-reason");
         if (!usable) {
           guidance = email
             ? (c.email_connected ? "A reply isn't possible for this message." : "Email isn't connected. Connect your mailbox in Settings → Email to reply by email.")
             : "";
         } else if (!email && c.email_guidance) {
-          guidance = "Email isn't connected. Connect your mailbox in Settings → Email to also reach this person by email.";
+          guidance = "Email isn't connected.";
         }
         const $guide = $("[data-role=composer-guidance]").prop("hidden", guidance === "").empty();
         if (guidance !== "") {
           $guide.text(guidance + " ");
           if (c.settings_url) {
-            $guide.append($("<a></a>").attr("href", c.settings_url).text("Open Email settings"));
+            $guide.append($("<a></a>").attr("href", c.settings_url).text("Connect email"));
           }
         }
         syncSendAvailability();
-        $("#message").attr("placeholder", email ? "Write your email" : "Write a message");
+        const first = String($("[data-role=conversation-title]").text() || "").trim().split(/\s+/)[0];
+        $("#message").attr("placeholder", email ? (c.url && String(c.url).indexOf("/reply") !== -1 ? "Write a reply…" : "Write your email") : (first ? "Text " + first + "…" : "Write a message"));
       }
 
       $(document).on("click", "[data-role=composer-channel] .conversation-channel-option", function() {
@@ -2292,6 +2334,7 @@
         $("[data-role=conversation-subtitle]").text("");
         $(".conversation-call-btn").prop("hidden", true).removeAttr("data-call-uid data-call-conversation data-call-label data-call-phone data-call-initials data-call-for data-call-unavailable");
         $(".add-to-pin").prop("hidden", true).prop("disabled", false);
+        $("[data-role=email-thread-actions], [data-role=conversation-rename]").prop("hidden", true);
       }
 
       function applyConversationHeader(response) {
@@ -2365,7 +2408,10 @@
       function loadTimeline(chat_id) {
         // An email thread (id "email:<thread key>") opens through the unified inbox endpoint; everything else is an SMS conversation.
         const isEmailThread = String(chat_id).indexOf("email:") === 0;
-        const request = isEmailThread
+        const isEmailCompose = String(chat_id).indexOf("compose:") === 0;
+        const request = isEmailCompose
+          ? $.post(conversationRoutes.emailCompose, { _token: "{{ csrf_token() }}", contact: String(chat_id).slice(8) })
+          : isEmailThread
           ? $.post(conversationRoutes.emailThread, { _token: "{{ csrf_token() }}", thread: String(chat_id).slice(6) })
           : $.post(conversationUrl('timeline', chat_id), { _token: "{{ csrf_token() }}" });
 
@@ -2389,6 +2435,8 @@
             $(".chat_history").html(response.timeline);
             $("#conversation-context").html(response.context);
             applyConversationHeader(response);
+            $("[data-role=email-thread-actions]").prop("hidden", !(response.channel === "email" && isEmailThread));
+            $("[data-role=conversation-rename]").prop("hidden", !(response.channel !== "email" && response.can_rename === true));
 
             // Show the active chat area
             $(".start-chat-area").addClass("d-none");  // Hide the initial "Start chat" screen
@@ -2948,6 +2996,7 @@
             const on = $(this).data("channel") === channel;
             $(this).toggleClass("btn-primary", on).toggleClass("btn-outline-primary", !on).attr("aria-pressed", on ? "true" : "false");
           });
+          $("#chat-search").attr("placeholder", channel === "email" ? "Search emails" : "Search conversations");
         }
         paintChannel();
 
@@ -3018,6 +3067,24 @@
           }, 250);
         })();
 
+        // A deep link opens a conversation: on narrow screens the list slides away so the conversation itself is what is shown.
+        function closeListOnSmallScreens() {
+          if (window.innerWidth < 992) {
+            $(".sidebar-content").removeClass("show");
+            $(".body-content-overlay").removeClass("show");
+          }
+        }
+
+        // "Send Email" from a Contact profile (?channel=email&compose=<contact uid>): open the Email composer for that contact.
+        (function () {
+          const compose = homeScope.get("compose");
+          if (!compose) { return; }
+          $(".chat_id").val("compose:" + compose);
+          invalidateComposer();
+          loadTimeline("compose:" + compose);
+          closeListOnSmallScreens();
+        })();
+
         // Deep link to one email thread inside Conversations (?channel=email&thread=<key>): saved links from the former Email page.
         (function () {
           const thread = homeScope.get("thread");
@@ -3025,9 +3092,99 @@
           $(".chat_id").val("email:" + thread);
           invalidateComposer();
           loadTimeline("email:" + thread);
+          closeListOnSmallScreens();
         })();
 
-// Add debounce function to delay the search request
+// ── Email thread actions, rename, formatting toolbar ────────────────────────────────────────────────────────────
+      function openEmailThreadKey() {
+        const id = String($(".chat_id").val() || "");
+        return id.indexOf("email:") === 0 ? id.slice(6) : "";
+      }
+
+      function closeOpenConversation() {
+        $("#users-list li.active").remove();
+        $(".chat_id").val("");
+        invalidateComposer();
+        $(".active-chat").addClass("d-none");
+        $(".start-chat-area").removeClass("d-none");
+      }
+
+      $(document).on("click", "[data-email-action]", function() {
+        const action = String($(this).attr("data-email-action"));
+        const key = openEmailThreadKey();
+        if (key === "") { return; }
+        const post = function(name) { return $.post(conversationRoutes.emailAction[name], { _token: "{{ csrf_token() }}", thread: key }); };
+        const fail = function(xhr) { toastr["warning"]((xhr.responseJSON && xhr.responseJSON.message) || "That could not be done. Nothing was changed.", "{{ __('locale.labels.attention') }}"); };
+
+        if (action === "archive") {
+          post("archive").done(function() {
+            closeOpenConversation();
+            toastr["success"]("Archived. A new reply brings it back. <a href='#' data-undo-archive='" + $("<i>").text(key).html() + "'>Undo</a>", "Conversation archived", { escapeHtml: false, timeOut: 8000, closeButton: true, positionClass: "toast-top-right" });
+          }).fail(fail);
+        } else if (action === "unread") {
+          post("unread").done(function() {
+            $("#users-list li.active").addClass("conv-unread");
+            toastr["success"]("It stays bold in the list until you open it again.", "Marked unread", { timeOut: 3000, positionClass: "toast-top-right" });
+          }).fail(fail);
+        } else if (action === "delete") {
+          if (!window.confirm("Delete this email conversation?\n\nIt is removed from MotionGrove. The emails stay in your connected mailbox.")) { return; }
+          post("delete").done(function() { closeOpenConversation(); toastr["success"]("Removed from MotionGrove.", "Deleted", { timeOut: 3000, positionClass: "toast-top-right" }); }).fail(fail);
+        }
+      });
+
+      $(document).on("click", "[data-undo-archive]", function(event) {
+        event.preventDefault();
+        const key = String($(this).attr("data-undo-archive"));
+        $.post(conversationRoutes.emailAction.unarchive, { _token: "{{ csrf_token() }}", thread: key }).done(function() { window.location.reload(); });
+      });
+
+      // Rename (SMS conversation with a linked contact): edits the contact's name in place.
+      $("[data-role=conversation-rename]").on("click", function() {
+        const uid = String($(".chat_id").val() || "");
+        const $title = $("[data-role=conversation-title]");
+        if (uid === "" || $title.find("input").length) { return; }
+        const current = $title.text();
+        const $input = $('<input type="text" class="form-control form-control-sm" maxlength="120" aria-label="Contact name">').val(current);
+        $title.empty().append($input);
+        $input.trigger("focus").trigger("select");
+        let done = false;
+        const restore = function(text) { done = true; $title.text(text); };
+        $input.on("keydown", function(e) {
+          if (e.key === "Escape") { restore(current); }
+          if (e.key !== "Enter") { return; }
+          e.preventDefault();
+          const name = String($input.val() || "").trim();
+          if (name === "" || name === current) { restore(current); return; }
+          $.post(conversationRoutes.rename.replace("__UID__", encodeURIComponent(uid)), { _token: "{{ csrf_token() }}", name: name })
+            .done(function(r) {
+              restore(r.name);
+              $("#users-list li.active [data-role=conversation-row-title]").text(r.name);
+              loadTimeline(uid);
+            })
+            .fail(function(xhr) { restore(current); toastr["warning"]((xhr.responseJSON && xhr.responseJSON.message) || "The name could not be changed.", "{{ __('locale.labels.attention') }}"); });
+        }).on("blur", function() { if (!done) { restore(current); } });
+      });
+
+      // Formatting toolbar: writes the visible markup around the selection of the email body.
+      $(document).on("click", "[data-format]", function() {
+        const el = document.getElementById("message");
+        if (!el || el.disabled) { return; }
+        const kind = String($(this).attr("data-format"));
+        const start = el.selectionStart, end = el.selectionEnd, selected = el.value.slice(start, end);
+        let insert;
+        if (kind === "bold") { insert = "**" + (selected || "text") + "**"; }
+        else if (kind === "italic") { insert = "_" + (selected || "text") + "_"; }
+        else {
+          const url = window.prompt("Link address (https://…)", "https://");
+          if (!url || !/^(https?:\/\/|mailto:)\S+$/i.test(url.trim())) { if (url) { toastr["warning"]("Use an address that starts with https://, http:// or mailto:", "Link"); } return; }
+          insert = "[" + (selected || url.trim()) + "](" + url.trim() + ")";
+        }
+        el.setRangeText(insert, start, end, "end");
+        el.focus();
+        $(el).trigger("input");
+      });
+
+      // Add debounce function to delay the search request
         function debounce(func, delay) {
           let timeout;
           return function(...args) {

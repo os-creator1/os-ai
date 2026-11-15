@@ -5,18 +5,16 @@
     section a registered domain supplies. No placeholder for a domain that
     does not exist yet.
 --}}
-<div class="conversation-context-inner" data-role="contact-panel" data-header-initials="{{ $context->initials() }}" data-header-subtitle="{{ $context->name !== null ? $context->phone : '' }}{{ $context->group !== null ? ' · ' . $context->group : '' }}">
+<div class="conversation-context-inner mgx-ctx" data-role="contact-panel" data-header-initials="{{ $context->initials() }}" data-header-subtitle="{{ $context->name !== null ? \App\Library\Contacts\ContactPhone::pretty($context->phone) : '' }}{{ $context->group !== null ? ' · ' . $context->group : '' }}">
     <div class="conversation-context-person">
-        <span class="avatar bg-light-primary conversation-context-avatar" aria-hidden="true">
-            <span class="avatar-content">
-                @if ($context->initials() !== '')
-                    {{ $context->initials() }}
-                @else
-                    <x-ds-icon name="user" />
-                @endif
-            </span>
+        <span class="mgx-ctx-av" aria-hidden="true">
+            @if ($context->initials() !== '')
+                {{ $context->initials() }}
+            @else
+                <x-ds-icon name="user" />
+            @endif
         </span>
-        <h5 class="mb-25 mt-1" data-role="contact-panel-name">
+        <h5 class="mgx-ctx-name" data-role="contact-panel-name">
             @if ($profileUrl !== null)
                 <a href="{{ $profileUrl }}" class="conversation-context-profile-link" data-role="contact-panel-name-link" title="View contact details">{{ $context->title() }}</a>
             @else
@@ -24,32 +22,30 @@
             @endif
         </h5>
         @if ($context->name !== null)
-            <div class="text-caption text-numeric" data-role="contact-panel-phone">{{ $context->phone }}</div>
+            <div class="visually-hidden text-numeric" data-role="contact-panel-phone">{{ $context->phone }}</div>
         @endif
-        <div class="mt-75">
-            <x-badge :variant="$context->consentVariant()" data-role="contact-panel-consent">{{ $context->consentLabel() }}</x-badge>
-        </div>
+        <span class="mgx-ctx-badge is-{{ $context->consentVariant() }}" data-role="contact-panel-consent">{{ $context->consentLabel() }}</span>
     </div>
 
     @if (! empty($call) || $profileUrl !== null || ($addContactUrl ?? null) !== null)
-        <div class="conversation-context-actions">
+        <div class="mgx-ctx-actions conversation-context-actions">
         @if (! empty($call))
             {{-- Hidden until the page confirms the existing browser softphone is present; the server already verified this contact. --}}
-            <button type="button" class="conv-btn conv-btn-outline" data-role="conversation-call" data-call-uid="{{ $call['uid'] }}" data-call-conversation="{{ $call['conversation'] ?? '' }}" data-call-label="{{ $call['label'] }}" data-call-phone="{{ $call['phone'] }}" data-call-initials="{{ $call['initials'] }}" aria-label="Call {{ $call['label'] }}" hidden>
+            <button type="button" class="mgx-ctx-btn" data-role="conversation-call" data-call-uid="{{ $call['uid'] }}" data-call-conversation="{{ $call['conversation'] ?? '' }}" data-call-label="{{ $call['label'] }}" data-call-phone="{{ $call['phone'] }}" data-call-initials="{{ $call['initials'] }}" aria-label="Call {{ $call['label'] }}" hidden>
                 <x-ds-icon name="phone" size="16" aria-hidden="true" />Call
             </button>
         @endif
             @if ($profileUrl !== null)
-                <x-button variant="outline" size="sm" :href="$profileUrl" data-role="contact-panel-profile">View contact details</x-button>
+                <a class="mgx-ctx-btn is-brand" href="{{ $profileUrl }}" data-role="contact-panel-profile">Open contact</a>
             @elseif (($addContactUrl ?? null) !== null)
-                <x-button variant="outline" size="sm" :href="$addContactUrl" data-role="contact-panel-add">Add to contacts</x-button>
+                <a class="mgx-ctx-btn is-brand" href="{{ $addContactUrl }}" data-role="contact-panel-add">Add to contacts</a>
             @endif
         </div>
     @endif
 
-    <dl class="conversation-context-facts" data-role="contact-panel-identity">
+    <dl class="mgx-kv conversation-context-facts" data-role="contact-panel-identity">
         <dt>Phone</dt>
-        <dd class="text-numeric">{{ $context->phone }}</dd>
+        <dd class="text-numeric">{{ \App\Library\Contacts\ContactPhone::pretty($context->phone) }}</dd>
 
         @if ($context->email !== null)
             <dt>Email</dt>
@@ -63,7 +59,7 @@
 
         @if ($context->group !== null)
             <dt>Group</dt>
-            <dd>{{ $context->group }}</dd>
+            <dd class="is-brand">{{ $context->group }}</dd>
         @endif
 
         @if ($context->addedAt !== null)
@@ -72,14 +68,14 @@
         @endif
 
         @if ($context->businessNumber !== null && $context->businessNumber !== '')
-            <dt>Your number</dt>
-            <dd class="text-numeric">{{ $context->businessNumber }}</dd>
+            <dt>Texts from</dt>
+            <dd class="text-numeric">{{ \App\Library\Contacts\ContactPhone::pretty($context->businessNumber) }}</dd>
         @endif
     </dl>
 
     @if ($context->details !== [])
         <h6 class="conversation-context-heading">Details</h6>
-        <dl class="conversation-context-facts" data-role="contact-panel-details">
+        <dl class="mgx-kv conversation-context-facts" data-role="contact-panel-details">
             @foreach ($context->details as $detail)
                 <dt>{{ $detail['label'] }}</dt>
                 <dd>{{ $detail['value'] }}</dd>

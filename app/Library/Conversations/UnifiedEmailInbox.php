@@ -30,7 +30,7 @@ class UnifiedEmailInbox
 {
     public const MAX_MESSAGES = 300;
 
-    private const COLUMNS = ['id', 'uid', 'direction', 'contact_id', 'location_id', 'provider_thread_id', 'from_email', 'from_name', 'to_email', 'subject', 'body_text', 'status', 'received_at', 'created_at'];
+    private const COLUMNS = ['id', 'uid', 'direction', 'contact_id', 'location_id', 'provider_thread_id', 'from_email', 'from_name', 'to_email', 'subject', 'body_text', 'status', 'received_at', 'created_at', 'archived_at', 'marked_unread_at'];
 
     public function __construct(private readonly BusinessEmailLocationScope $locations)
     {
@@ -39,7 +39,8 @@ class UnifiedEmailInbox
     /** The email rows this actor may see in this Business. */
     public function visible(Business $business, int $userId): Builder
     {
-        $query = BusinessEmailMessage::query()->where('business_id', $business->id);
+        // A thread deleted from MotionGrove stays deleted here only: the provider mailbox is never touched.
+        $query = BusinessEmailMessage::query()->where('business_id', $business->id)->whereNull('deleted_at');
         $this->locations->restrictMessages($query, $userId, $business);
 
         return $query;
@@ -91,8 +92,12 @@ class UnifiedEmailInbox
                     // The ledger's own association, when any message of the thread carries one.
                     'contact_id' => $messages->pluck('contact_id')->filter()->first(),
                     'at' => self::activityAt($latest),
+                    // Archived means the NEWEST message is archived: a new reply (a fresh, unarchived row) brings the thread back.
+                    'archived' => $latest->archived_at !== null,
+                    'unread' => $messages->contains(fn (BusinessEmailMessage $m) => $m->marked_unread_at !== null),
                 ];
             })
+            ->reject(fn (array $thread) => $thread['archived'])
             ->sortByDesc(fn (array $thread) => $thread['at']->getTimestamp())
             ->values();
     }
