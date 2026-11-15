@@ -63,9 +63,13 @@ Element boxes were measured with `getBoundingClientRect()` in both renderings, n
 * **Conversations (Email and SMS):** list column order (segmented control, search, tabs), tab/search/row sizes (rows 81/64),
   the header (65), the 300px contact panel running the full height beside it, panel avatar/name positions all match to 1-2px.
   The Email composer card height matches (224).
-* **Call popup:** widths 340 in all states. Heights vs the design: incoming 167/167, calling 295/276, on call 399/405,
-  keypad 431/421, hold ~409/409, note ~459/440, ended 407/397. The extra height is the "Calling from <number>" line
-  (the number-selection disclosure) and the "Record and Transfer are not available yet" hint, which the design does not have.
+* **Call popup** (re-measured after the final CSS, width 340 in every state; minimized pill 279x56). Heights, ours / design:
+  incoming 167/167, calling 278/276, on call 382/405, keypad 431/421, hold 411/409, note 442/440, ended 390/397.
+  On call and ended are shorter because the design's Recording banner and "Recording saved" line are unsupported (no
+  recording or consent flow); keypad is 10px taller because of the "Calling from" disclosure kept by request.
+* **Audio output chooser** was exercised in Chromium three ways: without `setSinkId` (button disabled with a reason),
+  with it (device list, selection calls `setSinkId`, list closes), and with a rejecting `setSinkId` (the message stays
+  visible and the previous device stays selected). The call popup's Telnyx SDK and server are simulated in that harness.
 
 ## Evidence
 

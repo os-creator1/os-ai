@@ -91,6 +91,7 @@
     var audioBtn = $('softphone-audio');
     var audioList = $('softphone-audio-list');
     var audioOpen = false;
+    var audioError = '';
     var held = false;
     var wasAnswered = false;
     var keypadOpen = false;
@@ -180,6 +181,8 @@
         root.setAttribute('data-state', state);
         root.setAttribute('data-held', inCall && held ? '1' : '0');
         statusEl.textContent = text;
+        if (state !== 'connecting' && state !== 'ringing') { audioError = ''; }
+        detail = detail || audioError;
         detailEl.textContent = detail || '';
         detailEl.hidden = !detail || keypadOpen;
         hangRow.hidden = !live || keypadOpen;
@@ -736,9 +739,9 @@
                     audioEl.setSinkId(d.deviceId).then(function () {
                         try { window.localStorage.setItem(key, d.deviceId); } catch (e) {}
                         audioList.querySelectorAll('[role=radio]').forEach(function (o) { o.setAttribute('aria-checked', o === b ? 'true' : 'false'); });
-                        audioOpen = false;
+                        audioOpen = false; audioError = '';
                         setState(root.getAttribute('data-state'), statusEl.textContent, '');
-                    }).catch(function () { detailEl.textContent = 'That audio output could not be selected.'; detailEl.hidden = false; });
+                    }).catch(function () { audioError = 'That audio output could not be selected.'; setState(root.getAttribute('data-state'), statusEl.textContent, ''); });
                 });
                 audioList.appendChild(b);
             });
