@@ -20,10 +20,19 @@ final class NichePresets
 
     public const DOG = 'dog_business';
 
+    public const PHOTO_BOOTH = 'photo_booth_business';
+
+    /**
+     * Niches whose illustration data and wording already ARE the platform's own event / photo-booth defaults, so the
+     * "replace old sample content" cleanup has nothing to remove for them.
+     */
+    public const EVENT_NATIVE = [self::GENERAL, self::PHOTO_BOOTH];
+
     /** key => label shown in the editor */
     public const NICHES = [
         self::GENERAL => 'General small business (MotionGrove defaults)',
         self::DOG => 'Dog trainers, puppy schools and boarding businesses',
+        self::PHOTO_BOOTH => 'Photo booth rental businesses (wedding, 360, Magic Mirror, corporate)',
     ];
 
     /**
@@ -33,6 +42,7 @@ final class NichePresets
     {
         return match ($niche) {
             self::DOG => self::dog($brand),
+            self::PHOTO_BOOTH => self::photoBooth($brand),
             default => ['values' => [], 'demo' => [], 'industries' => [], 'whoFor' => null],
         };
     }
@@ -123,6 +133,99 @@ final class NichePresets
                 ],
             ],
             'whoFor' => 'Dog trainers, puppy-training schools, dog obedience businesses, board-and-train operators and dog boarding businesses.',
+        ];
+    }
+
+    /**
+     * Photo booth rental businesses. Every name, date and number is fictional sample data inside the product
+     * illustrations ("Bright Frame Photo Booths" is not a real customer); it makes no claim about results, rankings
+     * or testimonials, and only describes features the software really has.
+     */
+    private static function photoBooth(string $brand): array
+    {
+        return [
+            'values' => [
+                'copy.home.hero.title' => 'More booth bookings.',
+                'copy.home.hero.title_accent' => 'Fewer missed inquiries.',
+                'copy.home.hero.lead' => 'Your website, local search presence, inquiries, quotes and event calendar in one place — built for photo booth rental businesses.',
+                'copy.home.hero.lead_mobile' => 'Your website, inquiries, quotes and event calendar in one place — built for photo booth businesses.',
+                'copy.home.hero.ticks' => ['Website, CRM and calendar together', 'Follow-ups for every new inquiry', 'Built for photo booth rental businesses'],
+                'copy.home.trust.title' => 'Built for photo booth rental businesses',
+                'copy.home.trust.title_mobile' => 'Built for photo booth businesses',
+                'copy.home.trust.industries' => ['Photo booth rental companies', 'Wedding photo booths', '360 photo booth operators', 'Magic Mirror providers', 'Corporate event booths'],
+                'copy.home.trust.industries_mobile' => ['Booth rentals', 'Weddings', '360 booths', 'Magic Mirror', 'Corporate'],
+                'copy.home.final.lead' => 'Bring your website, inquiries and event calendar together — built for photo booth rental businesses.',
+                'copy.home.final.lead_mobile' => 'Bring your website, inquiries and event calendar together.',
+                'copy.footer_blurb' => "{$brand} — your website, inquiries and bookings in one place, built for photo booth rental businesses.",
+                'pages.solutions.description' => "{$brand} for photo booth rental companies, wedding photo booth businesses, 360 booth operators, Magic Mirror providers and corporate-event booth companies.",
+                'page_copy.solutions.lead' => 'Different kinds of photo booth business, the same everyday problem: inquiries in too many places, slow replies and quotes nobody followed up.',
+                'page_copy.solutions.note' => 'Don’t see your kind of booth business? The platform works for any business that runs on event inquiries and bookings.',
+                'flow_steps.1.rows' => [['Jordan Park', 'Wedding · Saturday in June', '#B4514A'], ['Package', '360 booth, 3 hours', '#A99E96'], ['Source', 'Website form', '#A99E96']],
+            ],
+            'demo' => [
+                'business' => 'Bright Frame Photo Booths',
+                'owner' => 'Casey',
+                'lead_name' => 'Jordan P.',
+                'lead_full' => 'Jordan Park',
+                'lead_detail' => 'Wedding, Saturday in June · from your website form',
+                'lead_tag' => 'Wedding · June Saturday',
+                'signed_name' => 'Harbor Tech corporate party',
+                'reply_snippet' => 'Thanks Jordan — here’s our open Saturdays in June and our booth packages…',
+                'inbox_subject' => 'Is a 360 booth free on a Saturday in June?',
+                'callback_note' => 'Follow up on the Magic Mirror quote!!',
+                'search_query' => 'photo booth rental near me',
+                'keywords' => ['photo booth rental near me', 'wedding photo booth', '360 photo booth rental'],
+                'keywords_product' => ['photo booth rental near me', 'wedding photo booth', 'magic mirror photo booth'],
+                'seo_next' => 'Next step: add a service page for corporate events',
+                'services' => ['Wedding booths', '360 booths', 'Magic Mirror'],
+                'site_domain' => 'brightframebooths.example',
+                'site_tagline' => 'Photo booths for weddings and events.',
+                'site_cta' => 'Check your date',
+                'chat_question' => 'Hi! Is a 360 booth free on a Saturday in June?',
+                'chat_answer' => 'Let me check! Here are our booth packages and a link to request a quote.',
+                'crm_a_name' => 'Jordan Park',
+                'crm_a_kind' => 'Wedding',
+                'crm_b_name' => 'Mia Torres',
+                'crm_b_kind' => 'Magic Mirror quote',
+                'crm_c_name' => 'Harbor Tech party',
+                'crm_c_kind' => '360 booth · corporate',
+                'crm_d_name' => 'Park wedding',
+                'open_dates' => 'Saturdays you still have open this season.',
+                'after_event' => 'Day after the event',
+            ],
+            'industries' => [
+                [
+                    'name' => 'Photo booth rental companies',
+                    'head' => 'Answer every date inquiry, even on event weekends.',
+                    'body' => "Inquiries arrive by form, text, email and social messages while you are at an event. {$brand} keeps them in one inbox and replies first.",
+                    'jobs' => [['Instant replies to new inquiries', 'Packages and a booking link sent within minutes.'], ['One inbox for every channel', 'Text and email threads next to each contact.'], ['Follow-ups that keep going', 'Automatic reminders until they book or say no.'], ['Local search visibility', 'See how you rank for “photo booth rental near me”.']],
+                ],
+                [
+                    'name' => 'Wedding photo booth businesses',
+                    'head' => 'Keep every wedding lead moving.',
+                    'body' => "Couples compare several vendors fast. {$brand} tracks each wedding inquiry from first message to booked date.",
+                    'jobs' => [['A pipeline for wedding leads', 'See who is new, quoted, booked or needs a nudge.'], ['Date checks on one calendar', 'Check open Saturdays before you reply.'], ['Quote follow-ups', 'A reminder when a quote has gone quiet.']],
+                ],
+                [
+                    'name' => '360 photo booth operators',
+                    'head' => 'Turn 360 booth interest into booked events.',
+                    'body' => "Whether it is a birthday or a launch party, {$brand} captures the inquiry, answers it and books the next step.",
+                    'jobs' => [['A page for your 360 booth', 'Show packages and what is included on your website.'], ['Lead capture on every page', 'Website forms feed straight into your CRM.'], ['Booking confirmations', 'Confirmation and reminder messages sent automatically.']],
+                ],
+                [
+                    'name' => 'Magic Mirror providers',
+                    'head' => 'Never lose a Magic Mirror quote request.',
+                    'body' => "Quote requests are easy to lose between apps. {$brand} keeps each one on a contact record with its follow-ups.",
+                    'jobs' => [['Quote requests in one place', 'Every request becomes a contact with its history.'], ['Follow-up reminders', 'Know which quotes still need a reply.'], ['AI assistant', 'Ask what to focus on this week.']],
+                ],
+                [
+                    'name' => 'Corporate-event booth companies',
+                    'head' => 'Handle corporate inquiries professionally.',
+                    'body' => "Corporate planners want quick, clear answers. {$brand} replies fast and books a call or a quote conversation on your calendar.",
+                    'jobs' => [['Fast first reply', 'Packages and availability sent as soon as they inquire.'], ['Calendar bookings', 'Planners pick a time that suits your calendar.'], ['Conversation history', 'Every message about the event in one place.']],
+                ],
+            ],
+            'whoFor' => 'Photo booth rental companies, wedding photo booth businesses, 360 booth operators, Magic Mirror providers and corporate-event booth companies.',
         ];
     }
 }

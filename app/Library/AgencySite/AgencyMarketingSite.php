@@ -55,11 +55,15 @@ final class AgencyMarketingSite extends MarketingSite
 
     public function legalName(): string
     {
-        return $this->context->legalName ?: $this->context->brandName;
+        return $this->context->original ? parent::legalName() : ($this->context->legalName ?: $this->context->brandName);
     }
 
     public function wordmark(bool $onDark = false): string
     {
+        if ($this->context->original) {
+            return parent::wordmark($onDark);
+        }
+
         $logo = $onDark ? ($this->context->logoDark ?? $this->context->logo) : ($this->context->logo ?? $this->context->logoDark);
 
         return $logo ?? self::textLogo($this->context->brandName, $onDark ? '#FFFFFF' : '#181413');
@@ -67,11 +71,19 @@ final class AgencyMarketingSite extends MarketingSite
 
     public function mark(): string
     {
+        if ($this->context->original) {
+            return parent::mark();
+        }
+
         return $this->context->logoSquare ?? self::initialMark($this->context->brandName, $this->context->primaryColor);
     }
 
     public function favicon(): string
     {
+        if ($this->context->original) {
+            return parent::favicon();
+        }
+
         return $this->context->favicon ?? $this->mark();
     }
 
@@ -95,6 +107,11 @@ final class AgencyMarketingSite extends MarketingSite
             return $this->bookDemoUrl() ?? ($this->context->pageUrl)('home');
         }
 
+        // The original site's other pages (support, legal, Zoom guide) are the platform's own real pages.
+        if ($this->context->original && ! in_array($page, SiteSchema::PAGES, true) && $page !== 'book-demo') {
+            return parent::url($page);
+        }
+
         return match ($page) {
             'book-demo' => $this->bookDemoUrl() ?? ($this->context->pageUrl)('home'),
             default => ($this->context->pageUrl)($page),
@@ -103,6 +120,10 @@ final class AgencyMarketingSite extends MarketingSite
 
     public function legalLinks(): array
     {
+        if ($this->context->original) {
+            return parent::legalLinks();
+        }
+
         return ['primary' => [], 'supporting' => []];
     }
 
@@ -125,7 +146,7 @@ final class AgencyMarketingSite extends MarketingSite
     /** The platform's Support center and Zoom guide are MotionGrove-branded pages: an Agency site links none of them. */
     public function hasPlatformSupportPages(): bool
     {
-        return false;
+        return $this->context->original;
     }
 
     public function sellsOnline(): bool
@@ -135,12 +156,12 @@ final class AgencyMarketingSite extends MarketingSite
 
     public function bookDemoLabel(): string
     {
-        return $this->context->callOnly() ? 'Book a call' : 'Book a demo';
+        return $this->context->callOnly() ? ($this->context->original ? 'Book a Call' : 'Book a call') : 'Book a demo';
     }
 
     public function getStartedLabel(): string
     {
-        return $this->context->callOnly() ? 'Book a call' : 'Get started';
+        return $this->context->callOnly() ? ($this->context->original ? 'Book a Call' : 'Book a call') : 'Get started';
     }
 
     /** Pricing is not a page of a call-only site, whatever the Agency's page switches say. */
@@ -250,6 +271,10 @@ final class AgencyMarketingSite extends MarketingSite
      */
     public function testimonials(): array
     {
+        if ($this->context->original) {
+            return parent::testimonials();
+        }
+
         $slots = [];
 
         foreach ((array) Arr::get($this->tree, 'x.testimonials', []) as $i => $t) {
@@ -302,14 +327,14 @@ final class AgencyMarketingSite extends MarketingSite
     public function meta(string $page): array
     {
         $meta = parent::meta($page);
-        $meta['image'] = $this->context->logoSquare ?? $this->context->logo ?? $this->mark();
+        $meta['image'] = $this->context->original ? $meta['image'] : ($this->context->logoSquare ?? $this->context->logo ?? $this->mark());
 
         return $meta;
     }
 
     public function social(): array
     {
-        return array_merge(parent::social(), $this->context->social);
+        return $this->context->original ? parent::social() : array_merge(parent::social(), $this->context->social);
     }
 
     // ------------------------------------------------------------- helpers

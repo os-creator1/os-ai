@@ -40,56 +40,66 @@ final class SiteContentBuilder
     public function build(array $values, SiteContext $context): array
     {
         $brand = $context->brandName;
-        $tree = (array) config('marketing');
-
-        // Never carry platform-only wiring into an Agency site.
-        $tree['cta'] = ['book_demo_url' => null, 'login_url' => null, 'plans' => []];
-        $tree['links'] = ['help_centre' => null, 'support_email' => null, 'rates' => null, 'privacy' => null, 'terms' => null, 'acceptable_use' => null];
-        $tree['social'] = ['youtube' => null, 'instagram' => null];
-        $tree['testimonials'] = [];
-        $tree['trust_logos'] = [];
-        $tree['plan_comparison'] = [];
-        $tree['plans'] = [];
-        $tree['hosts'] = [];
-        $tree['sections'] = ['home' => ['trust_logos' => false, 'testimonials' => true, 'setup_specialist_card' => false]];
-        $tree['show_unverified_features'] = false;
-
-        $tree = $this->rebrand($tree, $brand);
-
-        foreach (SiteDefaults::values($brand) as $path => $value) {
-            Arr::set($tree, $path, $value);
-        }
-
-        // Industry layer: wording and illustration sample data for the chosen niche, above the neutral defaults and
-        // below every answer the Agency has saved.
-        $answers = $this->validAnswers($values);
-        $niche = NichePresets::for((string) ($answers['x.niche'] ?? NichePresets::GENERAL), $brand);
-
-        foreach ($niche['values'] as $path => $value) {
-            Arr::set($tree, $path, $value);
-        }
-
-        $tree['demo'] = array_merge((array) ($tree['demo'] ?? []), $niche['demo']);
-
-        if ($niche['industries'] !== []) {
-            $tree['industries'] = $niche['industries'];
-        }
-
+        $answers = null;
         $callOnly = $context->callOnly();
-        $tree['faqs'] = ['home' => SiteDefaults::homeFaqs($brand, $callOnly, $niche['whoFor']), 'pricing' => $callOnly ? [] : SiteDefaults::pricingFaqs()];
 
-        if ($callOnly) {
-            // Starter wording for a site with no pricing and no signup; the Agency's own answers still win below.
-            foreach (SiteDefaults::callOnlyValues() as $path => $value) {
+        if ($context->original) {
+            $tree = $this->originalTree();
+            $answers = $this->validAnswers($values);
+        } else {
+            $tree = (array) config('marketing');
+
+            // Never carry platform-only wiring into an Agency site.
+            $tree['cta'] = ['book_demo_url' => null, 'login_url' => null, 'plans' => []];
+            $tree['links'] = ['help_centre' => null, 'support_email' => null, 'rates' => null, 'privacy' => null, 'terms' => null, 'acceptable_use' => null];
+            $tree['social'] = ['youtube' => null, 'instagram' => null];
+            $tree['testimonials'] = [];
+            $tree['trust_logos'] = [];
+            $tree['plan_comparison'] = [];
+            $tree['plans'] = [];
+            $tree['hosts'] = [];
+            $tree['sections'] = ['home' => ['trust_logos' => false, 'testimonials' => true, 'setup_specialist_card' => false]];
+            $tree['show_unverified_features'] = false;
+
+            $tree = $this->rebrand($tree, $brand);
+
+            foreach (SiteDefaults::values($brand) as $path => $value) {
                 Arr::set($tree, $path, $value);
             }
-        }
 
-        Arr::set($tree, 'pages.pricing.description', "Plans and pricing for {$brand}.");
-        Arr::set($tree, 'pages.home.title', $brand);
-        $tree['site'] = ['name' => $brand, 'legal_name' => $context->legalName, 'og_image' => 'img/mg-mark.png'];
-        $tree['links']['support_email'] = $context->supportEmail;
-        $tree['links']['help_centre'] = $context->supportUrl;
+            // Industry layer: wording and illustration sample data for the chosen niche, above the neutral defaults and
+            // below every answer the Agency has saved.
+            $answers = $this->validAnswers($values);
+            $niche = NichePresets::for((string) ($answers['x.niche'] ?? NichePresets::GENERAL), $brand);
+
+            foreach ($niche['values'] as $path => $value) {
+                Arr::set($tree, $path, $value);
+            }
+
+            $tree['demo'] = array_merge((array) ($tree['demo'] ?? []), $niche['demo']);
+
+            if ($niche['industries'] !== []) {
+                $tree['industries'] = $niche['industries'];
+            }
+
+            $callOnly = $context->callOnly();
+            $tree['faqs'] = ['home' => SiteDefaults::homeFaqs($brand, $callOnly, $niche['whoFor']), 'pricing' => $callOnly ? [] : SiteDefaults::pricingFaqs()];
+
+            if ($callOnly) {
+                // Starter wording for a site with no pricing and no signup; the Agency's own answers still win below.
+                foreach (SiteDefaults::callOnlyValues() as $path => $value) {
+                    Arr::set($tree, $path, $value);
+                }
+            }
+
+            Arr::set($tree, 'pages.pricing.description', "Plans and pricing for {$brand}.");
+            Arr::set($tree, 'pages.home.title', $brand);
+            $tree['site'] = ['name' => $brand, 'legal_name' => $context->legalName, 'og_image' => 'img/mg-mark.png'];
+            $tree['links']['support_email'] = $context->supportEmail;
+            $tree['links']['help_centre'] = $context->supportUrl;
+
+
+        }
 
         // Page titles read "<Page> — <Brand>".
         foreach (SiteSchema::PAGES as $page) {
@@ -145,14 +155,18 @@ final class SiteContentBuilder
 
         // Pages the Agency chose not to offer. Customers is hidden unless there is an approved story to show.
         $hiddenPages = (array) ($answers['x.pages_hidden'] ?? []);
-        $hasStories = collect($tree['x']['testimonials'])->contains(fn ($t) => ! empty($t['approved']) && ($t['visible'] ?? true) && (! empty($t['quote']) || ! empty($t['video'])));
+        $hasStories = $context->original
+            ? collect((array) ($tree['testimonials'] ?? []))->contains(fn ($t) => ($t['visible'] ?? true) !== false && ! empty($t['youtubeId']))
+            : collect($tree['x']['testimonials'])->contains(fn ($t) => ! empty($t['approved']) && ($t['visible'] ?? true) && (! empty($t['quote']) || ! empty($t['video'])));
         if (! $hasStories) {
             $hiddenPages[] = 'customers';
         }
         foreach (array_unique($hiddenPages) as $page) {
             Arr::set($tree, "sections.pages.$page", false);
         }
-        Arr::set($tree, 'sections.solutions.agency', false);
+        if (! $context->original) {
+            Arr::set($tree, 'sections.solutions.agency', false);
+        }
         Arr::set($tree, 'sections.how.commitment', (bool) ($answers['page_copy.how-it-works.commitment.lead'] ?? false) || (bool) ($answers['page_copy.how-it-works.commitment.cards'] ?? false));
         Arr::set($tree, 'sections.pricing.usage', false);
 
@@ -163,6 +177,28 @@ final class SiteContentBuilder
         $order = $this->homeOrder($answers, $context, $hasStories);
 
         return [$tree, $order];
+    }
+
+    /**
+     * The original MotionGrove marketing tree, unchanged, with only what a call-only page needs removed: plan-scoped
+     * reassurance ticks and the support note that names a plan. Same treatment as the static /photobooth page, so the
+     * two start from identical content.
+     *
+     * @return array<string, mixed>
+     */
+    private function originalTree(): array
+    {
+        $tree = self::enforceCallOnly((array) config('marketing'));
+
+        Arr::set($tree, 'copy.home.hero.ticks', array_values(array_filter(
+            (array) Arr::get($tree, 'copy.home.hero.ticks', []),
+            fn ($tick) => preg_match(self::SELLING_WORDS, (string) $tick) !== 1,
+        )));
+        Arr::set($tree, 'copy.home.people.note', '');
+        Arr::set($tree, 'copy.home.hero.primary', 'Book a Call');
+        Arr::set($tree, 'copy.home.final.primary', 'Book a Call');
+
+        return $tree;
     }
 
     /** Wording that sells a plan, a price or a self-service signup. */
@@ -319,7 +355,8 @@ final class SiteContentBuilder
         $hidden = (array) ($answers['x.home_hidden'] ?? []);
         $shown = (array) ($answers['x.home_shown'] ?? []);
 
-        foreach (SiteSchema::HOME_HIDDEN_BY_DEFAULT as $key) {
+        // The original site shows everything except the plan promise; an Agency site starts with its promises switched off.
+        foreach ($context->original ? ['commitment'] : SiteSchema::HOME_HIDDEN_BY_DEFAULT as $key) {
             if (! in_array($key, $shown, true)) {
                 $hidden[] = $key;
             }

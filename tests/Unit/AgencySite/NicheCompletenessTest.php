@@ -74,4 +74,19 @@ class NicheCompletenessTest extends TestCase
         $this->assertStringContainsString('Lumen Events', $html);
         $this->assertStringContainsString('photo booth rental near me', $html);
     }
+
+    public function test_the_photo_booth_niche_renders_its_own_examples_on_every_page_without_dog_content(): void
+    {
+        foreach (['both', 'book_call'] as $goal) {
+            foreach (self::PAGES as $page) {
+                $html = $this->html($goal, NichePresets::PHOTO_BOOTH, $page);
+                preg_match('/.{0,40}(Lumen Events|Maple Ridge|puppy|Biscuit|board and train).{0,40}/iu', $html, $leak);
+                $this->assertSame([], $leak, "{$goal}/{$page} leaks other-niche content");
+            }
+        }
+
+        $home = $this->html('book_call', NichePresets::PHOTO_BOOTH, 'home');
+        $this->assertStringContainsString('Bright Frame Photo Booths', $home);
+        $this->assertStringContainsString('Built for photo booth rental businesses', $home);
+    }
 }

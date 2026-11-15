@@ -18,7 +18,7 @@ class AgencySiteFind extends Command
 {
     protected $signature = 'agency-site:find {name : Part of the brand or legal name, e.g. "Daniel Black"}';
 
-    protected $description = 'Read-only: list White Label sites matching a brand name (for MARKETING_LANDING_DOGS_SITE).';
+    protected $description = 'Read-only: list White Label sites matching a brand name (for MARKETING_LANDING_DOGS_SITE / MARKETING_LANDING_PHOTOBOOTH_SITE).';
 
     public function handle(AgencySiteBookingService $booking): int
     {
@@ -45,6 +45,7 @@ class AgencySiteFind extends Command
             $rows[] = [
                 $brand->display_name, $agency->uid, $site->public_id, $site->status, $site->isLive() ? 'yes' : 'no',
                 $values['x.goal'] ?? 'both', $values['x.niche'] ?? 'general', $ready ? 'yes' : 'NO',
+                implode(', ', array_keys(array_filter(['dogs' => config('marketing.landing.dogs_site'), 'photobooth' => config('marketing.landing.photobooth_site')], fn ($id) => $id === $site->public_id))) ?: '-',
             ];
         }
 
@@ -54,8 +55,8 @@ class AgencySiteFind extends Command
             return self::FAILURE;
         }
 
-        $this->table(['Brand', 'Workspace uid', 'Site public id', 'Status', 'Live', 'Saved goal', 'Niche', 'Calendar ready'], $rows);
-        $this->line('Set MARKETING_LANDING_DOGS_SITE to the "Site public id" of the live row (the landing page needs Live = yes and Calendar ready = yes).');
+        $this->table(['Brand', 'Workspace uid', 'Site public id', 'Status', 'Live', 'Saved goal', 'Niche', 'Calendar ready', 'Served at'], $rows);
+        $this->line('Set MARKETING_LANDING_DOGS_SITE (/dogs) or MARKETING_LANDING_PHOTOBOOTH_SITE (/photobooth) to the "Site public id" of the live row (the landing page needs Live = yes and Calendar ready = yes).');
 
         return self::SUCCESS;
     }

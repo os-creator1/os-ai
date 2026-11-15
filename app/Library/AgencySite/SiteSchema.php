@@ -33,6 +33,13 @@ final class SiteSchema
         10 => 'Review & publish',
     ];
 
+    /**
+     * `x.edition` = this value makes the site the ORIGINAL MotionGrove marketing site (name, logo, colours, wording,
+     * illustrations, navigation, legal links) with only the call-only differences. Unset = the usual white-label site,
+     * rebranded to the Agency. It is a site setting, so the Agency workspace's own branding is never touched.
+     */
+    public const EDITION_ORIGINAL = 'motiongrove';
+
     public const PAGES = ['home', 'product', 'solutions', 'how-it-works', 'customers', 'pricing'];
 
     /** Where a visitor can be sent by a hero / final call-to-action. */
@@ -310,6 +317,7 @@ final class SiteSchema
         $index['x.cta.product'] = ['path' => 'x.cta.product', 'label' => 'Product CTA', 'type' => 'choice', 'options' => self::CTA_TARGETS];
         $index['x.cta.solutions'] = ['path' => 'x.cta.solutions', 'label' => 'Solutions CTA', 'type' => 'choice', 'options' => self::CTA_TARGETS];
         $index['x.cta.how'] = ['path' => 'x.cta.how', 'label' => 'How it works CTA', 'type' => 'choice', 'options' => self::CTA_TARGETS];
+        $index['x.edition'] = ['path' => 'x.edition', 'label' => 'Site edition', 'type' => 'choice', 'options' => [self::EDITION_ORIGINAL => 'Original MotionGrove site']];
         $index['x.seo_image'] = ['path' => 'x.seo_image', 'label' => 'Social image', 'type' => 'asset'];
 
         return $index;

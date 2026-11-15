@@ -29,7 +29,7 @@ final class SiteEditorPresenter
         $values = AgencySiteManager::values($site);
         $context = $this->contexts->make($site, $values);
         // The defaults the editor shows (and "reset" returns to) are those of the selected industry, not the general ones.
-        [$defaultTree] = $this->builder->build(array_intersect_key($values, ['x.niche' => 1]), $context);
+        [$defaultTree] = $this->builder->build(array_intersect_key($values, ['x.niche' => 1, 'x.edition' => 1]), $context);
         [$tree, $homeOrder] = $this->builder->build($values, $context);
 
         $groups = [];
@@ -100,7 +100,7 @@ final class SiteEditorPresenter
             'pages' => array_map(fn ($page) => ['key' => $page, 'url' => route('customer.workspaces.agency.site.preview', [$agency->uid, $page])], SiteSchema::PAGES),
             'ctaTargets' => SiteSchema::CTA_TARGETS,
             'goals' => SiteSchema::GOALS,
-            'legacySamples' => (($values['x.niche'] ?? NichePresets::GENERAL) !== NichePresets::GENERAL) ? app(LegacySampleCleaner::class)->analyse($site) : ['pinned' => [], 'review' => []],
+            'legacySamples' => (! in_array($values['x.niche'] ?? NichePresets::GENERAL, NichePresets::EVENT_NATIVE, true)) ? app(LegacySampleCleaner::class)->analyse($site) : ['pinned' => [], 'review' => []],
             'signupUrls' => collect($context->plans)->mapWithKeys(fn ($p) => [$p['uid'] => route('agency.site.signup', [$site->public_id, $p['uid']])])->all(),
         ];
     }

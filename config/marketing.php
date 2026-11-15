@@ -52,6 +52,9 @@ return [
     // at /dogs (find it with `php artisan agency-site:find`); blank = /dogs is a 404. Never taken from a request.
     'landing' => [
         'dogs_site' => env('MARKETING_LANDING_DOGS_SITE'),
+        // PUBLIC ID of the published White Label site served at /photobooth. Blank = /photobooth keeps serving the static
+        // call-only adaptation of the official homepage (CallOnlyMarketingSite) until the owner authorizes the cutover.
+        'photobooth_site' => env('MARKETING_LANDING_PHOTOBOOTH_SITE'),
     ],
 
     'cta' => [

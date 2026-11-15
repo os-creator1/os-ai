@@ -94,7 +94,7 @@ final class LegacySampleCleaner
             $values = AgencySiteManager::values($latest);
             $niche = (string) ($values['x.niche'] ?? NichePresets::GENERAL);
 
-            if ($niche === NichePresets::GENERAL || ! array_key_exists($niche, NichePresets::NICHES)) {
+            if (in_array($niche, NichePresets::EVENT_NATIVE, true) || ! array_key_exists($niche, NichePresets::NICHES)) {
                 throw ValidationException::withMessages(['niche' => 'Choose an industry first: the old examples are only replaced for the industry saved on this draft.']);
             }
 

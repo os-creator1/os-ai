@@ -40,6 +40,7 @@ final class SiteContext
         public readonly string $loginUrl,
         public readonly string $cssUrl,
         public readonly bool $preview = false,
+        public readonly bool $original = false,
     ) {
     }
 
