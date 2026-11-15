@@ -379,7 +379,7 @@
             </section>
         @endif
 
-    @if ($canSend && count($contacts) > 0)
+    @if ($canSend)
         <details class="me-compose" @if ($errors->any()) open @endif>
             <summary>Send an email to a contact</summary>
         <div class="card">
