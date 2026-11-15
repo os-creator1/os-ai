@@ -126,7 +126,7 @@
 
             <div class="mg-cp-actions" data-role="contact-actions">
                 @if ($canEditDetails)
-                    <x-button variant="outline" size="sm" icon="pencil" data-role="contact-edit" :href="route('customer.workspaces.businesses.contact.edit', [$workspaceUid, $businessUid, $profile['group']['uid']]) . '?contact_id=' . urlencode($contactUid)">Edit details</x-button>
+                    <x-button variant="outline" size="sm" icon="pencil" data-role="contact-edit" data-mgx-edit-contact data-uid="{{ $contactUid }}" :href="route('customer.workspaces.businesses.contact.edit', [$workspaceUid, $businessUid, $profile['group']['uid']]) . '?contact_id=' . urlencode($contactUid)">Edit details</x-button>
                 @endif
                 @if ($actions['bookUrl'] !== null)
                     <x-button variant="outline" size="sm" icon="calendar" data-role="contact-book" :href="$actions['bookUrl']">Book appointment</x-button>
@@ -289,6 +289,10 @@
         </div>
     </section>
 
+    @if ($canEditDetails)
+        <link rel="stylesheet" href="{{ asset('css/crm/mgx-contacts.css') }}?v=1">
+        @include('customer.people._edit-contact-modal')
+    @endif
     @if (! empty($browserCalling))
         @include('customer.people._softphone')
     @endif

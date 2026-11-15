@@ -28,7 +28,11 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
+use libphonenumber\NumberParseException;
+use libphonenumber\PhoneNumberFormat;
+use libphonenumber\PhoneNumberUtil;
 
 /**
  * Contacts, person first: Contacts opens "All contacts" — every contact of
@@ -466,6 +470,293 @@ class ContactDirectoryController extends CustomerBaseController
                 'url' => route('customer.workspaces.businesses.people.show', [$workspaceUid, $businessUid, $subscriber->uid]),
             ],
         ]);
+    }
+
+    /**
+     * The contact as the Edit-contact modal needs it (JSON, fetched when the modal opens). The Contact must belong to the
+     * Business and sit at a Location the actor may reach; anything else answers 404 exactly like an unknown uid. Only what
+     * the schema really stores is returned: the phone split into its country and national number, the identity fields
+     * (first / last name, email, company), the group and the notes.
+     */
+    public function editDetails(string $workspaceUid, string $businessUid, string $contactUid): JsonResponse
+    {
+        [, $business] = $this->resolveBusiness($workspaceUid, $businessUid);
+        $this->authorize('update_contact');
+        $contact = $this->editableContact($business, $contactUid);
+
+        $email = app(ContactEmailIdentity::class)->status($contact);
+        [$region, $national] = $this->splitPhone((string) $contact->phone, $this->defaultRegionFor($business));
+
+        return response()->json([
+            'uid' => (string) $contact->uid,
+            'country' => $region,
+            'phone' => $national,
+            'first_name' => (string) $contact->getValueByTag('FIRST_NAME'),
+            'last_name' => (string) $contact->getValueByTag('LAST_NAME'),
+            'email' => (string) ($email['email'] ?? ''),
+            'email_ambiguous' => $email['state'] === ContactEmailIdentity::STATE_AMBIGUOUS,
+            'company' => (string) $contact->getValueByTag('COMPANY'),
+            'notes' => (string) $contact->getValueByTag('NOTES'),
+            'group' => $contact->contactGroup !== null ? (string) $contact->contactGroup->uid : '',
+            'groups' => ContactGroups::query()->where('business_id', $business->id)->orderBy('name')->get(['uid', 'name'])
+                ->map(fn (ContactGroups $g) => ['uid' => (string) $g->uid, 'name' => (string) $g->name])->all(),
+            'can_delete' => Gate::allows('delete_contact'),
+            'updateUrl' => route('customer.workspaces.businesses.people.update', [$workspaceUid, $businessUid, $contact->uid]),
+            'deleteUrl' => route('customer.workspaces.businesses.people.destroy', [$workspaceUid, $businessUid, $contact->uid]),
+        ]);
+    }
+
+    /**
+     * The Edit-contact modal's save: the same canonical writers the profile and the New-contact modal use
+     * (ContactEmailIdentity for the email, Contacts::updateFields for the identity fields and the stored phone). The phone is
+     * validated against the CHOSEN country and stored in the one canonical digits form; the contact keeps its uid, Business and
+     * Location. A group change carries every stored value across by field tag and is refused, changing nothing, when it would drop a
+     * value the other group has no field for. JSON in, JSON out; nothing is written on a validation error.
+     */
+    public function update(Request $request, string $workspaceUid, string $businessUid, string $contactUid): JsonResponse
+    {
+        [, $business] = $this->resolveBusiness($workspaceUid, $businessUid);
+        $this->authorize('update_contact');
+
+        if (config('app.stage') === 'demo') {
+            return response()->json(['status' => 'error', 'message' => 'Sorry! This option is not available in demo mode'], 403);
+        }
+
+        $contact = $this->editableContact($business, $contactUid);
+
+        $input = $request->validate([
+            'country' => ['required', 'string', 'size:2'],
+            'phone' => ['required', 'string', 'max:40'],
+            'first_name' => ['nullable', 'string', 'max:120'],
+            'last_name' => ['nullable', 'string', 'max:120'],
+            'email' => ['nullable', 'string', 'max:191'],
+            'company' => ['nullable', 'string', 'max:191'],
+            'group' => ['nullable', 'string', 'max:64'],
+            'notes' => ['nullable', 'string', 'max:5000'],
+        ]);
+
+        $errors = [];
+        $phone = CountryDirectory::validate($input['phone'], $input['country']);
+
+        if (! $phone['ok']) {
+            $errors['phone'] = [$phone['error']];
+        }
+
+        $email = trim((string) ($input['email'] ?? ''));
+        $normalizedEmail = $email === '' ? null : \App\Library\BusinessEmail\BusinessEmailContactResolver::normalize($email);
+
+        if ($email !== '' && $normalizedEmail === null) {
+            $errors['email'] = ['Enter a valid email address.'];
+        }
+
+        // The group: only one of THIS Business's own; empty keeps the current one.
+        $current = ContactGroups::query()->where('business_id', $business->id)->whereKey($contact->group_id)->first();
+        $target = $current;
+
+        if (filled($input['group'] ?? null) && (string) $input['group'] !== (string) $current?->uid) {
+            $target = ContactGroups::query()->where('business_id', $business->id)->where('uid', (string) $input['group'])->first();
+
+            if ($target === null) {
+                $errors['group'] = ['Choose one of your groups.'];
+            }
+        }
+
+        if ($target === null && ! isset($errors['group'])) {
+            $errors['group'] = ['Choose one of your groups.'];
+        }
+
+        $moving = $target !== null && $current !== null && (int) $target->id !== (int) $current->id;
+        $lost = $moving ? $this->valuesWithoutAHome($contact, $target) : [];
+
+        if ($lost !== []) {
+            $errors['group'] = ['“' . $target->name . '” has no ' . implode(', ', $lost) . ' field, so that information would be lost. Add the field to the group first.'];
+        }
+
+        // The number is the contact's identity inside its Business and Location: another contact there may not hold it.
+        if ($phone['ok']) {
+            $digits = (string) $phone['digits'];
+            $duplicate = Contacts::query()
+                ->where('business_id', $business->id)
+                ->where('id', '!=', $contact->id)
+                ->where('phone', $digits)
+                ->when(
+                    $contact->location_id === null,
+                    fn ($query) => $query->whereNull('location_id'),
+                    fn ($query) => $query->where('location_id', $contact->location_id),
+                )
+                ->exists();
+
+            if ($duplicate) {
+                $errors['phone'] = ['A contact with this phone number already exists.'];
+            } elseif ($digits !== (string) $contact->phone && \App\Models\Blacklists::where('number', $digits)->exists()) {
+                $errors['phone'] = [__('locale.blacklist.phone_was_blacklisted')];
+            }
+        }
+
+        if ($errors !== []) {
+            return response()->json(['status' => 'error', 'message' => 'Please fix the highlighted fields.', 'errors' => $errors], 422);
+        }
+
+        $identity = app(ContactEmailIdentity::class);
+        $notes = trim((string) ($input['notes'] ?? ''));
+        $ambiguous = $identity->status($contact)['state'] === ContactEmailIdentity::STATE_AMBIGUOUS;
+
+        DB::transaction(function () use ($contact, $current, $target, $moving, $phone, $input, $notes, $normalizedEmail, $ambiguous, $identity): void {
+            if ($moving) {
+                $this->moveToGroup($contact, $target);
+            }
+
+            foreach (['FIRST_NAME', 'LAST_NAME', 'COMPANY', 'NOTES'] as $tag) {
+                $identity->ensureField($target, $tag);
+            }
+
+            $contact->setRelation('contactGroup', ContactGroups::query()->find($target->id));
+            $contact->updateFields([
+                'PHONE' => (string) $phone['digits'],
+                'FIRST_NAME' => trim((string) ($input['first_name'] ?? '')),
+                'LAST_NAME' => trim((string) ($input['last_name'] ?? '')),
+                'COMPANY' => trim((string) ($input['company'] ?? '')),
+                'NOTES' => $notes,
+            ]);
+
+            // Several different stored addresses are never overwritten by a blank box.
+            if (! ($ambiguous && $normalizedEmail === null)) {
+                $identity->save($contact, $normalizedEmail);
+            }
+
+            if ($moving) {
+                $current->updateCache();
+                $target->updateCache();
+            }
+        });
+
+        session()->flash('flash_success', 'Contact saved.');
+
+        return response()->json(['status' => 'success', 'message' => 'Contact saved.']);
+    }
+
+    /** Delete from the Edit-contact modal: the canonical group delete, behind the delete permission and the same Location ACL. */
+    public function destroy(string $workspaceUid, string $businessUid, string $contactUid): JsonResponse
+    {
+        [, $business] = $this->resolveBusiness($workspaceUid, $businessUid);
+        $this->authorize('delete_contact');
+
+        if (config('app.stage') === 'demo') {
+            return response()->json(['status' => 'error', 'message' => 'Sorry! This option is not available in demo mode'], 403);
+        }
+
+        $contact = $this->editableContact($business, $contactUid);
+        $group = ContactGroups::query()->where('business_id', $business->id)->whereKey($contact->group_id)->first();
+        abort_if($group === null, 404);
+
+        if (! $this->contactGroups->contactDestroy($group, (string) $contact->uid)) {
+            return response()->json(['status' => 'error', 'message' => 'The contact could not be deleted.'], 422);
+        }
+
+        session()->flash('flash_success', 'Contact deleted.');
+
+        return response()->json([
+            'status' => 'success',
+            'message' => 'Contact deleted.',
+            'redirect' => route('customer.workspaces.businesses.people.index', [$workspaceUid, $businessUid]),
+        ]);
+    }
+
+    /** A contact of this Business at a Location the actor may reach; every other case is the same 404. */
+    private function editableContact(Business $business, string $contactUid): Contacts
+    {
+        $contact = $this->directory->findForBusiness($business, $contactUid, (int) Auth::id());
+        abort_if($contact === null || ! $this->locationAccessible($contact), 404);
+
+        return $contact;
+    }
+
+    private function defaultRegionFor(Business $business): string
+    {
+        $region = strtoupper((string) $business->country_code);
+
+        return CountryDirectory::isRegion($region) ? $region : CountryDirectory::DEFAULT_REGION;
+    }
+
+    /**
+     * The stored digits as the picker shows them: the number's own country and its national form.
+     *
+     * @return array{0: string, 1: string}
+     */
+    private function splitPhone(string $digits, string $fallbackRegion): array
+    {
+        $digits = trim($digits);
+        $util = PhoneNumberUtil::getInstance();
+
+        try {
+            $number = $util->parse('+' . ltrim($digits, '+'), null);
+            $region = $util->getRegionCodeForNumber($number);
+
+            if ($region !== null && CountryDirectory::isRegion($region)) {
+                return [$region, $util->format($number, PhoneNumberFormat::NATIONAL)];
+            }
+        } catch (NumberParseException) {
+            // fall through: show the digits exactly as stored
+        }
+
+        return [$fallbackRegion, $digits];
+    }
+
+    /**
+     * Labels of the contact's non-empty stored values that the target group has no field for (so a move would lose them).
+     * Built-in identity fields do not count: they are created on the target group on demand.
+     *
+     * @return list<string>
+     */
+    private function valuesWithoutAHome(Contacts $contact, ContactGroups $target): array
+    {
+        $builtIn = ['PHONE', 'FIRST_NAME', 'LAST_NAME', 'EMAIL', 'COMPANY', 'NOTES'];
+        $targetTags = DB::table('contact_group_fields')->where('contact_group_id', $target->id)->pluck('tag')->map(fn ($t) => strtolower((string) $t))->all();
+
+        return DB::table('contacts_custom_field as v')
+            ->join('contact_group_fields as f', 'f.id', '=', 'v.field_id')
+            ->where('v.contact_id', $contact->id)
+            ->get(['f.tag', 'f.label', 'v.value'])
+            ->filter(fn ($row) => trim((string) $row->value) !== ''
+                && ! in_array(strtoupper((string) $row->tag), $builtIn, true)
+                && ! in_array(strtolower((string) $row->tag), $targetTags, true))
+            ->map(fn ($row) => (string) $row->label)
+            ->unique()
+            ->values()
+            ->all();
+    }
+
+    /** Re-home every stored value on the target group's field with the same tag, then point the contact at the group. */
+    private function moveToGroup(Contacts $contact, ContactGroups $target): void
+    {
+        $identity = app(ContactEmailIdentity::class);
+        $targetFields = DB::table('contact_group_fields')->where('contact_group_id', $target->id)->orderBy('id')->get(['id', 'tag'])
+            ->groupBy(fn ($f) => strtolower((string) $f->tag))->map(fn ($g) => (int) $g->first()->id);
+
+        $rows = DB::table('contacts_custom_field as v')
+            ->join('contact_group_fields as f', 'f.id', '=', 'v.field_id')
+            ->where('v.contact_id', $contact->id)
+            ->get(['v.id as value_id', 'f.tag', 'v.value']);
+
+        foreach ($rows as $row) {
+            $tag = strtolower((string) $row->tag);
+
+            if (! $targetFields->has($tag) && in_array(strtoupper($tag), ['FIRST_NAME', 'LAST_NAME', 'EMAIL', 'COMPANY', 'NOTES'], true)) {
+                $targetFields->put($tag, $identity->ensureField($target, strtoupper($tag)));
+            }
+
+            if ($targetFields->has($tag)) {
+                $clash = DB::table('contacts_custom_field')->where('contact_id', $contact->id)->where('field_id', $targetFields[$tag])->where('id', '!=', $row->value_id)->exists();
+                $clash
+                    ? DB::table('contacts_custom_field')->where('id', $row->value_id)->delete()
+                    : DB::table('contacts_custom_field')->where('id', $row->value_id)->update(['field_id' => $targetFields[$tag]]);
+            } else {
+                DB::table('contacts_custom_field')->where('id', $row->value_id)->delete();
+            }
+        }
+
+        $contact->group_id = $target->id;
+        $contact->save();
     }
 
     /**

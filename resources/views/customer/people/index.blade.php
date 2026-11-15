@@ -131,6 +131,9 @@
                         <span class="{{ $contact['last_activity'] === null ? 'mgx-mu' : '' }}" data-label="Last activity">{{ $contact['last_activity'] !== null ? ($contact['last_activity_type'] ?? 'Texted') . ' · ' . $contact['last_activity']->diffForHumans(['short' => true]) : '—' }}</span>
                         <span class="mgx-mu" data-label="Added">{{ $contact['added']?->format('M j') }}</span>
                         <div class="mgx-ra">
+                            @can('update_contact')
+                                <button type="button" aria-label="Edit {{ $label }}" title="Edit contact" data-mgx-edit-contact data-uid="{{ $contact['uid'] }}"><svg class="mgx-ic" viewBox="0 0 24 24"><path d="M4 20h4L19 9l-4-4L4 16zM13.5 6.5l4 4"/></svg></button>
+                            @endcan
                             @if ($canCall)
                                 <button type="button" aria-label="Call {{ $label }}" data-mgx-call data-uid="{{ $contact['uid'] }}" data-label="{{ $label }}" data-phone="{{ \App\Library\Contacts\ContactPhone::pretty($contact['phone']) }}" data-initials="{{ $initials($contact['name']) }}"><svg class="mgx-ic" viewBox="0 0 24 24"><path d="M5 4h4l2 5-2.5 1.5a11 11 0 0 0 5 5L15 13l5 2v4a1 1 0 0 1-1 1A16 16 0 0 1 4 5a1 1 0 0 1 1-1z"/></svg></button>
                             @endif
@@ -154,6 +157,7 @@
     @if (($modal ?? null) !== null)
         @include('customer.people._new-contact-modal', ['modal' => $modal])
     @endif
+    @include('customer.people._edit-contact-modal')
     @if (! empty($browserCalling))
         @include('customer.people._softphone')
     @endif

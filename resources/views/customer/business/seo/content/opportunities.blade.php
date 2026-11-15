@@ -47,16 +47,16 @@
                     <a class="opp-filter {{ $current === $uid ? 'is-active' : '' }}" href="{{ $route('opportunities', ['page' => $uid]) }}" data-content-local data-filter="{{ $uid }}" @if($current === $uid) aria-current="true" @endif>{{ $filter['title'] }} <span>{{ $filter['count'] }}</span></a>
                 @endforeach
             </nav>
-            <p class="opp-trust" data-role="opportunities-note"><x-ds-icon name="lock" size="13" aria-hidden="true" /> AI drafts use your real packages and prices, and are never published without you.</p>
+            <p class="opp-trust" data-role="opportunities-note"><x-ds-icon name="lock" size="16" aria-hidden="true" /> AI drafts use your real packages and prices, and are never published without you.</p>
         </div>
 
-        <div data-role="opportunities">
+        <div class="opp-list" data-role="opportunities">
             @foreach($groups as $intent => [$groupTitle, $groupSub, $icon, $tone])
                 @php($rows = $shown->where('search_intent', $intent))
                 @continue($rows->isEmpty())
                 <section class="opp-group" data-role="opportunity-group" data-intent="{{ $intent }}" aria-labelledby="opp-group-{{ $intent }}">
                     <header class="opp-group-head">
-                        <span class="opp-group-icon {{ $tone }}" aria-hidden="true"><x-ds-icon name="{{ $icon }}" size="16" /></span>
+                        <span class="opp-group-icon {{ $tone }}" aria-hidden="true"><x-ds-icon name="{{ $icon }}" size="18" /></span>
                         <div>
                             <h5 id="opp-group-{{ $intent }}" class="opp-group-title">{{ $groupTitle }}</h5>
                             <p class="opp-group-sub">{{ $groupSub }}</p>

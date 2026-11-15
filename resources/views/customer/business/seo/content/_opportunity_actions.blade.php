@@ -20,12 +20,12 @@
             <form method="POST" action="{{ $route('opportunities.draft') }}" data-role="opportunity-ai-form">
                 @csrf
                 <input type="hidden" name="key" value="{{ $opp['key'] }}">
-                <button class="btn {{ $btn }} btn-primary" type="submit" data-role="create-ai-draft">@if($short)<x-ds-icon name="sparkles" size="14" aria-hidden="true" /> AI draft @else Create AI draft @endif</button>
+                <button class="btn {{ $btn }} btn-primary" type="submit" data-role="create-ai-draft">@if($short)<x-ds-icon name="sparkles" size="16" aria-hidden="true" /> AI draft @else Create AI draft @endif</button>
             </form>
             <form method="POST" action="{{ $route('opportunities.start') }}" data-role="opportunity-start-form">
                 @csrf
                 <input type="hidden" name="key" value="{{ $opp['key'] }}">
-                <button class="btn {{ $btn }} btn-outline-secondary" type="submit" data-role="write-myself">{{ $short ? 'Write myself' : 'Write it myself' }}</button>
+                <button class="btn {{ $btn }} btn-outline-primary" type="submit" data-role="write-myself">{{ $short ? 'Write myself' : 'Write it myself' }}</button>
             </form>
         @endcan
     @endif

@@ -17,13 +17,16 @@
     @php($ap = $autopilot)
     @php($filled = min($ap['month']['max'], $ap['month']['published'] + $ap['month']['planned']))
 
-    <x-card :padded="true" class="mb-2" data-role="autopilot-switch" data-state="{{ $ap['enabled'] ? ($ap['paused'] ? 'paused' : 'on') : 'off' }}">
+    <x-card :padded="true" class="autopilot-card" data-role="autopilot-switch" data-state="{{ $ap['enabled'] ? ($ap['paused'] ? 'paused' : 'on') : 'off' }}">
         <div class="autopilot-hero">
             <div class="autopilot-hero-main">
-                <span class="content-icon-tile content-icon-tile--neutral" aria-hidden="true"><x-ds-icon name="sparkles" size="16" /></span>
-                <div>
-                    <h5 class="mb-25">Content Autopilot <span class="content-chip {{ $ap['running'] ? 'is-success' : '' }} ms-50" data-role="autopilot-badge">{{ $ap['running'] ? 'On' : ($ap['enabled'] ? 'Paused' : 'Off') }}</span></h5>
-                    <p class="mb-0 text-caption" data-role="autopilot-status">
+                <span class="content-icon-tile content-icon-tile--neutral" aria-hidden="true"><x-ds-icon name="sparkles" size="26" /></span>
+                <div class="autopilot-hero-text">
+                    <div class="autopilot-hero-title">
+                        <h2>Content Autopilot</h2>
+                        <span class="cm-pill {{ $ap['running'] ? 'is-on' : ($ap['enabled'] ? 'is-paused' : '') }}" data-role="autopilot-badge">{{ $ap['running'] ? 'On' : ($ap['enabled'] ? 'Paused' : 'Off') }}</span>
+                    </div>
+                    <p data-role="autopilot-status">
                         @if($ap['enabled'])
                             {{ $ap['statusText'] }}
                         @else
@@ -35,7 +38,7 @@
             <div class="d-flex flex-wrap gap-50">
                 @if(! $ap['enabled'])
                     <form method="POST" action="{{ $route('autopilot.enable') }}">@csrf
-                        <button type="submit" class="btn btn-primary" data-role="turn-on"><x-ds-icon name="power" size="15" aria-hidden="true" /> Turn on Autopilot</button>
+                        <button type="submit" class="btn btn-primary" data-role="turn-on"><x-ds-icon name="power" size="16" aria-hidden="true" /> Turn on Autopilot</button>
                     </form>
                 @else
                     @if($ap['paused'] === 'owner')
@@ -75,8 +78,8 @@
     @endif
 
     <div class="autopilot-grid">
-        <x-card :padded="true" class="h-100" data-role="next-up" data-kind="{{ $ap['next']['kind'] }}">
-            <h5 class="mb-1">Next up</h5>
+        <x-card :padded="true" data-role="next-up" data-kind="{{ $ap['next']['kind'] }}">
+            <h5>Next up</h5>
             @if($ap['next']['title'])
                 <p class="fw-bold mb-25">
                     @if($ap['next']['article_uid'])
@@ -93,15 +96,15 @@
                 </p>
             @else
                 <div class="autopilot-empty" data-role="next-up-empty">
-                    <x-ds-icon name="file-text" size="18" class="text-muted" aria-hidden="true" />
-                    <strong class="text-body">No articles planned</strong>
-                    <span class="text-caption">{{ $ap['enabled'] ? $ap['next']['detail'] : 'Planned articles will show here once Autopilot is on.' }}</span>
+                    <x-ds-icon name="file-text" size="24" aria-hidden="true" />
+                    <strong>No articles planned</strong>
+                    <span>{{ $ap['enabled'] ? $ap['next']['detail'] : 'Planned articles will show here once Autopilot is on.' }}</span>
                 </div>
             @endif
         </x-card>
 
-        <x-card :padded="true" class="h-100" data-role="this-month">
-            <h5 class="mb-0">This month</h5>
+        <x-card :padded="true" data-role="this-month">
+            <h5>This month</h5>
             <div class="autopilot-month" data-role="month-counts">
                 <div><span class="num">{{ $ap['month']['published'] }}</span><span class="content-label">Published</span></div>
                 <div><span class="num">{{ $ap['month']['planned'] }}</span><span class="content-label">Planned</span></div>
@@ -111,7 +114,7 @@
                     @for($i = 1; $i <= $ap['month']['max']; $i++)<i class="{{ $i <= $filled ? 'is-filled' : '' }}"></i>@endfor
                 </div>
             @endif
-            <p class="mb-0 text-caption">Up to {{ $ap['month']['max'] }} a month - and fewer is perfectly fine. Autopilot writes only when there is something worth saying.</p>
+            <p class="autopilot-note">Up to {{ $ap['month']['max'] }} a month, and fewer is perfectly fine. Autopilot writes only when there is something worth saying.</p>
         </x-card>
     </div>
 
@@ -178,8 +181,8 @@
     @endif
 
     <div class="autopilot-quick" data-role="secondary-links">
-        <a href="{{ $route('autopilot.profile') }}" data-role="quick-profile"><span class="content-icon-tile" aria-hidden="true"><x-ds-icon name="user" size="15" /></span>{{ $ap['profileCompleted'] ? 'Edit what Autopilot knows about you' : 'Tell Autopilot a little about you' }}<x-ds-icon name="chevron-right" size="16" class="chev" aria-hidden="true" /></a>
-        <a href="{{ $route('opportunities') }}" data-content-local data-role="quick-topics"><span class="content-icon-tile" aria-hidden="true"><x-ds-icon name="lightbulb" size="15" /></span>Browse topic ideas<x-ds-icon name="chevron-right" size="16" class="chev" aria-hidden="true" /></a>
-        <a href="{{ $route('plan') }}" data-content-local data-role="quick-plan"><span class="content-icon-tile" aria-hidden="true"><x-ds-icon name="calendar" size="15" /></span>Content plan<x-ds-icon name="chevron-right" size="16" class="chev" aria-hidden="true" /></a>
+        <a href="{{ $route('autopilot.profile') }}" data-role="quick-profile"><span class="content-icon-tile" aria-hidden="true"><x-ds-icon name="user" size="18" /></span>{{ $ap['profileCompleted'] ? 'Edit what Autopilot knows about you' : 'Tell Autopilot a little about you' }}<x-ds-icon name="chevron-right" size="16" class="chev" aria-hidden="true" /></a>
+        <a href="{{ $route('opportunities') }}" data-content-local data-role="quick-topics"><span class="content-icon-tile" aria-hidden="true"><x-ds-icon name="lightbulb" size="18" /></span>Browse topic ideas<x-ds-icon name="chevron-right" size="16" class="chev" aria-hidden="true" /></a>
+        <a href="{{ $route('plan') }}" data-content-local data-role="quick-plan"><span class="content-icon-tile" aria-hidden="true"><x-ds-icon name="calendar" size="18" /></span>Content plan<x-ds-icon name="chevron-right" size="16" class="chev" aria-hidden="true" /></a>
     </div>
 @endsection
