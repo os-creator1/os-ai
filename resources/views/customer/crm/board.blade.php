@@ -261,7 +261,7 @@
                                             @if ($card['stage_entered_at'])
                                                 <span class="crm-card-age" data-role="crm-card-age">
                                                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="8.5"></circle><path d="M12 7.5V12l3 2"></path></svg>
-                                                    {{ $card['stage_entered_at']->diffForHumans(null, true) }} in stage
+                                                    <span class="crm-age-label">{{ $card['stage_entered_at']->diffForHumans(null, true) }} in stage</span>
                                                 </span>
                                             @endif
                                         </div>
