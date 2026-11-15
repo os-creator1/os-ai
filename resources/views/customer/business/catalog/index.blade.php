@@ -3,18 +3,7 @@
 @section('title', 'Packages & Products')
 
 @section('page-style')
-    @include('partials.cx._styles')
-    <style>
-        .catalog-order { display: flex; flex-direction: column; gap: .125rem; flex: 0 0 auto; }
-        .catalog-order form { margin: 0; }
-        .catalog-order .cx-icon-btn { width: 1.5rem; height: 1.25rem; border-color: transparent; background: transparent; }
-        .catalog-order-spacer { display: block; width: 1.5rem; height: 1.25rem; }
-        .catalog-price { min-width: 9rem; }
-        .catalog-price .cx-meta-value { font-weight: 600; }
-        @media (max-width: 575.98px) {
-            .catalog-price { min-width: 0; }
-        }
-    </style>
+    @include('customer.business.catalog._styles')
 @endsection
 
 @section('content')
@@ -54,118 +43,90 @@
 
     @include('customer.business.catalog._messages')
 
-    <header class="cx-page-head">
-        <div>
-            <h1 class="cx-page-title">Packages &amp; Products</h1>
-            <p class="cx-page-sub">
-                What <strong>{{ $business->name }}</strong> sells, in one list. Each location can choose to offer an item or not,
-                and can set its own price — without copying the list.
-            </p>
-            <div class="cx-page-actions mt-1">
-                <x-button variant="secondary" icon="map-pin" :href="route('customer.workspaces.businesses.catalog.locations.index', $scope)" data-role="catalog-locations">
-                    Manage by location
-                </x-button>
-                <x-button variant="primary" icon="plus" :href="$createUrl" data-role="catalog-add">
-                    Add package or product
-                </x-button>
+    <div class="cg">
+        <header class="cg-head">
+            <div class="cg-head-text">
+                <h1 class="cg-title">Packages &amp; Products</h1>
+                <p class="cg-sub">{{ $counts['all'] }} {{ \Illuminate\Support\Str::plural('item', $counts['all']) }} in your catalog</p>
             </div>
-        </div>
-    </header>
+            <div class="cg-head-actions">
+                <a href="{{ route('customer.workspaces.businesses.catalog.locations.index', $scope) }}" class="cg-btn is-outline" data-role="catalog-locations">
+                    <x-ds-icon name="map-pin" size="16" aria-hidden="true" />Prices by location
+                </a>
+                <a href="{{ $createUrl }}" class="cg-btn is-primary" data-role="catalog-add" data-catalog-add>
+                    <x-ds-icon name="plus" size="16" aria-hidden="true" />Add item
+                </a>
+            </div>
+        </header>
 
-    <section class="cx-card">
-        <div class="cx-card-head">
-            <div>
-                <h2 class="cx-card-title">Your list</h2>
-                <p class="cx-card-sub">{{ $counts['all'] }} {{ \Illuminate\Support\Str::plural('item', $counts['all']) }} · shown to customers in this order</p>
-            </div>
-            @if ($counts['all'] > 0)
-                <nav class="cx-seg" aria-label="Filter by type">
-                    <a href="{{ $indexUrl }}" @if ($filter === 'all') aria-current="page" @endif>All <span class="cx-count">{{ $counts['all'] }}</span></a>
-                    <a href="{{ $indexUrl }}?type=package" @if ($filter === 'package') aria-current="page" @endif>Packages <span class="cx-count">{{ $counts['package'] }}</span></a>
-                    <a href="{{ $indexUrl }}?type=product" @if ($filter === 'product') aria-current="page" @endif>Products <span class="cx-count">{{ $counts['product'] }}</span></a>
-                </nav>
-            @endif
-        </div>
+        @if ($counts['all'] > 0)
+            <nav class="cg-seg is-sm is-filter" aria-label="Filter by type" style="align-self:flex-start">
+                <a href="{{ $indexUrl }}" @if ($filter === 'all') aria-current="page" @endif>All <span class="cg-count">{{ $counts['all'] }}</span></a>
+                <a href="{{ $indexUrl }}?type=package" @if ($filter === 'package') aria-current="page" @endif>Packages <span class="cg-count">{{ $counts['package'] }}</span></a>
+                <a href="{{ $indexUrl }}?type=product" @if ($filter === 'product') aria-current="page" @endif>Products <span class="cg-count">{{ $counts['product'] }}</span></a>
+            </nav>
+        @endif
 
         @if ($activeItems->isEmpty())
-            <div class="cx-card-body">
-                <p class="mb-0 text-caption" data-role="catalog-empty">Nothing here yet. Add your first package or product.</p>
-            </div>
+            <p class="cg-empty mb-0" data-role="catalog-empty">Nothing here yet. Add your first package or product.</p>
         @elseif ($visible->isEmpty())
-            <div class="cx-card-body">
-                <p class="mb-0 text-caption">No {{ $filter === 'package' ? 'packages' : 'products' }} yet. <a href="{{ $indexUrl }}">Show everything</a>.</p>
-            </div>
+            <p class="cg-empty mb-0">No {{ $filter === 'package' ? 'packages' : 'products' }} yet. <a href="{{ $indexUrl }}">Show everything</a>.</p>
         @else
             @if ($filter !== 'all' && $activeItems->count() > 1)
-                <p class="text-caption px-2 pt-1 mb-0">To change the order, switch to <a href="{{ $indexUrl }}">All</a>.</p>
+                <p class="cg-sub mb-0">To change the order, switch to <a href="{{ $indexUrl }}">All</a>.</p>
             @endif
-            <ul class="cx-list" data-role="catalog-active">
+            <ul class="cg-grid" data-role="catalog-active">
                 @foreach ($visible as $item)
                     @php
                         $index = array_search($item->uid, $activeUids, true);
-                        $isPackage = $item->type === \App\Enums\Catalog\CatalogItemType::Package;
                         $editUrl = route('customer.workspaces.businesses.catalog.edit', array_merge($scope, [$item->uid]));
                     @endphp
-                    <li class="cx-row" data-item="{{ $item->uid }}">
-                        <div class="cx-row-main">
-                            @if ($canReorder)
-                                <div class="catalog-order">
-                                    @if ($index > 0)
-                                        <form method="POST" action="{{ route('customer.workspaces.businesses.catalog.reorder', $scope) }}">
-                                            @csrf
-                                            @foreach ($orderWithSwap($index, $index - 1) as $uid)
-                                                <input type="hidden" name="order[]" value="{{ $uid }}">
-                                            @endforeach
-                                            <button type="submit" class="cx-icon-btn" data-role="move-up" aria-label="Move {{ $item->name }} up">
-                                                <x-ds-icon name="chevron-up" size="14" aria-hidden="true" />
-                                            </button>
-                                        </form>
-                                    @else
-                                        <span class="catalog-order-spacer" aria-hidden="true"></span>
-                                    @endif
-                                    @if ($index < count($activeUids) - 1)
-                                        <form method="POST" action="{{ route('customer.workspaces.businesses.catalog.reorder', $scope) }}">
-                                            @csrf
-                                            @foreach ($orderWithSwap($index, $index + 1) as $uid)
-                                                <input type="hidden" name="order[]" value="{{ $uid }}">
-                                            @endforeach
-                                            <button type="submit" class="cx-icon-btn" data-role="move-down" aria-label="Move {{ $item->name }} down">
-                                                <x-ds-icon name="chevron-down" size="14" aria-hidden="true" />
-                                            </button>
-                                        </form>
-                                    @else
-                                        <span class="catalog-order-spacer" aria-hidden="true"></span>
-                                    @endif
-                                </div>
+                    <li class="cg-item" data-item="{{ $item->uid }}">
+                        <span class="cg-kind">{{ ucfirst($item->type->value) }}</span>
+                        <a href="{{ $editUrl }}" class="cg-name">{{ $item->name }}</a>
+                        @if (filled($item->description))
+                            <span class="cg-desc">{{ $item->description }}</span>
+                        @endif
+                        @if ($item->price_minor === null)
+                            <b class="cg-price">Quote only</b>
+                        @else
+                            <b class="cg-price">{{ \App\Library\Catalog\CatalogMoney::format($item->price_minor, $item->currency_code) }}</b>
+                            @if (strtoupper((string) $item->currency_code) !== strtoupper((string) $business->currency_code))
+                                <small class="cg-note" data-role="currency-mismatch">
+                                    Not in your business currency ({{ strtoupper((string) $business->currency_code) }}), so it can't be added to a quote or invoice.
+                                </small>
                             @endif
-                            <span class="cx-tile {{ $isPackage ? '' : 'is-info' }}" aria-hidden="true">
-                                <x-ds-icon :name="$isPackage ? 'package' : 'tag'" size="17" />
-                            </span>
-                            <span class="cx-row-text">
-                                <a href="{{ $editUrl }}" class="cx-row-title">{{ $item->name }}</a>
-                                <span class="cx-pill {{ $isPackage ? 'is-accent' : 'is-info' }} mt-25">{{ ucfirst($item->type->value) }}</span>
-                            </span>
-                        </div>
-                        <div class="cx-row-meta">
-                            <div class="cx-meta catalog-price">
-                                <span class="cx-meta-label">Price</span>
-                                @if ($item->price_minor === null)
-                                    <span class="cx-meta-value">Quote only</span>
-                                @else
-                                    <span class="cx-meta-value">{{ \App\Library\Catalog\CatalogMoney::format($item->price_minor, $item->currency_code) }}</span>
-                                    @if (strtoupper((string) $item->currency_code) !== strtoupper((string) $business->currency_code))
-                                        <small class="d-block text-warning" data-role="currency-mismatch">
-                                            Not in your business currency ({{ strtoupper((string) $business->currency_code) }}), so it can't be added to a quote or invoice.
-                                        </small>
-                                    @endif
+                        @endif
+                        <div class="cg-tools">
+                            @if ($canReorder)
+                                @if ($index > 0)
+                                    <form method="POST" action="{{ route('customer.workspaces.businesses.catalog.reorder', $scope) }}">
+                                        @csrf
+                                        @foreach ($orderWithSwap($index, $index - 1) as $uid)
+                                            <input type="hidden" name="order[]" value="{{ $uid }}">
+                                        @endforeach
+                                        <button type="submit" class="cg-iconbtn" data-role="move-up" aria-label="Move {{ $item->name }} up">
+                                            <x-ds-icon name="chevron-up" size="14" aria-hidden="true" />
+                                        </button>
+                                    </form>
                                 @endif
-                            </div>
-                        </div>
-                        <div class="cx-row-actions">
-                            <a href="{{ $editUrl }}" class="cx-link-btn"><x-ds-icon name="pencil" size="14" aria-hidden="true" />Edit</a>
-                            <form method="POST" action="{{ route('customer.workspaces.businesses.catalog.archive', array_merge($scope, [$item->uid])) }}" class="d-inline">
+                                @if ($index < count($activeUids) - 1)
+                                    <form method="POST" action="{{ route('customer.workspaces.businesses.catalog.reorder', $scope) }}">
+                                        @csrf
+                                        @foreach ($orderWithSwap($index, $index + 1) as $uid)
+                                            <input type="hidden" name="order[]" value="{{ $uid }}">
+                                        @endforeach
+                                        <button type="submit" class="cg-iconbtn" data-role="move-down" aria-label="Move {{ $item->name }} down">
+                                            <x-ds-icon name="chevron-down" size="14" aria-hidden="true" />
+                                        </button>
+                                    </form>
+                                @endif
+                            @endif
+                            <span class="cg-spacer"></span>
+                            <a href="{{ $editUrl }}" class="cg-link"><x-ds-icon name="pencil" size="14" aria-hidden="true" />Edit</a>
+                            <form method="POST" action="{{ route('customer.workspaces.businesses.catalog.archive', array_merge($scope, [$item->uid])) }}">
                                 @csrf
-                                <button type="submit" class="cx-link-btn" data-role="archive" aria-label="Archive {{ $item->name }}">
+                                <button type="submit" class="cg-link" data-role="archive" aria-label="Archive {{ $item->name }}">
                                     <x-ds-icon name="archive" size="14" aria-hidden="true" />Archive
                                 </button>
                             </form>
@@ -175,36 +136,27 @@
             </ul>
         @endif
 
-        <a href="{{ $createUrl }}" class="cx-add-row"><x-ds-icon name="plus" size="15" aria-hidden="true" />Add package or product</a>
-    </section>
+        @if ($archivedItems->isNotEmpty())
+            <section>
+                <h2 class="cg-section-title">Archived</h2>
+                <p class="cg-section-sub">Archived items are not offered anywhere. Past quotes and invoices keep the price they were made with.</p>
+                <ul class="cg-grid mt-1" data-role="catalog-archived">
+                    @foreach ($archivedItems as $item)
+                        <li class="cg-item is-muted" data-item="{{ $item->uid }}">
+                            <span class="cg-kind">{{ ucfirst($item->type->value) }}</span>
+                            <span class="cg-name">{{ $item->name }}</span>
+                            <div class="cg-tools">
+                                <form method="POST" action="{{ route('customer.workspaces.businesses.catalog.reactivate', array_merge($scope, [$item->uid])) }}">
+                                    @csrf
+                                    <button type="submit" class="cg-btn is-outline is-sm" data-role="reactivate">Make active again</button>
+                                </form>
+                            </div>
+                        </li>
+                    @endforeach
+                </ul>
+            </section>
+        @endif
 
-    @if ($archivedItems->isNotEmpty())
-        <section class="cx-card">
-            <div class="cx-card-head">
-                <div>
-                    <h2 class="cx-card-title">Archived</h2>
-                    <p class="cx-card-sub">Archived items are not offered anywhere. Past quotes and invoices keep the price they were made with.</p>
-                </div>
-            </div>
-            <ul class="cx-list" data-role="catalog-archived">
-                @foreach ($archivedItems as $item)
-                    <li class="cx-row" data-item="{{ $item->uid }}">
-                        <div class="cx-row-main">
-                            <span class="cx-tile is-neutral" aria-hidden="true"><x-ds-icon name="archive" size="16" /></span>
-                            <span class="cx-row-text">
-                                <span class="cx-row-title">{{ $item->name }}</span>
-                                <span class="cx-row-sub">{{ ucfirst($item->type->value) }}</span>
-                            </span>
-                        </div>
-                        <div class="cx-row-actions">
-                            <form method="POST" action="{{ route('customer.workspaces.businesses.catalog.reactivate', array_merge($scope, [$item->uid])) }}" class="d-inline">
-                                @csrf
-                                <button type="submit" class="btn btn-sm btn-outline-primary" data-role="reactivate">Make active again</button>
-                            </form>
-                        </div>
-                    </li>
-                @endforeach
-            </ul>
-        </section>
-    @endif
+        @include('customer.business.catalog._add-modal')
+    </div>
 @endsection

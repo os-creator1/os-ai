@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Http\Controllers\Customer\Business\Concerns\AuthorizesCatalogRequests;
 use App\Library\Catalog\CatalogItemLocationOverrideManager;
 use App\Library\Catalog\CatalogLocationOfferReader;
+use App\Library\Business\BusinessLocationManager;
 use App\Library\Catalog\CatalogMoney;
 use App\Library\Catalog\Exceptions\CatalogRuleException;
 use App\Library\Workspace\LocationAccessGuard;
@@ -46,6 +47,7 @@ class CatalogLocationOffersController extends Controller
         private readonly CatalogLocationOfferReader $offers,
         private readonly LocationAccessGuard $guard,
         private readonly BusinessLocationRepository $locations,
+        private readonly BusinessLocationManager $locationManager,
     ) {
     }
 
@@ -61,10 +63,30 @@ class CatalogLocationOffersController extends Controller
             ->filter(fn ($location) => isset($accessible[(int) $location->id]))
             ->values();
 
+        // One card per reachable Location. The numbers come ONLY from the
+        // reader's rows (which come from the pricing resolver): how many items
+        // the Location offers, and how many of those carry a price set for
+        // this Location. Nothing here derives an offering or a price.
+        $cards = $locations->map(function ($location) use ($business): array {
+            $rows = $this->offers->rowsFor($business, $location);
+
+            return [
+                'location' => $location,
+                'total' => $rows->count(),
+                'offered' => $rows->where('isOffered', true)->count(),
+                'ownPrices' => $rows->filter(fn (array $row) => $row['isOffered'] && $row['hasOverridePrice'])->count(),
+            ];
+        })->values();
+
         return view('customer.business.catalog.locations', [
             'workspace' => $workspace,
             'business' => $business,
             'locations' => $locations,
+            'cards' => $cards,
+            // The existing, separately authorized location workflow decides
+            // for itself (and re-checks) who may add one; this only decides
+            // whether to offer the link.
+            'canAddLocation' => $this->locationManager->canManage((int) Auth::id(), $business),
         ]);
     }
 
