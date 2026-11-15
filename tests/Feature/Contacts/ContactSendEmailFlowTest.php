@@ -146,4 +146,23 @@ class ContactSendEmailFlowTest extends TestCase
         $this->authenticateAs($owner, ['view_contact']);
         $this->compose($workspace, $business, $mine)->assertStatus(401);
     }
+
+    public function test_a_provider_failure_is_shown_as_not_delivered_and_never_as_sent(): void
+    {
+        [$owner, $business, $workspace] = $this->emailTenant();
+        $this->activeAccount($business);
+        $contact = $this->contactWithEmails($business, ['pat@example.com'], null, 'Pat');
+        $this->authenticateAs($owner);
+        $composer = $this->compose($workspace, $business, $contact)->assertOk()->json('composer');
+
+        $this->fakeGoogle->sendScript[] = new \App\Exceptions\BusinessEmail\BusinessEmailProviderException(\App\Enums\BusinessEmail\BusinessEmailFailureCategory::PermanentProviderFailure, '550');
+
+        $response = $this->postJson($composer['url'], ['contact_uid' => $contact->uid, 'subject' => 'Hi', 'body' => 'Body', 'send_token' => (string) Str::uuid()]);
+        $response->assertStatus(422)->assertJsonPath('status', 'error');
+        $this->assertNotSame('accepted', $response->json('outcome'));
+
+        $timeline = $this->compose($workspace, $business, $contact)->json('timeline');
+        $this->assertStringContainsString('Not delivered', $timeline);
+        $this->assertStringNotContainsString('Email sent', $response->getContent());
+    }
 }

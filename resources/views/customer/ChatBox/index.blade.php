@@ -1829,7 +1829,7 @@
                         </div>
                         <div class="composer-email-fields" data-role="composer-email-fields" hidden>
                             <div class="composer-email-to" data-role="composer-email-to"><span class="composer-email-label">To</span><span class="composer-email-recipient" data-role="composer-email-recipient"></span></div>
-                            <input type="text" id="email-subject" class="form-control form-control-sm" maxlength="200" placeholder="Subject" aria-label="Email subject" autocomplete="off">
+                            <div class="composer-email-subject-row"><span class="composer-email-label">Subject</span><input type="text" id="email-subject" class="form-control form-control-sm" maxlength="200" placeholder="Subject" aria-label="Email subject" autocomplete="off"></div>
                             <select id="email-location" class="form-select form-select-sm" aria-label="Which location is this for?" hidden></select>
                         </div>
                         <p class="composer-guidance text-caption mb-0" data-role="composer-guidance" hidden></p>
@@ -2084,7 +2084,7 @@
         });
         $(".chat-app-form").toggleClass("is-email-channel", email);
         $("[data-role=composer-email-fields]").prop("hidden", !(email && usable));
-        $("[data-role=composer-email-recipient]").text(c.recipient || "");
+        $("[data-role=composer-email-recipient]").text(c.recipient ? ((c.recipient_name ? c.recipient_name + " · " : "") + c.recipient) : "");
         $("[data-role=composer-email-to]").prop("hidden", !c.recipient);
         if (email && usable && !$("#email-subject").val()) {
           $("#email-subject").val(c.subject || "");

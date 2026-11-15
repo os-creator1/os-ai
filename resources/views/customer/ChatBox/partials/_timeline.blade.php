@@ -49,6 +49,21 @@
             $emailSnippet = \Illuminate\Support\Str::limit(trim(preg_replace('/\s+/', ' ', (string) $item->body)), 120);
             $emailWarn = $item->tone->value === 'warning';
         @endphp
+        @if (($compactEmail ?? false) === true)
+            {{-- Inside a text conversation: a compact email card with its state, leading to the full email in the Email tab. --}}
+            <div class="mgx-em-compact mgx-em-compact-{{ $item->isInbound() ? 'in' : 'out' }}" data-role="timeline-message" data-direction="{{ $item->direction?->value }}" data-channel="email">
+                <div class="mgx-emc-head">
+                    <span class="mgx-emc-ic" aria-hidden="true"><x-ds-icon name="mail" size="17" /></span>
+                    <span class="mgx-emc-t"><b data-role="timeline-email-subject">{{ $item->title !== '' ? $item->title : '(no subject)' }}</b><small>{{ $item->via !== null && str_starts_with((string) $item->via, 'Imported') ? $item->via : 'Email · ' . ($item->isInbound() ? 'Received' : 'Sent') }}</small></span>
+                    @if ($item->detail !== null)<span class="mgx-em-chip {{ $emailWarn ? 'is-warn' : '' }}" data-role="timeline-detail">{{ $item->detail }}</span>@endif
+                </div>
+                @if ($emailSnippet !== '')<div class="mgx-emc-body">{{ $emailSnippet }}</div>@endif
+                @if ($item->threadKey !== null && isset($emailThreadUrl))
+                    <a class="mgx-emc-link" href="{{ $emailThreadUrl($item->threadKey) }}" data-role="timeline-view-email">View full email <x-ds-icon name="chevron-right" size="14" aria-hidden="true" /></a>
+                @endif
+                <time class="mgx-emc-time" datetime="{{ $local->toIso8601String() }}">{{ $local->format(config('app.time_format')) }}</time>
+            </div>
+        @else
         <details class="mgx-em mgx-em-{{ $item->isInbound() ? 'in' : 'out' }} {{ $emailWarn ? 'is-warn' : '' }}" data-role="timeline-message" data-direction="{{ $item->direction?->value }}" data-channel="email" @if ($emailOpen) open @endif>
             <summary class="mgx-em-head">
                 <span class="mgx-em-av" aria-hidden="true">{{ $emailInitial }}</span>
@@ -66,6 +81,7 @@
                 <div class="mgx-em-body timeline-message-body">{{ $item->body }}</div>
             @endif
         </details>
+        @endif
     @elseif ($item->isMessage())
         <div class="chat {{ $item->isInbound() ? 'chat-left' : '' }} timeline-message {{ $item->tone->value === 'warning' ? 'timeline-message-warning' : '' }}" data-role="timeline-message" data-direction="{{ $item->direction?->value }}" data-channel="{{ $item->channel }}">
             <div class="chat-body">

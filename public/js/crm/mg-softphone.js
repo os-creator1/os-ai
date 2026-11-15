@@ -199,6 +199,8 @@
             if (pause) { pause.hidden = held; }
             if (play) { play.hidden = !held; }
         }
+        // Before the call connects only Mute and Keypad exist in the approved design; the rest appear once there is a live call.
+        [holdBtn, noteBtn, $('softphone-record'), $('softphone-transfer')].forEach(function (b) { if (b) { b.hidden = !inCall; } });
         if (noteBtn) { noteBtn.disabled = !live; noteBtn.classList.toggle('on', noteOpen); noteBtn.setAttribute('aria-pressed', noteOpen ? 'true' : 'false'); }
         if (keypadView) { keypadView.hidden = !(keypadOpen && live); }
         if (noteView) { noteView.hidden = !(noteOpen && live); }
@@ -207,13 +209,13 @@
             holdBanner.hidden = !(held && inCall);
             holdBanner.textContent = held ? 'The call is on hold. Call time: ' + (timerEl ? timerEl.textContent : '') : '';
         }
-        if (fromEl) { fromEl.hidden = !fromNumber || incoming; fromEl.textContent = fromNumber ? 'Calling from ' + fromNumber : ''; }
+        if (fromEl) { fromEl.hidden = !fromNumber || incoming || keypadOpen; fromEl.textContent = fromNumber ? 'Calling from ' + fromNumber : ''; }
         minBtn.hidden = !live;
         closeBtn.hidden = live || incoming;
         doneRow.hidden = live || incoming || choosing;
         againBtn.hidden = direction === 'inbound' || !(cfg.contactUid || cfg.conversationUid);
         var ended = state === 'ended' || state === 'failed';
-        summaryEl.hidden = !ended;
+        summaryEl.hidden = !ended || (state === 'ended' && !!callUid && !!cfg.wrapupUrl && !!wrapEl && wasAnswered);
         if (choosing) { timerEl.hidden = true; }
         // The wrap-up (How did it go? + note) is offered only for a call that was really answered and that the server recorded.
         var wrapOk = state === 'ended' && !!callUid && !!cfg.wrapupUrl && !!wrapEl && wasAnswered;

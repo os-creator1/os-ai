@@ -674,13 +674,16 @@
                 'status'   => 'success',
                 'pinned'   => $box->pinned ?? 0,
                 'composer' => app(\App\Library\Conversations\ConversationComposerOptions::class)
-                    ->for($business, $workspaceUid, $businessUid, (int) Auth::id(), true, $contact, $replyTo),
+                    ->for($business, $workspaceUid, $businessUid, (int) Auth::id(), true, $contact, $replyTo) + ['recipient_name' => $context->name],
                 'title'    => $context->title(),
                 'call'     => $call,
                 'call_unavailable' => $call === null ? $this->callUnavailable($business, $box) : null,
                 'timeline' => view('customer.ChatBox.partials._timeline', [
                     'contactName' => $context->name,
                     'businessName' => (string) $business->name,
+                    // Inside a text conversation an email is a compact card that leads to the full email (approved design).
+                    'compactEmail' => true,
+                    'emailThreadUrl' => fn (string $key) => route('customer.workspaces.businesses.conversations.index', [$workspaceUid, $businessUid, 'channel' => 'email', 'thread' => $key]),
                     'page' => $timeline->forConversation($business, $box, $contact),
                 ])->render(),
                 'context'  => view('customer.ChatBox.partials._context', [
@@ -751,7 +754,7 @@
                 'title'    => trim((string) $messages->last()->subject) !== '' ? (string) $messages->last()->subject : ($name ?? $counterpart),
                 'call'     => $call,
                 'composer' => app(\App\Library\Conversations\ConversationComposerOptions::class)
-                    ->for($business, $workspaceUid, $businessUid, $userId, false, $contact, $replyTo),
+                    ->for($business, $workspaceUid, $businessUid, $userId, false, $contact, $replyTo) + ['recipient_name' => $name],
                 'timeline' => view('customer.ChatBox.partials._timeline', ['page' => $page, 'contactName' => $name, 'businessName' => (string) $business->name])->render(),
                 'context'  => view('customer.ChatBox.partials._email_context', [
                     'call'        => $call,
@@ -812,6 +815,7 @@
 
             // Why Email is not usable, with the one action that fixes it. Never silently another channel.
             $composer['blocked'] = null;
+            $composer['recipient_name'] = $name;
 
             if (! $composer['email']) {
                 $composer['blocked'] = match (true) {

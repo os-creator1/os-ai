@@ -356,6 +356,24 @@ class CustomerOutboundCallTest extends TestCase
         $this->assertSame(1, substr_count((string) \DB::table('contacts_custom_field as v')->join('contact_group_fields as f', 'f.id', '=', 'v.field_id')->where('v.contact_id', $this->contact->id)->where('f.tag', 'NOTES')->value('v.value'), 'Wants a 360'));
     }
 
+    public function test_wrapup_decides_once_only_under_a_row_lock_on_the_call(): void
+    {
+        $call = $this->finishedCall();
+        \DB::enableQueryLog();
+
+        $this->wrapup($call->uid, ['note' => 'Locked save.', 'disposition' => 'booked'])->assertOk();
+
+        $locking = collect(\DB::getQueryLog())->pluck('query')->filter(fn ($q) => str_contains($q, 'business_voice_calls') && str_contains(strtolower($q), 'for update'));
+        $this->assertCount(1, $locking, 'The once-only check re-reads the call row FOR UPDATE inside the transaction.');
+        $this->assertSame('booked', $call->fresh()->wrapup_disposition);
+
+        // Another request that raced past an earlier read still finds the saved marker under the lock and appends nothing.
+        \DB::table('business_voice_calls')->where('id', $call->id)->update(['wrapup_note' => 'first']);
+        $this->wrapup($call->uid, ['note' => 'Second submit.'])->assertOk()->assertJsonPath('data.duplicate', true);
+        $this->assertSame('first', $call->fresh()->wrapup_note);
+        $this->assertSame(0, \DB::table('contacts_custom_field')->where('value', 'like', '%Second submit.%')->count());
+    }
+
     public function test_wrapup_is_refused_while_the_call_is_live_and_for_unknown_dispositions(): void
     {
         $this->place()->assertStatus(202);

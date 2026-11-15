@@ -144,5 +144,29 @@ html body .app-content.chat-application{--mg-brand:#B4514A;--mg-brand-d:#8F3B35;
 .chat-application .chat-app-form.is-email-channel .form-send-message textarea{padding-bottom:58px;min-height:128px}
 .chat-application .chat-app-form.is-email-channel .send{float:none;display:block;margin:-50px 10px 14px auto;position:relative;z-index:2}
 .chat-application .sidebar-content .chat-fixed-search .form-control,.chat-application .sidebar-content .chat-fixed-search input[type=text],.chat-application .sidebar-content .chat-fixed-search [class*="search"]{border-radius:10px!important}
-.chat-application .chat-app-form.is-email-channel .send{float:right!important;margin:-50px 10px 14px 0!important;position:relative;z-index:2}
+.chat-application .chat-app-form.is-email-channel .send{float:right!important;margin:-50px 10px 14px 0!important;position:relative;z-index:10}
 .chat-application .chat-app-form.is-email-channel::after{content:"";display:block;clear:both}
+
+/* composer: Subject row like the design */
+.chat-application .composer-email-subject-row{display:flex;align-items:center;gap:10px;min-height:40px}
+.chat-application .composer-email-subject-row .composer-email-label{width:56px;flex:none}
+.chat-application .composer-email-subject-row #email-subject{flex:1}
+/* compact email card inside a text conversation */
+.chat-application .mgx-em-compact{width:420px;max-width:100%;border-radius:16px;background:#fff;border:1px solid var(--mg-line2);overflow:hidden;margin:0 0 10px auto;position:relative}
+.chat-application .mgx-em-compact-in{margin-left:0;margin-right:auto}
+.chat-application .mgx-emc-head{display:flex;align-items:center;gap:10px;padding:12px 14px;border-bottom:1px solid #F0EBE6}
+.chat-application .mgx-emc-ic{width:32px;height:32px;border-radius:8px;background:#E4EEF6;color:#1F5682;display:flex;align-items:center;justify-content:center;flex:none}
+.chat-application .mgx-emc-t{flex:1;min-width:0;display:flex;flex-direction:column}
+.chat-application .mgx-emc-t b{font-size:14px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.chat-application .mgx-emc-t small{font-size:12px;color:var(--mg-mute)}
+.chat-application .mgx-emc-body{padding:12px 14px;font-size:13.5px;line-height:1.5;color:#4A4340}
+.chat-application .mgx-emc-link{display:flex;align-items:center;gap:4px;padding:0 14px 12px;font-size:13px;font-weight:600;color:var(--mg-brand-d)}
+.chat-application .mgx-emc-time{display:block;padding:0 14px 10px;font-size:11.5px;color:var(--mg-faint)}
+
+/* ---------- SMS composer: one bordered row (input, attach) like the design ---------- */
+.chat-application .chat-app-form:not(.is-email-channel) .form-send-message{display:flex;flex-wrap:nowrap;align-items:center;border:1px solid #D6CFC8;border-radius:12px;background:#fff;min-height:48px;overflow:hidden}
+.chat-application .chat-app-form:not(.is-email-channel) .form-send-message textarea.message{border:0!important;box-shadow:none!important;border-radius:0;min-height:46px;height:46px;padding:12px 16px;flex:1 1 auto;background:transparent;resize:none}
+.chat-application .chat-app-form:not(.is-email-channel) .form-send-message .input-group-text{border:0;background:transparent;padding:0 6px}
+.chat-application .chat-app-form:not(.is-email-channel) .composer-template-select .form-select,.chat-application .chat-app-form:not(.is-email-channel) .composer-template-select .select2-selection{border-radius:10px;min-height:48px}
+.chat-application .timeline-channel-sms{display:none}
+.chat-application .conversation-channel-switch{margin-right:6px}
