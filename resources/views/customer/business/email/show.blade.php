@@ -202,7 +202,7 @@
                     // "Connected" means the account is active, not necessarily that mail has been delivered or synced.
                     $sendFailed = (bool) $account->failure_classification;
                     $hasAcceptedSend = $messages->contains(fn ($message) => $message->direction === 'outbound' && $message->status->value === 'accepted');
-                    $receivingHealthy = $inboundReady && $account->inbound_synced_at !== null && ! $account->inbound_failure;
+                    $receivingHealthy = $account->inbound_synced_at !== null && ! $account->inbound_failure;
                 @endphp
                 <section class="me-card me-account" aria-label="Connected email account" data-role="email-account">
                     <span class="me-mail-icon" aria-hidden="true">
