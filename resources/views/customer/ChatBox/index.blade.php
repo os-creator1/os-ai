@@ -1862,7 +1862,7 @@
 
 
                         <x-button variant="primary" class="send" onclick="enter_chat();">
-                            <x-ds-icon name="send" size="16" aria-hidden="true" />
+                            <x-ds-icon name="send" class="d-lg-none" />
                             <span class="d-none d-lg-block">{{ __('locale.buttons.send') }}</span>
                         </x-button>
                     </form>

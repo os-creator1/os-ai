@@ -227,3 +227,5 @@ html body .app-content.chat-application{--mg-brand:#B4514A;--mg-brand-d:#8F3B35;
 .chat-application .chat-app-form:not(.is-email-channel)>.composer-template-select{grid-column:2}
 .chat-application .chat-app-form:not(.is-email-channel)>.send{grid-column:3}
 .chat-application .chat-app-form:not(.is-email-channel)>.composer-guidance{order:0;grid-row:auto}
+/* the design shows the send arrow beside the label on every width */
+.chat-application .chat-app-form .send svg.d-lg-none{display:inline-block!important}
