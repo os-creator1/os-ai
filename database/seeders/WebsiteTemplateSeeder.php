@@ -38,7 +38,7 @@ class WebsiteTemplateSeeder extends Seeder
     /** Upserts only one niche's templates (a niche seed never rewrites another niche's rows). */
     public function runForNiche(string $nicheKey): void
     {
-        foreach (self::templates() as $attributes) {
+        foreach (self::nicheTemplates() as $attributes) {
             if (($attributes['niche_key'] ?? null) === $nicheKey) {
                 WebsiteTemplate::updateOrCreate(['key' => $attributes['key']], $attributes);
             }
@@ -52,10 +52,18 @@ class WebsiteTemplateSeeder extends Seeder
     {
         $manifest = self::sharedPageManifest();
 
-        return [
-            ...self::photoBoothTemplates($manifest),
-            ...self::dogBoardingTemplates($manifest),
-        ];
+        return self::photoBoothTemplates($manifest);
+    }
+
+    /**
+     * Templates that belong to one niche and are installed only by that niche's own seed (blueprint:seed-niche), so the
+     * default seed and every Photo Booth site keep exactly the four templates they always had.
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    public static function nicheTemplates(): array
+    {
+        return self::dogBoardingTemplates(self::sharedPageManifest());
     }
 
     /**

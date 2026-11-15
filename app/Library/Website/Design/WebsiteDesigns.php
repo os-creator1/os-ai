@@ -35,7 +35,7 @@ final class WebsiteDesigns
 
     public static function forTemplateKey(?string $templateKey): ?WebsiteDesign
     {
-        return $templateKey === null ? null : (self::all()[$templateKey] ?? null);
+        return $templateKey === null ? null : (self::all()[$templateKey] ?? self::nicheDesigns()[$templateKey] ?? null);
     }
 
     /**
@@ -158,7 +158,21 @@ final class WebsiteDesigns
             ),
         ];
 
-        return $designs + self::dogBoardingDesigns($designs);
+        return $designs;
+    }
+
+    /** @var array<string, WebsiteDesign>|null */
+    private static ?array $niche = null;
+
+    /**
+     * Designs that belong to one niche's templates. They are not part of all() (the four canonical designs), only
+     * reachable by their own template key.
+     *
+     * @return array<string, WebsiteDesign>
+     */
+    private static function nicheDesigns(): array
+    {
+        return self::$niche ??= self::dogBoardingDesigns(self::all());
     }
 
     /**
