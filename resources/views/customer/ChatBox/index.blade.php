@@ -1862,7 +1862,7 @@
 
 
                         <x-button variant="primary" class="send" onclick="enter_chat();">
-                            <x-ds-icon name="send" class="d-lg-none" />
+                            <x-ds-icon name="send" size="16" aria-hidden="true" />
                             <span class="d-none d-lg-block">{{ __('locale.buttons.send') }}</span>
                         </x-button>
                     </form>
@@ -2109,17 +2109,18 @@
             ? (c.email_connected ? "A reply isn't possible for this message." : "Email isn't connected. Connect your mailbox in Settings → Email to reply by email.")
             : "";
         } else if (!email && c.email_guidance) {
-          guidance = "Email isn't connected. Connect your mailbox in Settings → Email to also reach this person by email.";
+          guidance = "Email isn't connected.";
         }
         const $guide = $("[data-role=composer-guidance]").prop("hidden", guidance === "").empty();
         if (guidance !== "") {
           $guide.text(guidance + " ");
           if (c.settings_url) {
-            $guide.append($("<a></a>").attr("href", c.settings_url).text("Open Email settings"));
+            $guide.append($("<a></a>").attr("href", c.settings_url).text("Connect email"));
           }
         }
         syncSendAvailability();
-        $("#message").attr("placeholder", email ? "Write your email" : "Write a message");
+        const first = String($("[data-role=conversation-title]").text() || "").trim().split(/\s+/)[0];
+        $("#message").attr("placeholder", email ? (c.url && String(c.url).indexOf("/reply") !== -1 ? "Write a reply…" : "Write your email") : (first ? "Text " + first + "…" : "Write a message"));
       }
 
       $(document).on("click", "[data-role=composer-channel] .conversation-channel-option", function() {
@@ -2966,6 +2967,7 @@
             const on = $(this).data("channel") === channel;
             $(this).toggleClass("btn-primary", on).toggleClass("btn-outline-primary", !on).attr("aria-pressed", on ? "true" : "false");
           });
+          $("#chat-search").attr("placeholder", channel === "email" ? "Search emails" : "Search conversations");
         }
         paintChannel();
 

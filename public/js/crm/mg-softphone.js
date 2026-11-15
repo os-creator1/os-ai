@@ -178,7 +178,7 @@
         root.setAttribute('data-held', inCall && held ? '1' : '0');
         statusEl.textContent = text;
         detailEl.textContent = detail || '';
-        detailEl.hidden = !detail;
+        detailEl.hidden = !detail || keypadOpen;
         hangRow.hidden = !live || keypadOpen;
         hangLabelEl.textContent = state === 'connected' ? 'End call' : 'Cancel';
         var choosing = state === 'choose';
@@ -200,11 +200,17 @@
             if (play) { play.hidden = !held; }
         }
         // Before the call connects only Mute and Keypad exist in the approved design; the rest appear once there is a live call.
-        [holdBtn, noteBtn, $('softphone-record'), $('softphone-transfer')].forEach(function (b) { if (b) { b.hidden = !inCall; } });
+        // While taking a note the design shows four controls (Mute, Keypad, Hold, Note), so Record/Transfer step aside.
+        [holdBtn, noteBtn].forEach(function (b) { if (b) { b.hidden = !inCall; } });
+        [$('softphone-record'), $('softphone-transfer')].forEach(function (b) { if (b) { b.hidden = !inCall || noteOpen; } });
+        controlsEl.classList.toggle('is-four', noteOpen);
+        // The keypad view replaces the identity block (design state 4).
+        var whoEl = root.querySelector('.mg-sp-who');
+        if (whoEl) { whoEl.hidden = keypadOpen && live; }
         if (noteBtn) { noteBtn.disabled = !live; noteBtn.classList.toggle('on', noteOpen); noteBtn.setAttribute('aria-pressed', noteOpen ? 'true' : 'false'); }
         if (keypadView) { keypadView.hidden = !(keypadOpen && live); }
         if (noteView) { noteView.hidden = !(noteOpen && live); }
-        if (hintEl) { hintEl.hidden = !inCall || keypadOpen; }
+        if (hintEl) { hintEl.hidden = !inCall || keypadOpen || noteOpen || held; }
         if (holdBanner) {
             holdBanner.hidden = !(held && inCall);
             holdBanner.textContent = held ? 'The call is on hold. Call time: ' + (timerEl ? timerEl.textContent : '') : '';

@@ -51,6 +51,22 @@ returns opaque, business-bound tokens (same tenancy, CRM entitlement and calling
 nothing is dialled. With one eligible number the popup dials at once; with several it shows a "Call from" step first.
 Without `from` the primary number is used, as before.
 
+## Measured fidelity (authenticated app vs the supplied HTML, same 1440x900 viewport)
+
+Element boxes were measured with `getBoundingClientRect()` in both renderings, not judged by eye:
+
+* **Add Contact modal:** dialog 540x616 at (450,84) in both; every label, input, button and the footer land on the same
+  coordinates (checked field by field).
+* **Contacts list:** heading, sub-line, tabs (46), search (46), group filter (119x46), header row (42), rows (63), avatars (36),
+  name/email text (17/15), pills (24), row buttons (34) and footer (44) have identical sizes. The page sits 6px lower and
+  the sidebar is 4px narrower because the application's own shell frames it.
+* **Conversations (Email and SMS):** list column order (segmented control, search, tabs), tab/search/row sizes (rows 81/64),
+  the header (65), the 300px contact panel running the full height beside it, panel avatar/name positions all match to 1-2px.
+  The Email composer card height matches (224).
+* **Call popup:** widths 340 in all states. Heights vs the design: incoming 167/167, calling 295/276, on call 399/405,
+  keypad 431/421, hold ~409/409, note ~459/440, ended 407/397. The extra height is the "Calling from <number>" line
+  (the number-selection disclosure) and the "Record and Transfer are not available yet" hint, which the design does not have.
+
 ## Evidence
 
 `docs/design-acceptance/` holds the authenticated-browser screenshots and the reference-vs-production comparisons. See

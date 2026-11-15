@@ -53,7 +53,7 @@
     .mg-sp-nm span{font-size:13px;color:var(--sp-muted);font-variant-numeric:tabular-nums}
     .mg-sp-note{margin:0 18px 14px;padding:10px 12px;border-radius:10px;background:var(--sp-chip);font-size:12.5px;font-weight:500;color:var(--sp-fg2);line-height:1.4}
     .mg-softphone[data-state="failed"] .mg-sp-note{background:var(--sp-err-bg);color:var(--sp-err-fg)}
-    .mg-sp-ctl{display:flex;flex-wrap:wrap;justify-content:center;gap:12px 28px;padding:4px 18px 16px}
+    .mg-sp-ctl{display:grid;grid-template-columns:repeat(3,1fr);justify-items:center;gap:12px 8px;padding:4px 18px 16px}
     .mg-sp-k{display:flex;flex-direction:column;align-items:center;gap:6px;border:0;background:transparent;font:inherit;font-size:12px;font-weight:500;color:var(--sp-fg2);padding:0;cursor:pointer}
     .mg-sp-k i{width:52px;height:52px;border-radius:50%;background:var(--sp-chip);color:var(--sp-fg2);display:flex;align-items:center;justify-content:center;font-style:normal}
     .mg-sp-k:hover i{background:var(--sp-chip-h)}

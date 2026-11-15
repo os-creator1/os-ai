@@ -170,3 +170,60 @@ html body .app-content.chat-application{--mg-brand:#B4514A;--mg-brand-d:#8F3B35;
 .chat-application .chat-app-form:not(.is-email-channel) .composer-template-select .form-select,.chat-application .chat-app-form:not(.is-email-channel) .composer-template-select .select2-selection{border-radius:10px;min-height:48px}
 .chat-application .timeline-channel-sms{display:none}
 .chat-application .conversation-channel-switch{margin-right:6px}
+
+/* ======================= fidelity pass (measured against the supplied designs) ======================= */
+/* left column order: segmented control, search, filter tabs, list */
+.chat-application .sidebar-content{display:flex;flex-direction:column}
+.chat-application .sidebar-content>[data-role="conversation-channels"]{order:1;padding:16px 16px 0!important}
+.chat-application .sidebar-content>.chat-fixed-search{order:2;padding:12px 16px 0!important}
+.chat-application .sidebar-content>.pt-1.pb-1{order:3;padding:12px 0 0!important}
+.chat-application .sidebar-content>*:not([data-role="conversation-channels"]):not(.chat-fixed-search):not(.pt-1){order:4}
+.chat-application .sidebar-content .chat-fixed-search .form-control{height:44px}
+.chat-application .sidebar-content .tab-group .tab-button{min-height:41px;height:41px}
+.chat-application .sidebar-content .tab-group.btn-group{min-height:42px;align-items:flex-end}
+.chat-application .sidebar-content .chat-users-list{display:flex;flex-direction:column;padding-top:10px}
+.chat-application .sidebar-content .chat-user-list-wrapper li.conv-row,.chat-application .sidebar-content .chat-user-list-wrapper li.conv-row *{line-height:normal}
+.chat-application .sidebar-content .chat-user-list-wrapper li.conv-row{padding-top:12px;padding-bottom:12px}
+/* thread cards: tight like the design */
+.chat-application .mgx-em,.chat-application .mgx-em *{line-height:normal}
+.chat-application .mgx-em-body{line-height:1.5}
+/* header: subject heads the email thread, no avatar (design) */
+.chat-application .active-chat.is-email-thread .conversation-header-avatar{display:none}
+.chat-application .conversation-header-id h6{line-height:22px}
+.chat-application .conversation-header-sub{line-height:17px}
+/* contact panel spans the full height beside the header (design) */
+@media (min-width:1200px){
+  .chat-application .chat-app-window .active-chat:not(.d-none){display:grid;grid-template-columns:minmax(0,1fr) 300px;grid-template-rows:65px minmax(0,1fr)}
+  .chat-application .active-chat>.chat-navbar{grid-column:1;grid-row:1}
+  .chat-application .active-chat>.conversation-body{display:contents}
+  .chat-application .active-chat .conversation-main{grid-column:1;grid-row:2;min-height:0}
+  .chat-application .active-chat .conversation-context{grid-column:2;grid-row:1 / span 2;max-width:none;width:auto}
+}
+.chat-application .sidebar-content .chat-users-list{padding-top:8px}
+.chat-application .chat-app-form.is-email-channel .form-send-message textarea{min-height:106px}
+/* short conversations sit at the bottom, next to the composer (design) */
+.chat-application .conversation-main .user-chats .chats{min-height:100%;display:flex;flex-direction:column;justify-content:flex-end}
+.chat-application .active-chat.is-email-thread .timeline-divider{display:none}
+.chat-application .conversation-main .user-chats{display:flex;flex-direction:column}
+.chat-application .conversation-main .user-chats .chats{flex:1 0 auto;min-height:0}
+/* more design details */
+.chat-application .active-chat.is-email-thread .conversation-call-btn{display:none!important}
+.chat-application .mgx-em-from b{white-space:nowrap}
+.chat-application .composer-guidance{order:5;margin:0;font-size:12px;color:#8A817C}
+/* template picker becomes the design's icon button (still the same select2 control) */
+.chat-application .chat-app-form:not(.is-email-channel) .composer-template-select{width:48px;flex:none;margin:0!important}
+.chat-application .chat-app-form:not(.is-email-channel) .composer-template-select .select2-container{width:48px!important}
+.chat-application .chat-app-form:not(.is-email-channel) .composer-template-select .select2-selection{height:48px;border:1px solid #D6CFC8;border-radius:12px;display:flex;align-items:center;justify-content:center;background:#fff}
+.chat-application .chat-app-form:not(.is-email-channel) .composer-template-select .select2-selection__rendered,.chat-application .chat-app-form:not(.is-email-channel) .composer-template-select .select2-selection__arrow{display:none!important}
+.chat-application .chat-app-form:not(.is-email-channel) .composer-template-select .select2-selection::before{content:"";width:19px;height:19px;background:#4A4340;-webkit-mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M5 4h10l4 4v12H5zM9 12h6M9 16h4'/%3E%3C/svg%3E") center/contain no-repeat;mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M5 4h10l4 4v12H5zM9 12h6M9 16h4'/%3E%3C/svg%3E") center/contain no-repeat}
+.chat-application .chat-app-form .send{display:inline-flex;align-items:center;gap:8px}
+.chat-application .chat-app-form:not(.is-email-channel) .form-send-message{flex:1 1 220px;width:auto;max-width:none!important;margin-right:0!important}
+.chat-application .chat-app-form:not(.is-email-channel) .form-send-message{flex:1 1 0;min-width:200px}
+.chat-application .chat-app-form:not(.is-email-channel) .composer-template-select.me-1{margin-right:0!important}
+/* SMS composer grid: [input + attach] [template icon] [Send] */
+.chat-application .chat-app-window .chat-app-form:not(.is-email-channel){display:grid;grid-template-columns:minmax(0,1fr) 48px auto;column-gap:10px;row-gap:8px;align-items:center}
+.chat-application .chat-app-form:not(.is-email-channel)>.conversation-channel-switch,.chat-application .chat-app-form:not(.is-email-channel)>.composer-guidance,.chat-application .chat-app-form:not(.is-email-channel)>.composer-attachment-selected{grid-column:1 / -1}
+.chat-application .chat-app-form:not(.is-email-channel)>.form-send-message{grid-column:1}
+.chat-application .chat-app-form:not(.is-email-channel)>.composer-template-select{grid-column:2}
+.chat-application .chat-app-form:not(.is-email-channel)>.send{grid-column:3}
+.chat-application .chat-app-form:not(.is-email-channel)>.composer-guidance{order:0;grid-row:auto}

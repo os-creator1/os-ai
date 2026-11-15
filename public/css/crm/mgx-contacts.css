@@ -1,6 +1,6 @@
 /* MotionGrove — Contacts page + New contact modal (approved design "ContactsList"). Scoped to .mgx-contacts / .mgx-modal. */
 .mgx-contacts,.mgx-modal{--mg-brand:#B4514A;--mg-brand-d:#8F3B35;--mg-ink:#1F1A19;--mg-ink2:#2E2826;--mg-mute:#6B625E;--mg-line:#E9E4DF;--mg-line2:#D6CFC8;--mg-soft:#F8E9E6;font-family:'Figtree',var(--font-family-app,system-ui),system-ui,-apple-system,'Segoe UI',sans-serif;color:var(--mg-ink)}
-.mgx-contacts{display:flex;flex-direction:column;gap:16px;width:100%}
+.mgx-contacts{display:flex;flex-direction:column;gap:16px;width:100%;line-height:normal}
 .mgx-contacts *{box-sizing:border-box}
 .mgx-contacts a{text-decoration:none}
 .mgx-ic{width:16px;height:16px;flex:none;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
@@ -14,21 +14,21 @@
 .mgx-head{display:flex;flex-wrap:wrap;align-items:flex-end;gap:12px}
 .mgx-head>div:first-child{flex:1 1 300px}
 .mgx-title{margin:0;font-size:28px;font-weight:800;letter-spacing:-.02em;color:var(--mg-ink)}
-.mgx-sub{margin:2px 0 0;font-size:14px;color:var(--mg-mute)}
+.mgx-sub{margin:2px 0 0;font-size:14px;line-height:17px;color:var(--mg-mute)}
 .mgx-tabs{display:flex;gap:24px;border-bottom:1px solid var(--mg-line)}
-.mgx-tab{display:inline-flex;align-items:center;gap:8px;min-height:44px;font-size:14.5px;font-weight:500;color:var(--mg-mute);border-bottom:2px solid transparent;margin-bottom:-1px}
+.mgx-tab{display:inline-flex;align-items:center;gap:8px;min-height:46px;font-size:14.5px;font-weight:500;color:var(--mg-mute);border-bottom:2px solid transparent;margin-bottom:-1px}
 .mgx-tab:hover{color:var(--mg-brand-d)}
 .mgx-tab.is-on{color:var(--mg-brand-d);font-weight:600;border-color:var(--mg-brand)}
 .mgx-count{font-size:11.5px;font-weight:700;padding:1px 8px;border-radius:999px;background:var(--mg-soft);color:var(--mg-brand-d)}
 .mgx-card{border-radius:16px;background:#fff;border:1px solid var(--mg-line);overflow:hidden}
 .mgx-bar{display:flex;flex-wrap:wrap;gap:10px;padding:14px 16px}
-.mgx-search{flex:1 1 300px;display:flex;align-items:center;gap:8px;height:44px;padding:0 14px;border:1px solid #E0DAD4;border-radius:10px;color:#8A817C;background:#fff}
+.mgx-search{flex:1 1 300px;display:flex;align-items:center;gap:8px;height:46px;padding:0 14px;border:1px solid #E0DAD4;border-radius:10px;color:#8A817C;background:#fff}
 .mgx-search:focus-within{border-color:var(--mg-brand);box-shadow:0 0 0 3px var(--mg-soft)}
 .mgx-search input{border:0;outline:0;font:inherit;font-size:14.5px;flex:1;background:transparent;color:var(--mg-ink);min-width:0;padding:0}
 .mgx-filter{position:relative;display:inline-flex;align-items:center}
-.mgx-filter select{appearance:none;-webkit-appearance:none;min-height:44px;padding:0 38px 0 16px;border:1px solid #E0DAD4;border-radius:10px;background:#fff;color:var(--mg-ink2);font:inherit;font-size:14px;font-weight:500;cursor:pointer;max-width:16rem}
+.mgx-filter select{appearance:none;-webkit-appearance:none;field-sizing:content;min-height:46px;padding:0 38px 0 16px;border:1px solid #E0DAD4;border-radius:10px;background:#fff;color:var(--mg-ink2);font:inherit;font-size:14px;font-weight:500;cursor:pointer;max-width:16rem}
 .mgx-filter .mgx-ic{position:absolute;right:14px;width:14px;height:14px;color:#8A817C;pointer-events:none}
-.mgx-row{display:grid;grid-template-columns:minmax(0,2.2fr) 1.3fr 1fr 1.1fr .9fr 96px;align-items:center;gap:14px;min-height:62px;padding:0 20px;border-top:1px solid #F0EBE6;font-size:14px;color:var(--mg-ink)}
+.mgx-row{display:grid;grid-template-columns:minmax(0,2.2fr) 1.3fr 1fr 1.1fr .9fr 96px;align-items:center;gap:14px;min-height:63px;padding:0 20px;border-top:1px solid #F0EBE6;font-size:14px;color:var(--mg-ink)}
 .mgx-row.is-head{min-height:42px;border-top:0;background:#FBF9F7;font-size:11.5px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:var(--mg-mute)}
 .mgx-row:not(.is-head):hover{background:#fdfbfa}
 .mgx-who{display:flex;align-items:center;gap:12px;min-width:0}
@@ -70,8 +70,10 @@
 .mgx-modal[hidden]{display:none}
 .mgx-modal *{box-sizing:border-box}
 .mgx-modal{line-height:1.25}
-.mgx-modal .mgx-dh h2{line-height:1.25}
-.mgx-modal .mgx-dh span{line-height:1.4;display:block;margin-top:2px}
+.mgx-modal .mgx-dh h2{line-height:24px}
+.mgx-modal .mgx-dh span{line-height:19px;display:block;margin:0}
+.mgx-modal .mgx-fl>label{line-height:16px}
+.mgx-modal .mgx-df>label{line-height:20px}
 .mgx-dialog{width:540px;max-width:100%;border-radius:18px;background:#fff;box-shadow:0 24px 64px rgba(31,26,25,.28);overflow:visible}
 .mgx-dh{display:flex;align-items:flex-start;gap:12px;padding:22px 24px 4px}
 .mgx-dh>div{flex:1}
