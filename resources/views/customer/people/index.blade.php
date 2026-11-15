@@ -132,7 +132,7 @@
                         <span class="mgx-mu" data-label="Added">{{ $contact['added']?->format('M j') }}</span>
                         <div class="mgx-ra">
                             @if ($canCall)
-                                <button type="button" aria-label="Call {{ $label }}" data-mgx-call data-uid="{{ $contact['uid'] }}" data-label="{{ $label }}" data-phone="{{ $contact['phone'] }}" data-initials="{{ $initials($contact['name']) }}"><svg class="mgx-ic" viewBox="0 0 24 24"><path d="M5 4h4l2 5-2.5 1.5a11 11 0 0 0 5 5L15 13l5 2v4a1 1 0 0 1-1 1A16 16 0 0 1 4 5a1 1 0 0 1 1-1z"/></svg></button>
+                                <button type="button" aria-label="Call {{ $label }}" data-mgx-call data-uid="{{ $contact['uid'] }}" data-label="{{ $label }}" data-phone="{{ \App\Library\Contacts\ContactPhone::pretty($contact['phone']) }}" data-initials="{{ $initials($contact['name']) }}"><svg class="mgx-ic" viewBox="0 0 24 24"><path d="M5 4h4l2 5-2.5 1.5a11 11 0 0 0 5 5L15 13l5 2v4a1 1 0 0 1-1 1A16 16 0 0 1 4 5a1 1 0 0 1 1-1z"/></svg></button>
                             @endif
                             <a href="{{ $showUrl }}" aria-label="Message {{ $label }}" title="Open contact to send an SMS or email"><svg class="mgx-ic" viewBox="0 0 24 24"><path d="M4 5h16v11H9l-5 4z"/></svg></a>
                         </div>

@@ -85,6 +85,9 @@
     var wrapNote = $('softphone-wrap-note');
     var saveMsg = $('softphone-save-msg');
     var doneLabel = $('softphone-done-label');
+    var chooserEl = $('softphone-chooser');
+    var chooseRow = $('softphone-choose-row');
+    var chosenFrom = null;
     var held = false;
     var wasAnswered = false;
     var keypadOpen = false;
@@ -122,6 +125,7 @@
         contact_call_in_progress: 'A call to this contact is already in progress.',
         rate_limited: 'Hourly call limit reached.',
         browser_session_required: 'The calling session expired. Try again.',
+        number_not_available: 'That calling number is not available any more. Choose another number.',
         browser_not_answered: 'Your browser did not connect the call. Check your microphone and try again.',
         browser_disconnected: 'Your browser disconnected before the call connected.',
         bridge_failed: 'The call could not be connected.',
@@ -177,6 +181,9 @@
         detailEl.hidden = !detail;
         hangRow.hidden = !live || keypadOpen;
         hangLabelEl.textContent = state === 'connected' ? 'End call' : 'Cancel';
+        var choosing = state === 'choose';
+        if (chooserEl) { chooserEl.hidden = !choosing; }
+        if (chooseRow) { chooseRow.hidden = !choosing; }
         incomingRow.hidden = !incoming;
         controlsEl.hidden = !live || keypadOpen;
         muteBtn.disabled = !inCall;
@@ -203,10 +210,11 @@
         if (fromEl) { fromEl.hidden = !fromNumber || incoming; fromEl.textContent = fromNumber ? 'Calling from ' + fromNumber : ''; }
         minBtn.hidden = !live;
         closeBtn.hidden = live || incoming;
-        doneRow.hidden = live || incoming;
+        doneRow.hidden = live || incoming || choosing;
         againBtn.hidden = direction === 'inbound' || !(cfg.contactUid || cfg.conversationUid);
         var ended = state === 'ended' || state === 'failed';
         summaryEl.hidden = !ended;
+        if (choosing) { timerEl.hidden = true; }
         // The wrap-up (How did it go? + note) is offered only for a call that was really answered and that the server recorded.
         var wrapOk = state === 'ended' && !!callUid && !!cfg.wrapupUrl && !!wrapEl && wasAnswered;
         if (wrapEl) { wrapEl.hidden = !wrapOk; }
@@ -309,11 +317,18 @@
     }
 
     function refreshHistory() {
-        var holder = document.querySelector('[data-role="contact-call-history"]');
+        // In the calling shell the contact page is in the app frame; otherwise it is this document.
+        var frame = document.getElementById('mg-app-frame');
+        var pageDoc = document;
+        try { if (frame && frame.contentDocument) { pageDoc = frame.contentDocument; } } catch (e) { pageDoc = document; }
+        var holder = pageDoc.querySelector('[data-role="contact-call-history"]');
         if (holder && holder.getAttribute('data-reload') === '1') {
             if (reloadTimer) { clearTimeout(reloadTimer); }
             // Never reload the page out from under a call the user has started in the meantime.
-            reloadTimer = setTimeout(function () { if (!active && !starting) { window.location.reload(); } }, 1200);
+            reloadTimer = setTimeout(function () {
+                if (active || starting) { return; }
+                try { (frame && frame.contentWindow ? frame.contentWindow : window).location.reload(); } catch (e) { window.location.reload(); }
+            }, 1200);
         }
     }
 
@@ -370,7 +385,7 @@
         });
     }
 
-    function start() {
+    function begin() {
         if (active) { show(); return; }
         if (starting) {
             // A cancelled attempt is still unwinding (e.g. an open microphone prompt): do not overlap a new one with it.
@@ -426,7 +441,9 @@
             setState('connecting', 'Calling…', '');
             // A linked contact is called by its uid; an unlinked conversation by the conversation's own uid (the server resolves the number).
             var target = cfg.contactUid ? { contact_uid: cfg.contactUid } : { conversation_uid: cfg.conversationUid };
-            return api('POST', cfg.placeUrl, Object.assign(target, { idempotency_key: uuid(), channel: 'browser' }));
+            var placeBody = Object.assign(target, { idempotency_key: uuid(), channel: 'browser' });
+            if (chosenFrom) { placeBody.from = chosenFrom; }
+            return api('POST', cfg.placeUrl, placeBody);
         }).then(function (r) {
             if (!r.ok || !r.json || !r.json.data) {
                 if (stale()) { throw CANCELLED; }
@@ -450,6 +467,53 @@
             fail('Could not start the call. Check your connection and try again.');
         }).then(function () { starting = false; });
     }
+
+    // Entry point for every outbound call. With ONE eligible number (or no selector configured) it dials at once; with
+    // several, the person picks which of THIS business's voice-ready numbers to call from first.
+    var chooseGen = 0;
+    function start() {
+        if (active) { show(); return; }
+        if (starting) { begin(); return; }
+        if (!cfg.numbersUrl) { chosenFrom = null; begin(); return; }
+        var gen = ++chooseGen;
+        api('GET', cfg.numbersUrl).then(function (r) {
+            return r.ok && r.json && Array.isArray(r.json.data) ? r.json.data : null;
+        }, function () { return null; }).then(function (list) {
+            if (gen !== chooseGen || active || starting) { return; }
+            // The list could not be read: the server's own default (the primary number) applies; nothing else is guessed.
+            if (list === null || list.length < 2) { chosenFrom = null; begin(); return; }
+            showChooser(list);
+        });
+    }
+
+    function showChooser(list) {
+        var key = 'mg-call-from:' + cfg.numbersUrl, remembered = null;
+        try { remembered = window.localStorage.getItem(key); } catch (e) {}
+        var selected = list.some(function (n) { return n.id === remembered; }) ? remembered : list[0].id;
+        chooserEl.textContent = '';
+        list.forEach(function (n) {
+            var b = document.createElement('button');
+            b.type = 'button'; b.className = 'mg-sp-nr'; b.setAttribute('role', 'radio'); b.setAttribute('data-from', n.id);
+            var rd = document.createElement('i'); rd.className = 'rd';
+            var num = document.createElement('b'); num.textContent = n.number;
+            b.appendChild(rd); b.appendChild(num);
+            if (n.primary) { var p = document.createElement('span'); p.className = 'p'; p.textContent = 'Primary'; b.appendChild(p); }
+            b.addEventListener('click', function () { selected = n.id; paint(); });
+            chooserEl.appendChild(b);
+        });
+        function paint() {
+            chooserEl.querySelectorAll('[data-from]').forEach(function (b) { b.setAttribute('aria-checked', b.getAttribute('data-from') === selected ? 'true' : 'false'); });
+        }
+        paint();
+        direction = 'outbound';
+        setIdentity(cfg.contactLabel || '', cfg.contactPhone || '', cfg.contactInitials || '#');
+        show();
+        setState('choose', 'Call from', '');
+        var go = $('softphone-choose-go');
+        go.onclick = function () { chosenFrom = selected; try { window.localStorage.setItem(key, selected); } catch (e) {} begin(); };
+        $('softphone-choose-cancel').onclick = function () { chooseGen++; closePopup(); };
+    }
+
 
     // ------------------------------------------------------------------ inbound calls
 

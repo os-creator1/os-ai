@@ -45,6 +45,8 @@ class VoiceCallController extends CustomerBaseController
             'conversation_uid' => ['required_without:contact_uid', 'nullable', 'string', 'max:64'],
             'idempotency_key' => ['required', 'string', 'min:8', 'max:64', 'regex:/^[A-Za-z0-9_\-:.]+$/'],
             'channel' => ['sometimes', 'in:server,browser'],
+            // Optional calling-number choice: an opaque token from GET calls/numbers; validated against THIS Business only.
+            'from' => ['sometimes', 'nullable', 'string', 'max:64'],
         ]);
 
         $contact = null;
@@ -79,7 +81,7 @@ class VoiceCallController extends CustomerBaseController
         }
 
         try {
-            [$call, $replay] = $placer->place($business, $contact, (int) Auth::id(), $data['idempotency_key'], $data['channel'] ?? 'server', $number);
+            [$call, $replay] = $placer->place($business, $contact, (int) Auth::id(), $data['idempotency_key'], $data['channel'] ?? 'server', $number, $data['from'] ?? null);
         } catch (CustomerCallRefusedException $e) {
             return $this->error($e->reason, $e->getMessage(), $e->httpStatus);
         }
@@ -87,6 +89,22 @@ class VoiceCallController extends CustomerBaseController
         $status = $call->status === BusinessVoiceCall::STATUS_FAILED ? 502 : ($replay ? 200 : 202);
 
         return response()->json(['data' => $this->present($call, $contact?->uid), 'duplicate' => $replay], $status);
+    }
+
+    /**
+     * The calling numbers this user may choose from for THIS Business (opaque tokens, display numbers, which is primary).
+     * Same tenancy, entitlement and calling permission as placing a call. Never lists another Business's number.
+     */
+    public function numbers(string $workspaceUid, string $businessUid, CustomerCallPlacer $placer): JsonResponse
+    {
+        [, $business] = $this->resolveEntitledBusinessTenancy($workspaceUid, $businessUid, PlatformFeature::Crm->value);
+        $this->requireCalling($business);
+
+        return response()->json(['data' => $placer->eligibleNumbers($business)->map(fn ($number) => [
+            'id' => $placer->selectorToken($business, $number),
+            'number' => $this->formatNumber('+' . ltrim((string) $number->phone_number, '+')),
+            'primary' => (bool) $number->is_primary,
+        ])->values()->all()])->header('Cache-Control', 'no-store');
     }
 
     /**
@@ -163,15 +181,18 @@ class VoiceCallController extends CustomerBaseController
             return $this->error('call_not_finished', 'Notes are saved when the call ends.', 409);
         }
 
-        // Saved once: a second submit (double click, retry) never appends the note to the Contact twice.
-        if ($call->wrapup_saved_at !== null) {
-            return response()->json(['data' => ['saved' => true, 'duplicate' => true]]);
-        }
-
         $note = trim((string) ($data['note'] ?? ''));
 
-        \Illuminate\Support\Facades\DB::transaction(function () use ($call, $contact, $note, $data): void {
-            $call->forceFill([
+        // Once-only under a row lock: the call row is re-read FOR UPDATE inside the transaction, so two concurrent
+        // submits serialize and the second sees wrapup_saved_at and appends nothing.
+        $duplicate = \Illuminate\Support\Facades\DB::transaction(function () use ($call, $contact, $note, $data): bool {
+            $locked = BusinessVoiceCall::query()->whereKey($call->id)->lockForUpdate()->first();
+
+            if ($locked === null || $locked->wrapup_saved_at !== null) {
+                return true;
+            }
+
+            $locked->forceFill([
                 'wrapup_note' => $note !== '' ? $note : null,
                 'wrapup_disposition' => $data['disposition'] ?? null,
                 'wrapup_saved_at' => now(),
@@ -179,12 +200,21 @@ class VoiceCallController extends CustomerBaseController
 
             if ($note !== '' && $contact !== null && $contact->contactGroup !== null && Gate::allows('update_contact')) {
                 $fieldId = app(\App\Library\Contacts\ContactEmailIdentity::class)->ensureField($contact->contactGroup, 'NOTES');
-                $value = \App\Models\ContactsCustomField::query()->firstOrNew(['contact_id' => $contact->id, 'field_id' => $fieldId]);
+                $value = \App\Models\ContactsCustomField::query()->where('contact_id', $contact->id)->where('field_id', $fieldId)->lockForUpdate()->first()
+                    ?? new \App\Models\ContactsCustomField(['contact_id' => $contact->id, 'field_id' => $fieldId]);
                 $entry = '[Call ' . now()->format('M j, Y g:ia') . '] ' . $note;
+                $value->contact_id = $contact->id;
+                $value->field_id = $fieldId;
                 $value->value = trim((string) $value->value) === '' ? $entry : $value->value . "\n" . $entry;
                 $value->save();
             }
+
+            return false;
         });
+
+        if ($duplicate) {
+            return response()->json(['data' => ['saved' => true, 'duplicate' => true]]);
+        }
 
         return response()->json(['data' => ['saved' => true, 'duplicate' => false, 'on_contact' => $note !== '' && $contact !== null]]);
     }

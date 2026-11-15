@@ -4,6 +4,7 @@
      `capabilities` flags are switched on by a real implementation. Incoming (Answer / Decline) is real and is enabled only
      when the page's config carries `inbound` endpoints (inbound calling on for this user + Business). --}}
 @once
+@unless (strtolower((string) request()->header('Sec-Fetch-Dest', '')) === 'iframe')
 @php
     $contactUid = $contactUid ?? null;
     $displayName = $displayName ?? 'Caller';
@@ -24,6 +25,7 @@
         'statusUrl' => $browserCalling['statusUrl'],
         'hangupUrl' => $browserCalling['hangupUrl'],
         'wrapupUrl' => $browserCalling['wrapupUrl'] ?? null,
+        'numbersUrl' => $browserCalling['numbersUrl'] ?? null,
     ];
 @endphp
 <style>
@@ -91,6 +93,14 @@
     .mg-sp-pill button{width:40px;height:40px;border-radius:50%;border:0;background:rgba(255,255,255,.12);color:#fff;display:flex;align-items:center;justify-content:center;cursor:pointer;padding:0}
     .mg-sp-pill button.mg-sp-pend{background:var(--sp-end,#b4514a)}
     .mg-sp-pill button.on{background:#fff;color:#1f1a19}
+    .mg-sp-choose{padding:0 18px 14px;display:flex;flex-direction:column;gap:8px}
+    .mg-sp-nr{display:flex;align-items:center;gap:12px;min-height:48px;padding:0 16px;border:1px solid var(--sp-line);border-radius:10px;background:var(--sp-bg);font:inherit;font-size:14.5px;color:var(--sp-fg);cursor:pointer;text-align:left;width:100%}
+    .mg-sp-nr:hover{border-color:var(--sp-line2)}
+    .mg-sp-nr .rd{width:18px;height:18px;border-radius:50%;border:1.5px solid #cfc6be;box-sizing:border-box;flex:none}
+    .mg-sp-nr[aria-checked="true"]{border-color:var(--sp-end);background:#fbf0ee}
+    .mg-sp-nr[aria-checked="true"] .rd{border:5px solid var(--sp-end)}
+    .mg-sp-nr b{flex:1;font-weight:600;font-variant-numeric:tabular-nums}
+    .mg-sp-nr span.p{font-size:12.5px;color:var(--sp-muted)}
     .mg-sp-from{margin:-8px 18px 12px;font-size:12.5px;color:var(--sp-muted);font-variant-numeric:tabular-nums}
     .mg-sp-hold{margin:0 18px 14px;padding:10px 12px;border-radius:10px;background:var(--sp-warn-bg);font-size:12.5px;font-weight:500;color:var(--sp-warn-fg)}
     .mg-sp-hint{margin:-6px 18px 12px;font-size:12px;color:var(--sp-muted);text-align:center}
@@ -124,6 +134,12 @@
     </div>
     <p class="mg-sp-note" data-role="softphone-detail" hidden></p>
 
+    {{-- Pre-call: shown only when this Business has several voice-ready numbers; each row is a number the server lists for THIS Business. --}}
+    <div class="mg-sp-choose" data-role="softphone-chooser" role="radiogroup" aria-label="Call from" hidden></div>
+    <div class="mg-sp-bot" data-role="softphone-choose-row" hidden>
+        <button type="button" class="mg-sp-sec" data-role="softphone-choose-cancel">Cancel</button>
+        <button type="button" class="mg-sp-end" data-role="softphone-choose-go"><svg class="mg-sp-ic" viewBox="0 0 24 24"><path d="M5 4h4l2 5-2.5 1.5a11 11 0 0 0 5 5L15 13l5 2v4a1 1 0 0 1-1 1A16 16 0 0 1 4 5a1 1 0 0 1 1-1z"/></svg>Call</button>
+    </div>
     <p class="mg-sp-from" data-role="softphone-from" hidden></p>
 
     {{-- Live-call controls. Mute, Keypad (DTMF), Hold and Note are real; Record and Transfer have no safe backend yet and are shown disabled with the reason. --}}
@@ -200,4 +216,5 @@
 <audio id="mg-remote-audio" autoplay playsinline></audio>
 <script src="{{ asset('vendor/telnyx/webrtc-2.28.2.js') }}"></script>
 <script src="{{ asset('js/crm/mg-softphone.js') }}"></script>
+@endunless
 @endonce

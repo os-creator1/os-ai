@@ -59,6 +59,7 @@ final class InboundCallingSurface
             'statusUrl' => route('customer.workspaces.businesses.calls.show', [...$scope, '__CALL__']),
             'hangupUrl' => route('customer.workspaces.businesses.calls.hangup', [...$scope, '__CALL__']),
             'wrapupUrl' => route('customer.workspaces.businesses.calls.wrapup', [...$scope, '__CALL__']),
+            'numbersUrl' => route('customer.workspaces.businesses.calls.numbers', $scope),
             'inbound' => $inbound,
         ];
     }

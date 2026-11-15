@@ -135,7 +135,7 @@
                             <span class="mg-cp-info-icon"><x-ds-icon name="smartphone" size="16" aria-hidden="true" /></span>
                             <span class="mg-cp-info-body"><span class="mg-cp-info-label">Phone</span><span class="mg-cp-info-value text-numeric">{{ $profile['phone'] }}</span></span>
                             @if (! empty($browserCalling))
-                                <button type="button" class="mg-cp-iconbtn mg-cp-callbtn" data-role="contact-call" aria-label="Call {{ $displayName }}" title="Call"><x-ds-icon name="phone" size="14" aria-hidden="true" /></button>
+                                <button type="button" class="mg-cp-iconbtn mg-cp-callbtn" data-role="contact-call" data-call-uid="{{ $contactUid }}" data-call-label="{{ $displayName }}" data-call-phone="{{ \App\Library\Contacts\ContactPhone::pretty($profile['phone']) }}" data-call-initials="{{ $initials }}" aria-label="Call {{ $displayName }}" title="Call"><x-ds-icon name="phone" size="14" aria-hidden="true" /></button>
                             @endif
                             <button type="button" class="mg-cp-iconbtn" data-copy="{{ $profile['phone'] }}" data-role="contact-copy-phone" aria-label="Copy phone number" title="Copy phone number"><x-ds-icon name="copy" size="14" aria-hidden="true" /></button>
                         </li>

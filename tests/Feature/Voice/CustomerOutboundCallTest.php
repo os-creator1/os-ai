@@ -377,4 +377,103 @@ class CustomerOutboundCallTest extends TestCase
         $this->wrapup($call->uid, ['note' => 'x'], [$otherWorkspace->uid, $otherBusiness->uid])->assertNotFound();
         $this->assertNull($call->fresh()->wrapup_saved_at);
     }
+
+    // ---- outbound calling-number selection (several eligible numbers) ----
+
+    private function secondNumber(bool $voiceReady = true, string $status = 'active', bool $local = true): \App\Models\BusinessMessagingNumber
+    {
+        $identity = \App\Models\BusinessMessagingIdentity::query()->where('business_id', $this->business->id)->firstOrFail();
+        $number = $this->attachNumber($identity, $this->uniqueNumber(), false, \App\Enums\Messaging\BusinessMessagingNumberStatus::Active, 'num_ref_' . uniqid());
+
+        if ($voiceReady) {
+            $this->voiceReady($number->id);
+        }
+        if (! $local) {
+            \DB::table('business_messaging_numbers')->where('id', $number->id)->update(['number_type' => 'toll_free']);
+        }
+        if ($status !== 'active') {
+            \DB::table('business_messaging_numbers')->where('id', $number->id)->update(['status' => $status]);
+        }
+
+        return $number->fresh();
+    }
+
+    private function numbersList(?array $uids = null)
+    {
+        [$ws, $biz] = $uids ?? [$this->workspace->uid, $this->business->uid];
+
+        return $this->getJson(route('customer.workspaces.businesses.calls.numbers', [$ws, $biz]));
+    }
+
+    public function test_the_selector_lists_only_this_businesss_voice_ready_numbers_primary_first(): void
+    {
+        $second = $this->secondNumber();
+        $this->secondNumber(voiceReady: false);          // not confirmed on the voice connection
+        $this->secondNumber(local: false);               // not a local number
+        $this->secondNumber(status: 'released');         // not active
+
+        [, $otherBusiness] = $this->tenant(WorkspacePlanTier::Growth, 'Other Biz', 'Other WS');
+        $otherIdentity = $this->attachIdentity($otherBusiness);
+        $foreign = $this->attachNumber($otherIdentity, $this->uniqueNumber(), true, \App\Enums\Messaging\BusinessMessagingNumberStatus::Active, 'num_ref_foreign');
+        $this->voiceReady($foreign->id);
+        $this->authenticateAs($this->customer);
+
+        $json = $this->numbersList()->assertOk()->json('data');
+        $this->assertCount(2, $json);
+        $this->assertTrue($json[0]['primary']);
+        $this->assertFalse($json[1]['primary']);
+        $body = json_encode($json);
+        $this->assertStringNotContainsString((string) $foreign->phone_number, $body);
+        $this->assertStringNotContainsString((string) $second->phone_number . 'x', $body);
+        $this->assertSame(32, strlen($json[0]['id']), 'Opaque 32-character tokens, never database ids.');
+    }
+
+    public function test_a_chosen_number_is_the_one_dialled_and_recorded_while_the_default_stays_the_primary(): void
+    {
+        $second = $this->secondNumber();
+        $token = collect($this->numbersList()->json('data'))->firstWhere('primary', false)['id'];
+
+        $this->postJson(route('customer.workspaces.businesses.calls.store', [$this->workspace->uid, $this->business->uid]), [
+            'contact_uid' => $this->contact->uid, 'idempotency_key' => 'req-key-from-1', 'from' => $token,
+        ])->assertStatus(202);
+
+        Http::assertSent(fn (Request $r) => $r->url() === 'https://api.telnyx.com/v2/calls' && $r['from'] === $second->phone_number);
+        $this->assertSame($second->id, (int) BusinessVoiceCall::firstOrFail()->business_messaging_number_id);
+
+        // Without a choice the primary number is still used.
+        $this->postJson(route('customer.workspaces.businesses.calls.store', [$this->workspace->uid, $this->business->uid]), [
+            'contact_uid' => $this->makeContact($this->business->id, '14155552999')->uid, 'idempotency_key' => 'req-key-from-2',
+        ])->assertStatus(202);
+        $this->assertSame($this->number->id, (int) BusinessVoiceCall::query()->orderByDesc('id')->first()->business_messaging_number_id);
+    }
+
+    public function test_a_token_for_another_business_unknown_tokens_and_ineligible_numbers_dial_nothing(): void
+    {
+        [$otherCustomer, $otherBusiness, $otherWorkspace] = $this->tenant(WorkspacePlanTier::Growth, 'Other Biz', 'Other WS');
+        $otherIdentity = $this->attachIdentity($otherBusiness);
+        $foreign = $this->attachNumber($otherIdentity, $this->uniqueNumber(), true, \App\Enums\Messaging\BusinessMessagingNumberStatus::Active, 'num_ref_foreign');
+        $this->voiceReady($foreign->id);
+        $foreignToken = app(\App\Library\Voice\CustomerCallPlacer::class)->selectorToken($otherBusiness, $foreign);
+        $notReady = $this->secondNumber(voiceReady: false);
+        $notReadyToken = app(\App\Library\Voice\CustomerCallPlacer::class)->selectorToken($this->business, $notReady);
+        $this->authenticateAs($this->customer);
+        $url = route('customer.workspaces.businesses.calls.store', [$this->workspace->uid, $this->business->uid]);
+
+        foreach (['foreign' => $foreignToken, 'unknown' => 'deadbeef', 'not-ready' => $notReadyToken] as $label => $token) {
+            $this->postJson($url, ['contact_uid' => $this->contact->uid, 'idempotency_key' => 'req-key-bad-' . $label, 'from' => $token])
+                ->assertStatus(422)->assertJsonPath('error.code', 'number_not_available');
+        }
+
+        // A token minted for the other business is not valid for this one even when it is a real number there.
+        $this->numbersList([$otherWorkspace->uid, $otherBusiness->uid])->assertNotFound();
+        $this->noDial();
+        $this->assertSame(0, BusinessVoiceCall::count());
+    }
+
+    public function test_the_numbers_endpoint_requires_calling_permission(): void
+    {
+        \DB::table('workspaces')->where('id', $this->workspace->id)->update(['owner_user_id' => $this->platformAdminId()]);
+        $this->authenticateAs($this->customer, ['view_numbers']);
+        $this->assertContains($this->numbersList()->getStatusCode(), [401, 403]);
+    }
 }

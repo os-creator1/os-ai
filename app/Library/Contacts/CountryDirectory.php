@@ -80,7 +80,7 @@ final class CountryDirectory
     /**
      * Validate $input as a number of $region.
      *
-     * @return array{ok: true, digits: string, e164: string, display: string, region: string}|array{ok: false, error: string}
+     * @return array{ok: true, digits: string, e164: string, display: string, region: string}|array{ok: false, error: string, conflict?: bool}
      */
     public static function validate(?string $input, ?string $region): array
     {
@@ -110,7 +110,18 @@ final class CountryDirectory
             return ['ok' => false, 'error' => 'That does not look like a phone number.' . $hint];
         }
 
-        // An explicit "+<code>" may name another country; it must still be a real number.
+        // A number typed with an explicit "+<code>" must belong to the SELECTED country's calling code. A conflict is
+        // never silently stored under the other country (nor silently re-selected): the person is told exactly why.
+        $selectedCode = $util->getCountryCodeForRegion($region);
+
+        if (str_starts_with($input, '+') && $number->getCountryCode() !== $selectedCode) {
+            $typed = $util->getRegionCodeForCountryCode($number->getCountryCode());
+            $typedName = $typed !== PhoneNumberUtil::UNKNOWN_REGION ? self::name($typed) : 'another country';
+
+            return ['ok' => false, 'error' => 'That number starts with +' . $number->getCountryCode() . ' (' . $typedName . '), but ' . $countryName
+                . ' (+' . $selectedCode . ') is selected. Choose ' . $typedName . ' in the country picker, or enter the number without the +' . $number->getCountryCode() . '.', 'conflict' => true];
+        }
+
         $effective = $util->getRegionCodeForNumber($number) ?? $region;
 
         if (! $util->isValidNumber($number)) {

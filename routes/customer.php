@@ -2388,6 +2388,7 @@
 
         // Customer outbound calling backend (JSON; no browser audio yet). See VoiceCallController.
         Route::post('{workspaceUid}/businesses/{businessUid}/calls', 'Business\VoiceCallController@store')->middleware('throttle:30,1')->name('businesses.calls.store');
+        Route::get('{workspaceUid}/businesses/{businessUid}/calls/numbers', 'Business\VoiceCallController@numbers')->middleware('throttle:60,1')->name('businesses.calls.numbers');
         Route::post('{workspaceUid}/businesses/{businessUid}/calls/browser-session', 'Business\VoiceCallController@browserSession')->middleware('throttle:20,1')->name('businesses.calls.browser-session');
         // Inbound browser calls (flag-gated + pilot-gated server-side): availability heartbeat, ringing calls for THIS user,
         // and the one-winner answer / decline. Declared before calls/{callUid} so 'incoming' is never read as a call uid.
