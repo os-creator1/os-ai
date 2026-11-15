@@ -12,6 +12,7 @@ use App\Models\WebsiteTemplate;
 use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\ValidationException;
 use Throwable;
 
 /**
@@ -338,7 +339,7 @@ final class GuidedGenerationCommitService
             // AI provider calls stay OUTSIDE any database transaction
             // (Blocker 5) — the only writes below happen after this
             // returns.
-            [$aiPages, $retryCount] = $this->generateAndValidate($business, $aiPlan, $prohibitedClaims, $attempt->idempotency_key);
+            [$aiPages, $retryCount] = $this->generateAndValidate($business, $aiPlan, $prohibitedClaims, $attempt->idempotency_key, (int) $website->id, (int) $attempt->id);
         }
 
         if ($fenceToken !== null && ! Website::where('id', $website->id)->where('generation_lease_token', $fenceToken)->exists()) {
@@ -506,7 +507,7 @@ final class GuidedGenerationCommitService
      * @return array{0: ?array, 1: int} the validated page batch (or null
      *                                  on unrecoverable failure) and how many retries were spent
      */
-    private function generateAndValidate(Business $business, array $aiPlan, array $prohibitedClaims, string $idempotencyKey): array
+    private function generateAndValidate(Business $business, array $aiPlan, array $prohibitedClaims, string $idempotencyKey, int $websiteId = 0, ?int $attemptId = null): array
     {
         $attempts = 0;
 
@@ -518,12 +519,20 @@ final class GuidedGenerationCommitService
         while ($attempts <= 1) {
             $pages = $this->client->generate($business, $aiPlan, null, $idempotencyKey . ':retry' . $attempts);
 
-            if ($pages !== null) {
+            if ($pages === null) {
+                // Customer message stays generic; the stage is recorded for the operator only.
+                $diagnostic = $this->client->lastGenerationDiagnostic() ?? [];
+                $stage = (string) ($diagnostic['stage'] ?? GenerationBatchDiagnostics::STAGE_PROVIDER_NO_CONTENT);
+                unset($diagnostic['stage']);
+                GenerationBatchDiagnostics::log($websiteId, $attemptId, $attempts, $stage, count($aiPlan), $diagnostic);
+            } else {
                 try {
                     $this->validator->validate($pages, $aiPlan, $prohibitedClaims);
 
                     return [$pages, $attempts];
-                } catch (Throwable) {
+                } catch (ValidationException $e) {
+                    GenerationBatchDiagnostics::log($websiteId, $attemptId, $attempts, GenerationBatchDiagnostics::STAGE_VALIDATION_FAILED, count($aiPlan), ['returned_pages' => count($pages)], array_keys($e->errors()));
+                } catch (Throwable $e) {
                     // Acceptance-correction round 2: catches more than
                     // ValidationException on purpose — a provider that
                     // returns a well-formed JSON envelope with an
@@ -533,6 +542,7 @@ final class GuidedGenerationCommitService
                     // path below, never an uncaught TypeError reaching
                     // the HTTP layer as a 500 or leaving this attempt
                     // stuck `pending` forever.
+                    GenerationBatchDiagnostics::log($websiteId, $attemptId, $attempts, GenerationBatchDiagnostics::STAGE_UNEXPECTED_SHAPE, count($aiPlan), ['returned_pages' => count($pages)], [], $e);
                 }
             }
 
