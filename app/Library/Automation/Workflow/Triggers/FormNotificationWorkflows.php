@@ -1,6 +1,6 @@
 <?php
 
-namespace App\Library\Forms;
+namespace App\Library\Automation\Workflow\Triggers;
 
 use App\Enums\Automation\Workflow\WorkflowStatus;
 use App\Enums\Automation\Workflow\WorkflowTriggerType;

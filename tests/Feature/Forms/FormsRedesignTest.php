@@ -101,6 +101,9 @@ class FormsRedesignTest extends TestCase
     public function test_the_settings_pane_exposes_the_real_controls_and_live_preview(): void
     {
         $form = $this->makeForm($this->business);
+
+        $this->get($this->url('edit', [$form->uid]))->assertOk()->assertSee('Offer here', false)->assertDontSee('Copy embed code');
+
         $this->deploy($this->business, $form, $this->downtown);
 
         $this->get($this->url('edit', [$form->uid]))->assertOk()
@@ -108,7 +111,7 @@ class FormsRedesignTest extends TestCase
             ->assertSee('data-design-seg="radius"', false)->assertSee('data-v="pill"', false)
             ->assertSee('id="fb-s-opp"', false)->assertSee('data-role="forms-settings-preview"', false)
             ->assertSee('data-role="forms-activate"', false)
-            ->assertSee('Offer here', false)->assertSee('Copy embed code');
+            ->assertSee('Stop offering here', false)->assertSee('Copy embed code')->assertSee('Copy link');
     }
 
     public function test_all_responses_page_is_empty_then_populated_and_distinct_from_the_form_tab(): void
