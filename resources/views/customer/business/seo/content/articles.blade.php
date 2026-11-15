@@ -13,7 +13,7 @@
 
 @section('content-action')
     @can('manage_seo')
-        <a class="btn btn-primary" href="{{ route('customer.workspaces.businesses.seo.content.articles.create', [$workspaceUid, $businessUid]) }}" data-role="new-article"><x-ds-icon name="pencil" size="15" aria-hidden="true" /> Write an article</a>
+        <a class="btn btn-primary" href="{{ route('customer.workspaces.businesses.seo.content.articles.create', [$workspaceUid, $businessUid]) }}" data-role="new-article"><x-ds-icon name="pencil" size="16" aria-hidden="true" /> Write an article</a>
     @endcan
 @endsection
 
@@ -79,7 +79,7 @@
             </form>
         </div>
 
-        <div data-role="articles-table">
+        <div class="articles-list" data-role="articles-table">
             @forelse($articles as $article)
                 @php
                     $isPublished = $article->status === \App\Enums\Seo\ArticleStatus::Published;
@@ -120,7 +120,7 @@
                         @else
                             <a class="btn btn-outline-primary btn-sm" href="{{ $editUrl($article) }}" data-role="edit-article">Edit</a>
                             @if($isPublished && $website)
-                                <a class="btn btn-outline-secondary btn-sm" href="{{ route('public.website.blog.show', [$website->public_id, $article->slug]) }}" target="_blank" rel="noopener" aria-label="Open {{ $article->title }} on your website" data-role="open-live"><x-ds-icon name="external-link" size="14" aria-hidden="true" /></a>
+                                <a class="btn btn-outline-secondary btn-sm article-open-live" href="{{ route('public.website.blog.show', [$website->public_id, $article->slug]) }}" target="_blank" rel="noopener" aria-label="Open {{ $article->title }} on your website" data-role="open-live"><x-ds-icon name="external-link" size="14" aria-hidden="true" /></a>
                             @endif
                         @endif
                     </div>

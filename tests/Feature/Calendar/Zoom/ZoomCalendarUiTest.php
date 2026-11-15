@@ -105,12 +105,16 @@ class ZoomCalendarUiTest extends TestCase
 
     public function test_the_manual_appointment_form_offers_zoom_only_when_available(): void
     {
-        $create = route('customer.workspaces.businesses.calendar.appointments.create', $this->scope());
+        // The booking form renders once a customer is selected (the screen opens on the customer selector otherwise).
+        $contactUid = (string) \Illuminate\Support\Facades\DB::table('contacts')->where('id', $this->contactId())->value('uid');
+        $create = route('customer.workspaces.businesses.calendar.appointments.create', $this->scope()) . '?contact=' . $contactUid;
 
-        $this->get($create)->assertOk()->assertSee('name="meeting_location_type"', false)->assertSee('Zoom meeting');
+        $this->get($create)->assertOk()->assertSee('name="meeting_location_type"', false)->assertSee('<option value="zoom"', false)->assertSee('Zoom meeting');
 
+        // Not offered as a CHOICE below the Zoom plan. (The appointment-type card still states the type's own
+        // configured location, which is a fact about the type, not an offer.)
         $this->setTier('core');
-        $this->get($create)->assertOk()->assertSee('Phone call')->assertDontSee('Zoom meeting');
+        $this->get($create)->assertOk()->assertSee('Phone call')->assertDontSee('<option value="zoom"', false);
     }
 
     public function test_the_appointment_details_show_a_join_zoom_button_only_when_there_is_a_valid_link(): void

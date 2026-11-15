@@ -37,7 +37,7 @@ class CalendarActivationTest extends TestCase
             'booking-types.edit', 'booking-types.update', 'booking-types.active',
             'booking-types.staff', 'availability.index', 'availability.rules.store',
             'availability.rules.destroy', 'availability.time-off.store',
-            'availability.time-off.destroy', 'index', 'schedule', 'appointments.create',
+            'availability.time-off.destroy', 'index', 'schedule', 'appointments.create', 'appointments.slots',
             'appointments.store', 'appointments.show', 'appointments.reschedule',
             'appointments.cancel', 'appointments.complete', 'appointments.no-show'] as $suffix) {
             $this->assertNotNull(Route::getRoutes()->getByName($calendar.$suffix));

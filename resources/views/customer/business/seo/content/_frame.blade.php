@@ -20,16 +20,18 @@
 @section('page-heading', 'own')
 
 @section('page-style')
+    <link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700;800&display=swap" rel="stylesheet">
     @include('partials.section-router._styles')
     @include('partials.cx._styles')
     @include('customer.business.seo.content._styles')
 @endsection
 
 @section('content')
+  <div class="content-module">
     <div class="content-module-header" data-role="content-header">
         <div class="content-module-heading">
             <h4 class="mb-25">Content</h4>
-            <p class="text-caption mb-0" id="content-subtitle">{{ trim($__env->yieldContent('content-subtitle')) }}</p>
+            <p id="content-subtitle">{{ trim($__env->yieldContent('content-subtitle')) }}</p>
         </div>
         <div class="content-module-action" id="content-header-action">@yield('content-action')</div>
     </div>
@@ -46,6 +48,7 @@
     </div>
 
     <div id="content-live-status" class="mg-sr-only" role="status" aria-live="polite"></div>
+  </div>
 @endsection
 
 @section('page-script')

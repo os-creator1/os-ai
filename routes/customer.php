@@ -1926,6 +1926,9 @@
             Route::get('/import', 'Business\ContactDirectoryController@import')->name('import');
             Route::post('/first-list', 'Business\ContactDirectoryController@createFirstList')->name('first-list');
             Route::get('/{contactUid}', 'Business\ContactDirectoryController@show')->name('show');
+            Route::get('/{contactUid}/edit', 'Business\ContactDirectoryController@editDetails')->name('edit');
+            Route::post('/{contactUid}/update', 'Business\ContactDirectoryController@update')->middleware('throttle:60,1')->name('update');
+            Route::post('/{contactUid}/delete', 'Business\ContactDirectoryController@destroy')->middleware('throttle:30,1')->name('destroy');
             Route::post('/{contactUid}/custom-fields', 'Business\ContactDirectoryController@updateCustomFields')->name('custom-fields.update');
             Route::post('/{contactUid}/email', 'Business\ContactDirectoryController@updateEmail')->name('email.update');
         });
@@ -2054,6 +2057,7 @@
             // registered before `{appointmentUid}` so it is not swallowed.
             Route::get('/schedule', 'Business\CalendarController@show')->name('schedule');
             Route::get('/appointments/new', 'Business\CalendarController@create')->name('appointments.create');
+            Route::get('/appointments/slots', 'Business\CalendarController@slots')->name('appointments.slots');
             Route::post('/appointments', 'Business\CalendarController@store')->name('appointments.store');
             Route::get('/appointments/{appointmentUid}', 'Business\CalendarController@showAppointment')->name('appointments.show');
             Route::post('/appointments/{appointmentUid}/reschedule', 'Business\CalendarController@reschedule')->name('appointments.reschedule');

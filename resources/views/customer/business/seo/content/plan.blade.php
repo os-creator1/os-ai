@@ -41,7 +41,7 @@
 
     @foreach($reviewItems as $item)
         <div class="plan-review" data-role="needs-review" data-article="{{ $item['uid'] }}" @if($item['kind'] !== 'freshness') data-signal="{{ $item['kind'] }}" @endif>
-            <span class="content-icon-tile content-icon-tile--warm" aria-hidden="true"><x-ds-icon name="file-text" size="16" /></span>
+            <span class="content-icon-tile content-icon-tile--warm" aria-hidden="true"><x-ds-icon name="file-text" size="18" /></span>
             <div class="plan-review-main">
                 <span class="content-label plan-review-label">Needs a quick review</span>
                 <div class="plan-review-title">{{ $item['title'] }}</div>
@@ -78,7 +78,7 @@
                 @endphp
                 <div class="plan-row" data-role="cluster" data-page="{{ $row['page']['uid'] }}">
                     <div class="plan-row-page">
-                        <span class="content-icon-tile content-icon-tile--neutral" aria-hidden="true"><x-ds-icon name="{{ $pageIcon($row['page']['kind']) }}" size="15" /></span>
+                        <span class="content-icon-tile content-icon-tile--neutral" aria-hidden="true"><x-ds-icon name="{{ $pageIcon($row['page']['kind']) }}" size="16" /></span>
                         <span class="plan-row-name">{{ $row['page']['title'] }}</span>
                     </div>
 
