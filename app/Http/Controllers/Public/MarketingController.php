@@ -76,9 +76,21 @@ class MarketingController extends Controller
      * and self-service signup, with every conversion button going to the existing demo-booking flow. Request-scoped;
      * the normal homepage, /pricing and signup are untouched.
      */
-    public function photobooth(): \Illuminate\Http\Response
+    public function photobooth(?string $page = null): \Symfony\Component\HttpFoundation\Response
     {
         abort_unless($this->site->servesRequest(request()), 404);
+
+        // Cutover: once marketing.landing.photobooth_site names a published White Label site, THAT site (the owner's own
+        // Landing Page editor content, published revision only) is the authoritative page, exactly like /dogs. The
+        // site is chosen by configuration, never by the request. Blank keeps the static adaptation below.
+        $publicId = (string) config('marketing.landing.photobooth_site');
+        if ($publicId !== '') {
+            abort_unless(\Illuminate\Support\Str::isUuid($publicId), 404);
+
+            return app(AgencySiteController::class)->landing($publicId, $page ?? 'home', 'photobooth');
+        }
+
+        abort_unless($page === null, 404);
 
         $landing = new CallOnlyMarketingSite('photobooth');
         abort_unless($landing->canBook(), 404);

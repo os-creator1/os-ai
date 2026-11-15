@@ -38,6 +38,7 @@ $register = function (bool $named = true) use ($legalSlugs) {
     $route(Route::get('docs/zoom', [MarketingController::class, 'zoomDocs']), 'marketing.zoom-docs');
     // Call-only landing pages (see MarketingController::photobooth / ::dogs).
     $route(Route::get('photobooth', [MarketingController::class, 'photobooth']), 'marketing.photobooth');
+    $route(Route::get('photobooth/{page}', [MarketingController::class, 'photobooth'])->where('page', 'product|solutions|how-it-works|customers|pricing'), 'marketing.photobooth.page');
     $route(Route::get('dogs', [MarketingController::class, 'dogs']), 'marketing.dogs');
     $route(Route::get('dogs/{page}', [MarketingController::class, 'dogs'])->where('page', 'product|solutions|how-it-works|customers|pricing'), 'marketing.dogs.page');
     $route(Route::get('legal', [LegalController::class, 'index']), 'marketing.legal');

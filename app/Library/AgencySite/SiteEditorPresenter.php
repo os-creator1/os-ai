@@ -100,7 +100,7 @@ final class SiteEditorPresenter
             'pages' => array_map(fn ($page) => ['key' => $page, 'url' => route('customer.workspaces.agency.site.preview', [$agency->uid, $page])], SiteSchema::PAGES),
             'ctaTargets' => SiteSchema::CTA_TARGETS,
             'goals' => SiteSchema::GOALS,
-            'legacySamples' => (($values['x.niche'] ?? NichePresets::GENERAL) !== NichePresets::GENERAL) ? app(LegacySampleCleaner::class)->analyse($site) : ['pinned' => [], 'review' => []],
+            'legacySamples' => (! in_array($values['x.niche'] ?? NichePresets::GENERAL, NichePresets::EVENT_NATIVE, true)) ? app(LegacySampleCleaner::class)->analyse($site) : ['pinned' => [], 'review' => []],
             'signupUrls' => collect($context->plans)->mapWithKeys(fn ($p) => [$p['uid'] => route('agency.site.signup', [$site->public_id, $p['uid']])])->all(),
         ];
     }
