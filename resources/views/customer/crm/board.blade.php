@@ -98,6 +98,76 @@
             #crm-opportunities .crm-column, #crm-opportunities .crm-card { transition: none; }
             #crm-opportunities .crm-card.is-saving::after { animation: none; opacity: 1; }
         }
+
+        /* Approved Opportunities design — scoped to this page and preserving the existing CRM data hooks. */
+        @import url('https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700&display=swap');
+        #crm-opportunities {
+            font-family: 'Figtree', system-ui, sans-serif;
+            color: #1F1A19;
+            gap: 20px;
+        }
+        #crm-opportunities .crm-head { align-items: flex-end; gap: 16px; }
+        #crm-opportunities .crm-page-title { margin: 0 0 6px; font-size: 28px; line-height: 1.25; font-weight: 700; letter-spacing: -.015em; color: #1F1A19; }
+        #crm-opportunities .crm-summary { font-size: 15px; color: #5E5652; }
+        #crm-opportunities .crm-summary strong { color: #1F1A19; }
+        #crm-opportunities .crm-actions { gap: 10px; }
+        #crm-opportunities .crm-actions > .btn, #crm-opportunities .crm-actions > details > summary {
+            min-height: 44px; border-radius: 10px; padding: 0 16px; display: inline-flex; align-items: center;
+            justify-content: center; font-size: 14px; font-weight: 600;
+        }
+        #crm-opportunities .crm-actions > details > summary { border: 1px solid #D6CFC8; color: #2E2826; background: white; }
+        #crm-opportunities .crm-actions > .btn { background: #B4514A; border-color: #B4514A; color: white; }
+        #crm-opportunities .crm-filters-card { padding: 16px; border-radius: 14px; border: 1px solid #E9E4DF; background: white; }
+        #crm-opportunities .crm-filter-grid { grid-template-columns: minmax(160px, 1fr) minmax(220px, 1.35fr) minmax(112px, .7fr) minmax(130px, .77fr) auto; gap: 12px; align-items: end; }
+        #crm-opportunities .crm-filter-grid .form-label { display: block; margin-bottom: 6px; font-size: 13px; font-weight: 600; color: #4A4340; }
+        #crm-opportunities .crm-filter-grid .form-select, #crm-opportunities .crm-filter-grid input[type="search"] {
+            height: 44px; border-radius: 10px; border: 1px solid #D6CFC8; background: white; font: 400 14.5px 'Figtree',system-ui,sans-serif; color: #1F1A19;
+        }
+        #crm-opportunities .crm-filter-grid input::placeholder { color: #A9A0A9; }
+        #crm-opportunities .crm-filter-buttons { min-height: 44px; gap: 8px; flex-wrap: nowrap; }
+        #crm-opportunities .crm-filter-buttons .btn { min-height: 44px; padding: 0 16px; border: 1px solid #E3C3BF; border-radius: 10px; background: white; color: #8F3B35; font-size: 14px; font-weight: 600; }
+        #crm-opportunities .crm-customize { display: inline-flex; align-items: center; min-height: 44px; font-size: 14px; font-weight: 600; color: #8F3B35; }
+        #crm-opportunities .crm-columns { align-items: flex-start; gap: 14px; min-width: 100%; padding-bottom: 8px; scrollbar-width: thin; scrollbar-color: #CFC6BE transparent; }
+        #crm-opportunities .crm-columns::-webkit-scrollbar { height: 6px; }
+        #crm-opportunities .crm-columns::-webkit-scrollbar-thumb { background: #CFC6BE; border-radius: 999px; }
+        #crm-opportunities .crm-column { --crm-tone: #8A817C; box-sizing: border-box; flex: 1 1 0; min-width: 208px; width: auto; padding: 12px; border: 0; border-radius: 14px; background: #EFEBE6; }
+        #crm-opportunities .crm-column[data-tone="1"] { --crm-tone: #B7791F; }
+        #crm-opportunities .crm-column[data-tone="2"] { --crm-tone: #2F6FA8; }
+        #crm-opportunities .crm-column[data-tone="3"] { --crm-tone: #6B4FA0; }
+        #crm-opportunities .crm-column[data-tone="4"] { --crm-tone: #1F8A55; }
+        #crm-opportunities .crm-column.is-drop-target { background: #F8E9E6; box-shadow: inset 0 0 0 2px #B4514A; }
+        #crm-opportunities .crm-column-head { display: flex; align-items: center; gap: 8px; padding: 2px 4px; }
+        #crm-opportunities .crm-stage-dot { flex: none; width: 8px; height: 8px; background: var(--crm-tone); border-radius: 50%; }
+        #crm-opportunities .crm-column-name { flex: 1 1 auto; min-width: 0; margin: 0; font-size: 14px; font-weight: 700; color: #1F1A19; }
+        #crm-opportunities .crm-column-count { min-width: 24px; height: 24px; padding: 0 7px; display: inline-flex; justify-content: center; align-items: center; background: white; border: 0; border-radius: 999px; font-size: 12.5px; font-weight: 600; color: #4A4340; }
+        #crm-opportunities .crm-column-total { padding: 0 4px; margin: 4px 0 10px; font-size: 13px; font-weight: 600; color: #4A4340; }
+        #crm-opportunities .crm-cards { gap: 12px; min-height: 0; }
+        #crm-opportunities .crm-card { display: flex; flex-direction: column; gap: 12px; padding: 14px; border: 1px solid #E9E4DF; border-radius: 12px; background: white; color: #1F1A19; box-shadow: 0 1px 2px rgba(31,26,25,.06); }
+        #crm-opportunities .crm-card:hover { border-color: #E3C3BF; }
+        #crm-opportunities .crm-card-title { display: block; color: #1F1A19; font-size: 14.5px; font-weight: 600; line-height: 1.35; overflow-wrap: anywhere; }
+        #crm-opportunities .crm-card-contact { display: flex; align-items: center; gap: 8px; min-width: 0; margin: 0; font-size: 13.5px; color: #4A4340; }
+        #crm-opportunities .crm-card-contact-name { min-width: 0; overflow-wrap: anywhere; }
+        #crm-opportunities .crm-card-avatar { display: inline-flex; align-items: center; justify-content: center; flex: none; width: 24px; height: 24px; border-radius: 50%; background: #F8E9E6; color: #8F3B35; font-size: 10.5px; font-weight: 700; }
+        #crm-opportunities .crm-card-meta { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; min-width: 0; font-size: 12px; }
+        #crm-opportunities .crm-card-meta [data-role="crm-card-contact-status"] { display: inline-flex; align-items: center; min-height: 24px; padding: 0 9px; background: #FDF1DC !important; border: 0; border-radius: 999px; color: #7A4A05 !important; font-size: 12px; font-weight: 600; }
+        #crm-opportunities .crm-card-age { display: inline-flex; align-items: center; gap: 5px; margin: 0; color: #5E5652; font-size: 12.5px; }
+        #crm-opportunities .crm-card-age svg { flex: none; width: 13px; height: 13px; }
+        #crm-opportunities .crm-card-value-row { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding-top: 12px; border-top: 1px solid #EEE9E4; font-size: 12.5px; color: #5E5652; }
+        #crm-opportunities .crm-card-value { margin: 0; font-size: 15px; font-weight: 700; color: #1F1A19; }
+        #crm-opportunities .crm-column-empty { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 28px 16px; border: 1.5px dashed #CFC6BE; border-radius: 12px; background: transparent; color: #5E5652; text-align: center; font-size: 13.5px; }
+        #crm-opportunities .crm-column-empty span { font-size: 12.5px; }
+        @media (max-width: 1199.98px) {
+            #crm-opportunities .crm-filter-grid { grid-template-columns: repeat(2,minmax(0,1fr)); }
+            #crm-opportunities .crm-filter-search, #crm-opportunities .crm-filter-buttons { grid-column: 1 / -1; }
+            #crm-opportunities .crm-filter-buttons { flex-wrap: wrap; }
+        }
+        @media (max-width: 575.98px) {
+            #crm-opportunities .crm-head { align-items: stretch; }
+            #crm-opportunities .crm-page-title { font-size: 26px; }
+            #crm-opportunities .crm-column { flex: 0 0 240px; min-width: 240px; width: 240px; }
+            #crm-opportunities .crm-filter-grid { grid-template-columns: minmax(0,1fr); }
+            #crm-opportunities .crm-filter-search, #crm-opportunities .crm-filter-buttons { grid-column: auto; }
+        }
     </style>
 @endsection
 
@@ -115,7 +185,7 @@
         <div data-async-region="crm-board" data-role="crm-board" data-pipeline="{{ $pipeline->uid }}" data-currency="{{ $board['currency'] }}">
             <div class="crm-head">
                 <div>
-                    <h1 class="h3 mb-25">Opportunities</h1>
+                    <h1 class="crm-page-title">Opportunities</h1>
                     <p class="crm-summary" data-role="crm-board-summary">
                         <strong>{{ $board['total'] }}{{ $statusWord }}</strong> in {{ $pipeline->name }}
                         · {{ \App\Library\Crm\CrmMoney::format($boardValueMinor, $board['currency']) }} total
@@ -148,13 +218,14 @@
                     @foreach ($board['columns'] as $column)
                         @php
                             $isStage = $column['stage'] !== null;
-                            $columnTotal = $column['value_minor'] > 0 ? \App\Library\Crm\CrmMoney::format($column['value_minor'], $board['currency']) : '';
+                            $columnTotal = \App\Library\Crm\CrmMoney::format($column['value_minor'], $board['currency']);
                         @endphp
                         <div class="crm-column"
                              data-role="crm-column" data-column="{{ $column['key'] }}" data-tone="{{ $loop->index % 5 }}"
                              data-count="{{ $column['count'] }}" data-value-minor="{{ $column['value_minor'] }}"
                              @if ($isStage && $canManage) data-drop-stage="{{ $column['stage']->uid }}" @endif>
                             <div class="crm-column-head">
+                                <span class="crm-stage-dot" aria-hidden="true"></span>
                                 <h2 class="crm-column-name" data-role="crm-column-name">{{ $column['name'] }}</h2>
                                 <span class="crm-column-count" data-role="crm-column-count">{{ $column['count'] }}</span>
                                 <span class="crm-column-total" data-role="crm-column-total">{{ $columnTotal }}</span>
@@ -167,25 +238,41 @@
                                              @if ($isOpen && $canManage && $isStage) draggable="true" data-move-url="{{ route('customer.workspaces.businesses.crm.opportunities.move', [$workspaceUid, $businessUid, $card['uid']]) }}" @endif>
                                         <a class="crm-card-title" href="{{ route('customer.workspaces.businesses.crm.opportunities.show', [$workspaceUid, $businessUid, $card['uid']]) }}" draggable="false" data-role="crm-card-title">{{ $card['title'] }}</a>
                                         @if ($card['contact'] !== null)
-                                            <a class="crm-card-contact" href="{{ route('customer.workspaces.businesses.people.show', [$workspaceUid, $businessUid, $card['contact']['uid']]) }}" draggable="false" data-role="crm-card-contact">{{ $card['contact']['name'] ?? $card['contact']['phone'] }}</a>
+                                            @php
+                                                $contactLabel = trim((string) ($card['contact']['name'] ?? $card['contact']['phone']));
+                                                $nameParts = preg_split('/\s+/u', $contactLabel) ?: [];
+                                                $avatarInitials = count($nameParts) > 1
+                                                    ? mb_substr($nameParts[0], 0, 1) . mb_substr($nameParts[1], 0, 1)
+                                                    : mb_substr($contactLabel, 0, 2);
+                                            @endphp
+                                            <a class="crm-card-contact" href="{{ route('customer.workspaces.businesses.people.show', [$workspaceUid, $businessUid, $card['contact']['uid']]) }}" draggable="false" data-role="crm-card-contact">
+                                                <span class="crm-card-avatar" aria-hidden="true">{{ mb_strtoupper($avatarInitials) }}</span>
+                                                <span class="crm-card-contact-name">{{ $contactLabel }}</span>
+                                            </a>
                                         @else
-                                            <span class="crm-card-contact">Contact removed</span>
+                                            <span class="crm-card-contact crm-card-contact-missing">Contact removed</span>
                                         @endif
-                                        <div class="crm-card-foot">
+                                        <div class="crm-card-meta">
                                             <x-badge :variant="$card['contact_status'] === \App\Enums\Crm\CrmContactStatus::InContact ? 'success' : 'warning'" data-role="crm-card-contact-status">{{ $card['contact_status']->label() }}</x-badge>
                                             @unless ($isOpen)
                                                 <x-badge :variant="$card['status'] === \App\Enums\Crm\CrmOpportunityStatus::Won ? 'success' : 'danger'" data-role="crm-card-status">{{ $card['status']->label() }}</x-badge>
                                             @endunless
-                                            @if ($card['value'] !== null)
-                                                <span class="crm-card-value">{{ $card['value'] }}</span>
+                                            @if ($card['stage_entered_at'])
+                                                <span class="crm-card-age" data-role="crm-card-age">
+                                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="8.5"></circle><path d="M12 7.5V12l3 2"></path></svg>
+                                                    {{ $card['stage_entered_at']->diffForHumans(null, true) }} in stage
+                                                </span>
                                             @endif
                                         </div>
-                                        @if ($card['stage_entered_at'])
-                                            <span class="crm-card-age" data-role="crm-card-age">In stage {{ $card['stage_entered_at']->diffForHumans(null, true) }}</span>
-                                        @endif
+                                        <div class="crm-card-value-row">
+                                            <span>Value</span>
+                                            <strong class="crm-card-value">{{ $card['value'] ?? \App\Library\Crm\CrmMoney::format(0, $board['currency']) }}</strong>
+                                        </div>
                                     </article>
                                 @empty
-                                    <p class="text-caption text-muted mb-0" data-role="crm-column-empty">No opportunities</p>
+                                    <div class="crm-column-empty" data-role="crm-column-empty">No opportunities
+                                        <span>Drag one here when it reaches this stage.</span>
+                                    </div>
                                 @endforelse
 
                                 @if ($column['count'] > count($column['cards']))
