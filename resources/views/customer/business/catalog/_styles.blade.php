@@ -198,7 +198,22 @@
     @keyframes cg-spin { to { transform: rotate(360deg); } }
     @media (prefers-reduced-motion: reduce) { .cg-spin { animation-duration: 2s; } }
 
+    /* Edit-item dialog extras ------------------------------------------------ */
+    dialog.cg-dialog.is-edit { margin-top: 44px; }
+    .cg-info { display: flex; align-items: center; gap: 10px; padding: 12px 14px; border-radius: 10px; background: var(--cg-wash); border: 1px solid var(--cg-line-3); font-size: 13.5px; color: var(--cg-muted-2); }
+    .cg-info .cg-ic { color: var(--cg-faint); }
+    .cg-offer { margin: 0 24px 20px; display: flex; align-items: center; gap: 12px; padding: 14px 16px; border: 1px solid var(--cg-line); border-radius: 12px; }
+    .cg-offer .cg-ic { width: 18px; height: 18px; color: var(--cg-brand-dark); }
+    .cg-offer-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+    .cg-offer-text b { font-size: 14px; }
+    .cg-offer-text span { font-size: 12.5px; color: var(--cg-muted); }
+    .cg-offer a { font-size: 13.5px; font-weight: 600; color: var(--cg-brand-dark); min-height: 36px; display: inline-flex; align-items: center; }
+    .cg-offer a:hover { text-decoration: underline; }
+    .cg-del { flex: 1; justify-content: flex-start; padding: 0; font-size: 13.5px; color: #A3352A; background: transparent; }
+    .cg-del:hover { text-decoration: underline; color: #A3352A; }
+
     @media (max-width: 575.98px) {
+        .cg-offer { margin: 0 16px 16px; flex-wrap: wrap; }
         .cg-title { font-size: 24px; }
         .cg-head-actions { width: 100%; }
         .cg-head-actions .cg-btn { flex: 1 1 auto; }

@@ -194,7 +194,7 @@
                             <x-ds-icon :name="$isPackage ? 'package' : 'tag'" size="20" />
                         </span>
                         <span class="cat-text">
-                            <a href="{{ $editUrl }}" class="cat-name">{{ $item->name }}</a>
+                            <a href="{{ $editUrl }}" class="cat-name" data-catalog-edit="{{ $item->uid }}">{{ $item->name }}</a>
                             <span class="cat-pill {{ $isPackage ? '' : 'is-product' }}">{{ ucfirst($item->type->value) }}</span>
                         </span>
                         <div class="cat-price">
@@ -251,6 +251,7 @@
     {{-- The "Add to catalog" dialog. The links above still point at the full-page create URL (non-JavaScript fallback). --}}
     <div class="cg" style="display: contents">
         @include('customer.business.catalog._add-modal')
+        @include('customer.business.catalog._edit-modal')
     </div>
     </div>
 @endsection

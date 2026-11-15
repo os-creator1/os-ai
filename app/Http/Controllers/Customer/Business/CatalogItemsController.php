@@ -6,9 +6,12 @@ use App\Enums\Catalog\CatalogItemType;
 use App\Http\Controllers\Controller;
 use App\Http\Controllers\Customer\Business\Concerns\AuthorizesCatalogRequests;
 use App\Library\Catalog\CatalogItemManager;
+use App\Library\Catalog\CatalogLocationOfferReader;
 use App\Library\Catalog\CatalogMoney;
 use App\Library\Catalog\Exceptions\CatalogRuleException;
+use App\Library\Workspace\LocationAccessGuard;
 use App\Models\CatalogItem;
+use App\Repositories\Contracts\BusinessLocationRepository;
 use App\Models\Currency;
 use Illuminate\Contracts\View\View;
 use Illuminate\Http\RedirectResponse;
@@ -44,8 +47,12 @@ class CatalogItemsController extends Controller
 {
     use AuthorizesCatalogRequests;
 
-    public function __construct(private readonly CatalogItemManager $items)
-    {
+    public function __construct(
+        private readonly CatalogItemManager $items,
+        private readonly CatalogLocationOfferReader $offers,
+        private readonly LocationAccessGuard $guard,
+        private readonly BusinessLocationRepository $locations,
+    ) {
     }
 
     public function index(string $workspaceUid, string $businessUid): View
@@ -58,9 +65,12 @@ class CatalogItemsController extends Controller
             ->orderBy('id')
             ->get();
 
+        $active = $all->filter(fn (CatalogItem $item) => $item->isActive())->values();
+
         return view('customer.business.catalog.index', [
             'workspace' => $workspace,
             'business' => $business,
+            'editData' => $this->editDialogData($workspace, $business, $active),
             'activeItems' => $all->filter(fn (CatalogItem $item) => $item->isActive())->values(),
             'archivedItems' => $all->filter(fn (CatalogItem $item) => $item->isArchived())->values(),
             // The "Add to catalog" dialog is rendered by the list page itself.
@@ -155,17 +165,46 @@ class CatalogItemsController extends Controller
         ]);
     }
 
-    public function update(Request $request, string $workspaceUid, string $businessUid, string $catalogItemUid): RedirectResponse
+    /**
+     * Serves the full-page edit form (redirects) and the list's "Edit item"
+     * dialog, which asks for JSON: a 200 on success, or a 422 with field errors
+     * worded as the validator or the manager worded them.
+     */
+    public function update(Request $request, string $workspaceUid, string $businessUid, string $catalogItemUid): RedirectResponse|JsonResponse
     {
         [, $business] = $this->catalogScope($workspaceUid, $businessUid);
         $item = $this->catalogItemOrAbort($business, $catalogItemUid);
 
-        $data = $this->validated($request);
+        try {
+            $data = $this->validated($request);
+        } catch (ValidationException $exception) {
+            if (! $request->expectsJson()) {
+                throw $exception;
+            }
+
+            return response()->json([
+                'message' => collect($exception->errors())->flatten()->first(),
+                'errors' => $exception->errors(),
+            ], 422);
+        }
 
         try {
             $updated = $this->items->update($business, $item, $this->attributes($data));
         } catch (CatalogRuleException $exception) {
+            if ($request->expectsJson()) {
+                return response()->json([
+                    'message' => $exception->getMessage(),
+                    'errors' => ['catalog' => [$exception->getMessage()]],
+                ], 422);
+            }
+
             return $this->refused($exception);
+        }
+
+        if ($request->expectsJson()) {
+            $request->session()->flash('flash_success', 'Saved.');
+
+            return response()->json(['message' => 'Saved.', 'uid' => $updated->uid], 200);
         }
 
         return $this->backToEdit($workspaceUid, $businessUid, $updated->uid)
@@ -284,6 +323,52 @@ class CatalogItemsController extends Controller
             'price_minor' => CatalogMoney::toMinor($data['price'] ?? null, $data['currency_code'] ?? null),
             'currency_code' => $data['currency_code'] ?? null,
         ];
+    }
+
+    /**
+     * What the list's "Edit item" dialog needs for each active item, taken from
+     * the item itself plus how many of the Locations THIS actor may reach offer
+     * it. "Offered" is whatever CatalogLocationOfferReader (the pricing
+     * resolver) answered; no Location outside the actor's reach is read,
+     * counted or named.
+     *
+     * @param  \Illuminate\Support\Collection<int, CatalogItem>  $active
+     * @return array<string, array<string, mixed>>
+     */
+    private function editDialogData($workspace, $business, $active): array
+    {
+        $accessible = array_flip($this->guard->accessibleLocationIdsForBusiness((int) Auth::id(), $business));
+        $reachable = $this->locations->forBusiness($business)
+            ->filter(fn ($location) => isset($accessible[(int) $location->id]) && $location->isActive())
+            ->values();
+
+        $offeredAt = [];
+        foreach ($reachable as $location) {
+            foreach ($this->offers->rowsFor($business, $location) as $row) {
+                if ($row['isOffered']) {
+                    $offeredAt[$row['item']->uid] = ($offeredAt[$row['item']->uid] ?? 0) + 1;
+                }
+            }
+        }
+
+        $scope = [$workspace->uid, $business->uid];
+        $data = [];
+        foreach ($active as $item) {
+            $data[$item->uid] = [
+                'type' => $item->type->value,
+                'name' => $item->name,
+                'description' => (string) $item->description,
+                'pricing' => $item->price_minor === null ? 'quote' : 'fixed',
+                'price' => CatalogMoney::toInput($item->price_minor, $item->currency_code),
+                'currency' => strtoupper((string) $item->currency_code),
+                'updateUrl' => route('customer.workspaces.businesses.catalog.update', array_merge($scope, [$item->uid])),
+                'archiveUrl' => route('customer.workspaces.businesses.catalog.archive', array_merge($scope, [$item->uid])),
+                'offered' => $offeredAt[$item->uid] ?? 0,
+                'locations' => $reachable->count(),
+            ];
+        }
+
+        return $data;
     }
 
     private function refused(CatalogRuleException $exception): RedirectResponse
