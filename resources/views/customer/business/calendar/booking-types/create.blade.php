@@ -39,6 +39,9 @@
 
     <form method="POST" action="{{ route('customer.workspaces.businesses.calendar.booking-types.store', $scope) }}" class="cx-split">
         @csrf
+        @if (! empty($bookContact))
+            <input type="hidden" name="contact" value="{{ $bookContact['uid'] }}">
+        @endif
 
         <div class="cx-split-main">
             @include('customer.business.calendar.booking-types._settings-fields', ['bookingType' => null])

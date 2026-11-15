@@ -68,7 +68,7 @@ class BookingTypesController extends Controller
         ]);
     }
 
-    public function create(string $workspaceUid, string $businessUid, string $locationUid): View
+    public function create(Request $request, string $workspaceUid, string $businessUid, string $locationUid): View
     {
         [$workspace, $business, $location] = $this->scope($workspaceUid, $businessUid, $locationUid);
 
@@ -76,6 +76,7 @@ class BookingTypesController extends Controller
             'workspace' => $workspace,
             'business' => $business,
             'location' => $location,
+            'bookContact' => $this->bookContact($request, $business, $location),
         ]);
     }
 
@@ -94,10 +95,14 @@ class BookingTypesController extends Controller
             return response()->json(['status' => 'success', 'message' => 'Booking type created.', 'url' => $editUrl], 201);
         }
 
-        return redirect($editUrl)->with('flash_success', 'Booking type created.');
+        // Started from "Book appointment": keep the customer so the editor can lead back to booking them.
+        $bookContact = $this->bookContact($request, $business, $location);
+
+        return redirect($bookContact === null ? $editUrl : $editUrl . '?' . http_build_query(['contact' => $bookContact['uid']]))
+            ->with('flash_success', 'Booking type created.');
     }
 
-    public function edit(string $workspaceUid, string $businessUid, string $locationUid, string $bookingTypeUid): View
+    public function edit(Request $request, string $workspaceUid, string $businessUid, string $locationUid, string $bookingTypeUid): View
     {
         [$workspace, $business, $location] = $this->scope($workspaceUid, $businessUid, $locationUid);
         $bookingType = $this->bookingType($location, $bookingTypeUid);
@@ -111,7 +116,39 @@ class BookingTypesController extends Controller
             'readiness' => $this->bookingTypes->publicBookingReadiness($bookingType),
             'notificationReadiness' => $this->notificationReadiness->forBookingType($bookingType),
             'eligibleStaff' => $this->locations->eligibleStaff($workspace, $business, $location),
+            'bookContact' => $this->bookContact($request, $business, $location),
         ]);
+    }
+
+    /**
+     * The customer a "Book appointment" screen sent us here for, so setup can lead back to
+     * booking them. Resolved through the same Business + Location bookability check as the
+     * booking screen; anything else (absent, unknown, another Business's, a sibling
+     * Location's) is simply ignored — this is a convenience link, never a lookup oracle.
+     *
+     * @return array{uid: string, name: string, bookUrl: string}|null
+     */
+    private function bookContact(Request $request, Business $business, BusinessLocation $location): ?array
+    {
+        $uid = $request->input('contact', $request->query('contact'));
+
+        if (! is_string($uid) || $uid === '') {
+            return null;
+        }
+
+        $contact = app(\App\Library\Calendar\CalendarScheduleService::class)->findBookableContact($business, $location, $uid);
+
+        if ($contact === null) {
+            return null;
+        }
+
+        $summary = app(\App\Library\Contacts\ContactDirectory::class)->summaries($business, [(int) $contact->id])[(int) $contact->id] ?? null;
+
+        return [
+            'uid' => (string) $contact->uid,
+            'name' => trim((string) ($summary['name'] ?? '')) ?: (string) ($summary['phone'] ?? 'this customer'),
+            'bookUrl' => route('customer.workspaces.businesses.calendar.appointments.create', [$request->route('workspaceUid'), $business->uid, $location->uid]) . '?' . http_build_query(['contact' => $contact->uid]),
+        ];
     }
 
     public function update(Request $request, string $workspaceUid, string $businessUid, string $locationUid, string $bookingTypeUid): RedirectResponse

@@ -57,6 +57,13 @@
         <x-button type="submit" variant="primary" icon="check" form="booking-type-form">Save changes</x-button>
     </header>
 
+    @if (! empty($bookContact))
+        <div class="cx-callout mb-2" role="status" data-role="return-to-booking">
+            <x-ds-icon name="calendar" size="16" aria-hidden="true" />
+            <span class="cx-callout-text">Set this up, then <a href="{{ $bookContact['bookUrl'] }}"><strong>go back to booking {{ $bookContact['name'] }}</strong></a>. A type needs to be active, with someone assigned and working hours set, before it can be booked.</span>
+        </div>
+    @endif
+
     @if (! $readiness['ready'])
         <div class="cx-callout is-warning mb-2" data-role="booking-type-not-ready">
             <x-ds-icon name="alert-circle" size="16" aria-hidden="true" />

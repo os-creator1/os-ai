@@ -273,9 +273,10 @@ class ContactDirectoryController extends CustomerBaseController
      * destination (otherwise null and the view shows nothing):
      *  - messageUrl: the existing Inbox / new-conversation screens. They cannot be
      *    pre-filled with this Contact's number today, so this opens the screen only.
-     *  - bookUrl: the existing "New appointment" screen at the Contact's Location (or
-     *    the actor's only Location) with the Contact pre-searched via `q`; the Contact
-     *    still has to be chosen there because that screen has no contact preselection.
+     *  - bookUrl: the "Book appointment" screen at the Contact's Location (or the actor's
+     *    only Location) with this Contact preselected by its immutable uid. That screen
+     *    re-resolves the uid server-side against the Business and Location, so the link
+     *    carries no authority of its own.
      *
      * @return array{messageUrl: ?string, messageIsInbox: bool, bookUrl: ?string}
      */
@@ -304,7 +305,7 @@ class ContactDirectoryController extends CustomerBaseController
                 : ($locations->count() === 1 ? $locations->first() : null);
 
             if ($location !== null) {
-                $bookUrl = route('customer.workspaces.businesses.calendar.appointments.create', [...$scope, $location->uid]) . '?q=' . urlencode((string) $profile['phone']);
+                $bookUrl = route('customer.workspaces.businesses.calendar.appointments.create', [...$scope, $location->uid]) . '?contact=' . urlencode((string) $contact->uid);
             }
         }
 
