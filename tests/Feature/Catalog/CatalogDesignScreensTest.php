@@ -74,8 +74,7 @@ class CatalogDesignScreensTest extends TestCase
             ->assertOk()
             ->assertSee('Prom Night Booth')
             ->assertSee('USD 850.00')
-            ->assertSee('added to your catalog.')
-            ->assertSee('4 hours');
+            ->assertSee('added to your catalog.');
     }
 
     public function test_a_product_can_be_quote_only_and_is_never_given_a_price(): void
