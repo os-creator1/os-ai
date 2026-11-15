@@ -71,6 +71,27 @@ class CrmOpportunitiesHttpTest extends TestCase
         $this->assertSame(['Kitchen renovation'], $this->cardTitles($this->get($board . '?contact_status=no_contact')->getContent()));
     }
 
+    public function test_board_uses_the_approved_kanban_structure_with_real_data_and_no_invented_prices(): void
+    {
+        [$customer, $business, $workspace] = $this->crmTenant();
+        $pipeline = $this->standardPipeline($business);
+        $contact = $this->crmContact($business, ['FIRST_NAME' => 'Ana', 'LAST_NAME' => 'Petrauskaite'], '14155550101');
+        $this->deal($business, $pipeline, $contact, 'Wedding booking');
+        $this->authenticateAs($customer);
+
+        $html = $this->get($this->crmRoute('board', $workspace, $business))->assertOk()->getContent();
+
+        $this->assertSame(4, substr_count($html, 'class="crm-stage-dot"'), 'Render actual stages; do not insert five demo stages.');
+        $this->assertStringContainsString('class="crm-card-avatar"', $html);
+        $this->assertStringContainsString('class="crm-card-value-row"', $html);
+        $this->assertStringContainsString('data-role="crm-card-title">Wedding booking</a>', $html);
+        $this->assertStringContainsString('class="crm-card-value">—</strong>', $html, 'An unpriced deal must not show a fabricated USD 0.');
+        $this->assertStringContainsString('data-role="crm-column-total">USD 0</span>', $html);
+        $this->assertStringNotContainsString('Maya Thompson', $html, 'The mockup is not production data.');
+        $this->assertStringContainsString('data-role="crm-cards"', $html);
+        $this->assertStringContainsString('data-role="crm-card-contact-status"', $html);
+    }
+
     public function test_adding_an_opportunity_with_a_contact_of_this_business(): void
     {
         [$customer, $business, $workspace] = $this->crmTenant();
