@@ -35,6 +35,16 @@ class WebsiteTemplateSeeder extends Seeder
         }
     }
 
+    /** Upserts only one niche's templates (a niche seed never rewrites another niche's rows). */
+    public function runForNiche(string $nicheKey): void
+    {
+        foreach (self::templates() as $attributes) {
+            if (($attributes['niche_key'] ?? null) === $nicheKey) {
+                WebsiteTemplate::updateOrCreate(['key' => $attributes['key']], $attributes);
+            }
+        }
+    }
+
     /**
      * @return array<int, array<string, mixed>>
      */
@@ -42,6 +52,51 @@ class WebsiteTemplateSeeder extends Seeder
     {
         $manifest = self::sharedPageManifest();
 
+        return [
+            ...self::photoBoothTemplates($manifest),
+            ...self::dogBoardingTemplates($manifest),
+        ];
+    }
+
+    /**
+     * Dog Boarding looks. They share the one SEO page-type manifest (SEO architecture never depends on the chosen
+     * template) and reuse the CSS-backed structural designs; only the theme tokens differ.
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    private static function dogBoardingTemplates(array $manifest): array
+    {
+        $make = fn (string $key, string $name, string $description, string $font, string $primary, string $secondary, string $button, string $width, string $variant) => [
+            'key' => $key,
+            'niche_key' => 'dog_boarding',
+            'display_name' => $name,
+            'description' => $description,
+            'theme' => [
+                'font' => $font,
+                'primary_color' => $primary,
+                'secondary_color' => $secondary,
+                'button_style' => $button,
+                'content_width' => $width,
+                'header_variant' => $variant,
+                'footer_variant' => $variant,
+            ],
+            'page_manifest' => $manifest,
+            'manifest_version' => 1,
+            'is_active' => true,
+        ];
+
+        return [
+            $make('dog_boarding_warm', 'Warm Kennel', 'Cream and clay with calm serif headlines. A reassuring, homely look for family-style boarding.', 'serif', '#b45309', '#3b2a1a', 'solid', '1000px', 'editorial'),
+            $make('dog_boarding_fresh', 'Fresh Field', 'Deep green and sunshine with a full-width photo hero. Suits outdoor space and active daycare.', 'system', '#facc15', '#14532d', 'rounded', '1160px', 'modern'),
+            $make('dog_boarding_playful', 'Happy Tails', 'Sky and coral with rounded tiles and a floating menu. Bright and friendly for daycare and puppies.', 'system', '#fb7185', '#1e3a5f', 'pill', '1120px', 'conversion'),
+        ];
+    }
+
+    /**
+     * @return array<int, array<string, mixed>>
+     */
+    private static function photoBoothTemplates(array $manifest): array
+    {
         return [
             [
                 'key' => 'photo_booth_modern',

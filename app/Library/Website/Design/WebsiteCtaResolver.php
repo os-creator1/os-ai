@@ -55,12 +55,12 @@ final class WebsiteCtaResolver
             return ['kind' => 'booking', 'label' => 'Book now', 'url' => $bookingUrl];
         }
 
-        $contactPage = collect($navigationPages)->firstWhere('slug', 'photo-booth-contact');
+        $contactPage = collect($navigationPages)->first(fn ($page) => \App\Library\Website\WebsiteNicheVocabulary::roleForSlug((string) ($page['slug'] ?? '')) === 'contact');
 
         if ($contactPage !== null && ! empty($contactPage['url'])) {
             $hasForm = (bool) ($contactPage['has_form'] ?? false);
 
-            return ['kind' => $hasForm ? 'form' : 'contact_page', 'label' => $hasForm ? 'Request a quote' : 'Contact us', 'url' => $contactPage['url']];
+            return ['kind' => $hasForm ? 'form' : 'contact_page', 'label' => \App\Library\Website\WebsiteNicheVocabulary::contactCtaLabel((string) $contactPage['slug'], $hasForm), 'url' => $contactPage['url']];
         }
 
         return $this->contactTarget($business);

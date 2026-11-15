@@ -67,7 +67,7 @@ final class WebsiteDesigns
      */
     private static function build(): array
     {
-        return [
+        $designs = [
             'photo_booth_modern' => new WebsiteDesign(
                 key: 'modern',
                 templateKey: 'photo_booth_modern',
@@ -157,5 +157,45 @@ final class WebsiteDesigns
                 announcementBar: true,
             ),
         ];
+
+        return $designs + self::dogBoardingDesigns($designs);
+    }
+
+    /**
+     * The Dog Boarding templates reuse the three CSS-backed structural designs (the stylesheet is scoped to the design
+     * `key`, so no new CSS is needed) under their own template keys, labels and warm swatches. Layout variants, tones and
+     * home order are inherited; a template's own colours come from its theme tokens (WebsiteTemplateSeeder).
+     *
+     * @param  array<string, WebsiteDesign>  $base
+     * @return array<string, WebsiteDesign>
+     */
+    private static function dogBoardingDesigns(array $base): array
+    {
+        $specs = [
+            'dog_boarding_warm' => ['photo_booth_editorial', 1, 'Warm Kennel', 'Cream and clay with calm serif headlines and a centered logo. Spacious and reassuring.', 'Family-style boarding and owners who want a calm, homely feel.', ['#fbf6ef', '#b45309']],
+            'dog_boarding_fresh' => ['photo_booth_modern', 2, 'Fresh Field', 'Deep green and sunshine with a full-width photo hero and one clear request button.', 'Facilities with outdoor space and active daycare.', ['#14532d', '#facc15']],
+            'dog_boarding_playful' => ['photo_booth_conversion', 3, 'Happy Tails', 'Soft sky and coral with rounded tiles and a floating menu. Friendly and bright.', 'Daycare-led and puppy-focused businesses.', ['#1e3a5f', '#fb7185']],
+        ];
+
+        $out = [];
+
+        foreach ($specs as $templateKey => [$from, $number, $label, $tagline, $bestFor, $swatch]) {
+            $d = $base[$from];
+            $out[$templateKey] = new WebsiteDesign(
+                key: $d->key,
+                templateKey: $templateKey,
+                number: $number,
+                label: $label,
+                tagline: $tagline,
+                bestFor: $bestFor,
+                variants: $d->variants,
+                tones: $d->tones,
+                homeOrder: array_values(array_diff($d->homeOrder, ['backdrops'])),
+                swatch: $swatch,
+                announcementBar: $d->announcementBar,
+            );
+        }
+
+        return $out;
     }
 }

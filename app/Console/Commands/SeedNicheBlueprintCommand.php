@@ -2,6 +2,7 @@
 
 namespace App\Console\Commands;
 
+use App\Library\NicheBlueprint\Niches\DogBoardingBlueprint;
 use App\Library\NicheBlueprint\Niches\KidsCeramicsBlueprint;
 use App\Library\NicheBlueprint\Niches\TutoringBlueprint;
 use App\Library\NicheBlueprint\NicheBlueprintPublisher;
@@ -11,6 +12,8 @@ use App\Models\NicheBlueprint;
 use App\Models\NicheBlueprintComponent;
 use App\Models\User;
 use Illuminate\Console\Command;
+use Database\Seeders\DogBoardingWebsiteSetupQuestionnaireSeeder;
+use Database\Seeders\WebsiteTemplateSeeder;
 use RuntimeException;
 
 /**
@@ -37,10 +40,11 @@ class SeedNicheBlueprintCommand extends Command
     private const NICHES = [
         TutoringBlueprint::KEY => [TutoringBlueprint::class, TutoringBlueprint::NAME, TutoringBlueprint::BROAD_INDUSTRY],
         KidsCeramicsBlueprint::KEY => [KidsCeramicsBlueprint::class, KidsCeramicsBlueprint::NAME, KidsCeramicsBlueprint::BROAD_INDUSTRY],
+        DogBoardingBlueprint::KEY => [DogBoardingBlueprint::class, DogBoardingBlueprint::NAME, DogBoardingBlueprint::BROAD_INDUSTRY],
     ];
 
     protected $signature = 'blueprint:seed-niche
-        {niche : tutoring_exam_prep or kids_ceramics}
+        {niche : tutoring_exam_prep, kids_ceramics or dog_boarding}
         {--actor= : Platform administrator user id to publish as; defaults to the first admin user found}
         {--draft-only : Leave the result as a draft instead of publishing}';
 
@@ -68,6 +72,13 @@ class SeedNicheBlueprintCommand extends Command
             ['key' => $niche],
             ['display_name' => $displayName, 'broad_industry' => $industry, 'is_active' => true],
         );
+
+        // The Dog Boarding Blueprint's website_config names a shipped template and the niche owns a versioned setup
+        // questionnaire; both are idempotent seeds that touch nothing outside this niche.
+        if ($niche === DogBoardingBlueprint::KEY) {
+            (new WebsiteTemplateSeeder())->runForNiche($niche);
+            (new DogBoardingWebsiteSetupQuestionnaireSeeder())->run();
+        }
 
         $blueprint = NicheBlueprint::query()->where('key', $niche)->first()
             ?? $publisher->createBlueprint($actor, $niche, $displayName, $niche, $industry);

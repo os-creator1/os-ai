@@ -35,6 +35,8 @@ final class WebsiteNavigationBuilder
     {
         $labels = ['services' => 'Services', 'packages' => 'Packages', 'gallery' => 'Gallery', 'backdrops' => 'Backdrops', 'photo-booth-about' => 'About', 'photo-booth-faq' => 'FAQ', 'photo-booth-contact' => 'Contact'];
         $slug = (string) ($page['slug'] ?? '');
+        // A niche's own fixed addresses (Dog Boarding's about-us / faqs / request-a-stay) read the same way.
+        $labels += ['about-us' => 'About', 'faqs' => 'FAQs', 'request-a-stay' => 'Request a Stay'];
 
         if ((bool) ($page['is_home'] ?? false)) {
             return 'Home';
@@ -91,9 +93,9 @@ final class WebsiteNavigationBuilder
                 $slug === 'packages' => $packages = $page,
                 $slug === 'gallery' => $gallery = $page,
                 $slug === 'backdrops' => $backdrops = $page,
-                $slug === 'photo-booth-about' => $about = $page,
-                $slug === 'photo-booth-faq' => $faq = $page,
-                $slug === 'photo-booth-contact' => $contact = $page,
+                \App\Library\Website\WebsiteNicheVocabulary::roleForSlug($slug) === 'about' => $about = $page,
+                \App\Library\Website\WebsiteNicheVocabulary::roleForSlug($slug) === 'faq' => $faq = $page,
+                \App\Library\Website\WebsiteNicheVocabulary::roleForSlug($slug) === 'contact' => $contact = $page,
                 $slug === 'blog' => $blog = $page,
                 str_starts_with($slug, 'serving-') => $areas[] = $page,
                 default => $other[] = $page,

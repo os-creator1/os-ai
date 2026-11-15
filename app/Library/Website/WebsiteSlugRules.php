@@ -52,7 +52,7 @@ final class WebsiteSlugRules
     ];
 
     /** The pages the generator always names itself; a generated slug must never land on one. */
-    public const GENERATED_FIXED = ['services', 'packages', 'gallery', 'backdrops', 'photo-booth-about', 'photo-booth-faq', 'photo-booth-contact'];
+    public const GENERATED_FIXED = ['services', 'packages', 'gallery', 'backdrops', 'photo-booth-about', 'photo-booth-faq', 'photo-booth-contact', 'about-us', 'faqs', 'request-a-stay'];
 
     /**
      * A generated slug ("service-<name>", "serving-<area>") that is always valid: lowercase,

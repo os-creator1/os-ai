@@ -599,7 +599,8 @@ final class WebsiteSetupAnswerApplier
      */
     private function applyForm(Business $business, Website $website, array $value): void
     {
-        $preset = WebsiteFormPresets::photoBoothQuoteRequest();
+        $dog = DogBoardingSetup::appliesToBusiness($business);
+        $preset = $dog ? WebsiteFormPresets::dogBoardingStayRequest() : WebsiteFormPresets::photoBoothQuoteRequest();
 
         if (array_is_list($value)) {
             $selected = array_map('strval', $value);
@@ -625,8 +626,13 @@ final class WebsiteSetupAnswerApplier
         // Forms screen, and Website Health says so until it has.
         $locationId = \App\Models\Contacts::singleActiveLocationIdFor($business->id);
 
+        // Dog Boarding stay requests open an opportunity in the Blueprint's own Stay Requests pipeline.
+        $pipelineId = $dog ? WebsiteFormPresets::dogBoardingPipelineId((int) $business->id) : null;
+
         if ($form !== null) {
-            $form->update(['fields' => $fields] + ($form->location_id === null && $locationId !== null ? ['location_id' => $locationId] : []));
+            $form->update(['fields' => $fields]
+                + ($form->location_id === null && $locationId !== null ? ['location_id' => $locationId] : [])
+                + ($form->crm_pipeline_id === null && $pipelineId !== null ? ['crm_pipeline_id' => $pipelineId] : []));
 
             return;
         }
@@ -635,10 +641,11 @@ final class WebsiteSetupAnswerApplier
             'website_id' => $website->id,
             'business_id' => $business->id,
             'type' => WebsiteForm::TYPE_QUOTE_REQUEST,
-            'name' => 'Photo Booth Quote Request',
+            'name' => $dog ? 'Request a Stay' : 'Photo Booth Quote Request',
             'fields' => $fields,
-            'submit_label' => 'Request a quote',
+            'submit_label' => $dog ? 'Send stay request' : 'Request a quote',
             'location_id' => $locationId,
+            'crm_pipeline_id' => $pipelineId,
         ]);
     }
 

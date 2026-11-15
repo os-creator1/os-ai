@@ -6,7 +6,8 @@
     $c = $guidedReview['counts'];
     $stepUrl = fn (string $key) => route('customer.workspaces.businesses.website.setup.step', [$workspaceUid, $businessUid, $key]);
     $design = $guidedReview['template'] ? \App\Library\Website\Design\WebsiteDesigns::forTemplateKey($guidedReview['template']) : null;
-    $pricingLabel = ['fixed_packages' => 'Fixed package pricing', 'starting_from' => 'Prices starting from an amount', 'custom_quote' => 'Custom quote'][$c['pricing'] ?? ''] ?? '—';
+    $dog = (bool) ($guidedReview['dog_boarding'] ?? false);
+    $pricingLabel = ['fixed_packages' => $dog ? 'Fixed rates' : 'Fixed package pricing', 'starting_from' => 'Prices starting from an amount', 'custom_quote' => $dog ? 'Contact us for pricing' : 'Custom quote'][$c['pricing'] ?? ''] ?? '—';
 @endphp
 <div class="card mb-3" data-testid="guided-review">
     <div class="card-body">
@@ -16,16 +17,20 @@
             <dd class="col-sm-8">{{ $guidedReview['business']['name'] }}@if ($guidedReview['business']['base']) <span class="text-caption"> &middot; {{ $guidedReview['business']['base'] }}</span>@endif</dd>
             <dt class="col-sm-4">Contact</dt>
             <dd class="col-sm-8">{{ collect([$guidedReview['business']['phone'], $guidedReview['business']['email']])->filter()->implode(' · ') ?: '—' }}</dd>
-            <dt class="col-sm-4">Booths</dt>
+            <dt class="col-sm-4">{{ $dog ? 'Services' : 'Booths' }}</dt>
             <dd class="col-sm-8" data-count="booths">{{ $c['booths'] }}</dd>
+            @unless ($dog)
             <dt class="col-sm-4">Event types</dt>
             <dd class="col-sm-8" data-count="events">{{ $c['events'] }}</dd>
+            @endunless
             <dt class="col-sm-4">Pricing</dt>
             <dd class="col-sm-8">{{ $pricingLabel }}</dd>
-            <dt class="col-sm-4">Packages</dt>
+            <dt class="col-sm-4">{{ $dog ? 'Rates & packages' : 'Packages' }}</dt>
             <dd class="col-sm-8" data-count="packages">{{ $c['packages'] }}</dd>
+            @unless ($dog)
             <dt class="col-sm-4">Backdrops</dt>
             <dd class="col-sm-8" data-count="backdrops">{{ $c['backdrops'] }}</dd>
+            @endunless
             <dt class="col-sm-4">Service areas</dt>
             <dd class="col-sm-8">{{ $guidedReview['business']['areas'] }} <a class="ms-2" href="{{ $stepUrl('service_area_cities') }}" data-testid="edit-service-areas">Edit</a></dd>
             <dt class="col-sm-4">Uploaded photos</dt>
@@ -42,7 +47,7 @@
     <div class="card-body">
         @if ($guidedReview['missing'] === [])
             <h6 class="mb-1">Your photos are ready to publish</h6>
-            <p class="text-caption mb-0">Your homepage, every booth and every backdrop have a real photo.</p>
+            <p class="text-caption mb-0">{{ $dog ? 'Your homepage and every service have a real photo.' : 'Your homepage, every booth and every backdrop have a real photo.' }}</p>
         @else
             <h6 class="mb-1">Photos still needed to publish</h6>
             <p class="text-caption">You can generate your website now. Before you publish it, every item below needs a real photo.</p>

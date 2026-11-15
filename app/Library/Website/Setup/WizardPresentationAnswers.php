@@ -28,7 +28,8 @@ final class WizardPresentationAnswers
         $entries = self::answerForModule($response, 'custom_section');
 
         if (! is_array($entries) || $entries === []) {
-            return null;
+            // Dog Boarding: the owner's own policy answers are the Boarding Policies page (null when they wrote none).
+            return DogBoardingSetup::appliesTo($response) ? DogBoardingSetup::policiesSection((array) ($response->answers ?? [])) : null;
         }
 
         $entry = $entries[0];
@@ -288,6 +289,7 @@ final class WizardPresentationAnswers
             'customer_faq' => self::customerFaq($response) ?? [],
             'catalog_uids' => self::catalogSelection($response),
             'package_links' => $links,
+            'niche' => $response->version->questionnaireDefinition?->niche_key,
             'answers' => (array) ($response->answers ?? []),
         ];
     }
