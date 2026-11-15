@@ -56,18 +56,19 @@
     @php
         $ids = [$workspaceUid, $businessUid];
         $doneCount = collect($checklist)->where('done', true)->count();
-        $needsAnswers = ($aboutFaqMissingCount ?? 0) > 0 ? ['photo-booth-about', 'photo-booth-faq'] : [];
+        $needsAnswers = ($aboutFaqMissingCount ?? 0) > 0 ? ['photo-booth-about', 'photo-booth-faq', 'about-us', 'faqs'] : [];
         $canReuseGallery = $isPhotoBooth && $galleryPage && ! empty(collect($galleryPage->sections ?? [])->firstWhere('type', 'gallery')['data']['items'] ?? []);
         // No page-type column exists: generated pages follow fixed slug conventions (service-*, serving-*).
         $groups = [
-            'Main pages' => $pages->reject(fn ($p) => str_starts_with($p->slug, 'service-') || str_starts_with($p->slug, 'serving-')),
-            'Service pages' => $pages->filter(fn ($p) => str_starts_with($p->slug, 'service-')),
+            // A niche with its own addresses (Dog Boarding) drops the "service-" prefix; the stored page role still says "service".
+            'Main pages' => $pages->reject(fn ($p) => str_starts_with($p->slug, 'service-') || str_starts_with($p->slug, 'serving-') || $p->page_role === 'service'),
+            'Service pages' => $pages->filter(fn ($p) => str_starts_with($p->slug, 'service-') || $p->page_role === 'service'),
             'Location pages' => $pages->filter(fn ($p) => str_starts_with($p->slug, 'serving-')),
         ];
         $iconFor = fn ($p) => $p->is_home ? 'house' : match (true) {
             $p->slug === 'gallery' => 'images',
-            str_ends_with($p->slug, 'faq') => 'circle-help',
-            str_starts_with($p->slug, 'service-') => 'camera',
+            str_ends_with($p->slug, 'faq') || $p->slug === 'faqs' => 'circle-help',
+            str_starts_with($p->slug, 'service-') || $p->page_role === 'service' => 'camera',
             str_starts_with($p->slug, 'serving-') => 'map-pin',
             default => 'file-text',
         };

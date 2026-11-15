@@ -600,4 +600,19 @@ class DogBoardingWebsiteJourneyTest extends TestCase
 
         $this->assertStringContainsString('Edited by the owner.', json_encode($website->fresh()->pages()->where('slug', 'about-us')->firstOrFail()->sections));
     }
+
+    public function test_a_business_with_the_other_industry_gets_the_dog_boarding_setup_and_site(): void
+    {
+        $this->dogTenant(business: ['industry' => 'other']);
+        $this->assertSame('other', (string) ($this->business->fresh()->industry->value ?? $this->business->fresh()->industry));
+        $this->assertSame('dog_boarding', $this->wizardSession()->version->questionnaireDefinition->niche_key);
+
+        $this->completeDogSetup();
+        $this->uploadGalleryPhotos(3);
+        $website = $this->generate();
+
+        $this->assertContains('request-a-stay', $website->pages()->pluck('slug')->all());
+        $this->get(route('customer.workspaces.businesses.website.pages.index', [$this->workspace->uid, $this->business->uid]))
+            ->assertOk()->assertDontSee('photo booth', false);
+    }
 }
