@@ -9,12 +9,17 @@ use App\Library\Forms\Exceptions\FormStaleVersionException;
 use App\Library\Forms\FormAnalyticsReader;
 use App\Library\Forms\FormDefinitionNormalizer;
 use App\Library\Forms\FormManager;
+use App\Library\Forms\FormNotificationWorkflows;
 use App\Library\Forms\FormSubmissionReader;
 use App\Models\FormVersion;
 use Illuminate\Contracts\View\View;
+use App\Enums\Entitlement\PlatformFeature;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Gate;
+use Symfony\Component\HttpKernel\Exception\HttpExceptionInterface;
 
 /**
  * Forms visual builder — the editor's JSON endpoints (autosave, preview) and the
@@ -42,6 +47,7 @@ class FormBuilderController extends Controller
         private readonly FormDefinitionNormalizer $definitions,
         private readonly FormSubmissionReader $reader,
         private readonly FormAnalyticsReader $analytics,
+        private readonly FormNotificationWorkflows $notifier,
     ) {
     }
 
@@ -104,12 +110,63 @@ class FormBuilderController extends Controller
         [$workspace, $business] = $this->formsScope($workspaceUid, $businessUid);
         $form = $this->formOrAbort($business, $formUid);
 
+        // Notifications ARE Automations. The cards only become buttons for someone who
+        // may manage automations on a Business entitled to them; otherwise the tab
+        // says so instead of offering a door that would answer 401/404.
+        $canAutomate = $this->canManageAutomations($workspaceUid, $businessUid);
+
         return view('customer.business.forms.notifications', [
             'workspace' => $workspace,
             'business' => $business,
             'form' => $form,
             'tab' => 'notifications',
+            'canAutomate' => $canAutomate,
+            'eligibility' => $canAutomate ? $this->notifier->eligibility($business) : [],
+            'linked' => $canAutomate ? $this->notifier->linked($business, $form) : [],
         ]);
+    }
+
+    /**
+     * "Set up" on a notification card: a NEW DRAFT automation pointed at this form
+     * with one starter step, opened in the existing workflow editor. Never published
+     * here — nothing is sent until the person reviews and publishes it there.
+     */
+    public function startNotification(string $workspaceUid, string $businessUid, string $formUid, string $action): RedirectResponse
+    {
+        [, $business] = $this->formsScope($workspaceUid, $businessUid);
+        $form = $this->formOrAbort($business, $formUid);
+
+        abort_unless(in_array($action, FormNotificationWorkflows::ACTIONS, true), 404);
+
+        $this->authorize('automations');
+        $this->resolveEntitledBusinessTenancy($workspaceUid, $businessUid, PlatformFeature::Automations->value);
+
+        $eligibility = $this->notifier->eligibility($business)[$action];
+
+        if (! $eligibility['available']) {
+            return redirect()
+                ->route('customer.workspaces.businesses.forms.notifications', [$workspaceUid, $businessUid, $form->uid])
+                ->withErrors(['forms' => $eligibility['reason'] ?: 'That channel is not set up for this business yet.']);
+        }
+
+        $workflow = $this->notifier->start($business, $form, $action, (int) Auth::id());
+
+        return redirect()->route('customer.workspaces.businesses.automations.workflows.show', [$workspaceUid, $businessUid, $workflow->uid]);
+    }
+
+    private function canManageAutomations(string $workspaceUid, string $businessUid): bool
+    {
+        if (! Gate::allows('automations')) {
+            return false;
+        }
+
+        try {
+            $this->resolveEntitledBusinessTenancy($workspaceUid, $businessUid, PlatformFeature::Automations->value);
+        } catch (HttpExceptionInterface) {
+            return false;
+        }
+
+        return true;
     }
 
     public function analytics(string $workspaceUid, string $businessUid, string $formUid): View
@@ -125,6 +182,7 @@ class FormBuilderController extends Controller
             'form' => $form,
             'tab' => 'analytics',
             'stats' => $this->analytics->summary($business, $form, $visible, (bool) $form->currentVersion()?->isMultiPage()),
+            'shareUrl' => $this->formShareUrl($form, $visible),
         ]);
     }
 

@@ -63,10 +63,22 @@ class FormsController extends Controller
             ->all();
         $activeFormIds = $forms->filter(static fn (Form $form) => $form->isActive())->pluck('id')->all();
 
+        // Response counts for the list, bounded to the Locations this actor may reach —
+        // never a count that includes a Location they cannot see.
+        $visibleIds = array_keys($this->reader->visibleLocations($business, (int) Auth::id()));
+        $responseCounts = $forms->isEmpty() || $visibleIds === [] ? collect() : \Illuminate\Support\Facades\DB::table('form_submissions')
+            ->where('business_id', $business->id)
+            ->whereIn('form_id', $forms->pluck('id'))
+            ->whereIn('business_location_id', $visibleIds)
+            ->selectRaw('form_id, COUNT(*) as n')
+            ->groupBy('form_id')
+            ->pluck('n', 'form_id');
+
         return view('customer.business.forms.index', [
             'workspace' => $workspace,
             'business' => $business,
             'forms' => $forms,
+            'responseCounts' => $responseCounts,
             'liveLinks' => $activeFormIds === [] || $openLocationIds === [] ? collect() : FormDeployment::query()
                 ->whereIn('form_id', $activeFormIds)
                 ->where('source', FormDeploymentSource::DirectLink->value)

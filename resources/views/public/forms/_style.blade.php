@@ -6,7 +6,7 @@
     $design = $design ?? [];
     $accent = $design['accent'] ?? '#2563eb';
     $pageBg = $design['background'] ?? '#f3f5f9';
-    $radius = ['none' => '0px', 'sm' => '4px', 'md' => '8px', 'lg' => '16px'][$design['radius'] ?? 'md'] ?? '8px';
+    $radius = ['none' => '0px', 'sm' => '4px', 'md' => '8px', 'lg' => '16px', 'pill' => '999px'][$design['radius'] ?? 'md'] ?? '8px';
     $width = ['narrow' => '30rem', 'medium' => '40rem', 'wide' => '52rem'][$design['width'] ?? 'medium'] ?? '40rem';
 @endphp
 <style>
@@ -14,7 +14,7 @@
         font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;color:var(--pf-text);line-height:1.45}
     .pf-scope *{box-sizing:border-box}
     .pf-shell{max-width:var(--pf-width);margin:0 auto;padding:2rem 1rem}
-    .pf-card{background:#fff;border-radius:calc(var(--pf-radius) + 4px);padding:1.75rem;box-shadow:0 1px 3px rgba(16,24,40,.08),0 8px 24px rgba(16,24,40,.06)}
+    .pf-card{background:#fff;border-radius:min(calc(var(--pf-radius) + 4px),28px);padding:1.75rem;box-shadow:0 1px 3px rgba(16,24,40,.08),0 8px 24px rgba(16,24,40,.06)}
     .pf-title{font-size:1.6rem;margin:0 0 .35rem;line-height:1.2}
     .pf-step{color:var(--pf-muted);margin:.25rem 0 1rem;font-size:.9rem}
     .pf-intro{color:var(--pf-muted);margin:.25rem 0 1.1rem}
@@ -28,6 +28,7 @@
     .pf-help{display:block;color:var(--pf-muted);font-size:.82rem;margin-top:.25rem}
     .pf-input,.pf-select,.pf-textarea{width:100%;font:inherit;padding:.65rem .75rem;border:1px solid var(--pf-line);border-radius:var(--pf-radius);background:#fff;color:inherit}
     .pf-input:focus,.pf-select:focus,.pf-textarea:focus{outline:2px solid color-mix(in srgb,var(--pf-accent) 35%,transparent);border-color:var(--pf-accent)}
+    .pf-textarea{border-radius:min(var(--pf-radius),22px)}
     .pf-textarea{min-height:7rem;resize:vertical}
     .pf-choice{display:flex;align-items:flex-start;gap:.55rem;margin:.3rem 0;font-weight:400}
     .pf-choice input{margin-top:.25rem;accent-color:var(--pf-accent)}

@@ -50,13 +50,17 @@ class FormSubmissionsController extends Controller
             (int) $request->query('page', 1),
         ) ?? abort(404);
 
-        return view('customer.business.forms.submissions', [
+        return view($form ? 'customer.business.forms.submissions' : 'customer.business.forms.responses', [
             'workspace' => $workspace,
             'business' => $business,
             'submissions' => $submissions,
             'locations' => $visible,
             'selectedLocationUid' => is_string($locationUid) ? $locationUid : null,
             'form' => $form,
+            'tab' => 'submissions',
+            // The All-responses page filters by form: names only, this Business's own forms.
+            'forms' => $form ? collect() : Form::query()->where('business_id', $business->id)->orderBy('name')->limit(200)->get(['id', 'uid', 'name']),
+            'shareUrl' => $form ? $this->formShareUrl($form, $visible) : null,
         ]);
     }
 

@@ -2,108 +2,100 @@
 
 @section('title', 'Forms')
 
-@section('page-style')
-    @include('partials.cx._styles')
-    <style>
-        .forms-state { display: flex; flex-wrap: wrap; align-items: center; gap: .375rem .625rem; margin-top: .3125rem; }
-        .forms-state .cx-hint { margin: 0; }
-    </style>
-@endsection
-
 @section('content')
     @php
         // Forms V1 — presentation only. Every authorization answer (tenancy,
         // capability, entitlement) was decided before this view rendered; every
         // control below posts to a route that runs the full chain again. A
         // public link is offered only for an Active form with an enabled direct
-        // link at an active Location this actor may reach ($liveLinks).
+        // link at an active Location this actor may reach ($liveLinks), and response
+        // counts are bounded to the Locations this actor may reach ($responseCounts).
         $scope = [$workspace->uid, $business->uid];
         $liveLinks = $liveLinks ?? collect();
+        $responseCounts = $responseCounts ?? collect();
         $createUrl = route('customer.workspaces.businesses.forms.create', $scope);
         $responsesUrl = route('customer.workspaces.businesses.forms.submissions.index', $scope);
+        // A server-side refusal from the dialog's POST (bounced back here) re-opens it.
+        $reopen = $errors->has('name') || $errors->has('forms') || old('name') !== null;
     @endphp
 
+    @include('customer.business.forms._assets')
     @include('customer.business.forms._messages')
 
-    <header class="cx-page-head">
-        <div>
-            <h1 class="cx-page-title">Forms</h1>
-            <p class="cx-page-sub">
-                Questionnaires and lead forms for <strong>{{ $business->name }}</strong>. Build a form once, then offer it at the
-                locations you choose.
-            </p>
-        </div>
-        <div class="cx-page-actions">
-            <x-button variant="secondary" icon="message-square" :href="$responsesUrl" data-role="forms-submissions">View all responses</x-button>
-            <x-button variant="primary" icon="plus" :href="$createUrl" data-role="forms-add">New form</x-button>
-        </div>
-    </header>
-
-    <div class="cx-callout mb-2">
-        <x-ds-icon name="map-pin" size="15" aria-hidden="true" />
-        <span class="cx-callout-text">Each response belongs to the location it came through.</span>
-    </div>
-
-    @if ($forms->isEmpty())
-        <section class="cx-card">
-            <div class="cx-card-body">
-                <p class="mb-0 text-caption" data-role="forms-empty">No forms yet. Create your first form.</p>
+    <div class="mgf" data-role="forms-index">
+        <div class="mgf-pagehead">
+            <div>
+                <h1>Forms</h1>
+                <p data-role="forms-count">{{ $forms->count() }} {{ \Illuminate\Support\Str::plural('form', $forms->count()) }}</p>
             </div>
-        </section>
-    @else
-        <h2 class="cx-card-title mb-1">Your forms <span class="cx-count ms-25">{{ $forms->count() }} {{ \Illuminate\Support\Str::plural('form', $forms->count()) }}</span></h2>
+            <div class="mgf-index-actions">
+                <a class="mgf-btn is-outline" href="{{ $responsesUrl }}" data-role="forms-submissions">@include('customer.business.forms._icon', ['n' => 'inbox']) View all responses</a>
+                <a class="mgf-btn is-primary" href="{{ $createUrl }}" data-role="forms-add" data-new-form>@include('customer.business.forms._icon', ['n' => 'plus']) New form</a>
+            </div>
+        </div>
 
-        <section class="cx-card">
-            <ul class="cx-list" data-role="forms-list">
+        <div class="mgf-callout" style="padding:10px 16px">
+            @include('customer.business.forms._icon', ['n' => 'pin'])
+            <span>Each response belongs to the location it came through.</span>
+        </div>
+
+        @if ($forms->isEmpty())
+            <section class="mgf-card mgf-empty">
+                <span class="mgf-empty-ic">@include('customer.business.forms._icon', ['n' => 'form'])</span>
+                <div class="mgf-empty-copy">
+                    <b>No forms yet</b>
+                    <span data-role="forms-empty">No forms yet. Create your first form.</span>
+                </div>
+                <a class="mgf-btn is-primary" href="{{ $createUrl }}" data-new-form>@include('customer.business.forms._icon', ['n' => 'plus']) New form</a>
+            </section>
+        @else
+            <section class="mgf-list" data-role="forms-list" aria-label="Your forms">
                 @foreach ($forms as $form)
                     @php
                         $state = $form->lifecycle_state;
                         $links = $liveLinks->get($form->id, collect());
                         $editUrl = route('customer.workspaces.businesses.forms.edit', array_merge($scope, [$form->uid]));
-                        $pill = match ($state) {
-                            \App\Enums\Forms\FormLifecycleState::Active => 'is-success',
-                            \App\Enums\Forms\FormLifecycleState::Inactive => 'is-warning',
-                            default => '',
-                        };
+                        $count = (int) ($responseCounts[$form->id] ?? 0);
+                        $isLive = $state === \App\Enums\Forms\FormLifecycleState::Active;
                     @endphp
-                    <li class="cx-row" data-form="{{ $form->uid }}">
-                        <div class="cx-row-main">
-                            <span class="cx-tile {{ $state === \App\Enums\Forms\FormLifecycleState::Active ? '' : 'is-neutral' }}" aria-hidden="true">
-                                <x-ds-icon name="clipboard-list" size="17" />
-                            </span>
-                            <span class="cx-row-text">
-                                <a href="{{ $editUrl }}" class="cx-row-title">{{ $form->name }}</a>
-                                <span class="forms-state">
-                                    <span class="cx-pill has-dot {{ $pill }}" data-role="forms-state">{{ $state->label() }}</span>
-                                    <span class="cx-hint" data-role="forms-readiness">
-                                        @if ($state === \App\Enums\Forms\FormLifecycleState::Draft)
-                                            Not public yet. Open it, choose where to offer it, then activate it.
-                                        @elseif ($state === \App\Enums\Forms\FormLifecycleState::Inactive)
-                                            Switched off, so it accepts no responses. Past responses stay readable.
-                                        @elseif ($links->isEmpty())
-                                            Active, but not offered at any of your locations yet.
-                                        @else
-                                            Live at {{ $links->count() }} {{ \Illuminate\Support\Str::plural('location', $links->count()) }}.
-                                        @endif
-                                    </span>
-                                </span>
+                    <div class="mgf-row" data-form="{{ $form->uid }}">
+                        <span class="mgf-avatar" aria-hidden="true">@include('customer.business.forms._icon', ['n' => 'form'])</span>
+                        <div class="mgf-row-main">
+                            <a href="{{ $editUrl }}" data-role="forms-open" style="color:inherit"><b>{{ $form->name }}</b></a>
+                            <span data-role="forms-readiness">
+                                @if ($state === \App\Enums\Forms\FormLifecycleState::Draft)
+                                    Not public yet. Open it, choose where to offer it, then activate it.
+                                @elseif ($state === \App\Enums\Forms\FormLifecycleState::Inactive)
+                                    Switched off, so it accepts no responses. Past responses stay readable.
+                                @elseif ($links->isEmpty())
+                                    Active, but not offered at any of your locations yet.
+                                @else
+                                    Live at {{ $links->count() }} {{ \Illuminate\Support\Str::plural('location', $links->count()) }}.
+                                @endif
+                                · {{ $count }} {{ \Illuminate\Support\Str::plural('response', $count) }}
                             </span>
                         </div>
-                        <div class="cx-row-actions">
-                            <x-button variant="secondary" size="sm" :href="$responsesUrl.'?form='.$form->uid">Responses</x-button>
+                        <div class="mgf-row-meta">
+                            <span class="mgf-pill {{ $isLive ? 'is-ok' : ($state === \App\Enums\Forms\FormLifecycleState::Inactive ? 'is-warn' : '') }}" data-role="forms-state">{{ $isLive ? 'Live' : $state->label() }}</span>
+                            <a class="mgf-btn is-sm is-outline" href="{{ $responsesUrl.'?form='.$form->uid }}">Responses</a>
                             @if ($links->count() === 1)
-                                <x-button variant="secondary" size="sm" icon="external-link" :href="route('public.forms.show', [$links->first()->uid])"
-                                          target="_blank" rel="noopener" data-role="forms-open-live" aria-label="Open the live {{ $form->name }} form">View live</x-button>
+                                <a class="mgf-btn is-sm is-outline" href="{{ route('public.forms.show', [$links->first()->uid]) }}" target="_blank" rel="noopener" data-role="forms-open-live" aria-label="Open the live {{ $form->name }} form">View live</a>
                             @endif
-                            <a href="{{ $editUrl }}" class="btn btn-sm btn-outline-primary d-inline-flex align-items-center gap-1" data-role="forms-open">
-                                Open form <x-ds-icon name="chevron-right" size="14" aria-hidden="true" />
-                            </a>
+                            <a class="mgf-btn is-sm is-outline" href="{{ $editUrl }}">Open form</a>
                         </div>
-                    </li>
+                    </div>
                 @endforeach
-            </ul>
-        </section>
-    @endif
+            </section>
+        @endif
+    </div>
 
-    <a href="{{ $createUrl }}" class="cx-add-row is-standalone"><x-ds-icon name="plus" size="15" aria-hidden="true" />New form</a>
+    {{-- New form dialog. The `forms.create` page stays as the no-JS / direct-link fallback;
+         with JS, every [data-new-form] link opens this instead. --}}
+    <div class="mgf mgf-dlg-back" id="mgf-nf-back" hidden data-open="{{ $reopen ? '1' : '0' }}" data-role="forms-new-backdrop">
+        @include('customer.business.forms._new_form', ['dialog' => true])
+    </div>
+@endsection
+
+@section('page-script')
+    <script src="{{ asset('js/forms/new-form-dialog.js') }}?v={{ filemtime(public_path('js/forms/new-form-dialog.js')) }}"></script>
 @endsection

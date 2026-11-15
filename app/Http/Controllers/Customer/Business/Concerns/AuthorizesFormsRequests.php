@@ -111,4 +111,34 @@ trait AuthorizesFormsRequests
 
         return $submission;
     }
+
+    /**
+     * The one link the empty state can honestly offer to copy: this form is Active and
+     * has an enabled direct link at an active Location THIS actor may reach. Anything
+     * else returns null and the view points at Settings instead of inventing a link.
+     *
+     * @param  array<int, \App\Models\BusinessLocation>  $visible
+     */
+    protected function formShareUrl(Form $form, array $visible): ?string
+    {
+        if (! $form->isActive()) {
+            return null;
+        }
+
+        $open = collect($visible)->filter(static fn ($location) => $location->isActive())->keys()->all();
+
+        if ($open === []) {
+            return null;
+        }
+
+        $deployment = \App\Models\FormDeployment::query()
+            ->where('form_id', $form->id)
+            ->where('source', \App\Enums\Forms\FormDeploymentSource::DirectLink->value)
+            ->where('is_enabled', true)
+            ->whereIn('business_location_id', $open)
+            ->orderBy('id')
+            ->first();
+
+        return $deployment ? route('public.forms.show', [$deployment->uid]) : null;
+    }
 }
