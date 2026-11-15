@@ -134,6 +134,61 @@ class VoiceCallController extends CustomerBaseController
         return response()->json(['data' => $this->present($call, $contact?->uid)]);
     }
 
+    public const DISPOSITIONS = ['interested', 'booked', 'follow_up', 'not_a_fit', 'voicemail'];
+
+    /**
+     * Post-call wrap-up from the call popup: the caller's note and "How did it go?". Only the user who placed
+     * or answered the call may write it, only once the call is over, and a note on a call with a Contact is also
+     * appended (dated) to that Contact's built-in Notes field, so it really is "saved to this contact".
+     */
+    public function wrapup(Request $request, string $workspaceUid, string $businessUid, string $callUid): JsonResponse
+    {
+        [, $business] = $this->resolveEntitledBusinessTenancy($workspaceUid, $businessUid, PlatformFeature::Crm->value);
+        $this->requireCalling($business);
+
+        $data = $request->validate([
+            'note' => ['nullable', 'string', 'max:2000'],
+            'disposition' => ['nullable', 'string', 'in:' . implode(',', self::DISPOSITIONS)],
+        ]);
+
+        $call = $this->callFor($business, $callUid);
+        $mine = $call !== null && ((int) $call->initiated_by_user_id === (int) Auth::id() || (int) $call->answered_by_user_id === (int) Auth::id());
+        $contact = $call?->contact_id !== null ? Contacts::query()->where('business_id', $business->id)->find($call->contact_id) : null;
+
+        if ($call === null || ! $mine || ($call->kind !== 'inbound' && $contact !== null && ! $this->locationAccessible($contact))) {
+            return $this->error('call_not_found', 'Call not found.', 404);
+        }
+
+        if (! in_array($call->status, [BusinessVoiceCall::STATUS_ENDED, BusinessVoiceCall::STATUS_FAILED], true)) {
+            return $this->error('call_not_finished', 'Notes are saved when the call ends.', 409);
+        }
+
+        // Saved once: a second submit (double click, retry) never appends the note to the Contact twice.
+        if ($call->wrapup_saved_at !== null) {
+            return response()->json(['data' => ['saved' => true, 'duplicate' => true]]);
+        }
+
+        $note = trim((string) ($data['note'] ?? ''));
+
+        \Illuminate\Support\Facades\DB::transaction(function () use ($call, $contact, $note, $data): void {
+            $call->forceFill([
+                'wrapup_note' => $note !== '' ? $note : null,
+                'wrapup_disposition' => $data['disposition'] ?? null,
+                'wrapup_saved_at' => now(),
+            ])->save();
+
+            if ($note !== '' && $contact !== null && $contact->contactGroup !== null && Gate::allows('update_contact')) {
+                $fieldId = app(\App\Library\Contacts\ContactEmailIdentity::class)->ensureField($contact->contactGroup, 'NOTES');
+                $value = \App\Models\ContactsCustomField::query()->firstOrNew(['contact_id' => $contact->id, 'field_id' => $fieldId]);
+                $entry = '[Call ' . now()->format('M j, Y g:ia') . '] ' . $note;
+                $value->value = trim((string) $value->value) === '' ? $entry : $value->value . "\n" . $entry;
+                $value->save();
+            }
+        });
+
+        return response()->json(['data' => ['saved' => true, 'duplicate' => false, 'on_contact' => $note !== '' && $contact !== null]]);
+    }
+
     public function show(string $workspaceUid, string $businessUid, string $callUid): JsonResponse
     {
         [, $business] = $this->resolveEntitledBusinessTenancy($workspaceUid, $businessUid, PlatformFeature::Crm->value);
@@ -275,6 +330,8 @@ class VoiceCallController extends CustomerBaseController
             // What a calling UI shows: connecting (browser/call being set up), ringing, connected, ended, failed.
             'ui_state' => ['requested' => 'connecting', 'initiated' => 'ringing', 'answered' => 'connected', 'ended' => 'ended', 'failed' => 'failed'][$call->status] ?? 'connecting',
             'direction' => $inbound ? 'inbound' : 'outbound',
+            // The Business's own calling number this call used (never another Business's: it is the call row's own number).
+            'from_number' => $this->fromNumber($call),
             'outcome' => $call->outcome,
             'failure_code' => $call->failure_code,
             'hangup_cause' => $call->hangup_cause,
@@ -287,6 +344,19 @@ class VoiceCallController extends CustomerBaseController
                 ? ['browser' => true, 'note' => 'Audio is carried by the browser softphone.']
                 : ['browser' => false, 'note' => 'Placing a call does not connect browser audio.'],
         ], $inbound ? ['audio' => ['browser' => true, 'note' => 'Audio is carried by the browser softphone.'], 'caller' => $caller] : []);
+    }
+
+    private function fromNumber(BusinessVoiceCall $call): ?string
+    {
+        if ($call->business_messaging_number_id === null) {
+            return null;
+        }
+
+        $number = \App\Models\BusinessMessagingNumber::query()
+            ->whereKey($call->business_messaging_number_id)
+            ->value('phone_number');
+
+        return $number !== null ? $this->formatNumber('+' . ltrim((string) $number, '+')) : null;
     }
 
     private function formatNumber(string $e164): string

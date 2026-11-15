@@ -7,7 +7,10 @@ use App\Exceptions\Workspace\BusinessWorkspaceMismatchException;
 use App\Exceptions\Workspace\WorkspaceBusinessNotFoundException;
 use App\Http\Controllers\Customer\CustomerBaseController;
 use App\Library\Calendar\CalendarScheduleService;
+use App\Enums\Automation\Workflow\ContactCreationSource;
 use App\Library\Contacts\ContactDirectory;
+use App\Library\Contacts\ContactEmailIdentity;
+use App\Library\Contacts\CountryDirectory;
 use App\Library\Crm\CrmLocationScope;
 use App\Library\CustomFields\CustomFieldRuleException;
 use App\Library\CustomFields\CustomFieldValueService;
@@ -21,6 +24,7 @@ use App\Models\Workspace;
 use App\Repositories\Contracts\ContactsRepository;
 use App\Repositories\Contracts\WorkspaceRepository;
 use Illuminate\Contracts\View\View;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
@@ -84,7 +88,11 @@ class ContactDirectoryController extends CustomerBaseController
 
         $added = \App\Library\Dashboard\Home\HomeDestinationRange::fromRequest($request, $business);
 
+        $modal = Gate::allows('create_contact') ? $this->newContactModalShell($business) : null;
+
         return view('customer.people.index', [
+            'browserCalling' => $this->browserCalling($workspaceUid, $businessUid, $business),
+            'modal' => $modal,
             'added' => $added,
             'contacts' => $this->directory->page($business, $search, (int) Auth::id(), $group?->id, $added),
             'search' => $search,
@@ -112,12 +120,64 @@ class ContactDirectoryController extends CustomerBaseController
             'browserCalling' => $this->browserCalling($workspaceUid, $businessUid, $business),
             'callHistory' => $this->callHistory($business, $contact),
             'actions' => $this->profileActions($workspace, $business, $contact, $profile, $canConverse),
+            'emailActions' => $this->emailActions($workspace, $business, $contact, $canConverse),
             // Business-defined Custom Fields: only shown for a Contact whose
             // Location the actor may access (the existing Contact Location ACL).
             'customFields' => $this->locationAccessible($contact)
                 ? $this->customFields->sectionFor($business, $contact)
                 : null,
         ]);
+    }
+
+    /**
+     * The Email block of the profile: the canonical address and what can honestly be done with it.
+     *
+     *  - state: none | valid | ambiguous (several different EMAIL values: never guess one).
+     *  - sendUrl: Conversations → Email composer for this Contact, only with a valid address, a connected
+     *    mailbox and the chat/contact permissions. With a valid address but no mailbox, connectUrl instead.
+     *
+     * @return array{state: string, email: ?string, sendUrl: ?string, connectUrl: ?string, canEdit: bool, updateUrl: string}
+     */
+    private function emailActions(Workspace $workspace, Business $business, Contacts $contact, bool $canConverse): array
+    {
+        $status = app(ContactEmailIdentity::class)->status($contact);
+        $scope = [$workspace->uid, $business->uid];
+        $connected = app(\App\Library\BusinessEmail\BusinessEmailAccountManager::class)->findForBusiness($business)?->isActive() === true;
+        $mayCompose = $canConverse && Gate::allows('chat_box') && Gate::allows('view_contact');
+
+        return [
+            'state' => $status['state'],
+            'email' => $status['email'],
+            'sendUrl' => $status['state'] === ContactEmailIdentity::STATE_VALID && $mayCompose && $connected
+                ? route('customer.workspaces.businesses.conversations.index', [...$scope, 'channel' => 'email', 'compose' => (string) $contact->uid])
+                : null,
+            'connectUrl' => $status['state'] === ContactEmailIdentity::STATE_VALID && $mayCompose && ! $connected
+                ? route('customer.workspaces.businesses.email.show', $scope)
+                : null,
+            'canEdit' => Gate::allows('update_contact') && $this->locationAccessible($contact) && $contact->contactGroup !== null,
+            'updateUrl' => route('customer.workspaces.businesses.people.email.update', [...$scope, (string) $contact->uid]),
+        ];
+    }
+
+    /** Add / change / clear the Contact's canonical EMAIL identity (the built-in field, created for the group on demand). */
+    public function updateEmail(Request $request, string $workspaceUid, string $businessUid, string $contactUid): RedirectResponse
+    {
+        [, $business] = $this->resolveBusiness($workspaceUid, $businessUid);
+        $this->authorize('update_contact');
+
+        $contact = $this->directory->findForBusiness($business, $contactUid, (int) Auth::id());
+        abort_if($contact === null || ! $this->locationAccessible($contact), 404);
+
+        $input = $request->validate(['email' => ['nullable', 'string', 'max:191']]);
+        $back = redirect()->route('customer.workspaces.businesses.people.show', [$workspaceUid, $businessUid, $contactUid]);
+
+        try {
+            $saved = app(ContactEmailIdentity::class)->save($contact, $input['email'] ?? null);
+        } catch (\InvalidArgumentException $exception) {
+            return $back->withInput()->withErrors(['email' => $exception->getMessage()]);
+        }
+
+        return $back->with('flash_success', $saved === null ? 'Email removed.' : 'Email saved.');
     }
 
     /**
@@ -149,7 +209,7 @@ class ContactDirectoryController extends CustomerBaseController
      * Browser calling is offered only to a user who may place calls, on a deployment where it is switched on and live.
      * The page then gets the endpoints the softphone needs; every one re-checks tenancy, entitlement and permission.
      *
-     * @return array{sessionUrl: string, placeUrl: string, statusUrl: string, hangupUrl: string}|null
+     * @return array{sessionUrl: string, placeUrl: string, statusUrl: string, hangupUrl: string, wrapupUrl: string}|null
      */
     private function browserCalling(string $workspaceUid, string $businessUid, Business $business): ?array
     {
@@ -170,6 +230,7 @@ class ContactDirectoryController extends CustomerBaseController
             'placeUrl' => route('customer.workspaces.businesses.calls.store', $scope),
             'statusUrl' => route('customer.workspaces.businesses.calls.show', [...$scope, '__CALL__']),
             'hangupUrl' => route('customer.workspaces.businesses.calls.hangup', [...$scope, '__CALL__']),
+            'wrapupUrl' => route('customer.workspaces.businesses.calls.wrapup', [...$scope, '__CALL__']),
         ];
     }
 
@@ -259,6 +320,150 @@ class ContactDirectoryController extends CustomerBaseController
         $location = $contact->location;
 
         return $location !== null && app(LocationAccessGuard::class)->userCanAccessLocation((int) Auth::id(), $location);
+    }
+
+    /** Static shell data for the modal: the country list and default region only (no group or Location names are rendered into the page). */
+    private function newContactModalShell(Business $business): array
+    {
+        $region = strtoupper((string) $business->country_code);
+
+        return [
+            'countries' => CountryDirectory::all(),
+            'defaultRegion' => CountryDirectory::isRegion($region) ? $region : CountryDirectory::DEFAULT_REGION,
+        ];
+    }
+
+    /** The modal's group / Location choices, fetched when it opens (same authorization as the add chooser). */
+    public function newContactOptions(string $workspaceUid, string $businessUid): JsonResponse
+    {
+        [, $business] = $this->resolveBusiness($workspaceUid, $businessUid);
+        $this->authorize('create_contact');
+        $data = $this->newContactModalData($business);
+
+        return response()->json(['groups' => $data['groups'], 'locations' => $data['locations'], 'canCreateFirstList' => $data['canCreateFirstList']]);
+    }
+
+    /**
+     * Data the New-contact modal needs: the Business's groups (not only those already holding
+     * contacts), the Locations the actor may create at, and the country list.
+     *
+     * @return array{groups: list<array{uid: string, name: string}>, locations: list<array{uid: string, name: string}>, countries: list<array<string, mixed>>, defaultRegion: string, canCreateFirstList: bool}
+     */
+    private function newContactModalData(Business $business): array
+    {
+        $groups = ContactGroups::query()->where('business_id', $business->id)->orderBy('name')->get(['id', 'uid', 'name']);
+        $locations = app(CrmLocationScope::class)->selectableLocations($business, (int) Auth::id());
+        $region = strtoupper((string) $business->country_code);
+
+        return [
+            'groups' => $groups->map(fn (ContactGroups $g) => ['uid' => (string) $g->uid, 'name' => (string) $g->name])->all(),
+            'locations' => $locations->count() > 1 ? $locations->map(fn ($l) => ['uid' => (string) $l->uid, 'name' => (string) $l->name])->values()->all() : [],
+            'countries' => CountryDirectory::all(),
+            'defaultRegion' => CountryDirectory::isRegion($region) ? $region : CountryDirectory::DEFAULT_REGION,
+            'canCreateFirstList' => $groups->isEmpty() && Gate::allows('create_contact_group'),
+        ];
+    }
+
+    /**
+     * The New-contact modal's save. The phone is validated against the CHOSEN country (libphonenumber)
+     * and stored in the one canonical digits form; the email is written to the built-in EMAIL identity
+     * field of the group (created on demand), never to an invented custom field. JSON in, JSON out;
+     * every tenancy failure is a 404 and nothing is created on a validation error.
+     */
+    public function store(Request $request, string $workspaceUid, string $businessUid): JsonResponse
+    {
+        [, $business] = $this->resolveBusiness($workspaceUid, $businessUid);
+        $this->authorize('create_contact');
+
+        $input = $request->validate([
+            'country' => ['required', 'string', 'size:2'],
+            'phone' => ['required', 'string', 'max:40'],
+            'first_name' => ['nullable', 'string', 'max:120'],
+            'last_name' => ['nullable', 'string', 'max:120'],
+            'email' => ['nullable', 'string', 'max:191'],
+            'group' => ['nullable', 'string', 'max:64'],
+            'notes' => ['nullable', 'string', 'max:5000'],
+            'location' => ['nullable', 'string', 'max:64'],
+        ]);
+
+        $errors = [];
+        $phone = CountryDirectory::validate($input['phone'], $input['country']);
+
+        if (! $phone['ok']) {
+            $errors['phone'] = [$phone['error']];
+        }
+
+        $email = trim((string) ($input['email'] ?? ''));
+
+        if ($email !== '' && \App\Library\BusinessEmail\BusinessEmailContactResolver::normalize($email) === null) {
+            $errors['email'] = ['Enter a valid email address.'];
+        }
+
+        // The group: only one of THIS Business's; the first list is offered, never forced on, when there is none.
+        $groupQuery = ContactGroups::query()->where('business_id', $business->id);
+        $group = filled($input['group'] ?? null)
+            ? (clone $groupQuery)->where('uid', (string) $input['group'])->first()
+            : (clone $groupQuery)->orderBy('id')->first();
+
+        if ($group === null && ! filled($input['group'] ?? null) && Gate::allows('create_contact_group') && ! $groupQuery->exists()) {
+            $group = $this->contactGroups->store(['name' => self::FIRST_LIST_NAME, 'business_id' => $business->id, 'user_id' => $business->customer_id]);
+        }
+
+        if ($group === null) {
+            $errors['group'] = ['Choose one of your groups.'];
+        }
+
+        // The Location: one is used automatically, several require the actor to choose one of THEIR reachable ones.
+        $locationId = null;
+        $options = app(CrmLocationScope::class)->selectableLocations($business, (int) Auth::id());
+
+        if ($options->isEmpty()) {
+            $errors['location'] = [__('locale.contacts.no_location_available')];
+        } elseif ($options->count() === 1 && ! filled($input['location'] ?? null)) {
+            $locationId = (int) $options->first()->id;
+        } else {
+            $chosen = $options->firstWhere('uid', (string) ($input['location'] ?? ''));
+            $chosen === null ? $errors['location'] = [__('locale.contacts.choose_a_location')] : $locationId = (int) $chosen->id;
+        }
+
+        if ($errors !== []) {
+            return response()->json(['status' => 'error', 'message' => 'Please fix the highlighted fields.', 'errors' => $errors], 422);
+        }
+
+        /** @var ContactGroups $group */
+        $identity = app(ContactEmailIdentity::class);
+        $identity->ensureField($group);
+        $notes = trim((string) ($input['notes'] ?? ''));
+
+        if ($notes !== '') {
+            $identity->ensureField($group, 'NOTES');
+        }
+
+        [$validator, $subscriber] = $this->contactGroups->createContactFromRequest($group->refresh(), array_filter([
+            'PHONE' => $phone['digits'],
+            'FIRST_NAME' => trim((string) ($input['first_name'] ?? '')),
+            'LAST_NAME' => trim((string) ($input['last_name'] ?? '')),
+            'EMAIL' => $email !== '' ? \App\Library\BusinessEmail\BusinessEmailContactResolver::normalize($email) : null,
+            'NOTES' => $notes !== '' ? $notes : null,
+        ], static fn ($value) => $value !== null) + ['FIRST_NAME' => '', 'LAST_NAME' => ''], ContactCreationSource::Manual, $locationId);
+
+        if ($subscriber === null) {
+            $messages = collect($validator->errors()->toArray())
+                ->mapWithKeys(fn ($list, $key) => [strtolower((string) $key) === 'phone' ? 'phone' : strtolower((string) $key) => $list])
+                ->map(fn ($list, $key) => $key === 'phone' ? ['A contact with this phone number already exists in this group.'] : $list)
+                ->all();
+
+            return response()->json(['status' => 'error', 'message' => 'The contact was not saved.', 'errors' => $messages], 422);
+        }
+
+        return response()->json([
+            'status' => 'success',
+            'message' => 'Contact saved.',
+            'contact' => [
+                'uid' => (string) $subscriber->uid,
+                'url' => route('customer.workspaces.businesses.people.show', [$workspaceUid, $businessUid, $subscriber->uid]),
+            ],
+        ]);
     }
 
     /**

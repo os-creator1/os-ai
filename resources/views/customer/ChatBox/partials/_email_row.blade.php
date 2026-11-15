@@ -20,7 +20,7 @@
     <div class="email-row-main">
         <div class="email-row-top">
             <h6 class="mb-0 text-truncate email-row-sender" data-role="conversation-row-title">{{ $emailTitle }}</h6>
-            <small class="chat-time email-row-time">{{ \App\Library\Tool::customerDateTime($thread['at']) }}</small>
+            <small class="chat-time email-row-time">{{ \App\Library\Conversations\RowTime::format(\Illuminate\Support\Carbon::parse($thread['at'])) }}</small>
         </div>
         <div class="email-row-subject text-truncate">
             {{ $thread['subject'] !== '' ? $thread['subject'] : '(no subject)' }}

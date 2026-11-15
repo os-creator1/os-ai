@@ -114,7 +114,14 @@
                     <x-button variant="outline" size="sm" icon="calendar" data-role="contact-book" :href="$actions['bookUrl']">Book appointment</x-button>
                 @endif
                 @if ($actions['messageUrl'] !== null)
-                    <x-button variant="primary" size="sm" icon="message-square" data-role="contact-message" :href="$actions['messageUrl']">Send message</x-button>
+                    <x-button variant="outline" size="sm" icon="message-square" data-role="contact-sms" :href="$actions['messageUrl']">Send SMS</x-button>
+                @endif
+                @if ($emailActions['sendUrl'] !== null)
+                    <x-button variant="primary" size="sm" icon="mail" data-role="contact-send-email" :href="$emailActions['sendUrl']">Send Email</x-button>
+                @elseif ($emailActions['connectUrl'] !== null)
+                    <x-button variant="outline" size="sm" icon="mail" data-role="contact-connect-email" :href="$emailActions['connectUrl']">Connect Email</x-button>
+                @elseif ($emailActions['state'] === 'none' && $emailActions['canEdit'])
+                    <x-button variant="outline" size="sm" icon="mail" data-role="contact-add-email" type="button" onclick="document.getElementById('mg-cp-email-form').hidden=false;document.getElementById('mg-cp-email-input').focus();">Add Email</x-button>
                 @endif
             </div>
         </div>
@@ -132,11 +139,33 @@
                             @endif
                             <button type="button" class="mg-cp-iconbtn" data-copy="{{ $profile['phone'] }}" data-role="contact-copy-phone" aria-label="Copy phone number" title="Copy phone number"><x-ds-icon name="copy" size="14" aria-hidden="true" /></button>
                         </li>
-                        @if ($profile['email'] !== null)
-                            <li>
-                                <span class="mg-cp-info-icon"><x-ds-icon name="mail" size="16" aria-hidden="true" /></span>
-                                <span class="mg-cp-info-body"><span class="mg-cp-info-label">Email</span><span class="mg-cp-info-value">{{ $profile['email'] }}</span></span>
-                                <button type="button" class="mg-cp-iconbtn" data-copy="{{ $profile['email'] }}" data-role="contact-copy-email" aria-label="Copy email address" title="Copy email address"><x-ds-icon name="copy" size="14" aria-hidden="true" /></button>
+                        <li data-role="contact-email-row" data-email-state="{{ $emailActions['state'] }}">
+                            <span class="mg-cp-info-icon"><x-ds-icon name="mail" size="16" aria-hidden="true" /></span>
+                            <span class="mg-cp-info-body">
+                                <span class="mg-cp-info-label">Email</span>
+                                @if ($emailActions['state'] === 'valid')
+                                    <span class="mg-cp-info-value">{{ $emailActions['email'] }}</span>
+                                @elseif ($emailActions['state'] === 'ambiguous')
+                                    <span class="mg-cp-info-value text-warning">Several different emails are stored. Edit to choose one.</span>
+                                @else
+                                    <span class="mg-cp-info-value text-muted">No email yet</span>
+                                @endif
+                            </span>
+                            @if ($emailActions['state'] === 'valid')
+                                <button type="button" class="mg-cp-iconbtn" data-copy="{{ $emailActions['email'] }}" data-role="contact-copy-email" aria-label="Copy email address" title="Copy email address"><x-ds-icon name="copy" size="14" aria-hidden="true" /></button>
+                            @endif
+                            @if ($emailActions['canEdit'])
+                                <button type="button" class="mg-cp-iconbtn" data-role="contact-edit-email" aria-label="{{ $emailActions['state'] === 'none' ? 'Add email' : 'Edit email' }}" title="{{ $emailActions['state'] === 'none' ? 'Add email' : 'Edit email' }}" onclick="document.getElementById('mg-cp-email-form').hidden=false;document.getElementById('mg-cp-email-input').focus();"><x-ds-icon name="pencil" size="14" aria-hidden="true" /></button>
+                            @endif
+                        </li>
+                        @if ($emailActions['canEdit'])
+                            <li id="mg-cp-email-form" @if (! $errors->has('email')) hidden @endif>
+                                <form method="POST" action="{{ $emailActions['updateUrl'] }}" class="d-flex flex-wrap gap-50 w-100" data-role="contact-email-form">
+                                    @csrf
+                                    <input id="mg-cp-email-input" type="email" name="email" class="form-control" style="flex:1 1 14rem" maxlength="191" placeholder="name@example.com" aria-label="Email address" value="{{ old('email', $emailActions['email']) }}">
+                                    <x-button variant="primary" size="sm" type="submit">Save email</x-button>
+                                    @error('email')<div class="text-danger w-100" role="alert">{{ $message }}</div>@enderror
+                                </form>
                             </li>
                         @endif
                         @if ($profile['company'] !== null)

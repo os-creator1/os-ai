@@ -49,6 +49,42 @@ final class ContactPhone
     }
 
     /**
+     * A phone for people to read: "+1 (619) 853-2455" for the North American plan, the international
+     * grouping ("+370 612 34567") elsewhere, and the plain "+digits" when libphonenumber does not
+     * recognise it as a real number (never invented, never dropped).
+     */
+    public static function pretty(?string $digits): string
+    {
+        $legacy = self::legacyDigits($digits);
+
+        if ($legacy === '') {
+            return '';
+        }
+
+        $util = PhoneNumberUtil::getInstance();
+
+        try {
+            $number = $util->parse('+' . $legacy, null);
+
+            if (! $util->isValidNumber($number)) {
+                return '+' . $legacy;
+            }
+
+            if ($number->getCountryCode() === 1) {
+                $national = preg_replace('/\D+/', '', $util->format($number, PhoneNumberFormat::NATIONAL));
+
+                return strlen((string) $national) === 10
+                    ? sprintf('+1 (%s) %s-%s', substr($national, 0, 3), substr($national, 3, 3), substr($national, 6))
+                    : '+' . $legacy;
+            }
+
+            return $util->format($number, PhoneNumberFormat::INTERNATIONAL);
+        } catch (NumberParseException) {
+            return '+' . $legacy;
+        }
+    }
+
+    /**
      * The canonical stored form of $raw (see class docblock).
      */
     public static function canonical(?string $raw, ?string $defaultRegion = null): string

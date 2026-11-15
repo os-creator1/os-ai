@@ -1826,6 +1826,8 @@
             Route::get('/email', 'Business\EmailConversationsController@threads')->name('email');
             // One email thread opened inside the unified inbox (thread key in the body: provider ids are not URL-safe).
             Route::post('/email-thread', 'ChatBoxController@emailThread')->name('email_thread');
+            // "Send Email" from a Contact: the Email composer addressed to the Contact's canonical email.
+            Route::post('/email-compose', 'ChatBoxController@emailCompose')->name('email_compose');
             Route::post('/sent', 'ChatBoxController@sent')->name('sent');
             Route::post('/load', 'ChatBoxController@loadChatUsers')->name('load');
             Route::post('/{uid}/messages', 'ChatBoxController@messages')->name('messages');
@@ -1911,11 +1913,14 @@
         // and each contact's profile. Groups stay under .../contacts above.
         Route::prefix('{workspaceUid}/businesses/{businessUid}/people')->name('businesses.people.')->group(function () {
             Route::get('/', 'Business\ContactDirectoryController@listing')->name('index');
+            Route::post('/', 'Business\ContactDirectoryController@store')->middleware('throttle:60,1')->name('store');
+            Route::get('/new-contact-options', 'Business\ContactDirectoryController@newContactOptions')->name('new-contact-options');
             Route::get('/add', 'Business\ContactDirectoryController@add')->name('add');
             Route::get('/import', 'Business\ContactDirectoryController@import')->name('import');
             Route::post('/first-list', 'Business\ContactDirectoryController@createFirstList')->name('first-list');
             Route::get('/{contactUid}', 'Business\ContactDirectoryController@show')->name('show');
             Route::post('/{contactUid}/custom-fields', 'Business\ContactDirectoryController@updateCustomFields')->name('custom-fields.update');
+            Route::post('/{contactUid}/email', 'Business\ContactDirectoryController@updateEmail')->name('email.update');
         });
 
         /*
@@ -2402,6 +2407,7 @@
 
         Route::get('{workspaceUid}/businesses/{businessUid}/calls/{callUid}', 'Business\VoiceCallController@show')->name('businesses.calls.show');
         Route::post('{workspaceUid}/businesses/{businessUid}/calls/{callUid}/hangup', 'Business\VoiceCallController@hangup')->middleware('throttle:60,1')->name('businesses.calls.hangup');
+        Route::post('{workspaceUid}/businesses/{businessUid}/calls/{callUid}/wrapup', 'Business\VoiceCallController@wrapup')->middleware('throttle:30,1')->name('businesses.calls.wrapup');
 
         Route::prefix('{workspaceUid}/businesses/{businessUid}/settings/text-messaging')->name('businesses.text-messaging.')->group(function () {
             Route::get('/', 'Business\TextMessagingController@show')->name('show');

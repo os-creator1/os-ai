@@ -310,4 +310,71 @@ class CustomerOutboundCallTest extends TestCase
 
         $this->getJson(route('customer.workspaces.businesses.calls.show', [$this->workspace->uid, $this->business->uid, $uid]))->assertNotFound();
     }
+
+    // ---- post-call wrap-up (the call popup's "How did it go?" + note) ----
+
+    private function wrapup(string $callUid, array $body, ?array $uids = null)
+    {
+        [$ws, $biz] = $uids ?? [$this->workspace->uid, $this->business->uid];
+
+        return $this->postJson(route('customer.workspaces.businesses.calls.wrapup', [$ws, $biz, $callUid]), $body);
+    }
+
+    private function finishedCall(): BusinessVoiceCall
+    {
+        $this->place()->assertStatus(202);
+        $call = BusinessVoiceCall::firstOrFail();
+        $call->forceFill(['status' => BusinessVoiceCall::STATUS_ENDED, 'answered_at' => now(), 'ended_at' => now(), 'duration_seconds' => 252])->save();
+
+        return $call->fresh();
+    }
+
+    public function test_the_calling_number_is_the_businesss_own_and_is_reported_for_the_popup(): void
+    {
+        $this->place()->assertStatus(202)->assertJsonPath('data.from_number', fn ($n) => is_string($n) && str_starts_with($n, '+'));
+    }
+
+    public function test_wrapup_saves_the_disposition_and_appends_the_note_to_the_contact_once(): void
+    {
+        $call = $this->finishedCall();
+
+        $this->wrapup($call->uid, ['note' => 'Wants a 360 booth quote.', 'disposition' => 'interested'])
+            ->assertOk()->assertJsonPath('data.saved', true)->assertJsonPath('data.on_contact', true);
+
+        $call->refresh();
+        $this->assertSame('interested', $call->wrapup_disposition);
+        $this->assertSame('Wants a 360 booth quote.', $call->wrapup_note);
+
+        $notes = \DB::table('contacts_custom_field as v')->join('contact_group_fields as f', 'f.id', '=', 'v.field_id')
+            ->where('v.contact_id', $this->contact->id)->where('f.tag', 'NOTES')->pluck('v.value');
+        $this->assertCount(1, $notes);
+        $this->assertStringContainsString('Wants a 360 booth quote.', $notes[0]);
+
+        // A second submit (double click / retry) is acknowledged and appends nothing.
+        $this->wrapup($call->uid, ['note' => 'Wants a 360 booth quote.', 'disposition' => 'interested'])->assertOk()->assertJsonPath('data.duplicate', true);
+        $this->assertSame(1, \DB::table('contacts_custom_field as v')->join('contact_group_fields as f', 'f.id', '=', 'v.field_id')->where('v.contact_id', $this->contact->id)->where('f.tag', 'NOTES')->count());
+        $this->assertSame(1, substr_count((string) \DB::table('contacts_custom_field as v')->join('contact_group_fields as f', 'f.id', '=', 'v.field_id')->where('v.contact_id', $this->contact->id)->where('f.tag', 'NOTES')->value('v.value'), 'Wants a 360'));
+    }
+
+    public function test_wrapup_is_refused_while_the_call_is_live_and_for_unknown_dispositions(): void
+    {
+        $this->place()->assertStatus(202);
+        $call = BusinessVoiceCall::firstOrFail();
+
+        $this->wrapup($call->uid, ['note' => 'too early'])->assertStatus(409)->assertJsonPath('error.code', 'call_not_finished');
+
+        $call->forceFill(['status' => BusinessVoiceCall::STATUS_ENDED])->save();
+        $this->wrapup($call->uid, ['disposition' => 'sold_a_boat'])->assertStatus(422);
+        $this->assertNull($call->fresh()->wrapup_saved_at);
+    }
+
+    public function test_wrapup_of_another_businesss_call_is_not_found(): void
+    {
+        $call = $this->finishedCall();
+        [, $otherBusiness, $otherWorkspace] = $this->tenant(WorkspacePlanTier::Growth, 'Other Biz', 'Other WS');
+        $this->authenticateAs($this->customer);
+
+        $this->wrapup($call->uid, ['note' => 'x'], [$otherWorkspace->uid, $otherBusiness->uid])->assertNotFound();
+        $this->assertNull($call->fresh()->wrapup_saved_at);
+    }
 }

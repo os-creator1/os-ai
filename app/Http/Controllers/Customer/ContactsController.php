@@ -1128,6 +1128,12 @@
             $subscriber = Contacts::where('group_id', $contact->id)->where('uid', $request->input('contact_id'))->first();
             if ($subscriber && $this->locationAccessible($subscriber)) {
 
+                // Email is a built-in identity field: a group created before it existed gets it now (idempotent,
+                // nothing existing is touched), so Edit always exposes the same field the profile, Conversations
+                // and Automations read.
+                app(\App\Library\Contacts\ContactEmailIdentity::class)->ensureField($contact);
+                $contact->unsetRelation('getFields');
+
                 $breadcrumbs = [
                     ['link' => url('dashboard'), 'name' => __('locale.menu.Dashboard')],
                     ['link' => CrmRouting::route('contacts.show', $contact->uid), 'name' => $contact->name],

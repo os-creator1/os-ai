@@ -1731,6 +1731,8 @@
             }
         }
     </style>
+    {{-- Approved Conversations designs: restyles the structure above; loaded last on purpose. --}}
+    <link rel="stylesheet" href="{{ asset('css/crm/mgx-conversations.css') }}?v=1">
 
 @endsection
 
@@ -1951,6 +1953,7 @@
         pin: "{{ route('customer.workspaces.businesses.conversations.pin', [$workspaceUid, $businessUid, '__UID__']) }}",
         load: "{{ route('customer.workspaces.businesses.conversations.load', [$workspaceUid, $businessUid]) }}",
         emailThread: "{{ route('customer.workspaces.businesses.conversations.email_thread', [$workspaceUid, $businessUid]) }}",
+        emailCompose: "{{ route('customer.workspaces.businesses.conversations.email_compose', [$workspaceUid, $businessUid]) }}",
       };
       const conversationUrl = (name, uid) => conversationRoutes[name].replace('__UID__', encodeURIComponent(uid));
 
@@ -2089,6 +2092,18 @@
 
         // Guidance instead of a silent switch: an unusable selected channel is disabled and explained.
         let guidance = "";
+        if (email && !usable && c.blocked) {
+          // "Send Email" from a Contact: say exactly why, with the one action that fixes it (never an SMS fallback).
+          const $blocked = $("[data-role=composer-guidance]").prop("hidden", false).empty().attr("data-reason", "blocked");
+          $blocked.text(c.blocked.message + " ");
+          if (c.blocked.url && c.blocked.label) {
+            $blocked.append($("<a></a>").attr({ href: c.blocked.url, "data-role": "composer-blocked-action" }).addClass("fw-bold").text(c.blocked.label));
+          }
+          syncSendAvailability();
+          $("#message").attr("placeholder", "Write your email");
+          return;
+        }
+        $("[data-role=composer-guidance]").removeAttr("data-reason");
         if (!usable) {
           guidance = email
             ? (c.email_connected ? "A reply isn't possible for this message." : "Email isn't connected. Connect your mailbox in Settings → Email to reply by email.")
@@ -2365,7 +2380,10 @@
       function loadTimeline(chat_id) {
         // An email thread (id "email:<thread key>") opens through the unified inbox endpoint; everything else is an SMS conversation.
         const isEmailThread = String(chat_id).indexOf("email:") === 0;
-        const request = isEmailThread
+        const isEmailCompose = String(chat_id).indexOf("compose:") === 0;
+        const request = isEmailCompose
+          ? $.post(conversationRoutes.emailCompose, { _token: "{{ csrf_token() }}", contact: String(chat_id).slice(8) })
+          : isEmailThread
           ? $.post(conversationRoutes.emailThread, { _token: "{{ csrf_token() }}", thread: String(chat_id).slice(6) })
           : $.post(conversationUrl('timeline', chat_id), { _token: "{{ csrf_token() }}" });
 
@@ -3018,6 +3036,24 @@
           }, 250);
         })();
 
+        // A deep link opens a conversation: on narrow screens the list slides away so the conversation itself is what is shown.
+        function closeListOnSmallScreens() {
+          if (window.innerWidth < 992) {
+            $(".sidebar-content").removeClass("show");
+            $(".body-content-overlay").removeClass("show");
+          }
+        }
+
+        // "Send Email" from a Contact profile (?channel=email&compose=<contact uid>): open the Email composer for that contact.
+        (function () {
+          const compose = homeScope.get("compose");
+          if (!compose) { return; }
+          $(".chat_id").val("compose:" + compose);
+          invalidateComposer();
+          loadTimeline("compose:" + compose);
+          closeListOnSmallScreens();
+        })();
+
         // Deep link to one email thread inside Conversations (?channel=email&thread=<key>): saved links from the former Email page.
         (function () {
           const thread = homeScope.get("thread");
@@ -3025,6 +3061,7 @@
           $(".chat_id").val("email:" + thread);
           invalidateComposer();
           loadTimeline("email:" + thread);
+          closeListOnSmallScreens();
         })();
 
 // Add debounce function to delay the search request

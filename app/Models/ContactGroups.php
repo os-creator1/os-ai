@@ -355,6 +355,17 @@
                 'visible'          => true,
             ]);
 
+            // The built-in contact identity email: every new group has it, so a
+            // customer never has to invent a custom "Email" field.
+            $this->contactGroupFields()->create([
+                'contact_group_id' => $this->id,
+                'type'             => 'text',
+                'label'            => 'Email',
+                'tag'              => 'EMAIL',
+                'required'         => false,
+                'visible'          => true,
+            ]);
+
         }
 
         public function createUpdateFields()

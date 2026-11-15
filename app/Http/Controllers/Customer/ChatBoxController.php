@@ -679,6 +679,8 @@
                 'call'     => $call,
                 'call_unavailable' => $call === null ? $this->callUnavailable($business, $box) : null,
                 'timeline' => view('customer.ChatBox.partials._timeline', [
+                    'contactName' => $context->name,
+                    'businessName' => (string) $business->name,
                     'page' => $timeline->forConversation($business, $box, $contact),
                 ])->render(),
                 'context'  => view('customer.ChatBox.partials._context', [
@@ -745,11 +747,12 @@
                 'status'   => 'success',
                 'pinned'   => 0,
                 'channel'  => 'email',
-                'title'    => $name ?? $counterpart,
+                // The thread's subject heads the conversation; who it is with sits under it (approved Email design).
+                'title'    => trim((string) $messages->last()->subject) !== '' ? (string) $messages->last()->subject : ($name ?? $counterpart),
                 'call'     => $call,
                 'composer' => app(\App\Library\Conversations\ConversationComposerOptions::class)
                     ->for($business, $workspaceUid, $businessUid, $userId, false, $contact, $replyTo),
-                'timeline' => view('customer.ChatBox.partials._timeline', ['page' => $page])->render(),
+                'timeline' => view('customer.ChatBox.partials._timeline', ['page' => $page, 'contactName' => $name, 'businessName' => (string) $business->name])->render(),
                 'context'  => view('customer.ChatBox.partials._email_context', [
                     'call'        => $call,
                     'count'       => $messages->count(),
@@ -757,12 +760,95 @@
                     'subject'     => (string) $messages->last()->subject,
                     'name'        => $name,
                     'matched'     => $contact !== null,
+                    'profile'     => $contact !== null ? app(\App\Library\Contacts\ContactDirectory::class)->profile($business, $contact, false) : null,
                     'profileUrl'  => $contact !== null && Gate::allows('view_contact')
                         ? route('customer.workspaces.businesses.people.show', [$workspaceUid, $businessUid, $contact->uid])
                         : null,
                     'addContactUrl' => $contact === null && Gate::allows('create_contact')
                         ? route('customer.workspaces.businesses.people.add', [$workspaceUid, $businessUid])
                         : null,
+                ])->render(),
+            ]);
+        }
+
+        /**
+         * "Send Email" from a Contact: opens the Email composer addressed to the Contact's canonical EMAIL
+         * identity, together with every email already exchanged with them. The Contact is resolved THROUGH the
+         * Business and the actor's Location reach (anything else is the same 404). Sending still goes through
+         * the existing Business-email send endpoint; this only prepares the conversation, and says precisely
+         * why Email is unavailable (no address, ambiguous address, mailbox not connected) instead of falling
+         * back to SMS.
+         */
+        public function emailCompose(ContactActivityTimeline $timeline, Request $request, string $workspaceUid, string $businessUid): JsonResponse
+        {
+            $resolved = $this->resolveBusiness($workspaceUid, $businessUid);
+
+            if ($resolved === null) {
+                return $this->notFound();
+            }
+
+            [, $business] = $resolved;
+            $userId = (int) Auth::id();
+
+            if (! Gate::allows('chat_box') || ! Gate::allows('view_contact')) {
+                return $this->notFound();
+            }
+
+            $contact = Contacts::query()->where('business_id', $business->id)->where('uid', (string) $request->input('contact', ''))->first();
+
+            if ($contact === null || ! app(\App\Library\BusinessEmail\BusinessEmailLocationScope::class)->contactAccessible($userId, $contact)) {
+                return $this->notFound();
+            }
+
+            $inbox = app(\App\Library\Conversations\UnifiedEmailInbox::class);
+            $identity = app(\App\Library\Contacts\ContactEmailIdentity::class)->status($contact);
+            $name = $inbox->contactNames($business, $userId, [(int) $contact->id])[(int) $contact->id] ?? null;
+            $label = $name ?? ($identity['email'] ?? (string) $contact->phone);
+
+            $composer = app(\App\Library\Conversations\ConversationComposerOptions::class)
+                ->for($business, $workspaceUid, $businessUid, $userId, false, $contact, null);
+
+            $profileUrl = route('customer.workspaces.businesses.people.show', [$workspaceUid, $businessUid, $contact->uid]);
+
+            // Why Email is not usable, with the one action that fixes it. Never silently another channel.
+            $composer['blocked'] = null;
+
+            if (! $composer['email']) {
+                $composer['blocked'] = match (true) {
+                    $identity['state'] === 'none' => ['message' => 'This contact has no email address yet.', 'label' => 'Add Email', 'url' => $profileUrl],
+                    $identity['state'] === 'ambiguous' => ['message' => 'This contact has several different emails stored, so we will not guess one.', 'label' => 'Fix email', 'url' => $profileUrl],
+                    ! $composer['email_connected'] => ['message' => 'Your business mailbox is not connected.', 'label' => 'Connect Email', 'url' => $composer['settings_url']],
+                    default => ['message' => 'Email cannot be sent from here right now.', 'label' => null, 'url' => null],
+                };
+            }
+
+            $messages = $inbox->visible($business, $userId)->where('contact_id', $contact->id)->orderBy('id')->limit(100)
+                ->get(['id', 'uid', 'direction', 'contact_id', 'location_id', 'provider_thread_id', 'from_email', 'from_name', 'to_email', 'subject', 'body_text', 'status', 'received_at', 'created_at']);
+
+            $items = $messages->map(fn ($m) => \App\Library\Timeline\Sources\BusinessEmailMessagesSource::item($m))->sortBy(fn ($i) => [$i->at->getTimestamp(), $i->sequence])->values()->all();
+            $page = new \App\Library\Timeline\TimelinePage(new \App\Library\Timeline\TimelineSubject($business, '', null, $contact), $items, false);
+            $call = $this->callTarget($workspaceUid, $business, $contact, $label);
+
+            return response()->json([
+                'status'   => 'success',
+                'pinned'   => 0,
+                'channel'  => 'email',
+                'title'    => $label,
+                'call'     => $call,
+                'composer' => $composer,
+                'timeline' => $messages->isEmpty()
+                    ? view('customer.ChatBox.partials._email_compose_empty', ['label' => $label, 'email' => $identity['email']])->render()
+                    : view('customer.ChatBox.partials._timeline', ['page' => $page, 'contactName' => $name, 'businessName' => (string) $business->name])->render(),
+                'context'  => view('customer.ChatBox.partials._email_context', [
+                    'call'          => $call,
+                    'count'         => $messages->count(),
+                    'counterpart'   => (string) ($identity['email'] ?? ''),
+                    'subject'       => '',
+                    'name'          => $name ?? $label,
+                    'matched'       => true,
+                    'profile'       => app(\App\Library\Contacts\ContactDirectory::class)->profile($business, $contact, false),
+                    'profileUrl'    => $profileUrl,
+                    'addContactUrl' => null,
                 ])->render(),
             ]);
         }
