@@ -267,7 +267,7 @@
                                         </div>
                                         <div class="crm-card-value-row">
                                             <span>Value</span>
-                                            <strong class="crm-card-value">{{ $card['value'] ?? \App\Library\Crm\CrmMoney::format(0, $board['currency']) }}</strong>
+                                            <strong class="crm-card-value">{{ $card['value'] ?? '—' }}</strong>
                                         </div>
                                     </article>
                                 @empty
