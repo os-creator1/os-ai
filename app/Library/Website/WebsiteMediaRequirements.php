@@ -61,12 +61,16 @@ final class WebsiteMediaRequirements
 
         $missing = [];
         $business = $website->business;
+        // The setup question where a service photo is added is the pinned questionnaire's own business_service step with a
+        // cover field ('booth_services' for Photo Booth, 'dog_services' for Dog Boarding), never a hardcoded key.
+        $serviceStep = $this->serviceStepKey($website) ?? 'booth_services';
+        $dog = \App\Models\WebsiteTemplate::where('key', $website->template_key)->value('niche_key') === \App\Library\Website\WebsiteNicheVocabulary::DOG_BOARDING;
 
         if (! $this->hasHomepageHero($website)) {
             $missing[] = [
                 'key' => 'hero',
                 'title' => 'Homepage cover photo',
-                'detail' => 'Your homepage needs a real cover photo. Upload one of your event photos and choose it as the cover.',
+                'detail' => $dog ? 'Your homepage needs a real cover photo. Upload a photo of your facility and choose it as the cover.' : 'Your homepage needs a real cover photo. Upload one of your event photos and choose it as the cover.',
                 'step' => 'gallery',
             ];
         }
@@ -79,8 +83,10 @@ final class WebsiteMediaRequirements
                 $missing[] = [
                     'key' => 'service:' . $service->uid,
                     'title' => 'Photo needed: ' . $service->name,
-                    'detail' => '"' . $service->name . '" is shown on your website, so it needs a real photo of that booth. Add one — or hide this booth from your website.',
-                    'step' => 'booth_services',
+                    'detail' => $dog
+                        ? '"' . $service->name . '" is shown on your website, so it needs a real photo of your facility or area for it. Add one — or hide this service from your website.'
+                        : '"' . $service->name . '" is shown on your website, so it needs a real photo of that booth. Add one — or hide this booth from your website.',
+                    'step' => $serviceStep,
                 ];
             }
         }
@@ -99,6 +105,19 @@ final class WebsiteMediaRequirements
         }
 
         return $missing;
+    }
+
+    private function serviceStepKey(Website $website): ?string
+    {
+        $response = QuestionnaireResponse::where('website_id', $website->id)->latest('id')->first();
+
+        foreach ($response?->version->steps() ?? [] as $step) {
+            if (($step['target_module'] ?? null) === 'business_service' && in_array('cover', (array) ($step['row_fields'] ?? []), true)) {
+                return (string) $step['key'];
+            }
+        }
+
+        return null;
     }
 
     /**

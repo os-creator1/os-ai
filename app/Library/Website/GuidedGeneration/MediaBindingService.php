@@ -485,7 +485,8 @@ final class MediaBindingService
             }
 
             $form = WebsiteStarterDraftService::ensurePhotoBoothQuoteForm($website);
-            $pages[$index]['sections'][] = ['type' => 'form', 'data' => ['heading' => 'Request a quote', 'form_uid' => $form->uid]];
+            $dog = $website->business !== null && \App\Library\Website\Setup\DogBoardingSetup::appliesToBusiness($website->business);
+            $pages[$index]['sections'][] = ['type' => 'form', 'data' => ['heading' => $dog ? 'Request a stay' : 'Request a quote', 'form_uid' => $form->uid]];
         }
 
         return $pages;

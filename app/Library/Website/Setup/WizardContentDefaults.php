@@ -29,6 +29,10 @@ final class WizardContentDefaults
      */
     public function about(Business $business, array $answers, int $variant = 0): string
     {
+        if (DogBoardingSetup::appliesToBusiness($business)) {
+            return DogBoardingSetup::aboutDefault($business, $answers, $variant);
+        }
+
         $facts = $this->facts($business, $answers);
         $variant = $variant < 0 ? 0 : $variant % self::ABOUT_VARIANTS;
         $name = $facts['name'];
@@ -96,6 +100,10 @@ final class WizardContentDefaults
      */
     public function faq(Business $business, array $answers): array
     {
+        if (DogBoardingSetup::appliesToBusiness($business)) {
+            return DogBoardingSetup::faqDefault($business, $answers);
+        }
+
         $facts = $this->facts($business, $answers);
         $items = [];
         $add = function (string $key, string $question, string $answer) use (&$items) {

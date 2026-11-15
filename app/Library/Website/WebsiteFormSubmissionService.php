@@ -151,6 +151,11 @@ final class WebsiteFormSubmissionService
                 $submission->contact_id = $contact?->id;
                 $submission->contact_resolution = $resolution;
 
+                // A Dog Boarding stay request also fills the contact's dog custom fields (blank fields only on an existing contact).
+                if ($contact !== null && $this->isDogBoardingForm($locked)) {
+                    app(\App\Library\Website\Forms\DogBoardingContactFields::class)->apply($locked->website->business, $contact, $data, $resolution === 'matched');
+                }
+
                 if ($contact !== null && $locked->create_opportunity) {
                     $business = $locked->website->business;
                     $pipeline = $this->pipelineFor($locked, $business);
@@ -160,6 +165,26 @@ final class WebsiteFormSubmissionService
                         $title = Str::limit(trim(($name !== '' ? $name.' — ' : '').$formName), CrmOpportunityService::TITLE_MAX, '');
 
                         try {
+                            // A Dog Boarding owner who already has this person's stay request open in the Stay Requests pipeline
+                            // must not collect a second open card for the same person: the repeat submission is recorded and
+                            // linked to the existing request (the owner sees it in the submission), never duplicated.
+                            $open = $pipeline->template_key === \App\Library\NicheBlueprint\Niches\DogBoardingBlueprint::PIPELINE_TEMPLATE_KEY
+                                ? \App\Models\CrmOpportunity::query()
+                                    ->where('business_id', $business->id)
+                                    ->where('pipeline_id', $pipeline->id)
+                                    ->where('contact_id', $contact->id)
+                                    ->where('status', \App\Enums\Crm\CrmOpportunityStatus::Open->value)
+                                    ->orderBy('id')
+                                    ->first()
+                                : null;
+
+                            if ($open !== null) {
+                                $submission->crm_opportunity_id = $open->id;
+                                $submission->save();
+
+                                return $submission;
+                            }
+
                             $opportunity = $this->opportunities->createAtLocation(
                                 (int) $business->id,
                                 (int) $location->id,
@@ -207,6 +232,13 @@ final class WebsiteFormSubmissionService
             ->where('website_form_id', $form->id)
             ->where('idempotency_key', $idempotencyKey)
             ->first();
+    }
+
+    private function isDogBoardingForm(WebsiteForm $form): bool
+    {
+        return $form->crm_pipeline_id !== null
+            && CrmPipeline::query()->whereKey($form->crm_pipeline_id)->where('business_id', $form->business_id)
+                ->value('template_key') === \App\Library\NicheBlueprint\Niches\DogBoardingBlueprint::PIPELINE_TEMPLATE_KEY;
     }
 
     /**

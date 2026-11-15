@@ -4,6 +4,8 @@ namespace App\Library\Website\Setup;
 
 use App\Enums\Business\BusinessIndustry;
 use App\Models\Business;
+use App\Models\BusinessKnowledgeProfile;
+use App\Models\BusinessVertical;
 use App\Models\QuestionnaireDefinition;
 
 /**
@@ -45,8 +47,20 @@ final class QuestionnaireResolver
         return $definition;
     }
 
+    /**
+     * A Business's niche: its Knowledge Profile's vertical when that vertical is an ACTIVE catalog row that has its own
+     * published setup questionnaire (e.g. dog_boarding — the BusinessIndustry enum is locked, so a vertical-bound niche
+     * cannot be an industry), otherwise its canonical industry exactly as before. A Business with no such vertical
+     * resolves to the same niche it always did.
+     */
     public function nicheKeyFor(Business $business): ?string
     {
+        $vertical = $this->verticalNicheFor($business);
+
+        if ($vertical !== null) {
+            return $vertical;
+        }
+
         $industry = $business->industry;
 
         if ($industry instanceof BusinessIndustry) {
@@ -54,5 +68,22 @@ final class QuestionnaireResolver
         }
 
         return is_string($industry) && trim($industry) !== '' ? $industry : null;
+    }
+
+    private function verticalNicheFor(Business $business): ?string
+    {
+        $key = BusinessKnowledgeProfile::where('business_id', $business->id)->value('vertical_key');
+
+        if (! is_string($key) || trim($key) === '') {
+            return null;
+        }
+
+        if (! BusinessVertical::where('key', $key)->where('is_active', true)->exists()) {
+            return null;
+        }
+
+        $hasDefinition = QuestionnaireDefinition::where('scope', self::SCOPE)->where('niche_key', $key)->exists();
+
+        return $hasDefinition ? $key : null;
     }
 }

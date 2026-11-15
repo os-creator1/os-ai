@@ -64,6 +64,7 @@ final class GuidedGenerationCommitService
         private readonly WebsiteDraftPageService $pages,
         private readonly WebsitePageStrategy $pageStrategy,
         private readonly PhotoBoothBlueprint $blueprintWriter,
+        private readonly DogBoardingSiteBlueprint $dogBoardingWriter,
     ) {
     }
 
@@ -329,7 +330,9 @@ final class GuidedGenerationCommitService
         if ($blueprint !== null) {
             // The guided builder: complete default copy from the owner's confirmed facts. No AI call, so no budget
             // and nothing that can be unavailable; the same binding, validation and atomic commit follow.
-            $aiPages = $this->blueprintWriter->pages($business, $website, $plan, $blueprint);
+            // The writer is the niche's own: Dog Boarding has its own page set, copy and truthfulness rules.
+            $writer = ($blueprint['niche'] ?? null) === \App\Library\Website\Setup\DogBoardingSetup::NICHE ? $this->dogBoardingWriter : $this->blueprintWriter;
+            $aiPages = $writer->pages($business, $website, $plan, $blueprint);
             $retryCount = 0;
         } else {
             // AI provider calls stay OUTSIDE any database transaction

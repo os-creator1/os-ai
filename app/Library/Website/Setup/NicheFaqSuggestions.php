@@ -12,6 +12,17 @@ namespace App\Library\Website\Setup;
 final class NicheFaqSuggestions
 {
     private const BY_NICHE = [
+        'dog_boarding' => [
+            'What vaccinations do you require?',
+            'How do I request a stay?',
+            'What should I bring for my dog?',
+            'Can I visit the facility first?',
+            'What are your drop-off and pickup times?',
+            'Do you accept all breeds and sizes?',
+            'Can you give medication?',
+            'What is your cancellation policy?',
+            'Are dogs kept separate or in groups?',
+        ],
         'photo_booth_service' => [
             'How far in advance should I book?',
             'How long does setup take?',

@@ -392,7 +392,7 @@ final class WebsitePageStrategy
 
         // Slugs already spoken for by the fixed and saved-location pages: an
         // area that would land on one is skipped, never two pages at one URL.
-        $usedSlugs = array_filter(['services', 'packages', 'photo-booth-about', 'photo-booth-faq', 'photo-booth-contact', 'gallery', 'backdrops', $hasCustom ? WebsiteSlugRules::customSectionSlug((string) $customSection['title']) : null]);
+        $usedSlugs = array_filter(['services', 'packages', 'photo-booth-about', 'photo-booth-faq', 'photo-booth-contact', ...WebsiteNicheVocabulary::reservedSlugs(), 'gallery', 'backdrops', $hasCustom ? WebsiteSlugRules::customSectionSlug((string) $customSection['title']) : null]);
 
         // One address per saved location. Two locations in the same city and region used to plan the
         // same slug and abort the whole generation; the second now gets "-2" (and so on). A location with
@@ -657,7 +657,8 @@ final class WebsitePageStrategy
         }
 
         return [
-            'plan' => $plan,
+            // A niche with its own vocabulary (Dog Boarding) names its fixed pages and service addresses itself.
+            'plan' => WebsiteNicheVocabulary::apply($plan, $template->niche_key),
             'decisions' => $decisions,
             'areas' => [
                 'saved' => count($areaCandidates),

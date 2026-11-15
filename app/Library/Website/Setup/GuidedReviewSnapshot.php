@@ -31,8 +31,13 @@ final class GuidedReviewSnapshot
         $website = $response->website;
         $named = fn (string $key) => array_values(array_filter((array) ($answers[$key] ?? []), fn ($row) => is_array($row) && trim((string) ($row['name'] ?? '')) !== ''));
 
-        $booths = array_values(array_filter($named('booth_services'), fn ($row) => $row['visible'] ?? true));
-        $events = array_values(array_filter($named('event_types'), fn ($row) => $row['visible'] ?? true));
+        // The service and event steps are the pinned questionnaire's own (Photo Booth: booth_services / event_types;
+        // Dog Boarding: dog_services and no event step), never assumed keys.
+        $serviceStep = (string) ($steps->first(fn (array $s) => ($s['target_module'] ?? null) === 'business_service' && ($s['item_kind'] ?? null) !== 'event' && in_array('cover', (array) ($s['row_fields'] ?? []), true))['key'] ?? 'booth_services');
+        $eventStep = $steps->first(fn (array $s) => ($s['target_module'] ?? null) === 'business_service' && ($s['item_kind'] ?? null) === 'event')['key'] ?? null;
+
+        $booths = array_values(array_filter($named($serviceStep), fn ($row) => $row['visible'] ?? true));
+        $events = $eventStep === null ? [] : array_values(array_filter($named($eventStep), fn ($row) => $row['visible'] ?? true));
         $offersBackdrops = ($answers['offers_backdrops'] ?? null) === true;
         $backdrops = $offersBackdrops ? $named('backdrops') : [];
         $packages = (array) (WizardPresentationAnswers::catalogSelection($response) ?? []);
@@ -41,14 +46,15 @@ final class GuidedReviewSnapshot
         $hasHero = $gallery->isNotEmpty() || ($website !== null && is_string($website->theme['hero_asset_uid'] ?? null));
 
         $missing = [];
+        $dog = $this->isDogBoarding($response);
 
         if (! $hasHero) {
-            $missing[] = ['title' => 'Homepage cover photo', 'detail' => 'Upload at least one real event photo and choose it as your homepage cover.', 'step' => 'gallery'];
+            $missing[] = ['title' => 'Homepage cover photo', 'detail' => $dog ? 'Upload at least one real photo of your facility and choose it as your homepage cover.' : 'Upload at least one real event photo and choose it as your homepage cover.', 'step' => 'gallery'];
         }
 
         foreach ($booths as $row) {
             if (empty($row['image_path'])) {
-                $missing[] = ['title' => 'Photo needed: ' . $row['name'], 'detail' => 'Every booth shown on your website needs a real photo of that booth. Add one — or hide the booth.', 'step' => 'booth_services'];
+                $missing[] = ['title' => 'Photo needed: ' . $row['name'], 'detail' => $dog ? 'Every service shown on your website needs a real photo of your facility or area for it. Add one — or hide the service.' : 'Every booth shown on your website needs a real photo of that booth. Add one — or hide the booth.', 'step' => $serviceStep];
             }
         }
 
@@ -65,7 +71,9 @@ final class GuidedReviewSnapshot
         $booking = match ($answers['primary_cta'] ?? null) {
             'call' => 'Call now',
             'book_now' => 'Book now',
-            'quote_request' => 'Request a quote',
+            'quote_request' => $this->isDogBoarding($response) ? 'Request a stay' : 'Request a quote',
+            'consultation_booking' => 'Request a meet & greet',
+            'calendar_booking' => $this->isDogBoarding($response) ? 'Request a stay (a meet & greet booking button appears only once your booking type is active)' : 'Book a meet & greet',
             default => null,
         };
 
@@ -88,6 +96,12 @@ final class GuidedReviewSnapshot
             'missing' => $missing,
             'template' => $website?->template_key,
             'booking' => $booking,
+            'dog_boarding' => $this->isDogBoarding($response),
         ];
+    }
+
+    private function isDogBoarding(QuestionnaireResponse $response): bool
+    {
+        return $response->version->questionnaireDefinition?->niche_key === 'dog_boarding';
     }
 }

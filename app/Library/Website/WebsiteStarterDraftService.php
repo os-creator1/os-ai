@@ -780,13 +780,17 @@ final class WebsiteStarterDraftService
      */
     public static function ensurePhotoBoothQuoteForm(Website $website): WebsiteForm
     {
+        // A Dog Boarding business gets its own stay-request form (named and worded for a REQUEST the owner confirms).
+        $dog = $website->business !== null && \App\Library\Website\Setup\DogBoardingSetup::appliesToBusiness($website->business);
+
         $form = $website->forms()->firstOrCreate(
             ['type' => WebsiteForm::TYPE_QUOTE_REQUEST],
             [
                 'business_id' => $website->business_id,
-                'name' => 'Photo Booth Quote Request',
-                'fields' => WebsiteFormPresets::photoBoothQuoteRequest(),
-                'submit_label' => 'Request a quote',
+                'name' => $dog ? 'Request a Stay' : 'Photo Booth Quote Request',
+                'fields' => $dog ? WebsiteFormPresets::dogBoardingStayRequest() : WebsiteFormPresets::photoBoothQuoteRequest(),
+                'submit_label' => $dog ? 'Send stay request' : 'Request a quote',
+                'crm_pipeline_id' => $dog ? WebsiteFormPresets::dogBoardingPipelineId((int) $website->business_id) : null,
                 // Forms V1: a form with no Location accepts nothing (fail
                 // closed). The only Location knowable at creation time is the
                 // Business's single Active one (Contract 08B §5); a
