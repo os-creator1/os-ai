@@ -78,7 +78,7 @@ final class SiteContextFactory
             pricingMode: $goal,
             pageUrl: $pageUrl,
             signupUrl: fn (string $planUid) => route('agency.site.signup', [$publicId, $planUid]),
-            loginUrl: $preview ? route('login') : route('agency.site.login', $publicId),
+            loginUrl: $preview || $original ? route('login') : route('agency.site.login', $publicId),
             cssUrl: ($preview ? route('customer.workspaces.agency.site.preview-css', [$previewWorkspaceUid]) : route('agency.site.css', $publicId))
                 .'?v='.substr(md5($primary.($brand?->secondary_color ?? '')), 0, 8),
             preview: $preview,

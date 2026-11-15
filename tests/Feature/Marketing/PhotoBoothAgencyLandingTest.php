@@ -142,8 +142,8 @@ class PhotoBoothAgencyLandingTest extends TestCase
 
         // Every conversion CTA is the workspace's own calendar: not the platform demo calendar, not Daniel's.
         $own = route('public.booking.show', $type->public_booking_uuid);
-        preg_match_all('/<a href="([^"]*)" class="btn(?: btn-p)?[^"]*"[^>]*>\s*Book a call/i', $booth, $buttons);
-        $this->assertGreaterThanOrEqual(3, count($buttons[1]));
+        preg_match_all('/<a href="([^"]*)" class="btn(?: btn-p)?[^"]*"[^>]*>\s*Book a Call/', $booth, $buttons);
+        $this->assertGreaterThanOrEqual(3, count($buttons[1]), 'header, hero and final CTA all read "Book a Call"');
         $this->assertSame([$own], array_values(array_unique($buttons[1])));
         $this->assertStringNotContainsString('calendar.example', $booth);
         $this->assertStringNotContainsString($dogType->public_booking_uuid, $booth);
@@ -154,6 +154,9 @@ class PhotoBoothAgencyLandingTest extends TestCase
         $this->get('/photobooth/pricing')->assertRedirect($own);
         $this->assertStringContainsString('noindex', (string) $this->get('/photobooth')->headers->get('X-Robots-Tag'));
         $this->assertStringContainsString(url('legal'), $booth, 'footer legal links remain available');
+
+        $this->assertContains(route('login'), $this->hrefs($booth), 'Log in is MotionGrove’s own login');
+        $this->assertStringNotContainsString('/w/' . $site->public_id . '/login', $booth);
 
         // The branding record of the workspace was never needed, created or changed.
         $this->assertSame(0, AgencyWhiteLabelSetting::query()->where('agency_workspace_id', $agency->id)->count());

@@ -156,12 +156,12 @@ final class AgencyMarketingSite extends MarketingSite
 
     public function bookDemoLabel(): string
     {
-        return $this->context->callOnly() ? 'Book a call' : 'Book a demo';
+        return $this->context->callOnly() ? ($this->context->original ? 'Book a Call' : 'Book a call') : 'Book a demo';
     }
 
     public function getStartedLabel(): string
     {
-        return $this->context->callOnly() ? 'Book a call' : 'Get started';
+        return $this->context->callOnly() ? ($this->context->original ? 'Book a Call' : 'Book a call') : 'Get started';
     }
 
     /** Pricing is not a page of a call-only site, whatever the Agency's page switches say. */

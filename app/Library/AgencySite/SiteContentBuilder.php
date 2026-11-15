@@ -195,6 +195,8 @@ final class SiteContentBuilder
             fn ($tick) => preg_match(self::SELLING_WORDS, (string) $tick) !== 1,
         )));
         Arr::set($tree, 'copy.home.people.note', '');
+        Arr::set($tree, 'copy.home.hero.primary', 'Book a Call');
+        Arr::set($tree, 'copy.home.final.primary', 'Book a Call');
 
         return $tree;
     }
