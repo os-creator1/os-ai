@@ -375,6 +375,7 @@ final class BusinessEmailSender
                 'to_email' => $to,
                 'subject' => $subject,
                 'body_text' => $body,
+                'body_html' => $request->bodyHtml,
                 'provider_thread_id' => $reply?->provider_thread_id,
                 'in_reply_to' => $reply?->internet_message_id,
                 'references_header' => $reply === null ? null : $this->referencesFor($reply),
@@ -490,7 +491,8 @@ final class BusinessEmailSender
             // Outside any transaction: a real outbound HTTP request.
             $accessToken = $this->accounts->accessTokenFor($account);
 
-            $result = $this->providers->for($account->provider)->send($accessToken, new BusinessEmailOutbound(
+            $provider = $this->providers->for($account->provider);
+            $result = $provider->send($accessToken, new BusinessEmailOutbound(
                 fromEmail: (string) $account->mailbox_email,
                 fromName: $account->display_name,
                 toEmail: (string) $message->to_email,
@@ -500,6 +502,7 @@ final class BusinessEmailSender
                 references: $message->references_header,
                 threadId: $message->provider_thread_id,
                 replyToProviderMessageId: $this->repliedProviderMessageId($message),
+                bodyHtml: $provider->capabilities()->htmlSend && trim((string) $message->body_html) !== '' ? (string) $message->body_html : null,
             ));
         } catch (BusinessEmailProviderException $exception) {
             $this->finalizeFailure(

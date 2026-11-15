@@ -101,7 +101,7 @@ class BusinessEmailController extends CustomerBaseController
         // neither leaks another Location's records and neither is N+1.
         $accessible = $this->locations->accessibleLocationIds((int) Auth::id(), $business);
 
-        $messageQuery = BusinessEmailMessage::query()->where('business_id', $business->id);
+        $messageQuery = BusinessEmailMessage::query()->where('business_id', $business->id)->whereNull('deleted_at');
         $this->locations->restrictMessages($messageQuery, (int) Auth::id(), $business);
 
         $messages = $messageQuery
@@ -408,16 +408,19 @@ class BusinessEmailController extends CustomerBaseController
             abort_if($location === null, 404);
         }
 
+        $markup = \App\Library\BusinessEmail\SafeEmailMarkup::convert((string) $request->validated('body'));
+
         try {
             $message = $this->sender->send(new BusinessEmailSendRequest(
                 business: $business,
                 contact: $contact,
                 subject: (string) $request->validated('subject'),
-                bodyText: (string) $request->validated('body'),
+                bodyText: $markup['text'],
                 operationKey: 'manual:' . $request->validated('send_token'),
                 source: BusinessEmailSource::Manual,
                 location: $location,
                 sentByUserId: (int) Auth::id(),
+                bodyHtml: $markup['html'],
             ));
         } catch (BusinessEmailSendRefusedException $exception) {
             return $this->backOrJson($workspaceUid, $businessUid, 'error', $exception->userMessage(), 'refused');
@@ -479,17 +482,20 @@ class BusinessEmailController extends CustomerBaseController
                 ->with(['status' => $status, 'message' => $message])
             : $this->backOrJson($workspaceUid, $businessUid, $status, $message, $outcome);
 
+        $markup = \App\Library\BusinessEmail\SafeEmailMarkup::convert((string) $request->validated('body'));
+
         try {
             $message = $this->sender->send(new BusinessEmailSendRequest(
                 business: $business,
                 contact: $contact,
                 subject: (string) $request->validated('subject'),
-                bodyText: (string) $request->validated('body'),
+                bodyText: $markup['text'],
                 operationKey: 'reply:' . $request->validated('send_token'),
                 source: BusinessEmailSource::Manual,
                 location: $location,
                 sentByUserId: (int) Auth::id(),
                 inResponseTo: $original,
+                bodyHtml: $markup['html'],
             ));
         } catch (BusinessEmailSendRefusedException $exception) {
             return $back('error', $exception->userMessage(), 'refused');

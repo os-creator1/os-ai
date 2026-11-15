@@ -20,6 +20,8 @@ final class BusinessEmailOutbound
         public readonly ?string $threadId = null,
         /** Provider id of the message being answered, for providers that thread by reply (Graph createReply). */
         public readonly ?string $replyToProviderMessageId = null,
+        /** Sanitized HTML alternative; only ever set for a provider whose capabilities say htmlSend. */
+        public readonly ?string $bodyHtml = null,
     ) {
     }
 }

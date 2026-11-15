@@ -88,6 +88,9 @@
     var chooserEl = $('softphone-chooser');
     var chooseRow = $('softphone-choose-row');
     var chosenFrom = null;
+    var audioBtn = $('softphone-audio');
+    var audioList = $('softphone-audio-list');
+    var audioOpen = false;
     var held = false;
     var wasAnswered = false;
     var keypadOpen = false;
@@ -207,6 +210,16 @@
         // The keypad view replaces the identity block (design state 4).
         var whoEl = root.querySelector('.mg-sp-who');
         if (whoEl) { whoEl.hidden = keypadOpen && live; }
+        // Audio output: real browser capability (setSinkId), offered while the call is being placed (design state 2).
+        if (audioBtn) {
+            var placing = state === 'connecting' || state === 'ringing';
+            audioBtn.hidden = !placing;
+            audioBtn.disabled = !audioSupported();
+            audioBtn.title = audioSupported() ? 'Choose where you hear the call' : 'This browser cannot choose an audio output.';
+            audioBtn.classList.toggle('on', audioOpen && placing);
+            if (!placing) { audioOpen = false; }
+            if (audioList) { audioList.hidden = !(audioOpen && placing); }
+        }
         if (noteBtn) { noteBtn.disabled = !live; noteBtn.classList.toggle('on', noteOpen); noteBtn.setAttribute('aria-pressed', noteOpen ? 'true' : 'false'); }
         if (keypadView) { keypadView.hidden = !(keypadOpen && live); }
         if (noteView) { noteView.hidden = !(noteOpen && live); }
@@ -216,6 +229,7 @@
             holdBanner.textContent = held ? 'The call is on hold. Call time: ' + (timerEl ? timerEl.textContent : '') : '';
         }
         if (fromEl) { fromEl.hidden = !fromNumber || incoming || keypadOpen; fromEl.textContent = fromNumber ? 'Calling from ' + fromNumber : ''; }
+        root.setAttribute('data-has-from', fromNumber && !incoming && !keypadOpen ? '1' : '0');
         minBtn.hidden = !live;
         closeBtn.hidden = live || incoming;
         doneRow.hidden = live || incoming || choosing;
@@ -699,6 +713,41 @@
         root.querySelectorAll('[data-disposition]').forEach(function (b) { b.setAttribute('aria-pressed', 'false'); });
     }
 
+    function audioSupported() {
+        return !!(audioEl && typeof audioEl.setSinkId === 'function' && navigator.mediaDevices && typeof navigator.mediaDevices.enumerateDevices === 'function');
+    }
+
+    function toggleAudio() {
+        if (!audioSupported()) { return; }
+        if (audioOpen) { audioOpen = false; setState(root.getAttribute('data-state'), statusEl.textContent, detailEl.hidden ? '' : detailEl.textContent); return; }
+        navigator.mediaDevices.enumerateDevices().then(function (devices) {
+            var outs = devices.filter(function (d) { return d.kind === 'audiooutput'; });
+            audioList.textContent = '';
+            var key = 'mg-audio-out', saved = null;
+            try { saved = window.localStorage.getItem(key); } catch (e) {}
+            outs.forEach(function (d, i) {
+                var b = document.createElement('button');
+                b.type = 'button'; b.className = 'mg-sp-nr'; b.setAttribute('role', 'radio');
+                b.setAttribute('aria-checked', (saved ? saved === d.deviceId : d.deviceId === 'default' || i === 0) ? 'true' : 'false');
+                var rd = document.createElement('i'); rd.className = 'rd';
+                var nm = document.createElement('b'); nm.textContent = d.label || ('Speaker ' + (i + 1));
+                b.appendChild(rd); b.appendChild(nm);
+                b.addEventListener('click', function () {
+                    audioEl.setSinkId(d.deviceId).then(function () {
+                        try { window.localStorage.setItem(key, d.deviceId); } catch (e) {}
+                        audioList.querySelectorAll('[role=radio]').forEach(function (o) { o.setAttribute('aria-checked', o === b ? 'true' : 'false'); });
+                        audioOpen = false;
+                        setState(root.getAttribute('data-state'), statusEl.textContent, '');
+                    }).catch(function () { detailEl.textContent = 'That audio output could not be selected.'; detailEl.hidden = false; });
+                });
+                audioList.appendChild(b);
+            });
+            if (!outs.length) { var none = document.createElement('p'); none.className = 'mg-sp-hint'; none.textContent = 'No other audio outputs were found.'; audioList.appendChild(none); }
+            audioOpen = true;
+            setState(root.getAttribute('data-state'), statusEl.textContent, detailEl.hidden ? '' : detailEl.textContent);
+        }).catch(function () { /* devices unreadable: the control simply does nothing */ });
+    }
+
     function toggleKeypad(open) {
         if (root.getAttribute('data-state') !== 'connected') { return; }
         keypadOpen = open;
@@ -822,6 +871,7 @@
     if (kpHang) { kpHang.addEventListener('click', hangUp); }
     root.querySelectorAll('[data-digit]').forEach(function (b) { b.addEventListener('click', function () { sendDigit(b.getAttribute('data-digit')); }); });
     if (holdBtn) { holdBtn.addEventListener('click', toggleHold); }
+    if (audioBtn) { audioBtn.addEventListener('click', toggleAudio); }
     if (noteBtn) { noteBtn.addEventListener('click', toggleNote); }
     root.querySelectorAll('[data-disposition]').forEach(function (b) {
         b.addEventListener('click', function () {

@@ -79,9 +79,24 @@ Element boxes were measured with `getBoundingClientRect()` in both renderings, n
   popup only says "The call is on hold".
 * **A live Telnyx call has not been exercised**: the browser architecture is proven against the real app with the Telnyx
   SDK and calls API answered by the test; a supervised call with a real Telnyx connection is still required.
-* **Email archive / mark-unread / delete** and the **rich-text toolbar** of the Email design have no backend (the sender
-  takes plain text and the ledger has no archive/unread state), so they are not rendered.
-* **Conversation rename** (SMS header) has no backend and is not rendered.
+* **Email attach and template toolbar buttons** of the reference are not rendered (no attachment or email-template backend).
+* **Call recording** has no recording or consent flow, so it stays disabled; the popup's **Audio output** chooser is real
+  but only appears where the browser supports `setSinkId`.
 * **Imported-from-GoHighLevel email status** (design example) has no marker in the email ledger; imported history
   appears through the existing imported-history timeline source only.
 * **Contact profile** has no supplied mockup; it adopts the Contacts design language.
+
+## Email thread actions, rich text, rename, last activity
+
+* **Archive / Mark unread / Delete** (Email header) persist on `business_email_messages` (`archived_at`,
+  `marked_unread_at`, `deleted_at`), are workspace/location scoped, and never touch the connected mailbox. A thread is
+  archived only while its newest message is, so a new reply resurfaces it; opening a thread clears "unread".
+* **Rich-text toolbar** (bold / italic / link) is shown only when the provider can send HTML. The browser sends visible
+  markup; `SafeEmailMarkup` escapes everything and emits only `strong`, `em`, `a` and `br`, plus a plain-text
+  alternative. Google sends multipart/alternative, Microsoft Graph sends HTML, IMAP stays plain text.
+* **SMS Rename** renames the linked contact (first/last name); it needs `update_contact`, and unlinked conversations are
+  refused. The SMS/Email switcher is a small pill beside the composer.
+* **Last Activity** (Contacts list) is the latest of SMS, email, call and chat, labelled Texted / Emailed / Called, from
+  four grouped queries (no N+1).
+* Verified here with fakes and the real app in a browser; a real provider send was not made (a real reply attempt
+  correctly returned the expired-connection error).

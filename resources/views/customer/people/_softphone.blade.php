@@ -79,7 +79,7 @@
     .mg-sp-pad{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;padding:0 26px 14px}
     .mg-sp-pad button{height:50px;border-radius:12px;border:0;background:var(--sp-pad);display:flex;flex-direction:column;align-items:center;justify-content:center;font:inherit;font-size:20px;font-weight:600;color:var(--sp-fg);line-height:1;cursor:pointer}
     .mg-sp-pad small{font-size:9.5px;font-weight:600;letter-spacing:.12em;color:var(--sp-grey);margin-top:2px}
-    .mg-sp-digits{padding:10px 18px 12px;text-align:center;font-size:26px;font-weight:700;letter-spacing:.12em;font-variant-numeric:tabular-nums;min-height:34px}
+    .mg-sp-digits{padding:0 18px 12px;text-align:center;font-size:26px;font-weight:700;letter-spacing:.12em;font-variant-numeric:tabular-nums;min-height:34px}
     .mg-sp-field{margin:0 18px 14px;display:flex;flex-direction:column;gap:8px}
     .mg-sp-field textarea{min-height:84px;padding:10px 12px;border:1px solid var(--sp-end);border-radius:10px;font:inherit;font-size:14px;line-height:1.45;background:var(--sp-bg);color:var(--sp-fg);resize:vertical;box-shadow:0 0 0 3px var(--sp-av-bg)}
     .mg-sp-pill{position:fixed;right:1.25rem;bottom:1.25rem;z-index:1080;display:inline-flex;align-items:center;gap:10px;height:56px;padding:0 8px 0 10px;border-radius:999px;background:#1f1a19;color:#fff;box-shadow:0 12px 32px rgba(31,26,25,.25);font-size:14px;font-family:'Figtree',system-ui,-apple-system,'Segoe UI',sans-serif;max-width:calc(100vw - 1.5rem);box-sizing:border-box}
@@ -101,7 +101,8 @@
     .mg-sp-nr[aria-checked="true"] .rd{border:5px solid var(--sp-end)}
     .mg-sp-nr b{flex:1;font-weight:600;font-variant-numeric:tabular-nums}
     .mg-sp-nr span.p{font-size:12.5px;color:var(--sp-muted)}
-    .mg-sp-from{margin:-8px 18px 12px;font-size:12.5px;color:var(--sp-muted);font-variant-numeric:tabular-nums}
+    .mg-sp-nm .mg-sp-from{font-size:12.5px;color:var(--sp-muted);font-variant-numeric:tabular-nums}
+    .mg-softphone[data-has-from="1"] .mg-sp-who{padding-bottom:10px}
     .mg-sp-hold{margin:0 18px 14px;padding:10px 12px;border-radius:10px;background:var(--sp-warn-bg);font-size:12.5px;font-weight:500;color:var(--sp-warn-fg)}
     .mg-sp-hint{margin:-6px 18px 12px;font-size:12px;color:var(--sp-muted);text-align:center}
     .mg-sp-k.is-off{opacity:.45;cursor:not-allowed}
@@ -130,6 +131,7 @@
         <div class="mg-sp-nm">
             <b data-role="softphone-name">{{ $displayName }}</b>
             <span data-role="softphone-sub">{{ $spPhone }}</span>
+            <span class="mg-sp-from" data-role="softphone-from" hidden></span>
         </div>
     </div>
     <p class="mg-sp-note" data-role="softphone-detail" hidden></p>
@@ -140,18 +142,20 @@
         <button type="button" class="mg-sp-sec" data-role="softphone-choose-cancel">Cancel</button>
         <button type="button" class="mg-sp-end" data-role="softphone-choose-go"><svg class="mg-sp-ic" viewBox="0 0 24 24"><path d="M5 4h4l2 5-2.5 1.5a11 11 0 0 0 5 5L15 13l5 2v4a1 1 0 0 1-1 1A16 16 0 0 1 4 5a1 1 0 0 1 1-1z"/></svg>Call</button>
     </div>
-    <p class="mg-sp-from" data-role="softphone-from" hidden></p>
 
     {{-- Live-call controls. Mute, Keypad (DTMF), Hold and Note are real; Record and Transfer have no safe backend yet and are shown disabled with the reason. --}}
     <div class="mg-sp-hold" data-role="softphone-hold-banner" hidden></div>
     <div class="mg-sp-ctl" data-role="softphone-controls" hidden>
         <button type="button" class="mg-sp-k" data-role="softphone-mute" data-label-mute="Mute" data-label-unmute="Unmute" aria-pressed="false"><i><svg class="mg-sp-ic" viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21"/></svg></i><span data-role="softphone-mute-label">Mute</span></button>
+        <button type="button" class="mg-sp-k" data-role="softphone-audio" aria-pressed="false" hidden><i><svg class="mg-sp-ic" viewBox="0 0 24 24"><path d="M4 10v4h3.5L12 18V6L7.5 10zM15.5 9a4 4 0 0 1 0 6M18 6.5a7.5 7.5 0 0 1 0 11"/></svg></i><span>Audio</span></button>
         <button type="button" class="mg-sp-k" data-role="softphone-keypad" data-capability="keypad" aria-pressed="false"><i><svg class="mg-sp-ic" viewBox="0 0 24 24"><circle cx="6" cy="5" r="1.3"/><circle cx="12" cy="5" r="1.3"/><circle cx="18" cy="5" r="1.3"/><circle cx="6" cy="11" r="1.3"/><circle cx="12" cy="11" r="1.3"/><circle cx="18" cy="11" r="1.3"/><circle cx="6" cy="17" r="1.3"/><circle cx="12" cy="17" r="1.3"/><circle cx="18" cy="17" r="1.3"/><circle cx="12" cy="22" r=".6"/></svg></i>Keypad</button>
         <button type="button" class="mg-sp-k" data-role="softphone-hold" data-capability="hold" aria-pressed="false"><i><svg class="mg-sp-ic" viewBox="0 0 24 24" data-role="hold-icon-pause" style="stroke-width:2.4"><path d="M9 5v14M15 5v14"/></svg><svg class="mg-sp-ic" viewBox="0 0 24 24" data-role="hold-icon-play" hidden><path d="M8 5l11 7-11 7z"/></svg></i><span data-role="softphone-hold-label">Hold</span></button>
         <button type="button" class="mg-sp-k is-off" data-role="softphone-record" data-capability="record" disabled title="Call recording is not available yet: no recording or consent flow exists for browser calls." aria-label="Record (not available yet)"><i><svg class="mg-sp-ic" viewBox="0 0 24 24"><circle cx="12" cy="12" r="5" fill="currentColor"/></svg></i>Record</button>
         <button type="button" class="mg-sp-k is-off" data-role="softphone-transfer" data-capability="transfer" disabled title="Transfer is not available yet: the call bridge has no transfer operation." aria-label="Transfer (not available yet)"><i><svg class="mg-sp-ic" viewBox="0 0 24 24"><path d="M4 9h13l-3.5-3.5M20 15H7l3.5 3.5"/></svg></i>Transfer</button>
         <button type="button" class="mg-sp-k" data-role="softphone-notebtn" data-capability="note" aria-pressed="false"><i><svg class="mg-sp-ic" viewBox="0 0 24 24"><path d="M5 4h10l4 4v12H5zM9 12h6M9 16h4"/></svg></i>Note</button>
     </div>
+    {{-- Audio output: the browser's own output devices (setSinkId); shown only while the call is being placed, as in the design. --}}
+    <div class="mg-sp-choose" data-role="softphone-audio-list" role="radiogroup" aria-label="Audio output" hidden></div>
     <p class="mg-sp-hint" data-role="softphone-hint" hidden>Record and Transfer are not available yet.</p>
 
     {{-- Keypad: real DTMF on the live call. --}}

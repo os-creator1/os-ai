@@ -50,6 +50,8 @@ final class ContactEmailIdentity
             $definition = match ($tag) {
                 self::TAG => ['label' => 'Email', 'type' => 'text'],
                 'NOTES' => ['label' => 'Notes', 'type' => 'textarea'],
+                'FIRST_NAME' => ['label' => 'First name', 'type' => 'text'],
+                'LAST_NAME' => ['label' => 'Last name', 'type' => 'text'],
                 default => throw new InvalidArgumentException('Unknown built-in contact field ' . $tag),
             };
 

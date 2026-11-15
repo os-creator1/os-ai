@@ -13,7 +13,7 @@
         }
     }
 @endphp
-<li class="conv-row email-row" data-id="email:{{ $thread['key'] }}" data-channel="email" data-email-thread="{{ $thread['key'] }}" title="{{ $thread['counterpart'] }}">
+<li class="conv-row email-row {{ ! empty($thread['unread']) ? 'conv-unread' : '' }}" data-id="email:{{ $thread['key'] }}" data-channel="email" data-email-thread="{{ $thread['key'] }}" title="{{ $thread['counterpart'] }}">
     <span class="avatar bg-light-primary conversation-row-avatar email-row-avatar" aria-hidden="true">
         {{ $emailInitials !== '' ? $emailInitials : mb_strtoupper(mb_substr($thread['counterpart'], 0, 1)) }}
     </span>

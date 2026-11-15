@@ -229,3 +229,23 @@ html body .app-content.chat-application{--mg-brand:#B4514A;--mg-brand-d:#8F3B35;
 .chat-application .chat-app-form:not(.is-email-channel)>.composer-guidance{order:0;grid-row:auto}
 /* the design shows the send arrow beside the label on every width */
 .chat-application .chat-app-form .send svg.d-lg-none{display:inline-block!important}
+
+/* ---- real email thread actions, rename, formatting toolbar, SMS/Email switch (round 3) ---- */
+.chat-application .mgx-email-actions{display:inline-flex;gap:8px;margin-left:4px}
+.chat-application .mgx-email-actions[hidden]{display:none}
+.chat-application .conv-hb-danger{color:#B4514A}
+.chat-application .active-chat.is-email-thread .add-to-blacklist,.chat-application .active-chat.is-email-thread .remove-btn{display:none!important}
+.chat-application .chat-header [data-role=conversation-rename]{display:inline-flex;align-items:center;justify-content:center}
+.chat-application .chat-header [data-role=conversation-rename][hidden]{display:none}
+.chat-application .conversation-header-id input.form-control-sm{height:30px;font-size:15px;font-weight:700;max-width:260px}
+.chat-application .composer-email-toolbar{float:left;display:flex;gap:2px;margin:-48px 0 14px 10px;position:relative;z-index:10}
+.chat-application .composer-email-toolbar[hidden]{display:none}
+.chat-application .composer-email-toolbar .conv-hb{border:0;background:transparent;width:40px;height:40px}
+.chat-application .composer-email-toolbar .conv-hb:hover{background:var(--mg-canvas)}
+/* the SMS/Email switch is a quiet "send as" control under the input, right-aligned beside the hint */
+.chat-application .chat-app-form:not(.is-email-channel)>.form-send-message,.chat-application .chat-app-form:not(.is-email-channel)>.composer-template-select,.chat-application .chat-app-form:not(.is-email-channel)>.send{grid-row:1}
+.chat-application .chat-app-form:not(.is-email-channel)>.composer-guidance{grid-row:2;grid-column:1 / 3;align-self:center}
+.chat-application .chat-app-form:not(.is-email-channel)>.conversation-channel-switch{grid-row:2;grid-column:3;justify-self:end;margin:0;display:inline-flex;gap:0;padding:2px;border-radius:999px;background:#F1EDE9;border:0}
+.chat-application .conversation-channel-switch .conversation-channel-option{border:0;background:transparent;color:#5E5652;font-size:12px;font-weight:600;padding:2px 12px;border-radius:999px;min-height:24px}
+.chat-application .conversation-channel-switch .conversation-channel-option.is-active{background:#fff;color:var(--mg-ink);box-shadow:0 1px 2px rgba(31,26,25,.12)}
+.chat-application .composer-email-toolbar .mgx-italic{font-family:Georgia,serif;font-size:15px}

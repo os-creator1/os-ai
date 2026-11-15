@@ -46,6 +46,9 @@ final class FakeBusinessEmailProvider implements BusinessEmailProvider, InboundB
 
     public string $mailbox = 'owner@business.test';
 
+    /** Mirrors the real Google/Microsoft adapters, which send a sanitized HTML alternative. */
+    public bool $htmlSend = true;
+
     /** Runs inside send(), e.g. to simulate a re-entrant duplicate request. */
     public ?Closure $duringSend = null;
 
@@ -73,7 +76,7 @@ final class FakeBusinessEmailProvider implements BusinessEmailProvider, InboundB
 
     public function capabilities(): BusinessEmailProviderCapabilities
     {
-        return new BusinessEmailProviderCapabilities(inboundSync: $this->type === BusinessEmailProviderType::Google);
+        return new BusinessEmailProviderCapabilities(htmlSend: $this->htmlSend, inboundSync: $this->type === BusinessEmailProviderType::Google);
     }
 
     public function authorizationUrl(string $state, bool $forceConsent): string

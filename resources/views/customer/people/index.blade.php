@@ -128,7 +128,7 @@
                                 <span class="mgx-gp is-none">No group</span>
                             @endif
                         </span>
-                        <span class="{{ $contact['last_activity'] === null ? 'mgx-mu' : '' }}" data-label="Last activity">{{ $contact['last_activity'] !== null ? 'Texted · ' . $contact['last_activity']->diffForHumans(['short' => true]) : '—' }}</span>
+                        <span class="{{ $contact['last_activity'] === null ? 'mgx-mu' : '' }}" data-label="Last activity">{{ $contact['last_activity'] !== null ? ($contact['last_activity_type'] ?? 'Texted') . ' · ' . $contact['last_activity']->diffForHumans(['short' => true]) : '—' }}</span>
                         <span class="mgx-mu" data-label="Added">{{ $contact['added']?->format('M j') }}</span>
                         <div class="mgx-ra">
                             @if ($canCall)

@@ -1828,6 +1828,13 @@
             Route::post('/email-thread', 'ChatBoxController@emailThread')->name('email_thread');
             // "Send Email" from a Contact: the Email composer addressed to the Contact's canonical email.
             Route::post('/email-compose', 'ChatBoxController@emailCompose')->name('email_compose');
+            // Email thread actions: archive / un-archive / mark unread / delete from MotionGrove (the mailbox is never touched).
+            Route::post('/email-thread/archive', 'ChatBoxController@emailThreadArchive')->name('email_thread_archive');
+            Route::post('/email-thread/unarchive', 'ChatBoxController@emailThreadUnarchive')->name('email_thread_unarchive');
+            Route::post('/email-thread/unread', 'ChatBoxController@emailThreadUnread')->name('email_thread_unread');
+            Route::post('/email-thread/delete', 'ChatBoxController@emailThreadDelete')->name('email_thread_delete');
+            // Rename the person an SMS conversation is with (their Contact's name; only when a Contact is linked).
+            Route::post('/{uid}/rename', 'ChatBoxController@rename')->name('rename');
             Route::post('/sent', 'ChatBoxController@sent')->name('sent');
             Route::post('/load', 'ChatBoxController@loadChatUsers')->name('load');
             Route::post('/{uid}/messages', 'ChatBoxController@messages')->name('messages');
