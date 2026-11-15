@@ -77,10 +77,13 @@
 
     if (shown === 0 && count === 0) {
       if (!empty) {
-        empty = document.createElement('p');
-        empty.className = 'text-caption text-muted mb-0';
+        empty = document.createElement('div');
+        empty.className = 'crm-column-empty';
         empty.setAttribute('data-role', 'crm-column-empty');
         empty.textContent = 'No opportunities';
+        var hint = document.createElement('span');
+        hint.textContent = 'Drag one here when it reaches this stage.';
+        empty.appendChild(hint);
         list.appendChild(empty);
       }
     } else if (empty) {
@@ -119,7 +122,7 @@
     list.insertBefore(card, list.querySelector('[data-role="crm-card"]'));
 
     var age = card.querySelector('[data-role="crm-card-age"]');
-    if (age) { age.textContent = 'In stage less than a minute'; }
+    if (age) { (age.querySelector('.crm-age-label') || age).textContent = 'less than a minute in stage'; }
 
     if (source) {
       bump(source, -1, -valueOf(card));
