@@ -59,7 +59,7 @@
             <div class="xw-verdict-text">
                 @if($urgent > 0)
                     <b>Your website needs attention</b>
-                    <span>{{ $urgent }} critical or high-priority {{ $urgent === 1 ? 'problem' : 'problems' }} found@if($minor > 0), plus {{ $minor }} smaller {{ $minor === 1 ? 'improvement' : 'improvements' }}@endif. Start with the first item below.</span>
+                    <span>{{ $urgent }} critical or high-priority {{ $urgent === 1 ? 'problem' : 'problems' }} found{{ $minor > 0 ? ', plus '.$minor.' smaller '.($minor === 1 ? 'improvement' : 'improvements') : '' }}. Start with the first item below.</span>
                 @elseif($minor > 0)
                     <b>Your website is in good shape</b>
                     <span>No critical or high-priority problems. {{ $minor }} small {{ $minor === 1 ? 'improvement' : 'improvements' }} worth doing.</span>
@@ -68,7 +68,7 @@
                     <span>No problems or improvements found on the pages we audited.</span>
                 @endif
             </div>
-            <a href="{{ $planUrl }}" class="xw-btn xw-btn-line" data-role="open-plan">Open improvement plan@if($plan !== null && $plan['counts']['items'] > 0) <span class="xw-faint">({{ $plan['counts']['items'] }} item(s))</span>@endif</a>
+            <a href="{{ $planUrl }}" class="xw-btn xw-btn-line" data-role="open-plan">Open improvement plan {!! ($plan !== null && $plan['counts']['items'] > 0) ? '<span class="xw-faint">('.(int) $plan['counts']['items'].' item(s))</span>' : '' !!}</a>
         </section>
 
         {{-- Numbers: precise labels, no invented score --}}
