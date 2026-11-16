@@ -1996,16 +1996,16 @@
                 });
             }
 
-            // Unified inbox: All (default) / SMS / Email. Email has no read state or "waiting" notion, and a Home date scope is an SMS
-            // notion, so those narrower views stay SMS-only rather than mixing in rows that cannot honour the filter.
+            // All and SMS list only SMS lead threads. Email is the separate mailbox; a linked lead's timeline still includes emails and activities.
+            // Unread / Read / Waiting and Home date scopes remain SMS-only.
             $channel = in_array($request->get('channel'), ['sms', 'email'], true) ? $request->get('channel') : 'all';
             // Email has no Unread/Read/Waiting: those views are SMS-only, never an empty Email list.
             if ($channel === 'email' && ! in_array($filter, ['recents', 'all'], true)) {
                 $channel = 'sms';
             }
-            $emailEligible = $channel !== 'sms' && in_array($filter, ['recents', 'all'], true) && $created === null;
-            // Email-only and the merged All list page themselves (UnifiedConversationList); SMS-only and the narrower SMS views paginate as ever.
-            $chat_box = ($channel === 'email' || ($channel === 'all' && $emailEligible)) ? null : $query->with('latestMessage')->paginate(50, ['*'], 'page', $page);
+            $emailEligible = $channel === 'email' && in_array($filter, ['recents', 'all'], true) && $created === null;
+            // Email pages the mailbox; All and SMS use the established SMS query, filters, and pagination.
+            $chat_box = $emailEligible ? null : $query->with('latestMessage')->paginate(50, ['*'], 'page', $page);
 
             $items = app(\App\Library\Conversations\UnifiedConversationList::class)
                 ->items($business, (int) Auth::id(), $channel, $emailEligible, $query, $chat_box, (int) $page, $search);
