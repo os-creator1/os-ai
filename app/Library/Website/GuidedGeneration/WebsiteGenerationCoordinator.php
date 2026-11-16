@@ -69,6 +69,10 @@ final class WebsiteGenerationCoordinator
                 'generation_lease_attempt_uid' => null,
             ])->save();
 
+            // The lease is exclusive, so a pending attempt older than a whole lease can only be an orphan of a
+            // crashed/timed-out request or worker. Fail it so it can never be mistaken for work in flight.
+            $this->guidedGeneration->recoverStalePendingAttempts((int) $locked->id, self::LEASE_SECONDS);
+
             return $token;
         });
     }
@@ -209,6 +213,36 @@ final class WebsiteGenerationCoordinator
 
             return true;
         });
+    }
+
+    /**
+     * A queued job restarts the lease clock when it actually begins running, so time spent waiting in the queue never
+     * eats into the lease the job needs for the provider call and the commit. Compare-and-swap on the token: false
+     * means this job no longer owns the lease (it was reclaimed as stale) and must do nothing at all.
+     */
+    public function heartbeat(Website $website, string $token): bool
+    {
+        Website::where('id', $website->id)
+            ->where('generation_lease_token', $token)
+            ->update(['generation_lease_started_at' => now()]);
+
+        // Not the affected-row count: MySQL reports 0 when the timestamp did not change within the same second.
+        return Website::where('id', $website->id)->where('generation_lease_token', $token)->exists();
+    }
+
+    /**
+     * A queued run died (exception, queue timeout, worker crash handled by the queue's failed callback). Fails the
+     * attempt THIS lease owns and releases the lease, both only while the token still matches.
+     */
+    public function abandon(Website $website, string $token, string $reason): void
+    {
+        $owned = Website::where('id', $website->id)->where('generation_lease_token', $token)->value('generation_lease_attempt_uid');
+
+        if ($owned !== null) {
+            $this->guidedGeneration->recoverAttemptByUid($owned, $reason);
+        }
+
+        $this->release($website, $token);
     }
 
     /**
