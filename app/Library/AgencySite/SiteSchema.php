@@ -41,6 +41,8 @@ final class SiteSchema
     public const EDITION_ORIGINAL = 'motiongrove';
 
     /** `x.template`: what the site's home page is. `consultation` = the two-column "talk to us" page with the booking calendar. */
+    public const TEMPLATE_BOOK_CALL = 'consultation';
+
     public const TEMPLATES = ['home' => 'Full marketing website', 'consultation' => 'Consultation landing page (headline, steps and booking calendar)'];
 
     public const PAGES = ['home', 'product', 'solutions', 'how-it-works', 'customers', 'pricing'];
@@ -118,7 +120,6 @@ final class SiteSchema
                 self::text('x.market', 'Market / country', 60),
                 self::choice('x.niche', 'Which industry examples should the product illustrations use?', NichePresets::NICHES),
                 self::choice('x.goal', 'How should visitors become customers?', self::GOALS),
-                self::choice('x.template', 'What should the home page be?', self::TEMPLATES),
             ]],
             // The consultation template's own copy (shown when "What should the home page be?" is the consultation page).
             'consultation' => ['step' => 1, 'page' => 'home', 'label' => 'Consultation landing page', 'fields' => [
@@ -331,6 +332,7 @@ final class SiteSchema
         $index['x.cta.product'] = ['path' => 'x.cta.product', 'label' => 'Product CTA', 'type' => 'choice', 'options' => self::CTA_TARGETS];
         $index['x.cta.solutions'] = ['path' => 'x.cta.solutions', 'label' => 'Solutions CTA', 'type' => 'choice', 'options' => self::CTA_TARGETS];
         $index['x.cta.how'] = ['path' => 'x.cta.how', 'label' => 'How it works CTA', 'type' => 'choice', 'options' => self::CTA_TARGETS];
+        $index['x.template'] = ['path' => 'x.template', 'label' => 'Landing page type', 'type' => 'choice', 'options' => self::TEMPLATES];
         $index['x.edition'] = ['path' => 'x.edition', 'label' => 'Site edition', 'type' => 'choice', 'options' => [self::EDITION_ORIGINAL => 'Original MotionGrove site']];
         $index['x.seo_image'] = ['path' => 'x.seo_image', 'label' => 'Social image', 'type' => 'asset'];
 

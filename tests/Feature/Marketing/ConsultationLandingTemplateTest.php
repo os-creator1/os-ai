@@ -86,7 +86,7 @@ class ConsultationLandingTemplateTest extends TestCase
         ]);
         $this->authenticateAs($owner);
         $editorPage = $this->get(route('customer.workspaces.agency.white-label.show', ['workspaceUid' => $agency->uid, 'tab' => 'landing']))->assertOk()->getContent();
-        $this->assertStringContainsString('Consultation landing page', $editorPage, 'the template is offered in the White Label editor');
+        $this->assertStringContainsString('Book a Call Landing Page', $editorPage, 'the template is offered in the White Label editor');
         $this->assertStringContainsString('consultation.title', $editorPage);
         $preview = $this->get(route('customer.workspaces.agency.site.preview', ['workspaceUid' => $agency->uid, 'page' => 'home']))->assertOk()->getContent();
         foreach (['Edited headline for us', 'Our own description.', 'Talk to us', 'Choose a slot', 'Fourth'] as $text) {
@@ -103,7 +103,7 @@ class ConsultationLandingTemplateTest extends TestCase
         // The editor presents the template's fields and choice.
         $editor = app(\App\Library\AgencySite\SiteEditorPresenter::class)->present($agency, $sites->find($agency));
         $this->assertArrayHasKey('consultation', $editor['groups']);
-        $this->assertContains('x.template', array_column($editor['groups']['setup']['fields'], 'path'));
+        $this->assertSame('consultation', $editor['template']);
 
         // Draft edits are invisible on the published page until publishing.
         $sites->publish((int) $owner->user_id, $agency);
@@ -259,5 +259,71 @@ class ConsultationLandingTemplateTest extends TestCase
         $this->get('/photobooth')->assertSee('A-DRAFT')->assertDontSee('A-FIRST');
         $this->get('/dogs')->assertSee('B-FIRST')->assertDontSee('A-DRAFT');
         $this->assertSame(2, AgencySite::query()->count());
+    }
+
+    public function test_book_a_call_is_a_first_class_option_at_the_top_of_the_editor_for_every_agency(): void
+    {
+        [$agency, $owner, $type] = $this->agency('Ordinary Agency');
+        $this->authenticateAs($owner);
+        $url = route('customer.workspaces.agency.white-label.show', ['workspaceUid' => $agency->uid, 'tab' => 'landing']);
+
+        $html = $this->get($url)->assertOk()->getContent();
+
+        // Both options are offered immediately, BEFORE the 10-step wizard navigation.
+        $chooser = strpos($html, 'data-role="template-chooser"');
+        $this->assertNotFalse($chooser);
+        $this->assertLessThan(strpos($html, 'data-role="step-nav"'), $chooser, 'the chooser is outside and above the wizard');
+        $this->assertStringContainsString('data-template-option="home"', $html);
+        $this->assertStringContainsString('data-template-option="consultation"', $html);
+        $this->assertStringContainsString('Book a Call Landing Page', $html);
+        $this->assertStringContainsString('Full marketing website', $html);
+        $this->assertStringContainsString('data-mode="site"', $html, 'the existing website stays the default');
+
+        // The Book a Call editor has its own content, branding and calendar panels, plus draft, preview and publish.
+        foreach (['data-role="callpage-content"', 'data-role="callpage-brand"', 'consultation.title', 'consultation.steps', 'data-booking-option' , 'data-role="save-draft"', 'data-role="publish"', 'id="wl-preview"'] as $needle) {
+            $this->assertStringContainsString($needle, $html, $needle);
+        }
+
+        // Choosing it saves through the ordinary editor endpoint and the editor reopens in Book a Call mode.
+        $this->postJson(route('customer.workspaces.agency.site.save', ['workspaceUid' => $agency->uid]), ['answers' => ['x.template' => 'consultation', 'x.booking_type_uid' => $type->public_booking_uuid], 'step' => 1])->assertOk();
+        $this->assertStringContainsString('data-mode="callpage"', $this->get($url)->assertOk()->getContent());
+
+        // Bad values are refused server-side.
+        $this->postJson(route('customer.workspaces.agency.site.save', ['workspaceUid' => $agency->uid]), ['answers' => ['x.template' => 'something-else'], 'step' => 1])->assertStatus(422);
+    }
+
+    public function test_switching_type_is_a_draft_change_that_never_alters_the_published_page_and_enforces_call_only(): void
+    {
+        [$agency, $owner, $type] = $this->agency('Switching Agency');
+        $sites = app(AgencySiteManager::class);
+        $publish = function () use ($sites, $owner, $agency) {
+            try { return $sites->publish((int) $owner->user_id, $agency); } catch (\App\Exceptions\AgencySite\SitePublishBlockedException $e) { $this->fail('Publish blocked: ' . json_encode(array_column($e->blockers, 'detail', 'key'))); }
+        };
+        $sites->ensure((int) $owner->user_id, $agency);
+        $sites->save((int) $owner->user_id, $agency, ['x.goal' => 'book_call', 'x.booking_type_uid' => $type->public_booking_uuid, 'links.privacy' => 'https://example.test/p', 'links.terms' => 'https://example.test/t']);
+        try { $site = $publish(); } catch (\App\Exceptions\AgencySite\SitePublishBlockedException $e) { $this->fail(json_encode($e->blockers ?? $e->getMessage())); }
+        $before = $this->get(route('agency.site.home', $site->public_id))->assertOk()->getContent();
+        $this->assertStringNotContainsString('data-role="public-scheduler"', $before);
+
+        // Switching to Book a Call in the draft leaves the live page byte-identical until republished.
+        $sites->save((int) $owner->user_id, $agency, ['x.template' => 'consultation']);
+        $this->assertSame($before, $this->get(route('agency.site.home', $site->public_id))->getContent());
+        $this->assertTrue($sites->hasUnpublishedChanges($sites->find($agency)->fresh()));
+
+        $publish();
+        $this->get(route('agency.site.home', $site->public_id))->assertSee('data-role="public-scheduler"', false);
+
+        // Call-only is enforced for the Book a Call page even when the saved goal sells plans, and the goal is not rewritten.
+        $sites->save((int) $owner->user_id, $agency, ['x.goal' => 'both']);
+        $publish();
+        $html = $this->get(route('agency.site.home', $site->public_id))->assertOk()->getContent();
+        $this->assertDoesNotMatchRegularExpression('/Get started|\bplans?\b|\$\d/i', strip_tags((string) preg_replace('/<script.*?<\/script>|<style.*?<\/style>/s', '', $html)));
+        $this->assertSame('both', AgencySiteManager::values($sites->find($agency))['x.goal']);
+
+        // Switching back restores the full website without losing the page copy.
+        // (A full website that sells plans needs a sellable plan to publish, so restore the call-only goal first.)
+        $sites->save((int) $owner->user_id, $agency, ['x.template' => 'home', 'x.goal' => 'book_call']);
+        $publish();
+        $this->get(route('agency.site.home', $site->public_id))->assertDontSee('data-role="public-scheduler"', false);
     }
 }

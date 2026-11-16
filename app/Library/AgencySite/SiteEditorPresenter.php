@@ -65,6 +65,7 @@ final class SiteEditorPresenter
             'unpublishedChanges' => $this->manager->hasUnpublishedChanges($site),
             'hostedUrl' => route('agency.site.home', $site->public_id),
             'officialUrl' => OfficialDomainPaths::urlFor($agency),
+            'template' => ($values['x.template'] ?? 'home') === SiteSchema::TEMPLATE_BOOK_CALL ? 'consultation' : 'home',
             'step' => (int) $site->current_step ?: 1,
             'steps' => SiteSchema::STEPS,
             'groups' => $groups,

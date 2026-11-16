@@ -24,7 +24,23 @@
     ];
 @endphp
 
-<div id="wl-site" data-role="landing-editor" data-urls='@json($urls)' data-step="{{ $e['step'] }}" data-can-edit="{{ $canEdit ? '1' : '0' }}" data-csrf="{{ csrf_token() }}" data-pages='@json($e['pages'])'>
+<div id="wl-site" data-role="landing-editor" data-mode="{{ $e['template'] === 'consultation' ? 'callpage' : 'site' }}" data-urls='@json($urls)' data-step="{{ $e['step'] }}" data-can-edit="{{ $canEdit ? '1' : '0' }}" data-csrf="{{ csrf_token() }}" data-pages='@json($e['pages'])'>
+    {{-- Landing page type: the first decision, outside the 10-step wizard. Saves x.template; the editor below switches with it. --}}
+    <div class="mb-3" role="radiogroup" aria-label="Landing page type" data-role="template-chooser">
+        <div class="row g-2">
+            @foreach ([
+                'home' => ['Full marketing website', 'Home, Product, Solutions, How it works, Customers and more, with your branding. Guided in 10 steps.'],
+                'consultation' => ['Book a Call Landing Page', 'One focused page: your headline, numbered steps and a working booking calendar. No pricing, no signup.'],
+            ] as $key => [$title, $text])
+                <div class="col-12 col-md-6">
+                    <button type="button" role="radio" class="btn w-100 text-start border rounded p-3 {{ $e['template'] === $key ? 'btn-primary' : 'btn-outline-secondary' }}" data-template-option="{{ $key }}" aria-checked="{{ $e['template'] === $key ? 'true' : 'false' }}" @disabled(! $canEdit)>
+                        <strong class="d-block">{{ $title }}</strong>
+                        <span class="small d-block">{{ $text }}</span>
+                    </button>
+                </div>
+            @endforeach
+        </div>
+    </div>
     <div class="d-flex flex-wrap align-items-center gap-2 mb-2" data-role="landing-status">
         <x-badge :variant="$statusBadge[0]"><span data-role="site-status">{{ $statusBadge[1] }}</span></x-badge>
         <span class="text-caption" id="wl-save-state" role="status" aria-live="polite" data-role="save-state">{{ $canEdit ? 'All changes saved' : 'Read only — only the agency owner can edit' }}</span>
@@ -46,7 +62,7 @@
 
     <div class="row g-2">
         {{-- Navigation --}}
-        <nav class="col-12 col-lg-2" aria-label="Website setup screens" data-pane="edit">
+        <nav class="col-12 col-lg-2" aria-label="Website setup screens" data-pane="edit" data-mode-only="site">
             <ol class="list-unstyled mb-0" data-role="step-nav">
                 @foreach ($e['steps'] as $n => $label)
                     <li>
@@ -61,14 +77,31 @@
 
         {{-- Questions --}}
         <div class="col-12 col-lg-5" data-pane="edit">
+            {{-- ============ Book a Call Landing Page: its own editor (content, branding, then the calendar and publishing panels below) --}}
+            <section data-mode-only="callpage" data-callpage-panel="0" data-role="callpage-content" hidden>
+                <x-card title="Book a Call Landing Page — content">
+                    <p class="text-caption">Edit the words on your page. Everything saves as you type and shows in the preview; visitors see it once you publish.</p>
+                    @include('customer.agency.white-label._group', ['group' => $e['groups']['consultation'], 'canEdit' => $canEdit])
+                </x-card>
+            </section>
+            <section data-mode-only="callpage" data-callpage-panel="1" data-role="callpage-brand" hidden>
+                <x-card title="Branding and colours">
+                    <div class="d-flex align-items-center gap-2 mb-1">
+                        <span aria-hidden="true" style="display:inline-block;width:28px;height:28px;border-radius:8px;background:{{ $e['brand']['color'] }};border:1px solid rgba(0,0,0,.15)"></span>
+                        <span><strong>{{ $e['brand']['name'] }}</strong> · {{ $e['brand']['color'] }}</span>
+                    </div>
+                    <p class="text-caption mb-0">Your name, logo, colours and fonts on this page come from the <a href="{{ route('customer.workspaces.agency.white-label.show', $agencyWorkspace->uid) }}">Branding tab</a>, so they match everything else you publish. Change them there and the preview updates.</p>
+                    @if ($e['officialUrl'])
+                        <p class="text-caption mt-1 mb-0" data-role="official-url-callpage">Your official MotionGrove address is <a href="{{ $e['officialUrl'] }}" target="_blank" rel="noopener">{{ $e['officialUrl'] }}</a>. Publishing updates it.</p>
+                    @endif
+                </x-card>
+            </section>
+
             {{-- ============ 1 · Business & website --}}
             <section data-step-panel="1" {{ $e['step'] === 1 ? '' : 'hidden' }}>
                 <x-card title="Business and website setup">
                     <p class="text-caption">Your website name, logo and colours come from the <a href="{{ route('customer.workspaces.agency.white-label.show', $agencyWorkspace->uid) }}">Branding tab</a>: currently <strong>{{ $e['brand']['name'] }}</strong>{{ $e['brand']['saved'] ? '' : ' (not saved yet)' }}. A complete starter website already exists and updates as you answer.</p>
                     @include('customer.agency.white-label._group', ['group' => $e['groups']['setup'], 'canEdit' => $canEdit])
-                    <h3 class="h6 mt-3">Consultation landing page</h3>
-                    <p class="text-caption">Choose “Consultation landing page” above to make the home page a two-column page with your headline, numbered steps and your booking calendar. Pick the booking type in step 8.</p>
-                    @include('customer.agency.white-label._group', ['group' => $e['groups']['consultation'], 'canEdit' => $canEdit])
                     @if ($canEdit && (count($e['legacySamples']['pinned']) || count($e['legacySamples']['review'])))
                         <div class="alert alert-warning small" data-role="legacy-samples">
                             <b>Old example content is still saved in this draft.</b>
@@ -227,7 +260,7 @@
             </section>
 
             {{-- ============ 8 · Book a call --}}
-            <section data-step-panel="8" {{ $e['step'] === 8 ? '' : 'hidden' }}>
+            <section data-step-panel="8" data-callpage-panel="2" {{ $e['step'] === 8 ? '' : 'hidden' }}>
                 <x-card title="Book a call">
                     <div id="wl-booking-status" data-role="booking-status">@include('customer.agency.white-label._booking-status', ['booking' => $e['booking']])</div>
                     @if (! $e['booking']['hasBusiness'] || ! $e['booking']['entitled'])
@@ -285,7 +318,7 @@
             </section>
 
             {{-- ============ 10 · Review --}}
-            <section data-step-panel="10" {{ $e['step'] === 10 ? '' : 'hidden' }}>
+            <section data-step-panel="10" data-callpage-panel="3" {{ $e['step'] === 10 ? '' : 'hidden' }}>
                 <x-card title="Review, SEO and publishing">
                     <ul class="list-unstyled" id="wl-checklist" data-role="checklist">
                         @foreach ($e['checklist'] as $item)
@@ -300,7 +333,7 @@
                 </x-card>
             </section>
 
-            <div class="d-flex justify-content-between mt-1">
+            <div class="d-flex justify-content-between mt-1" data-mode-only="site">
                 <button type="button" class="btn btn-outline-secondary btn-sm" data-step-prev>Back</button>
                 <button type="button" class="btn btn-primary btn-sm" data-step-next>Next</button>
             </div>
