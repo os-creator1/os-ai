@@ -318,8 +318,39 @@
         if (t.id === 'wl-unpublish') { if (confirm('Take your website offline?')) { post(urls.unpublish, {}).then(function (j) { if (j.ok) { applyState(j); setState('Website unpublished'); } else { setState(j.message, true); } }); } return; }
     });
 
+    // ---------- landing page type (Full marketing website | Book a Call Landing Page)
+    function mode() { return root.getAttribute('data-mode') === 'callpage' ? 'callpage' : 'site'; }
+    function applyMode(initial) {
+        var callpage = mode() === 'callpage';
+        document.querySelectorAll('[data-mode-only]').forEach(function (el) { el.style.display = el.getAttribute('data-mode-only') === (callpage ? 'callpage' : 'site') ? '' : 'none'; });
+        document.querySelectorAll('[data-step-panel], [data-mode-only="callpage"]').forEach(function (p) {
+            if (callpage) { p.hidden = !p.hasAttribute('data-callpage-panel'); }
+        });
+        document.querySelectorAll('[data-template-option]').forEach(function (b) {
+            var on = (b.getAttribute('data-template-option') === 'consultation') === callpage;
+            b.classList.toggle('btn-primary', on); b.classList.toggle('btn-outline-secondary', !on); b.setAttribute('aria-checked', on ? 'true' : 'false');
+        });
+        if (!callpage && !initial) { go(step, true); }
+        var sel = document.getElementById('wl-preview-page');
+        if (callpage && sel) { Array.prototype.forEach.call(sel.options, function (o) { if (o.value.split('?')[0].split('/').pop() === 'home') { sel.value = o.value; } }); }
+    }
+    document.addEventListener('click', function (ev) {
+        var t = ev.target.closest ? ev.target.closest('[data-template-option]') : null;
+        if (!t || !canEdit) { return; }
+        var next = t.getAttribute('data-template-option');
+        if ((next === 'consultation') === (mode() === 'callpage')) { return; }
+        setState('Saving…');
+        saver.save({ 'x.template': next }, { step: step }).then(function (r) {
+            if (r.ok) {
+                root.setAttribute('data-mode', next === 'consultation' ? 'callpage' : 'site');
+                applyState(r.body); applyMode(); refreshPreview(); setState('All changes saved');
+            } else { setState(r.message || 'Could not switch the landing page type', true); }
+        });
+    });
+
     // ---------- steps
-    function go(n) {
+    function go(n, force) {
+        if (mode() === 'callpage' && !force) { return; }
         if (n < 1 || n > 10) { return; }
         step = n;
         document.querySelectorAll('[data-step-panel]').forEach(function (p) { p.hidden = parseInt(p.getAttribute('data-step-panel'), 10) !== n; });
@@ -343,6 +374,7 @@
     window.addEventListener('resize', function () { setPane(document.querySelector('[data-mobile-tab].btn-primary') ? document.querySelector('[data-mobile-tab].btn-primary').getAttribute('data-mobile-tab') : 'edit'); });
     document.querySelectorAll('[data-mobile-tab]').forEach(function (b) { b.addEventListener('click', function () { document.querySelectorAll('[data-mobile-tab]').forEach(function (x) { x.className = 'btn btn-sm ' + (x === b ? 'btn-primary' : 'btn-outline-secondary'); }); }); });
     setPane('edit');
+    applyMode(true);
 
     // ---------- booking
     function renderBooking(b) {

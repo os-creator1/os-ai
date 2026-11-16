@@ -44,6 +44,8 @@ final class SiteContextFactory
         $primary = $brand?->accent_color ?: self::DEFAULT_PRIMARY;
         $goal = (string) ($values['x.goal'] ?? 'both');
         $goal = in_array($goal, array_keys(SiteSchema::GOALS), true) ? $goal : 'both';
+        // A Book a Call landing page never sells plans: call-only is enforced here, so switching templates never has to rewrite the saved goal.
+        $goal = ($values['x.template'] ?? 'home') === SiteSchema::TEMPLATE_BOOK_CALL ? 'book_call' : $goal;
 
         $publicId = (string) $site->public_id;
         $preview = $previewWorkspaceUid !== null;
