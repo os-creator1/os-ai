@@ -176,11 +176,27 @@ class ContactDirectoryController extends CustomerBaseController
         $back = redirect()->route('customer.workspaces.businesses.people.show', [$workspaceUid, $businessUid, $contactUid]);
 
         $recorder = app(\App\Library\Contacts\ContactEditRecorder::class);
-        $before = $recorder->snapshot($contact);
 
         try {
-            $saved = app(ContactEmailIdentity::class)->save($contact, $input['email'] ?? null);
-            $recorder->record($business, $contact, ['email' => $before['email']], ['email' => $recorder->snapshot($contact)['email']], Auth::id() !== null ? (int) Auth::id() : null);
+            // The canonical email update and its audit event must commit or roll back together.
+            // Lock the contact before taking the old snapshot to serialize concurrent manual saves.
+            $saved = DB::transaction(function () use ($contact, $business, $input, $recorder): ?string {
+                $locked = Contacts::query()
+                    ->where('business_id', $business->id)
+                    ->lockForUpdate()
+                    ->findOrFail($contact->id);
+                $before = $recorder->snapshot($locked);
+                $saved = app(ContactEmailIdentity::class)->save($locked, $input['email'] ?? null);
+                $recorder->record(
+                    $business,
+                    $locked,
+                    ['email' => $before['email']],
+                    ['email' => $recorder->snapshot($locked)['email']],
+                    Auth::id() !== null ? (int) Auth::id() : null,
+                );
+
+                return $saved;
+            });
         } catch (\InvalidArgumentException $exception) {
             return $back->withInput()->withErrors(['email' => $exception->getMessage()]);
         }
