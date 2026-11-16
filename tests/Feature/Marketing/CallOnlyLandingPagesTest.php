@@ -33,6 +33,12 @@ class CallOnlyLandingPagesTest extends TestCase
         $this->bindFakeAgencyStripe();
     }
 
+    /** Point an official path at the Agency workspace that owns $site (by immutable uid), as production config does. */
+    private function officialPath(string $path, \App\Models\AgencySite $site): void
+    {
+        config(['marketing.landing.official_paths.' . $path => (string) \App\Models\Workspace::query()->findOrFail($site->agency_workspace_id)->uid]);
+    }
+
     private function normalise(string $html): string
     {
         return (string) preg_replace('/\?v=\d+/', '?v=X', $html);
@@ -67,7 +73,7 @@ class CallOnlyLandingPagesTest extends TestCase
         $this->assertStringContainsString('Get started', $homeBefore);
         $this->assertMatchesRegularExpression('/\$\d+/', $pricingBefore, 'real prices still show on /pricing');
         $this->assertStringContainsString(route('register', ['plan' => 'core']), $pricingBefore, 'signup still reachable from /pricing');
-        $this->assertNull(config('marketing.landing.dogs_site'), 'nothing was written to the marketing config');
+        $this->assertSame(['photobooth', 'dogs'], array_keys(config('marketing.landing.official_paths')), 'nothing was written to the marketing config');
     }
 
     public function test_photobooth_is_the_official_homepage_without_pricing_or_signup(): void
@@ -222,7 +228,7 @@ class CallOnlyLandingPagesTest extends TestCase
     public function test_dogs_renders_the_existing_published_dog_site_as_a_call_only_page(): void
     {
         [$agency, $owner, $type, $site] = $this->dogAgency();
-        config(['marketing.landing.dogs_site' => $site->public_id]);
+        $this->officialPath('dogs', $site);
         $booking = route('public.booking.show', $type->public_booking_uuid);
 
         $html = $this->get('/dogs')->assertOk()->getContent();
@@ -255,7 +261,7 @@ class CallOnlyLandingPagesTest extends TestCase
     public function test_dogs_does_not_change_the_agencys_saved_mode_or_its_hosted_site(): void
     {
         [$agency, $owner, , $site] = $this->dogAgency();
-        config(['marketing.landing.dogs_site' => $site->public_id]);
+        $this->officialPath('dogs', $site);
 
         $this->get('/dogs')->assertOk();
 
@@ -268,7 +274,7 @@ class CallOnlyLandingPagesTest extends TestCase
     public function test_dogs_never_exposes_drafts_and_follows_publishing(): void
     {
         [$agency, $owner, , $site] = $this->dogAgency();
-        config(['marketing.landing.dogs_site' => $site->public_id]);
+        $this->officialPath('dogs', $site);
 
         app(AgencySiteManager::class)->save((int) $owner->user_id, $agency, ['copy.home.hero.title' => 'DRAFT ONLY HEADLINE']);
         $this->assertStringNotContainsString('DRAFT ONLY HEADLINE', $this->get('/dogs')->getContent(), 'unpublished edits are never public');
@@ -286,13 +292,13 @@ class CallOnlyLandingPagesTest extends TestCase
         [, , , $dog] = $this->dogAgency('Daniel Black');
         [, , , $other] = $this->dogAgency('Other Agency');
 
-        config(['marketing.landing.dogs_site' => null]);
+        config(['marketing.landing.official_paths' => []]);
         $this->get('/dogs')->assertNotFound();
 
-        config(['marketing.landing.dogs_site' => 'not-a-uuid']);
+        config(['marketing.landing.official_paths' => []]);
         $this->get('/dogs')->assertNotFound();
 
-        config(['marketing.landing.dogs_site' => $dog->public_id]);
+        $this->officialPath('dogs', $dog);
         $html = $this->get('/dogs?site=' . $other->public_id . '&publicId=' . $other->public_id)->assertOk()->getContent();
         $this->assertStringContainsString('Daniel Black', $html);
         $this->assertStringNotContainsString('Other Agency', $html, 'another Agency is never reachable through /dogs');
@@ -302,7 +308,7 @@ class CallOnlyLandingPagesTest extends TestCase
     public function test_dogs_is_a_404_when_the_agencys_calendar_stops_working_and_blocks_signup_bypass(): void
     {
         [$agency, $owner, $type, $site] = $this->dogAgency();
-        config(['marketing.landing.dogs_site' => $site->public_id]);
+        $this->officialPath('dogs', $site);
         $this->get('/dogs')->assertOk();
 
         // The landing page never offers signup, and the stored-mode signup route is not linked from it.
@@ -315,7 +321,7 @@ class CallOnlyLandingPagesTest extends TestCase
     public function test_every_dogs_navigation_link_stays_call_only_and_works(): void
     {
         [, , $type, $site] = $this->dogAgency();
-        config(['marketing.landing.dogs_site' => $site->public_id]);
+        $this->officialPath('dogs', $site);
         $booking = route('public.booking.show', $type->public_booking_uuid);
 
         $queue = [url('dogs')];

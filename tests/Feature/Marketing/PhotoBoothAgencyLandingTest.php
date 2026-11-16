@@ -36,6 +36,12 @@ class PhotoBoothAgencyLandingTest extends TestCase
         config(['marketing.cta.book_demo_url' => 'https://calendar.example/motiongrove-demo']);
     }
 
+    /** Point an official path at the Agency workspace that owns $site (by immutable uid), as production config does. */
+    private function officialPath(string $path, \App\Models\AgencySite $site): void
+    {
+        config(['marketing.landing.official_paths.' . $path => (string) \App\Models\Workspace::query()->findOrFail($site->agency_workspace_id)->uid]);
+    }
+
     private function hrefs(string $html): array
     {
         preg_match_all('/<a\b[^>]*\bhref="([^"]*)"/i', $html, $m);
@@ -107,7 +113,8 @@ class PhotoBoothAgencyLandingTest extends TestCase
     {
         [$agency, , $type, $site] = $this->boothSite();
         [, $dogType, $dogSite] = $this->dogSite();
-        config(['marketing.landing.photobooth_site' => $site->public_id, 'marketing.landing.dogs_site' => $dogSite->public_id]);
+        $this->officialPath('photobooth', $site);
+        $this->officialPath('dogs', $dogSite);
 
         $booth = $this->get('/photobooth')->assertOk()->getContent();
         $home = $this->get('/')->assertOk()->getContent();
@@ -173,7 +180,7 @@ class PhotoBoothAgencyLandingTest extends TestCase
     public function test_editor_changes_reach_the_published_page_only_after_publishing(): void
     {
         [$agency, $owner, , $site] = $this->boothSite();
-        config(['marketing.landing.photobooth_site' => $site->public_id]);
+        $this->officialPath('photobooth', $site);
         $sites = app(AgencySiteManager::class);
 
         $sites->save((int) $owner->user_id, $agency, ['copy.home.hero.title' => 'DRAFT-ONLY headline', 'copy.home.hero.lead' => 'Edited lead text']);
@@ -208,7 +215,8 @@ class PhotoBoothAgencyLandingTest extends TestCase
     {
         [, $owner, $type, $site] = $this->boothSite();
         [, , $dogSite] = $this->dogSite();
-        config(['marketing.landing.photobooth_site' => $site->public_id, 'marketing.landing.dogs_site' => $dogSite->public_id]);
+        $this->officialPath('photobooth', $site);
+        $this->officialPath('dogs', $dogSite);
 
         $html = $this->get('/photobooth?site=' . $dogSite->public_id . '&agency=1')->assertOk()->getContent();
         $this->assertStringContainsString('Lumen Events', $html);
@@ -218,17 +226,19 @@ class PhotoBoothAgencyLandingTest extends TestCase
         BookingType::query()->whereKey($type->id)->delete();
         $this->get('/photobooth')->assertNotFound();
 
-        config(['marketing.landing.photobooth_site' => 'not-a-uuid']);
-        $this->get('/photobooth')->assertNotFound();
+        // With no owning Agency site at all, the static page keeps serving; nothing can name another site.
+        config(['marketing.landing.official_paths' => []]);
+        $this->get('/photobooth')->assertOk()->assertSee('Lumen Events');
     }
 
-    public function test_an_unpublished_site_is_a_404_and_without_config_the_static_page_remains(): void
+    public function test_an_unpublished_site_keeps_the_static_page_until_published(): void
     {
         [, , , $site] = $this->boothSite(false);
-        config(['marketing.landing.photobooth_site' => $site->public_id]);
-        $this->get('/photobooth')->assertNotFound();
+        $this->officialPath('photobooth', $site);
+        // Until the owning Agency publishes, the static page keeps serving (and never shows the draft).
+        $this->get('/photobooth')->assertOk()->assertSee('Lumen Events');
 
-        config(['marketing.landing.photobooth_site' => null]);
+        config(['marketing.landing.official_paths' => []]);
         $this->get('/photobooth')->assertOk()->assertSee('Lumen Events');
         $this->get('/photobooth/product')->assertNotFound();
     }
