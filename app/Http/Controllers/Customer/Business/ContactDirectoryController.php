@@ -624,6 +624,11 @@ class ContactDirectoryController extends CustomerBaseController
         $before = $recorder->snapshot($contact);
 
         DB::transaction(function () use ($contact, $current, $target, $moving, $phone, $input, $notes, $normalizedEmail, $ambiguous, $identity, $recorder, $before, $business): void {
+            // The number is about to change: keep this lead's existing conversations attached to it.
+            if ($phone['ok'] && (string) $phone['digits'] !== (string) $contact->phone) {
+                \App\Models\ChatBox::linkConversationsToContact($contact);
+            }
+
             if ($moving) {
                 $this->moveToGroup($contact, $target);
             }
