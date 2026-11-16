@@ -57,7 +57,16 @@
             </div>
             <div class="form-check">
                 <input class="form-check-input" type="radio" name="mode" id="rebuild-mode-full" value="full">
-                <label class="form-check-label" for="rebuild-mode-full"><strong>Rebuild every page</strong> <span class="text-caption">&mdash; write all {{ $currentPageCount }} {{ $currentPageCount === 1 ? 'page' : 'pages' }} again from your answers</span></label>
+                <label class="form-check-label" for="rebuild-mode-full"><strong>Rebuild pages</strong>
+                    @if ($rebuildImpact !== null)
+                        <span class="text-caption" data-testid="rebuild-impact">&mdash; {{ $rebuildImpact['summary'] }}</span>
+                        @foreach ($rebuildImpact['blockers'] as $blocker)
+                            <div class="text-danger mt-2" role="alert" data-testid="rebuild-blocker">{{ $blocker }}</div>
+                        @endforeach
+                    @else
+                        <span class="text-caption">&mdash; rewrite the pages that match your current plan; your other pages are kept</span>
+                    @endif
+                </label>
             </div>
         </fieldset>
 
@@ -100,8 +109,8 @@
                     go: 'Change template'
                 },
                 full: {
-                    title: 'Rebuild every page?',
-                    text: 'Every draft page will be rewritten from your current answers, replacing what is there now. Visitors see nothing new until you publish.',
+                    title: 'Rebuild pages?',
+                    text: 'The draft pages your plan covers will be rewritten from your current answers, replacing them. Other pages you already have are kept as they are. Visitors see nothing new until you publish.',
                     go: 'Rebuild'
                 }
             };

@@ -32,7 +32,7 @@ use Throwable;
  * sees an empty shell), so even the very first guided generation must
  * REPLACE that starter content rather than append to it — the same
  * replace-the-entire-draft semantics a later rebuild needs. Both modes
- * atomically: lock the Website row, delete every existing draft page,
+ * atomically: lock the Website row, delete only the draft pages this rebuild rewrites (see DraftPageReconciler),
  * insert the complete validated+media-bound replacement batch, update
  * template provenance, and mark the attempt succeeded — all inside ONE
  * transaction, so a crash or exception at any point leaves the OLD
@@ -421,7 +421,17 @@ final class GuidedGenerationCommitService
                 $livePages = (array) (\App\Models\WebsiteRevision::where('website_id', $locked->id)->whereKey($locked->published_revision_id)->first()?->snapshot['pages'] ?? []);
                 $keptUids = PublishedPageIdentity::match($identities, $livePages);
 
-                $locked->pages()->delete();
+                // Preservation policy (DraftPageReconciler): only pages this rebuild rewrites (or, on a site never
+                // generated/published, plain starter content) are deleted. Every other page of an established site,
+                // and legal pages of any site, stay exactly as they are. A blocker (page/redirect ceiling) aborts here,
+                // before anything is deleted, so the draft is untouched and the attempt is recorded as failed.
+                $reconciliation = app(DraftPageReconciler::class)->reconcile($locked, $business, $bound['pages']);
+                if ($reconciliation['blockers'] !== []) {
+                    throw new \RuntimeException(implode(' ', $reconciliation['blockers']));
+                }
+                $replacedIds = collect($reconciliation['rewrite'])->merge($reconciliation['remove'])->pluck('id')->all();
+                $replacedSlugs = collect($reconciliation['rewrite'])->merge($reconciliation['remove'])->pluck('slug')->all();
+                $locked->pages()->whereIn('id', $replacedIds)->delete();
 
                 foreach ($bound['pages'] as $index => $page) {
                     $hiddenByOwner = in_array($page['is_home'] ? '' : (string) $page['slug'], $ownerHidden, true);
@@ -449,7 +459,7 @@ final class GuidedGenerationCommitService
                 // which cannot be told apart — are never changed or removed here, and never point anywhere but a live page.
                 $newSlugs = collect($bound['pages'])->pluck('slug')->filter()->all();
                 $coveredPlaces = $this->homeCoveredPlaces($business, $bound['pages']);
-                $lost = $previous->filter(fn ($old) => ! $old->is_home && $old->slug !== null && ($old->page_role === 'location' || str_starts_with((string) $old->slug, 'serving-')))
+                $lost = $previous->filter(fn ($old) => in_array($old->is_home ? '' : strtolower((string) $old->slug), $replacedSlugs, true))->filter(fn ($old) => ! $old->is_home && $old->slug !== null && ($old->page_role === 'location' || str_starts_with((string) $old->slug, 'serving-')))
                     ->reject(fn ($old) => in_array($old->slug, $newSlugs, true))
                     ->filter(fn ($old) => self::placeIsCovered(self::lostPagePlace($old->page_intent['place'] ?? null, (string) $old->slug, $coveredPlaces), $coveredPlaces))
                     ->pluck('slug')->values()->all();
@@ -458,6 +468,13 @@ final class GuidedGenerationCommitService
                     // Added only while there is room: the cap never evicts a redirect somebody else may have set.
                     if (! array_key_exists(strtolower((string) $slug), $redirects) && count($redirects) < \App\Library\Website\Seo\WebsiteRedirectManager::MAX) {
                         $redirects[strtolower((string) $slug)] = '';
+                    }
+                }
+
+                // A page rewritten at a new address keeps its old address alive (never overriding an owner's own redirect).
+                foreach ($reconciliation['redirects'] as $oldSlug => $newSlug) {
+                    if ($oldSlug !== '' && ! array_key_exists($oldSlug, $redirects)) {
+                        $redirects[$oldSlug] = $newSlug;
                     }
                 }
 
