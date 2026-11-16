@@ -136,7 +136,7 @@ final class SiteContentBuilder
         $tree['industries'] = $this->industriesWithJobs($tree['industries'] ?? []);
 
         // x.* — settings of the Agency site itself, kept apart from the copy.
-        $tree['x'] = ['cta' => [], 'testimonials' => (array) ($answers['x.testimonials'] ?? [])];
+        $tree['x'] = ['cta' => [], 'testimonials' => (array) ($answers['x.testimonials'] ?? []), 'template' => (string) ($answers['x.template'] ?? 'home')];
         foreach (['hero', 'final', 'product', 'solutions', 'how'] as $slot) {
             if (! empty($answers["x.cta.$slot"])) {
                 $tree['x']['cta'][$slot] = $answers["x.cta.$slot"];

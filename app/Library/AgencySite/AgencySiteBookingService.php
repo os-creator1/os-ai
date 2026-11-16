@@ -118,6 +118,58 @@ final class AgencySiteBookingService
         return $this->types->publicBookingReadiness($type);
     }
 
+    /**
+     * Everything the embedded booking calendar needs for the selected type, or null unless that type is genuinely
+     * bookable right now (same readiness as the booking link). The calendar talks to the canonical public booking
+     * endpoints (dates, slots, store) of THIS Agency's own booking type, by relative URL so it works on whichever
+     * host serves the page. Availability is never computed here.
+     *
+     * @return array{type: BookingType, timezone: string, timezones: array<string, list<string>>, offerSmsConsent: bool, config: array<string, mixed>}|null
+     */
+    public function embed(Workspace $agency, ?string $uuid): ?array
+    {
+        if (! $this->readiness($agency, $uuid)['ready']) {
+            return null;
+        }
+
+        $type = $this->find($agency, $uuid);
+        $business = $this->business($agency);
+
+        if ($type === null || $business === null) {
+            return null;
+        }
+
+        $timezone = (string) ($business->timezone ?: config('app.timezone', 'UTC'));
+        try {
+            new \DateTimeZone($timezone);
+        } catch (\Exception) {
+            return null;
+        }
+
+        $zones = [];
+        foreach (\DateTimeZone::listIdentifiers() as $identifier) {
+            $zones[str_contains($identifier, '/') ? strtok($identifier, '/') : 'Other'][] = $identifier;
+        }
+
+        $id = (string) $type->public_booking_uuid;
+
+        return [
+            'type' => $type,
+            'timezone' => $timezone,
+            'timezones' => $zones,
+            'offerSmsConsent' => $type->usesSms() && app(\App\Library\Calendar\Notifications\BookingNotificationReadiness::class)->smsReady($type),
+            'config' => [
+                'datesUrl' => route('public.booking.dates', [$id], false),
+                'slotsUrl' => route('public.booking.slots', [$id], false),
+                'storeUrl' => route('public.booking.store', [$id], false),
+                'businessTimezone' => $timezone,
+                'durationMinutes' => (int) $type->duration_minutes,
+                'typeName' => $type->name,
+                'businessName' => $business->name,
+            ],
+        ];
+    }
+
     /** The public booking address, or null unless the type is genuinely bookable right now. */
     public function publicUrl(Workspace $agency, ?string $uuid): ?string
     {

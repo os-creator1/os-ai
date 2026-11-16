@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Public;
 
 use App\Http\Controllers\Controller;
+use App\Library\AgencySite\OfficialDomainPaths;
 use App\Library\Marketing\CallOnlyMarketingSite;
 use App\Library\Marketing\MarketingSite;
 use Illuminate\Contracts\View\View;
@@ -80,14 +81,12 @@ class MarketingController extends Controller
     {
         abort_unless($this->site->servesRequest(request()), 404);
 
-        // Cutover: once marketing.landing.photobooth_site names a published White Label site, THAT site (the owner's own
-        // Landing Page editor content, published revision only) is the authoritative page, exactly like /dogs. The
-        // site is chosen by configuration, never by the request. Blank keeps the static adaptation below.
-        $publicId = (string) config('marketing.landing.photobooth_site');
-        if ($publicId !== '') {
-            abort_unless(\Illuminate\Support\Str::isUuid($publicId), 404);
-
-            return app(AgencySiteController::class)->landing($publicId, $page ?? 'home', 'photobooth');
+        // The Agency account that owns /photobooth (resolved from its immutable workspace uid, never from the request).
+        // Once it has a published Landing Page site, THAT site is authoritative; until then the static adaptation below
+        // keeps serving.
+        $site = OfficialDomainPaths::siteFor('photobooth');
+        if ($site !== null && $site->isLive()) {
+            return app(AgencySiteController::class)->landing($site->public_id, $page ?? 'home', 'photobooth');
         }
 
         abort_unless($page === null, 404);
@@ -106,16 +105,16 @@ class MarketingController extends Controller
 
     /**
      * /dogs and /dogs/{page} — the existing published White Label dog-business site, served as a call-only landing page.
-     * Which Agency site is decided by configuration (marketing.landing.dogs_site), never by the request.
+     * Which Agency site is decided by the immutable workspace uid in marketing.landing.official_paths, never by the request.
      */
     public function dogs(?string $page = null): \Symfony\Component\HttpFoundation\Response
     {
         abort_unless($this->site->servesRequest(request()), 404);
 
-        $publicId = (string) config('marketing.landing.dogs_site');
-        abort_unless(\Illuminate\Support\Str::isUuid($publicId), 404);
+        $site = OfficialDomainPaths::siteFor('dogs');
+        abort_if($site === null, 404);
 
-        return app(AgencySiteController::class)->landing($publicId, $page ?? 'home', 'dogs');
+        return app(AgencySiteController::class)->landing($site->public_id, $page ?? 'home', 'dogs');
     }
 
     private function page(string $page): View

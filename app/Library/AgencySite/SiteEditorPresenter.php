@@ -64,6 +64,7 @@ final class SiteEditorPresenter
             'isLive' => $site->isLive(),
             'unpublishedChanges' => $this->manager->hasUnpublishedChanges($site),
             'hostedUrl' => route('agency.site.home', $site->public_id),
+            'officialUrl' => OfficialDomainPaths::urlFor($agency),
             'step' => (int) $site->current_step ?: 1,
             'steps' => SiteSchema::STEPS,
             'groups' => $groups,

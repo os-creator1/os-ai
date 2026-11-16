@@ -48,13 +48,29 @@ return [
     | Call-to-action destinations
     |--------------------------------------------------------------------------
     */
-    // Call-only landing pages on the marketing host. `dogs_site` is the PUBLIC ID of the published White Label site served
-    // at /dogs (find it with `php artisan agency-site:find`); blank = /dogs is a 404. Never taken from a request.
+    // Consultation landing page template (White Label → Landing Page → "Consultation landing page"): the editable copy.
+    'consultation' => [
+        'eyebrow' => 'Book a call',
+        'title' => 'Let’s talk about your business.',
+        'lead' => 'A relaxed call with a real person. We’ll look at how you handle inquiries and bookings today, and show you how MotionGrove would fit — no pressure to buy.',
+        'steps' => [
+            ['Your current setup', 'Which tools you use and where things slip.'],
+            ['A walkthrough for your business', 'Website, CRM, follow-ups and bookings, in your context.'],
+            ['The right next steps', 'What setup would look like and how long it takes.'],
+        ],
+        'duration_label' => 'online video call',
+        'calendar_title' => 'Pick a time that suits you.',
+        'calendar_lead' => 'Choose a time for your call. Times are shown in your time zone.',
+    ],
+
+    // Call-only landing pages on the official marketing host. `official_paths` is the ONLY authority on who may publish
+    // under the root domain: path => immutable workspace UID of the one Agency account that owns it (see
+    // App\Library\AgencySite\OfficialDomainPaths). Not env-driven, not editable by an Agency, never taken from a request.
     'landing' => [
-        'dogs_site' => env('MARKETING_LANDING_DOGS_SITE'),
-        // PUBLIC ID of the published White Label site served at /photobooth. Blank = /photobooth keeps serving the static
-        // call-only adaptation of the official homepage (CallOnlyMarketingSite) until the owner authorizes the cutover.
-        'photobooth_site' => env('MARKETING_LANDING_PHOTOBOOTH_SITE'),
+        'official_paths' => [
+            'photobooth' => 'e14e25d2-42f2-4c24-b840-25efcdede356', // Motion Grove Photo Booth
+            'dogs' => 'cb403a56-3fb9-4694-b04e-a407495622db',       // MotionGrove
+        ],
     ],
 
     'cta' => [
