@@ -4,7 +4,6 @@ namespace App\Library\Conversations;
 
 use App\Models\Business;
 use App\Models\ChatBox;
-use Carbon\CarbonInterface;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Database\Eloquent\Builder;
 
@@ -38,12 +37,9 @@ class UnifiedConversationList
 
         $threads = $this->inbox->threads($business, $userId, $search);
 
-        if ($channel === 'email') {
-            $slice = $threads->slice(max(0, $page - 1) * UnifiedConversationList::PER_PAGE, UnifiedConversationList::PER_PAGE);
-            $names = $this->inbox->contactNames($business, $userId, $slice->pluck('contact_id')->all());
+        $slice = $threads->slice(max(0, $page - 1) * self::PER_PAGE, self::PER_PAGE);
+        $names = $this->inbox->contactNames($business, $userId, $slice->pluck('contact_id')->all());
 
-            return $slice->map(fn (array $thread) => ['type' => 'email', 'thread' => $thread, 'name' => $names[$thread['contact_id']] ?? null, 'at' => $thread['at']])->values()->all();
-        }
-
+        return $slice->map(fn (array $thread) => ['type' => 'email', 'thread' => $thread, 'name' => $names[$thread['contact_id']] ?? null, 'at' => $thread['at']])->values()->all();
     }
 }
