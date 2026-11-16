@@ -32,7 +32,7 @@ class WebhookGatewayConfigurationResilienceTest extends TestCase
         app()->instance(PaymentProviderGateway::class, new StripePaymentProviderGateway());
     }
 
-    private function post(string $body, ?string $signature)
+    private function postWebhook(string $body, ?string $signature)
     {
         $server = ['CONTENT_TYPE' => 'application/json'];
         if ($signature !== null) {
@@ -60,8 +60,8 @@ class WebhookGatewayConfigurationResilienceTest extends TestCase
         $this->useRealGatewayWithBrokenApiConfig();
         Queue::fake();
 
-        $this->post($this->body(), null)->assertStatus(400);
-        $this->post($this->body(), 't=1,v1=bad')->assertStatus(400);
+        $this->postWebhook($this->body(), null)->assertStatus(400);
+        $this->postWebhook($this->body(), 't=1,v1=bad')->assertStatus(400);
         $this->assertSame(0, DB::table('payment_provider_events')->count());
         Queue::assertNothingPushed();
     }
@@ -71,7 +71,7 @@ class WebhookGatewayConfigurationResilienceTest extends TestCase
         $this->useRealGatewayWithBrokenApiConfig('');
         Queue::fake();
 
-        $this->post($this->body(), $this->sign($this->body()))->assertStatus(400);
+        $this->postWebhook($this->body(), $this->sign($this->body()))->assertStatus(400);
         $this->assertSame(0, DB::table('payment_provider_events')->count());
     }
 
@@ -81,8 +81,8 @@ class WebhookGatewayConfigurationResilienceTest extends TestCase
         Queue::fake();
         $body = $this->body('evt_cfg_dup');
 
-        $this->post($body, $this->sign($body))->assertStatus(200);
-        $this->post($body, $this->sign($body))->assertStatus(200);
+        $this->postWebhook($body, $this->sign($body))->assertStatus(200);
+        $this->postWebhook($body, $this->sign($body))->assertStatus(200);
 
         $this->assertSame(1, DB::table('payment_provider_events')->where('provider_event_id', 'evt_cfg_dup')->count());
         Queue::assertPushed(\App\Jobs\Usage\ProcessPaymentProviderEvent::class, 1);
