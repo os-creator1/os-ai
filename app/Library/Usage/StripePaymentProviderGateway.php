@@ -186,7 +186,18 @@ class StripePaymentProviderGateway implements PaymentProviderGateway
 
     public function verifyWebhookSignature(string $rawBody, string $signatureHeader, string $webhookSecret): WebhookVerificationResult
     {
-        $this->assertConfigured();
+        // Webhook verification needs ONLY the webhook signing secret. It must
+        // not depend on the outbound-API configuration (secret key prefix,
+        // mode, pinned api_version): a gap there used to throw a
+        // RuntimeException here and turn every delivery, signed or not, into
+        // an HTTP 500 until Stripe disabled the endpoint. A missing signing
+        // secret fails closed as a 400 (nothing can be verified, nothing is
+        // stored) and is logged for operators without any secret value.
+        if (trim($webhookSecret) === '') {
+            \Log::critical('Stripe usage-billing webhook rejected: services.stripe.webhook.secret is empty.');
+
+            throw new WebhookSignatureVerificationException();
+        }
 
         try {
             $event = Webhook::constructEvent($rawBody, $signatureHeader, $webhookSecret);
