@@ -71,6 +71,40 @@ final class ExternalAuditPresenter
         };
     }
 
+    /** The CSS tone (External Website Audit stylesheet) for an x-badge style variant. */
+    public static function toneClass(string $variant): string
+    {
+        return match ($variant) {
+            'success' => 'xw-t-ok',
+            'warning' => 'xw-t-am',
+            'danger' => 'xw-t-bad',
+            'accent' => 'xw-t-new',
+            'info' => 'xw-t-info',
+            default => 'xw-t-low',
+        };
+    }
+
+    /** The short tag shown next to an issue: [label, tone class]. */
+    public static function kindTag(string $kind): array
+    {
+        return match ($kind) {
+            'problem' => ['Problem', 'xw-t-bad'],
+            'improvement' => ['SEO', 'xw-t-seo'],
+            'opportunity' => ['Growth', 'xw-t-grow'],
+            default => ['Info', 'xw-t-low'],
+        };
+    }
+
+    /** The tone of a page-importance tag. */
+    public static function importanceTone(?string $importance): string
+    {
+        return match ($importance) {
+            'home' => 'xw-t-seo',
+            'key' => 'xw-t-grow',
+            default => 'xw-t-low',
+        };
+    }
+
     public static function priorityLabel(string $priority): string
     {
         return ExternalAuditCatalog::PRIORITY_LABELS[$priority] ?? ucfirst($priority);

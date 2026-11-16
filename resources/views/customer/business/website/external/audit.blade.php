@@ -9,133 +9,141 @@
     @endphp
 
     @if($report === null)
-        <x-card :padded="true" data-role="audit-empty">
-            <p class="mb-0 text-muted">
+        <section class="xw-card xw-card-pad" data-role="audit-empty">
+            <p class="xw-p" style="margin:0">
                 @if($earlier !== null) Your last check used an earlier version of the audit, which did not keep the evidence behind each finding. Check again to get the full audit.
                 @else The audit appears here once your website has been checked. @endif
             </p>
-        </x-card>
+        </section>
     @else
-        <p class="text-caption text-muted mb-2" data-role="audit-meta">
-            Audit of {{ $report->finished_at?->toDayDateTimeString() }} &middot; {{ $report->pages_audited }} {{ $report->pages_audited === 1 ? 'page' : 'pages' }} audited.
-            MotionGrove cannot edit your website, so each issue shows what to change and where. Confirmed observations are stated as facts; interpretations are labelled.
-        </p>
-
-        {{-- Filters: real GET parameters, so a filtered view can be shared and bookmarked --}}
-        <form method="GET" action="{{ $auditUrl }}" class="row g-1 align-items-end mb-2" data-role="audit-filters">
-            <div class="col-md-3">
-                <label class="form-label" for="f-q">Search issue or page</label>
-                <input type="search" class="form-control" id="f-q" name="q" value="{{ $filters['q'] ?? '' }}" placeholder="e.g. title or /services">
-            </div>
-            <div class="col-6 col-md-2">
-                <label class="form-label" for="f-severity">Severity</label>
-                <select class="form-select" id="f-severity" name="severity">
+        {{-- Filters: real GET parameters, so a filtered view can be shared and bookmarked. Each select applies on change. --}}
+        @php
+            $chev = '<svg class="xi" viewBox="0 0 24 24"><path d="M7 10l5 5 5-5"/></svg>';
+            $submitOnChange = 'onchange="this.form.requestSubmit ? this.form.requestSubmit() : this.form.submit()"';
+        @endphp
+        <form method="GET" action="{{ $auditUrl }}" class="xw-filters" data-role="audit-filters">
+            <label class="xw-search" for="f-q"><svg class="xi" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.500"/><path d="M16 16l4.500 4.500"/></svg><input type="search" id="f-q" name="q" value="{{ $filters['q'] ?? '' }}" placeholder="Search issues or pages" aria-label="Search issue or page"></label>
+            <label class="xw-sel" for="f-severity"><span>Severity</span>
+                <select id="f-severity" name="severity" {!! $submitOnChange !!}>
                     <option value="">All</option>
                     @foreach($priorities as $key => $label)<option value="{{ $key }}" @selected(($filters['severity'] ?? '') === $key)>{{ $label }}</option>@endforeach
-                </select>
-            </div>
-            <div class="col-6 col-md-3">
-                <label class="form-label" for="f-category">Category</label>
-                <select class="form-select" id="f-category" name="category">
+                </select>{!! $chev !!}</label>
+            <label class="xw-sel" for="f-category"><span>Category</span>
+                <select id="f-category" name="category" {!! $submitOnChange !!}>
                     <option value="">All</option>
                     @foreach($categories as $key => $label)<option value="{{ $key }}" @selected(($filters['category'] ?? '') === $key)>{{ $label }}</option>@endforeach
-                </select>
-            </div>
-            <div class="col-6 col-md-2">
-                <label class="form-label" for="f-kind">Type</label>
-                <select class="form-select" id="f-kind" name="kind">
+                </select>{!! $chev !!}</label>
+            <label class="xw-sel" for="f-kind"><span>Type</span>
+                <select id="f-kind" name="kind" {!! $submitOnChange !!}>
                     <option value="">All</option>
                     @foreach($kinds as $key => $label)<option value="{{ $key }}" @selected(($filters['kind'] ?? '') === $key)>{{ $label }}</option>@endforeach
-                </select>
-            </div>
-            <div class="col-6 col-md-2">
-                <label class="form-label" for="f-status">Since last check</label>
-                <select class="form-select" id="f-status" name="status" @disabled($diff === null)>
+                </select>{!! $chev !!}</label>
+            <label class="xw-sel @if($diff === null) is-disabled @endif" for="f-status"><span>Since last check</span>
+                <select id="f-status" name="status" @disabled($diff === null) {!! $submitOnChange !!}>
                     <option value="">All</option>
                     <option value="new" @selected(($filters['status'] ?? '') === 'new')>New</option>
                     <option value="unchanged" @selected(($filters['status'] ?? '') === 'unchanged')>Unchanged</option>
-                </select>
-            </div>
+                </select>{!! $chev !!}</label>
             @if(! empty($filters['page']))<input type="hidden" name="page_id" value="{{ $filters['page'] }}">@endif
-            <div class="col-12 d-flex gap-1 align-items-center">
-                <button type="submit" class="btn btn-sm btn-primary" data-role="apply-filters">Apply filters</button>
-                @if($filters !== [])<a class="btn btn-sm btn-flat-secondary" href="{{ $auditUrl }}" data-role="clear-filters">Clear</a>@endif
-                <span class="text-caption text-muted" data-role="filter-count">Showing {{ count($groups) }} of {{ $totalGroups }} issue(s)</span>
-            </div>
+            <button type="submit" class="xw-sr" data-role="apply-filters">Apply filters</button>
+            @if($filters !== [])<a class="xw-lk" href="{{ $auditUrl }}" data-role="clear-filters">Clear</a>@endif
         </form>
 
+        <div class="xw-count" data-role="audit-meta">
+            <b data-role="filter-count">Showing {{ count($groups) }} of {{ $totalGroups }} issue(s)</b>
+            <span class="xw-mut">&middot; Audit of {{ $report->finished_at?->toDayDateTimeString() }} &middot; {{ $report->pages_audited }} {{ $report->pages_audited === 1 ? 'page' : 'pages' }} audited. MotionGrove cannot edit your website, so each issue shows what to change and where. Confirmed observations are stated as facts; interpretations are labelled.</span>
+        </div>
+
         @if($diff !== null && $diff['resolved'] > 0)
-            <x-card :padded="true" class="mb-2" data-role="resolved-since">
-                <p class="text-label mb-1">Resolved since the previous check ({{ $diff['resolved'] }})</p>
-                <ul class="mb-0">
+            <section class="xw-card xw-card-pad xw-stack" data-role="resolved-since">
+                <h2 class="xw-h">Resolved since the previous check ({{ $diff['resolved'] }})</h2>
+                <ul style="margin:0;padding-left:18px;font-size:14px">
                     @foreach($diff['resolved_by_rule'] as $rule => $n)
-                        <li>{{ \App\Library\ExternalSite\Audit\ExternalAuditCatalog::rule($rule)['title'] }} <span class="text-muted">&middot; {{ $n }} {{ $n === 1 ? 'place' : 'places' }}</span></li>
+                        <li>{{ \App\Library\ExternalSite\Audit\ExternalAuditCatalog::rule($rule)['title'] }} <span class="xw-mut">&middot; {{ $n }} {{ $n === 1 ? 'place' : 'places' }}</span></li>
                     @endforeach
                 </ul>
-            </x-card>
+            </section>
         @endif
 
         @forelse($groups as $group)
-            <x-card :padded="true" class="mb-2" id="rule-{{ $group['rule_key'] }}" data-role="issue" data-rule="{{ $group['rule_key'] }}" data-severity="{{ $group['priority'] }}" data-kind="{{ $group['kind'] }}" data-category="{{ $group['category'] }}">
-                <details @if($openRule === $group['rule_key'] || $group['priority'] === 'critical') open @endif>
-                    <summary class="d-flex align-items-center flex-wrap gap-1 mb-1" style="cursor:pointer">
-                        <x-badge :variant="P::priorityVariant($group['priority'])" data-role="severity">{{ $group['priority_label'] }}</x-badge>
-                        <x-badge variant="neutral" data-role="kind">{{ $group['kind_label'] }}</x-badge>
-                        <strong class="h5 mb-0" data-role="issue-title">{{ $group['title'] }}</strong>
-                        <span class="text-caption text-muted" data-role="issue-count">
-                            @if($group['site_level'] && $group['page_count'] <= 1) whole site
-                            @else {{ $group['page_count'] }} {{ $group['page_count'] === 1 ? 'page' : 'pages' }}@if($group['row_count'] !== $group['page_count']), {{ $group['row_count'] }} places @endif
-                            @endif
-                            &middot; {{ $group['category_label'] }}
+            @php
+                [$kindText, $kindTone] = P::kindTag($group['kind']);
+                $countText = ($group['site_level'] && $group['page_count'] <= 1)
+                    ? 'Whole site'
+                    : $group['page_count'].' '.($group['page_count'] === 1 ? 'page' : 'pages').($group['row_count'] !== $group['page_count'] ? ', '.$group['row_count'].' places' : '');
+                $isOpen = $openRule === $group['rule_key'] || ($openRule === null && ($loop->first || $group['priority'] === 'critical'));
+            @endphp
+            <section class="xw-card xw-card-flat" id="rule-{{ $group['rule_key'] }}" data-role="issue" data-rule="{{ $group['rule_key'] }}" data-severity="{{ $group['priority'] }}" data-kind="{{ $group['kind'] }}" data-category="{{ $group['category'] }}">
+                <details class="xw-det" @if($isOpen) open @endif>
+                    <summary>
+                        <span class="xw-tg {{ P::toneClass(P::priorityVariant($group['priority'])) }}" data-role="severity">{{ $group['priority_label'] }}</span>
+                        <span class="xw-tg {{ $kindTone }}" data-role="kind" title="{{ $group['kind_label'] }}">{{ $kindText }}</span>
+                        <span class="xw-det-title">
+                            <b data-role="issue-title">{{ $group['title'] }}</b>
+                            <span class="xw-det-sub xw-det-hide-open">{{ $group['what'] }}</span>
                         </span>
-                        @if(collect($group['rows'])->contains('status', 'new'))<x-badge variant="accent" data-role="new-badge">New</x-badge>@endif
+                        @if(collect($group['rows'])->contains('status', 'new'))<span class="xw-tg xw-t-new" data-role="new-badge">New</span>@endif
+                        <span class="xw-mut" data-role="issue-count">{{ $countText }} &middot; {{ $group['category_label'] }}</span>
+                        <svg class="xi xw-chev" viewBox="0 0 24 24"><path d="M7 10l5 5 5-5"/></svg>
                     </summary>
 
-                    <p class="mb-1" data-role="what"><strong>What the problem is.</strong> {{ $group['what'] }}</p>
-                    <p class="mb-1" data-role="why"><strong>Why it matters.</strong> {{ $group['why'] }}</p>
+                    <div class="xw-det-body">
+                        <p class="xw-p-body" data-role="what"><strong>What the problem is.</strong> {{ $group['what'] }}</p>
+                        <p class="xw-p-body" data-role="why"><strong>Why it matters.</strong> {{ $group['why'] }}</p>
 
-                    <p class="text-label mb-50">Affected URLs and what was observed</p>
-                    @if($group['clusters'] !== [])
-                        @foreach($group['clusters'] as $cluster)
-                            <div class="border rounded p-1 mb-1" data-role="cluster">
-                                @if($cluster['label'] !== '')<p class="mb-50 fw-semibold" data-role="cluster-label">{{ $cluster['label'] }}</p>@endif
-                                @include('customer.business.website.external._evidence-rows', ['rows' => $cluster['rows'], 'detailRoute' => $detailRoute])
+                        <div class="xw-stack" style="gap:8px">
+                            <span class="xw-eyebrow">Affected URLs and what was observed</span>
+                            @if($group['clusters'] !== [])
+                                @foreach($group['clusters'] as $cluster)
+                                    <div class="xw-cluster" data-role="cluster">
+                                        @if($cluster['label'] !== '')<span class="xw-cluster-label" data-role="cluster-label">{{ $cluster['label'] }}</span>@endif
+                                        @include('customer.business.website.external._evidence-rows', ['rows' => $cluster['rows'], 'detailRoute' => $detailRoute])
+                                    </div>
+                                @endforeach
+                            @else
+                                @include('customer.business.website.external._evidence-rows', ['rows' => $group['rows'], 'detailRoute' => $detailRoute])
+                            @endif
+                        </div>
+
+                        <div class="xw-twocol">
+                            <div class="xw-howto">
+                                <p class="xw-p-body" style="font-size:13.5px"><strong>Proposed change.</strong> {{ $group['proposal'] }}</p>
+                                <b style="display:block;margin-top:10px">How to fix it</b>
+                                <ol data-role="how-to">
+                                    @foreach($group['steps'] as $step)<li>{{ $step }}</li>@endforeach
+                                </ol>
                             </div>
-                        @endforeach
-                    @else
-                        @include('customer.business.website.external._evidence-rows', ['rows' => $group['rows'], 'detailRoute' => $detailRoute])
-                    @endif
+                            <div class="xw-notes">
+                                <span data-role="verify"><svg class="xi" viewBox="0 0 24 24"><path d="M20 11a8 8 0 0 0-14.500-4.500L4 8M4 4v4h4M4 13a8 8 0 0 0 14.500 4.500L20 16M20 20v-4h-4"/></svg><span><strong>How MotionGrove will verify the fix.</strong> {{ $group['verify'] }}</span></span>
+                                @if($group['confidence'] === 'heuristic')
+                                    <span data-role="confidence"><svg class="xi" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.500"/><path d="M12 11v5M12 8h.01"/></svg><span>This is an interpretation of what was observed, not a confirmed fault.</span></span>
+                                @endif
+                            </div>
+                        </div>
 
-                    <p class="mb-50 mt-1"><strong>Proposed change.</strong> {{ $group['proposal'] }}</p>
-                    <p class="text-label mb-50">How to fix it</p>
-                    <ol class="mb-1" data-role="how-to">
-                        @foreach($group['steps'] as $step)<li>{{ $step }}</li>@endforeach
-                    </ol>
-                    <p class="mb-1" data-role="verify"><strong>How MotionGrove will verify the fix.</strong> {{ $group['verify'] }}</p>
-                    @if($group['confidence'] === 'heuristic')
-                        <p class="text-caption text-muted mb-1" data-role="confidence">This is an interpretation of what was observed, not a confirmed fault.</p>
-                    @endif
-
-                    <div class="d-flex flex-wrap gap-1">
-                        <button type="button" class="btn btn-sm btn-outline-secondary" data-role="copy-recommendation"
-                                data-copy="{{ $group['title'].' — '.$group['proposal']."\n\n".implode("\n", array_map(fn ($s, $i) => ($i + 1).'. '.$s, $group['steps'], array_keys($group['steps'])))."\n\nAffected: ".implode(', ', array_slice(array_filter(array_column($group['rows'], 'page_url')), 0, 15)) }}"
-                                onclick="navigator.clipboard && navigator.clipboard.writeText(this.dataset.copy); this.textContent='Copied';">Copy recommendation</button>
-                        <a class="btn btn-sm btn-outline-secondary" href="{{ $planUrl }}#plan-{{ $group['rule_key'] }}" data-role="to-plan">Track in the improvement plan</a>
+                        <div class="xw-actions">
+                            <a class="xw-btn xw-btn-primary" href="{{ $planUrl }}#plan-{{ $group['rule_key'] }}" data-role="to-plan">Track in the improvement plan</a>
+                            <button type="button" class="xw-btn xw-btn-line" data-role="copy-recommendation"
+                                    data-copy="{{ $group['title'].' — '.$group['proposal']."\n\n".implode("\n", array_map(fn ($s, $i) => ($i + 1).'. '.$s, $group['steps'], array_keys($group['steps'])))."\n\nAffected: ".implode(', ', array_slice(array_filter(array_column($group['rows'], 'page_url')), 0, 15)) }}"
+                                    onclick="navigator.clipboard && navigator.clipboard.writeText(this.dataset.copy); this.textContent='Copied';"><svg class="xi" viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/></svg>Copy recommendation</button>
+                        </div>
                     </div>
                 </details>
-            </x-card>
+            </section>
         @empty
-            <x-card :padded="true" data-role="audit-clean"><p class="mb-0">@if($filters !== []) No issues match these filters. @else We did not find any issues on the pages we audited. @endif</p></x-card>
+            <section class="xw-card xw-card-pad" data-role="audit-clean"><p class="xw-p" style="margin:0">@if($filters !== []) No issues match these filters. @else We did not find any issues on the pages we audited. @endif</p></section>
         @endforelse
 
-        <x-card :padded="true" class="mb-2" data-role="not-measured">
-            <p class="text-label mb-1">Not measured by this audit</p>
-            <ul class="mb-0">
-                @foreach($notMeasured as $item)
-                    <li class="mb-50"><strong>{{ $item['label'] }}</strong> <x-badge variant="neutral">{{ $item['status'] }}</x-badge><br><span class="text-caption text-muted">{{ $item['detail'] }}</span></li>
-                @endforeach
-            </ul>
-        </x-card>
+        <section class="xw-card xw-card-flat" data-role="not-measured">
+            <details class="xw-skip">
+                <summary><h2 class="xw-h" style="flex:1">Not measured by this audit</h2><span class="xw-mut">{{ collect($notMeasured)->pluck('label')->implode(', ') }}</span><svg class="xi xw-chev" viewBox="0 0 24 24"><path d="M7 10l5 5 5-5"/></svg></summary>
+                <div class="xw-skip-group">
+                    @foreach($notMeasured as $item)
+                        <div class="xw-nm"><div class="xw-nm-body"><b style="font-size:13.5px">{{ $item['label'] }}</b><small>{{ $item['detail'] }}</small></div><span class="xw-nm-end">{{ $item['status'] }}</span></div>
+                    @endforeach
+                </div>
+            </details>
+        </section>
     @endif
 
     @if($openRule)
