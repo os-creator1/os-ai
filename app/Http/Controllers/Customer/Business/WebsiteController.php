@@ -822,8 +822,44 @@ class WebsiteController extends CustomerBaseController
                 'html' => $previews->render($business, $website, $template),
             ])->all(),
             'currentPageCount' => $website->pages()->count(),
+            'rebuildImpact' => $this->rebuildImpact($business, $website),
             'isPublished' => $website->published_revision_id !== null,
         ]);
+    }
+
+    /**
+     * What a full rebuild would do to the current draft's pages, from the same plan and the same preservation
+     * policy the rebuild itself uses (an estimate for the current template; null when it cannot be worked out).
+     *
+     * @return ?array{rewrite: int, preserve: int, create: int, remove: int, blockers: array<int, string>, preserved_titles: array<int, string>}
+     */
+    private function rebuildImpact(Business $business, Website $website): ?array
+    {
+        try {
+            $template = WebsiteTemplate::where('key', $website->template_key)->first();
+            if ($template === null) {
+                return null;
+            }
+            $completed = $this->latestCompletedSetupResponse($business);
+            $plan = app(\App\Library\Website\WebsitePageStrategy::class)->buildPlan($business, $template, $website, WizardPresentationAnswers::customSection($completed), WizardPresentationAnswers::catalogSelection($completed), WizardPresentationAnswers::serviceAreas($completed));
+            $report = app(\App\Library\Website\GuidedGeneration\DraftPageReconciler::class)->reconcile($website, $business, $plan);
+
+            $summary = 'rewrite ' . count($report['rewrite']) . ', create ' . count($report['create']) . ', keep ' . count($report['preserve']) . ' untouched'
+                . (count($report['remove']) > 0 ? ', replace ' . count($report['remove']) . ' starter page(s)' : '') . '.'
+                . (count($report['preserve']) > 0 ? ' Kept as they are: ' . implode(', ', array_column($report['preserve'], 'title')) . '.' : '');
+
+            return [
+                'summary' => $summary,
+                'rewrite' => count($report['rewrite']),
+                'preserve' => count($report['preserve']),
+                'create' => count($report['create']),
+                'remove' => count($report['remove']),
+                'blockers' => $report['blockers'],
+                'preserved_titles' => array_column($report['preserve'], 'title'),
+            ];
+        } catch (\Throwable) {
+            return null;
+        }
     }
 
     public function rebuild(Request $request, string $workspaceUid, string $businessUid): RedirectResponse

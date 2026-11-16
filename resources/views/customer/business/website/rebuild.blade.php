@@ -17,7 +17,7 @@
         <div class="wb-head">
             <div class="wb-head-text">
                 <h1 class="wb-title">Change template</h1>
-                <div class="wb-subline"><span>Change your template or rebuild every page. Nothing goes live until you publish.</span></div>
+                <div class="wb-subline"><span>Change your template or rebuild eligible pages. Nothing goes live until you publish.</span></div>
             </div>
         </div>
 
@@ -72,7 +72,20 @@
                     <label class="wb-option" for="rebuild-mode-full">
                         <input type="radio" name="mode" id="rebuild-mode-full" value="full">
                         <span class="rd" aria-hidden="true"></span>
-                        <span class="wb-option-text"><b>Rebuild every page</b><span class="wb-muted">Rewrite all {{ $currentPageCount }} {{ $currentPageCount === 1 ? 'page' : 'pages' }} again from your answers. Takes a minute or two.</span></span>
+                        <span class="wb-option-text">
+                            <b>Rebuild pages</b>
+                            @if ($rebuildImpact !== null)
+                                <span class="wb-muted" data-testid="rebuild-impact">Rewrite {{ $rebuildImpact['rewrite'] }}, create {{ $rebuildImpact['create'] }}, keep {{ $rebuildImpact['preserve'] }} untouched{{ $rebuildImpact['remove'] ? ', remove ' . $rebuildImpact['remove'] . ' no-longer-eligible generated pages' : '' }}. Estimated for the current template.</span>
+                                @if ($rebuildImpact['preserved_titles'] !== [])
+                                    <span class="wb-muted">Kept untouched: {{ implode(', ', $rebuildImpact['preserved_titles']) }}.</span>
+                                @endif
+                                @foreach ($rebuildImpact['blockers'] as $blocker)
+                                    <span class="text-danger" role="alert" data-testid="rebuild-blocker">{{ $blocker }}</span>
+                                @endforeach
+                            @else
+                                <span class="wb-muted">Rewrite pages covered by your current plan; keep other existing pages. Actual page counts depend on the selected template.</span>
+                            @endif
+                        </span>
                     </label>
                 </div>
             </fieldset>
@@ -125,9 +138,9 @@
                     go: 'Change template'
                 },
                 full: {
-                    title: 'Rebuild every page?',
-                    text: 'Every draft page will be rewritten from your current answers, replacing what is there now. Visitors see nothing new until you publish.',
-                    points: ['Your live site stays the same until you publish', 'Photos, packages and prices are kept', 'Edits you made to draft pages will be replaced'],
+                    title: 'Rebuild pages?',
+                    text: 'The draft pages your plan covers will be rewritten from your current answers. Other existing pages are kept unless generator-owned and no longer eligible. Visitors see nothing new until you publish.',
+                    points: ['Your live site stays the same until you publish', 'Legal and unrelated custom pages are kept', 'Edits to rewritten pages will be replaced'],
                     go: 'Rebuild pages'
                 }
             };
@@ -186,7 +199,7 @@
                 var mode = form.querySelector('input[name="mode"]:checked');
                 var label = tpl && tpl.closest('label') ? tpl.closest('label').querySelector('.wb-template-name > span').textContent.replace(/^Template \d+\s*\W+\s*/, '') : '';
                 summaryName.textContent = label;
-                summaryMode.textContent = (mode && mode.value === 'full' ? '\u00b7 rebuild every page' : '\u00b7 change the look only') + ' \u00b7 nothing changes for visitors until you publish';
+                summaryMode.textContent = (mode && mode.value === 'full' ? '\u00b7 rebuild eligible pages' : '\u00b7 change the look only') + ' \u00b7 nothing changes for visitors until you publish';
             }
             form.addEventListener('change', updateSummary);
             updateSummary();

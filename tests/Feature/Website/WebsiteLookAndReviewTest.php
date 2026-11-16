@@ -293,7 +293,7 @@ class WebsiteLookAndReviewTest extends TestCase
         $form->assertSee('id="rebuild-confirm"', false);
         $form->assertSee('data-testid="layout-change-warning"', false);
         $form->assertSee('Your header, section order, fonts and footer will change.', false);
-        $form->assertSee('Every draft page will be rewritten from your current answers', false);
+        $form->assertSee('The draft pages your plan covers will be rewritten from your current answers', false);
         foreach (WebsiteDesigns::all() as $design) {
             $form->assertSee('wd wd-' . $design->key, false);
         }
