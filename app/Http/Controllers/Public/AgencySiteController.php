@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Library\AgencySite\SiteRenderer;
 use App\Library\Branding\AgencyWhiteLabelManager;
 use App\Library\Workspace\AgencyClientRelationshipManager;
+use App\Library\AgencySite\OfficialDomainPaths;
 use App\Models\AgencySite;
 use App\Models\Workspace;
 use Symfony\Component\HttpFoundation\Response;
@@ -61,6 +62,9 @@ class AgencySiteController extends Controller
     public function landing(string $publicId, string $page, string $base): Response
     {
         [$site, $values] = $this->live($publicId);
+        // Defence in depth: whatever called this, an official path is only ever served for the one workspace that owns it.
+        $owner = Workspace::query()->find($site->agency_workspace_id);
+        abort_unless($owner !== null && OfficialDomainPaths::permits($base, (string) $owner->uid), 404);
         $values['x.goal'] = 'book_call';
         unset($values['x.pricing_mode']);
 

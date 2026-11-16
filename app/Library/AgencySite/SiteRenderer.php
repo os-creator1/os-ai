@@ -19,6 +19,7 @@ final class SiteRenderer
     public function __construct(
         private readonly SiteContentBuilder $builder,
         private readonly SiteContextFactory $contexts,
+        private readonly AgencySiteBookingService $booking,
     ) {
     }
 
@@ -55,7 +56,17 @@ final class SiteRenderer
             return null;
         }
 
-        $html = view('marketing.pages.'.$page, ['mg' => $mg, 'page' => $page, 'meta' => $mg->meta($page)])->render();
+        if ($page === 'home' && $mg->isConsultation()) {
+            // The consultation template: headline, numbered steps and the real booking calendar of THIS Agency's own
+            // booking type. `book-demo` is the layout's page class (its stylesheet scopes the two-column design).
+            $agency = \App\Models\Workspace::query()->findOrFail($site->agency_workspace_id);
+            $html = view('marketing.pages.consultation', [
+                'mg' => $mg, 'page' => 'book-demo', 'meta' => $mg->meta('home'),
+                'embed' => $this->booking->embed($agency, $values['x.booking_type_uid'] ?? null),
+            ])->render();
+        } else {
+            $html = view('marketing.pages.'.$page, ['mg' => $mg, 'page' => $page, 'meta' => $mg->meta($page)])->render();
+        }
         $html = $this->colourize($html, $mg->context());
 
         return $mg->context()->preview ? $this->previewBanner($html) : $html;

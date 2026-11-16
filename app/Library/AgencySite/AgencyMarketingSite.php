@@ -31,6 +31,23 @@ final class AgencyMarketingSite extends MarketingSite
         return $key === '' ? $this->tree : Arr::get($this->tree, $key, $default);
     }
 
+    /** `home` (the full site) or `consultation` (the two-column booking landing page). */
+    public function template(): string
+    {
+        return (string) Arr::get($this->tree, 'x.template', 'home') === 'consultation' ? 'consultation' : 'home';
+    }
+
+    public function isConsultation(): bool
+    {
+        return $this->template() === 'consultation';
+    }
+
+    /** The consultation template's editable copy. @return array<string, mixed> */
+    public function consultation(): array
+    {
+        return (array) Arr::get($this->tree, 'consultation', []);
+    }
+
     public function context(): SiteContext
     {
         return $this->context;
@@ -135,7 +152,10 @@ final class AgencyMarketingSite extends MarketingSite
     /** The Agency's own booking page for its selected booking type, or null when booking is off or invalid. */
     public function bookDemoUrl(): ?string
     {
-        return $this->context->offersBooking() ? $this->context->bookingUrl : null;
+        $url = $this->context->offersBooking() ? $this->context->bookingUrl : null;
+
+        // The consultation page IS the booking page: every Book a Call button goes to its own calendar.
+        return $url !== null && $this->isConsultation() ? ($this->context->pageUrl)('home').'#book' : $url;
     }
 
     public function nativeBookingReady(): bool

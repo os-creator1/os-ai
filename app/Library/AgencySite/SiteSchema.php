@@ -40,6 +40,9 @@ final class SiteSchema
      */
     public const EDITION_ORIGINAL = 'motiongrove';
 
+    /** `x.template`: what the site's home page is. `consultation` = the two-column "talk to us" page with the booking calendar. */
+    public const TEMPLATES = ['home' => 'Full marketing website', 'consultation' => 'Consultation landing page (headline, steps and booking calendar)'];
+
     public const PAGES = ['home', 'product', 'solutions', 'how-it-works', 'customers', 'pricing'];
 
     /** Where a visitor can be sent by a hero / final call-to-action. */
@@ -115,6 +118,17 @@ final class SiteSchema
                 self::text('x.market', 'Market / country', 60),
                 self::choice('x.niche', 'Which industry examples should the product illustrations use?', NichePresets::NICHES),
                 self::choice('x.goal', 'How should visitors become customers?', self::GOALS),
+                self::choice('x.template', 'What should the home page be?', self::TEMPLATES),
+            ]],
+            // The consultation template's own copy (shown when "What should the home page be?" is the consultation page).
+            'consultation' => ['step' => 1, 'page' => 'home', 'label' => 'Consultation landing page', 'fields' => [
+                self::text('consultation.eyebrow', 'Small label above the headline', 40),
+                self::text('consultation.title', 'Headline', 90),
+                self::area('consultation.lead', 'Supporting description', 420),
+                self::rows('consultation.steps', 'The numbered sections (title and description)', [['0', 'Title'], ['1', 'Description']], 5),
+                self::text('consultation.duration_label', 'Text after the meeting length', 60),
+                self::text('consultation.calendar_title', 'Calendar heading', 80),
+                self::area('consultation.calendar_lead', 'Text above the calendar', 220),
             ]],
             // ---------------------------------------------------------------- Screen 2: the 15 home sections
             'header' => ['step' => 2, 'page' => 'home', 'label' => 'Header & navigation', 'fields' => [

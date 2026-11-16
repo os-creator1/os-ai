@@ -4,92 +4,120 @@
 
 @section('page-style')
     @include('partials.section-router._styles')
+    @include('customer.business.website.studio._styles')
 @endsection
 
 @section('content')
-    <div class="row mb-3">
-        <div class="col-12 d-flex justify-content-between align-items-center gap-2">
-            <h4 class="mb-0">Change your template or rebuild</h4>
-            <x-button variant="ghost" icon="arrow-left" href="{{ route('customer.workspaces.businesses.website.studio.show', [$workspaceUid, $businessUid, 'settings']) }}">Back</x-button>
+    @php
+        $settingsUrl = route('customer.workspaces.businesses.website.studio.show', [$workspaceUid, $businessUid, 'settings']);
+        $websiteUrl = route('customer.workspaces.businesses.website.show', [$workspaceUid, $businessUid]);
+    @endphp
+    <div class="wb">
+        <a class="wb-back" href="{{ $settingsUrl }}"><x-ds-icon name="arrow-left" size="14" aria-hidden="true" /> Website</a>
+        <div class="wb-head">
+            <div class="wb-head-text">
+                <h1 class="wb-title">Change template</h1>
+                <div class="wb-subline"><span>Change your template or rebuild eligible pages. Nothing goes live until you publish.</span></div>
+            </div>
         </div>
-    </div>
 
-    <x-flash-alert class="mb-3" />
+        <x-flash-alert class="mb-3" />
 
-    @if ($errors->any())
-        <x-alert variant="danger" class="mb-3">{{ $errors->first() }}</x-alert>
-    @endif
+        @if ($errors->any())
+            <x-alert variant="danger" class="mb-3">{{ $errors->first() }}</x-alert>
+        @endif
 
-    <form method="POST" id="rebuild-form" action="{{ route('customer.workspaces.businesses.website.rebuild', [$workspaceUid, $businessUid]) }}">
-        @csrf
-        {{-- A fresh nonce per page render — see WebsiteController::runGuidedGeneration()'s own docblock. --}}
-        <input type="hidden" name="idempotency_key" value="{{ (string) \Illuminate\Support\Str::uuid() }}">
-        {{-- Set to 1 only by the confirmation dialog (below): the server still refuses an unconfirmed request. --}}
-        <input type="hidden" name="confirm_rebuild" id="confirm-rebuild" value="">
+        <form method="POST" id="rebuild-form" class="wb-flow" action="{{ route('customer.workspaces.businesses.website.rebuild', [$workspaceUid, $businessUid]) }}">
+            @csrf
+            {{-- A fresh nonce per page render — see WebsiteController::runGuidedGeneration()'s own docblock. --}}
+            <input type="hidden" name="idempotency_key" value="{{ (string) \Illuminate\Support\Str::uuid() }}">
+            {{-- Set to 1 only by the confirmation dialog (below): the server still refuses an unconfirmed request. --}}
+            <input type="hidden" name="confirm_rebuild" id="confirm-rebuild" value="">
 
-        <fieldset class="mb-4">
-            <legend class="h5 mb-2">Choose a template</legend>
-            <div class="row g-3" role="radiogroup" aria-label="Website template">
-                @foreach ($templateCards as $card)
-                    @php($design = $card['design'])
-                    @continue($design === null)
-                    <div class="col-md-6 col-xl-3">
-                        <label class="d-block h-100 border rounded p-2" for="rebuild-template-{{ $card['key'] }}" style="cursor:pointer; @if ($card['current']) box-shadow: 0 0 0 2px var(--color-primary, var(--bs-primary, #7367f0)); @endif" data-template-card="{{ $card['key'] }}">
-                            <input class="form-check-input me-1" type="radio" name="template_key" id="rebuild-template-{{ $card['key'] }}" value="{{ $card['key'] }}" @checked($card['current'])>
-                            <strong>Template {{ $design->number }} &mdash; {{ $design->label }}</strong>
-                            @if ($card['current']) <span class="badge bg-primary ms-1" data-testid="template-current">Current</span> @endif
-                            <div class="position-relative overflow-hidden rounded my-2" style="aspect-ratio: 16 / 10; background:#f1f1f1;">
+            <fieldset>
+                <legend class="wb-step"><span class="wb-step-n" aria-hidden="true">1</span> Choose a template</legend>
+                <div class="wb-template-grid" role="radiogroup" aria-label="Website template">
+                    @foreach ($templateCards as $card)
+                        @php
+                            $design = $card['design'];
+                        @endphp
+                        @continue($design === null)
+                        <label class="wb-template" for="rebuild-template-{{ $card['key'] }}" data-template-card="{{ $card['key'] }}">
+                            <input type="radio" name="template_key" id="rebuild-template-{{ $card['key'] }}" value="{{ $card['key'] }}" @checked($card['current'])>
+                            <span class="wb-template-shot">
                                 <iframe srcdoc="{{ $card['html'] }}" title="Preview of the {{ $design->label }} template" sandbox tabindex="-1" aria-hidden="true"
                                     style="position:absolute; top:0; left:0; width:1280px; height:800px; border:0; transform-origin:0 0; pointer-events:none;" data-template-iframe></iframe>
-                            </div>
-                            <span class="text-caption d-block">{{ $design->tagline }}</span>
+                            </span>
+                            <span class="wb-template-meta">
+                                <span class="wb-template-name">
+                                    <span>Template {{ $design->number }} &mdash; {{ $design->label }}</span>
+                                    @if ($card['current']) <span class="wb-template-tag" data-testid="template-current">Current</span> @endif
+                                    <x-ds-icon name="check" size="16" class="check" aria-hidden="true" />
+                                </span>
+                                <span class="wb-template-tagline">{{ $design->tagline }}</span>
+                            </span>
                         </label>
-                    </div>
-                @endforeach
+                    @endforeach
+                </div>
+            </fieldset>
+
+            <fieldset>
+                <legend class="wb-step"><span class="wb-step-n" aria-hidden="true">2</span> What should change?</legend>
+                <div class="wb-options">
+                    <label class="wb-option" for="rebuild-mode-look">
+                        <input type="radio" name="mode" id="rebuild-mode-look" value="look_only" checked>
+                        <span class="rd" aria-hidden="true"></span>
+                        <span class="wb-option-text"><b>The look only</b><span class="wb-muted">Keep every page, word, photo and price. Fast.</span></span>
+                    </label>
+                    <label class="wb-option" for="rebuild-mode-full">
+                        <input type="radio" name="mode" id="rebuild-mode-full" value="full">
+                        <span class="rd" aria-hidden="true"></span>
+                        <span class="wb-option-text">
+                            <b>Rebuild pages</b>
+                            @if ($rebuildImpact !== null)
+                                <span class="wb-muted" data-testid="rebuild-impact">Rewrite {{ $rebuildImpact['rewrite'] }}, create {{ $rebuildImpact['create'] }}, keep {{ $rebuildImpact['preserve'] }} untouched{{ $rebuildImpact['remove'] ? ', remove ' . $rebuildImpact['remove'] . ' no-longer-eligible generated pages' : '' }}. Estimated for the current template.</span>
+                                @if ($rebuildImpact['preserved_titles'] !== [])
+                                    <span class="wb-muted">Kept untouched: {{ implode(', ', $rebuildImpact['preserved_titles']) }}.</span>
+                                @endif
+                                @foreach ($rebuildImpact['blockers'] as $blocker)
+                                    <span class="text-danger" role="alert" data-testid="rebuild-blocker">{{ $blocker }}</span>
+                                @endforeach
+                            @else
+                                <span class="wb-muted">Rewrite pages covered by your current plan; keep other existing pages. Actual page counts depend on the selected template.</span>
+                            @endif
+                        </span>
+                    </label>
+                </div>
+            </fieldset>
+
+            <noscript>
+                <div class="form-check">
+                    <input class="form-check-input" type="checkbox" name="confirm_rebuild" value="1" id="confirm-rebuild-fallback">
+                    <label class="form-check-label" for="confirm-rebuild-fallback">I understand this changes my draft website.</label>
+                </div>
+            </noscript>
+
+            <div class="wb-bar">
+                <span class="wb-bar-text" id="rebuild-summary"><b data-summary-template></b> <span class="wb-muted" data-summary-mode></span></span>
+                <x-button variant="ghost" href="{{ $settingsUrl }}">Cancel</x-button>
+                <x-button type="submit" variant="primary" id="rebuild-apply">Apply template</x-button>
             </div>
-        </fieldset>
+        </form>
 
-        <fieldset class="mb-4">
-            <legend class="h5 mb-2">What should change?</legend>
-            <div class="form-check mb-2">
-                <input class="form-check-input" type="radio" name="mode" id="rebuild-mode-look" value="look_only" checked>
-                <label class="form-check-label" for="rebuild-mode-look"><strong>The look only</strong> <span class="text-caption">&mdash; keep every page, word, photo and price</span></label>
-            </div>
-            <div class="form-check">
-                <input class="form-check-input" type="radio" name="mode" id="rebuild-mode-full" value="full">
-                <label class="form-check-label" for="rebuild-mode-full"><strong>Rebuild pages</strong>
-                    @if ($rebuildImpact !== null)
-                        <span class="text-caption" data-testid="rebuild-impact">&mdash; {{ $rebuildImpact['summary'] }}</span>
-                        @foreach ($rebuildImpact['blockers'] as $blocker)
-                            <div class="text-danger mt-2" role="alert" data-testid="rebuild-blocker">{{ $blocker }}</div>
-                        @endforeach
-                    @else
-                        <span class="text-caption">&mdash; rewrite the pages that match your current plan; your other pages are kept</span>
-                    @endif
-                </label>
-            </div>
-        </fieldset>
+        {{-- Safety at the moment of the action, not as permanent page furniture. --}}
+        <x-dialog id="rebuild-confirm" size="sm">
+            <span class="wb-modal-icon" aria-hidden="true"><x-ds-icon name="refresh-cw" size="20" /></span>
+            <h2 class="wb-modal-title" id="rebuild-confirm-label">Change your template?</h2>
+            <p class="wb-modal-text" data-testid="layout-change-warning" id="rebuild-confirm-text"></p>
+            <ul class="wb-modal-points" id="rebuild-confirm-points"></ul>
+            <x-slot:footer>
+                <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-primary" id="rebuild-confirm-go">Continue</button>
+            </x-slot:footer>
+        </x-dialog>
 
-        <noscript>
-            <div class="form-check mb-3">
-                <input class="form-check-input" type="checkbox" name="confirm_rebuild" value="1" id="confirm-rebuild-fallback">
-                <label class="form-check-label" for="confirm-rebuild-fallback">I understand this changes my draft website.</label>
-            </div>
-        </noscript>
-
-        <x-button type="submit" variant="primary" id="rebuild-apply">Apply</x-button>
-    </form>
-
-    {{-- Safety at the moment of the action, not as permanent page furniture. --}}
-    <x-dialog id="rebuild-confirm" title="Change your template?" size="sm">
-        <p class="mb-0" data-testid="layout-change-warning" id="rebuild-confirm-text"></p>
-        <x-slot:footer>
-            <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
-            <button type="button" class="btn btn-primary" id="rebuild-confirm-go">Continue</button>
-        </x-slot:footer>
-    </x-dialog>
-
-    @include('customer.business.website._generation-progress')
+        @include('customer.business.website._generation-progress')
+    </div>
 
     <script>
         (function () {
@@ -106,12 +134,14 @@
                 look_only: {
                     title: 'Change your template?',
                     text: 'Your header, section order, fonts and footer will change. Your pages, words, photos and prices stay as they are. Visitors see nothing new until you publish.',
+                    points: ['Your live site stays the same until you publish', 'Pages, words, photos and prices are kept'],
                     go: 'Change template'
                 },
                 full: {
                     title: 'Rebuild pages?',
-                    text: 'The draft pages your plan covers will be rewritten from your current answers, replacing them. Other pages you already have are kept as they are. Visitors see nothing new until you publish.',
-                    go: 'Rebuild'
+                    text: 'The draft pages your plan covers will be rewritten from your current answers. Other existing pages are kept unless generator-owned and no longer eligible. Visitors see nothing new until you publish.',
+                    points: ['Your live site stays the same until you publish', 'Legal and unrelated custom pages are kept', 'Edits to rewritten pages will be replaced'],
+                    go: 'Rebuild pages'
                 }
             };
 
@@ -143,6 +173,15 @@
                 document.getElementById('rebuild-confirm-text').textContent = copy.text;
                 document.getElementById('rebuild-confirm-go').textContent = copy.go;
 
+                var points = document.getElementById('rebuild-confirm-points');
+                points.textContent = '';
+                copy.points.forEach(function (point) {
+                    var li = document.createElement('li');
+                    li.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>';
+                    li.appendChild(document.createTextNode(point));
+                    points.appendChild(li);
+                });
+
                 if (window.bootstrap && window.bootstrap.Modal) {
                     window.bootstrap.Modal.getOrCreateInstance(dialogEl).show();
                 } else if (window.confirm(copy.text)) {
@@ -151,6 +190,19 @@
             });
 
             document.getElementById('rebuild-confirm-go').addEventListener('click', submitConfirmed);
+
+            // The sticky bar always says what "Apply" will do.
+            var summaryName = document.querySelector('[data-summary-template]');
+            var summaryMode = document.querySelector('[data-summary-mode]');
+            function updateSummary() {
+                var tpl = form.querySelector('input[name="template_key"]:checked');
+                var mode = form.querySelector('input[name="mode"]:checked');
+                var label = tpl && tpl.closest('label') ? tpl.closest('label').querySelector('.wb-template-name > span').textContent.replace(/^Template \d+\s*\W+\s*/, '') : '';
+                summaryName.textContent = label;
+                summaryMode.textContent = (mode && mode.value === 'full' ? '\u00b7 rebuild eligible pages' : '\u00b7 change the look only') + ' \u00b7 nothing changes for visitors until you publish';
+            }
+            form.addEventListener('change', updateSummary);
+            updateSummary();
         })();
     </script>
 @endsection
