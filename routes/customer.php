@@ -2296,6 +2296,8 @@
 
             Route::get('/rebuild', 'Business\WebsiteController@rebuildForm')->name('rebuild.form');
             Route::post('/rebuild', 'Business\WebsiteController@rebuild')->name('rebuild');
+            Route::get('/generation', 'Business\WebsiteController@generationProgress')->name('generation.progress');
+            Route::get('/generation/status', 'Business\WebsiteController@generationStatus')->name('generation.status');
 
             Route::post('/assets', 'Business\WebsiteController@storeAsset')->name('assets.store');
             Route::delete('/assets/{assetUid}', 'Business\WebsiteController@destroyAsset')->name('assets.destroy');

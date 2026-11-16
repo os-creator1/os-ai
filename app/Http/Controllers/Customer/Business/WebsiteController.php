@@ -827,6 +827,51 @@ class WebsiteController extends CustomerBaseController
         ]);
     }
 
+    /** The progress screen shown right after a generation/rebuild is queued; it polls generationStatus(). */
+    public function generationProgress(Request $request, string $workspaceUid, string $businessUid): View|Factory|Application
+    {
+        $this->authorize('website');
+        $this->resolveEntitledBusiness($workspaceUid, $businessUid);
+
+        return view('customer.business.website.generation-progress', [
+            'statusUrl' => route('customer.workspaces.businesses.website.generation.status', [$workspaceUid, $businessUid, 'since' => (int) $request->query('since', 0), 'mode' => (string) $request->query('mode', '')]),
+            'pagesUrl' => route('customer.workspaces.businesses.website.pages.index', [$workspaceUid, $businessUid]),
+        ]);
+    }
+
+    /**
+     * The real state of the queued run, read from the lease and the attempt row — never a guess. A stale lease is
+     * recovered here (through the coordinator's own exclusive path), so a crashed worker shows as failed, not as
+     * "still building" forever.
+     */
+    public function generationStatus(Request $request, string $workspaceUid, string $businessUid): \Illuminate\Http\JsonResponse
+    {
+        $this->authorize('website');
+        [, $business] = $this->resolveEntitledBusiness($workspaceUid, $businessUid);
+        $website = $this->resolveWebsite($business);
+        $since = \Illuminate\Support\Carbon::createFromTimestamp(max(0, (int) $request->query('since', 0)));
+
+        try {
+            $this->generationCoordinator->runExclusive($website, fn () => null);
+        } catch (GenerationInProgressException) {
+            return response()->json(['state' => 'running']);
+        }
+
+        $attempt = WebsiteGuidedGenerationAttempt::where('website_id', $website->id)->where('created_at', '>=', $since)->orderByDesc('id')->first();
+
+        if ($attempt !== null && $attempt->status === WebsiteGuidedGenerationAttempt::STATUS_SUCCEEDED) {
+            $rebuilt = (string) $request->query('mode') === WebsiteGuidedGenerationAttempt::MODE_REBUILD && $website->published_revision_id !== null;
+
+            return response()->json(['state' => 'succeeded', 'message' => $rebuilt
+                ? 'Draft rebuilt with AI. Your currently published site is unaffected until you review and publish this draft.'
+                : 'Draft content generated. Review and edit before publishing.']);
+        }
+
+        return response()->json(['state' => 'failed', 'message' => $attempt !== null && $attempt->failure_reason
+            ? \App\Library\Website\GuidedGeneration\GenerationFailureMessage::forCustomer($attempt->failure_reason)
+            : "We couldn't finish building your website this time. Your existing draft is unchanged — please try again."]);
+    }
+
     /**
      * What a full rebuild would do to the current draft's pages, from the same plan and the same preservation
      * policy the rebuild itself uses (an estimate for the current template; null when it cannot be worked out).
@@ -980,28 +1025,27 @@ class WebsiteController extends CustomerBaseController
             $customSection = WizardPresentationAnswers::customSection($completedResponse);
             $customerFaq = WizardPresentationAnswers::customerFaq($completedResponse);
 
-            $attempt = $mode === WebsiteGuidedGenerationAttempt::MODE_REBUILD
-                ? $this->guidedGeneration->rebuild($business, $website, $template, (int) Auth::id(), $idempotencyKey, $leaseToken, $customSection, $customerFaq, WizardPresentationAnswers::catalogSelection($completedResponse), WizardPresentationAnswers::serviceAreas($completedResponse), WizardPresentationAnswers::blueprintContext($completedResponse))
-                : $this->guidedGeneration->generateFull($business, $website, $template, (int) Auth::id(), $idempotencyKey, $leaseToken, $customSection, $customerFaq, WizardPresentationAnswers::catalogSelection($completedResponse), WizardPresentationAnswers::serviceAreas($completedResponse), WizardPresentationAnswers::blueprintContext($completedResponse));
+            // The run happens on the queue, never inside this request (a slow provider call used to outlive the web
+            // server's timeout and surface as a 504). The lease taken above travels with the job as its fencing token
+            // and the job releases it; this request returns immediately to a screen that polls the real outcome.
+            $startedAt = now()->subSecond()->getTimestamp();
 
-            if ($attempt->status === WebsiteGuidedGenerationAttempt::STATUS_SUCCEEDED) {
-                return redirect()->route('customer.workspaces.businesses.website.pages.index', [$workspaceUid, $businessUid])->with([
-                    'status' => 'success',
-                    'message' => $mode === WebsiteGuidedGenerationAttempt::MODE_REBUILD && $website->published_revision_id !== null
-                        ? 'Draft rebuilt with AI. Your currently published site is unaffected until you review and publish this draft.'
-                        : 'Draft content generated. Review and edit before publishing.',
-                ]);
-            }
+            \App\Jobs\Website\RunGuidedWebsiteGenerationJob::dispatch(
+                (int) $website->id, (int) $business->id, (string) $template->key, (int) Auth::id(), $idempotencyKey, $mode, $leaseToken,
+                $customSection, $customerFaq, WizardPresentationAnswers::catalogSelection($completedResponse), WizardPresentationAnswers::serviceAreas($completedResponse), WizardPresentationAnswers::blueprintContext($completedResponse),
+            );
+        } catch (\Throwable $e) {
+            // Nothing was queued (or queuing failed): the lease must not stay held for a job that will never run.
+            $this->generationCoordinator->release($website, $leaseToken);
+            report($e);
 
             return redirect()->route('customer.workspaces.businesses.website.pages.index', [$workspaceUid, $businessUid])->with([
                 'status' => 'error',
-                'message' => $attempt->failure_reason
-                    ? \App\Library\Website\GuidedGeneration\GenerationFailureMessage::forCustomer($attempt->failure_reason)
-                    : 'AI generation is currently unavailable. Please try again later or add pages manually.',
+                'message' => "We couldn't start building your website. Your draft is unchanged — please try again.",
             ]);
-        } finally {
-            $this->generationCoordinator->release($website, $leaseToken);
         }
+
+        return redirect()->route('customer.workspaces.businesses.website.generation.progress', [$workspaceUid, $businessUid, 'since' => $startedAt, 'mode' => $mode]);
     }
 
     public function storeAsset(StoreWebsiteAssetRequest $request, string $workspaceUid, string $businessUid): RedirectResponse

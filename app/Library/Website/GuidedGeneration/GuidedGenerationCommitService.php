@@ -118,10 +118,26 @@ final class GuidedGenerationCommitService
      * caller is WebsiteGenerationCoordinator, reacting to its own expired
      * lease, but the actual write stays here.
      */
-    public function recoverAttemptByUid(string $attemptUid): void
+    public function recoverAttemptByUid(string $attemptUid, string $reason = 'Recovered from a stalled generation attempt.'): void
     {
         WebsiteGuidedGenerationAttempt::where('uid', $attemptUid)
             ->where('status', WebsiteGuidedGenerationAttempt::STATUS_PENDING)
+            ->update([
+                'status' => WebsiteGuidedGenerationAttempt::STATUS_FAILED,
+                'failure_reason' => $reason,
+                'completed_at' => now(),
+            ]);
+    }
+
+    /**
+     * Fails pending attempts older than $olderThanSeconds for one Website. Only the coordinator calls this, while it
+     * holds the Website's exclusive lease, so such an attempt has no live owner. Never touches a younger attempt.
+     */
+    public function recoverStalePendingAttempts(int $websiteId, int $olderThanSeconds): int
+    {
+        return WebsiteGuidedGenerationAttempt::where('website_id', $websiteId)
+            ->where('status', WebsiteGuidedGenerationAttempt::STATUS_PENDING)
+            ->where('created_at', '<', now()->subSeconds($olderThanSeconds))
             ->update([
                 'status' => WebsiteGuidedGenerationAttempt::STATUS_FAILED,
                 'failure_reason' => 'Recovered from a stalled generation attempt.',

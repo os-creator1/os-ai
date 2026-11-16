@@ -64,8 +64,9 @@ class GuidedGenerationRoutingTest extends TestCase
             'idempotency_key' => (string) Str::uuid(),
         ]);
 
-        $response->assertRedirect(route('customer.workspaces.businesses.website.pages.index', [$workspace->uid, $business->uid]));
-        $this->assertSame('success', session('status'));
+        $response->assertRedirectContains('/website/generation?since=');
+        // The run happened on the queue (sync in tests); the progress screen's status endpoint reports its real outcome.
+        $this->getJson(route('customer.workspaces.businesses.website.generation.status', [$workspace->uid, $business->uid, 'since' => 0]))->assertJsonPath('state', 'succeeded');
 
         // The AI-authored seo_title ("... | Guided") only exists if the
         // GUIDED pipeline actually ran — the legacy WebsiteAiDraftGenerator
@@ -139,8 +140,9 @@ class GuidedGenerationRoutingTest extends TestCase
             'idempotency_key' => (string) Str::uuid(),
         ]);
 
-        $response->assertRedirect(route('customer.workspaces.businesses.website.pages.index', [$workspace->uid, $business->uid]));
-        $this->assertSame('success', session('status'));
+        $response->assertRedirectContains('/website/generation?since=');
+        // The run happened on the queue (sync in tests); the progress screen's status endpoint reports its real outcome.
+        $this->getJson(route('customer.workspaces.businesses.website.generation.status', [$workspace->uid, $business->uid, 'since' => 0]))->assertJsonPath('state', 'succeeded');
 
         $website->refresh();
         $this->assertSame('photo_booth_editorial', $website->template_key);
@@ -177,8 +179,9 @@ class GuidedGenerationRoutingTest extends TestCase
 
         $response = $this->post(route('customer.workspaces.businesses.website.generate', [$workspace->uid, $business->uid]));
 
-        $response->assertRedirect(route('customer.workspaces.businesses.website.pages.index', [$workspace->uid, $business->uid]));
-        $this->assertSame('error', session('status'));
+        $response->assertRedirectContains('/website/generation?since=');
+        // The run happened on the queue (sync in tests); the progress screen's status endpoint reports its real outcome.
+        $this->getJson(route('customer.workspaces.businesses.website.generation.status', [$workspace->uid, $business->uid, 'since' => 0]))->assertJsonPath('state', 'failed');
 
         $website->refresh();
         $this->assertSame($originalPageCount, $website->pages()->count());
