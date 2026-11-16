@@ -15,12 +15,41 @@
 @endphp
 
 <div class="website-overview" data-testid="website-overview">
+    {{--
+        Actions first, exactly as in the design: with unpublished changes this is the amber "You have unpublished changes" banner
+        carrying Preview draft + Publish update; otherwise a plain row. (Edit now lives in the header: data-testid="action-edit".)
+    --}}
+    <div class="website-actions @if ($hasDraftChanges) is-draft @endif">
+        <div class="website-actions-text">
+            <span class="website-dot {{ $hasDraftChanges ? 'is-draft' : 'is-live' }}" aria-hidden="true"></span>
+            <div>
+                @if ($hasDraftChanges)
+                    <b>{{ $isPublished ? 'You have unpublished changes' : 'Your website is ready to publish' }}</b>
+                    <span class="sub">{{ $isPublished ? 'Compare below, then publish when you\'re happy.' : 'Preview your draft, then publish when you\'re happy.' }}</span>
+                @else
+                    <b>Your draft matches what is live</b>
+                    <span class="sub">Nothing to publish right now.</span>
+                @endif
+            </div>
+        </div>
+
+        <x-button variant="outline" icon="eye" href="{{ $previewUrl }}" data-testid="action-preview">Preview draft</x-button>
+
+        @if ($pageCount > 0)
+            <form method="POST" action="{{ route('customer.workspaces.businesses.website.publish', [$workspaceUid, $businessUid]) }}" class="d-inline">
+                @csrf
+                <x-button variant="{{ $hasDraftChanges ? 'primary' : 'outline' }}" icon="upload" type="submit" data-testid="action-publish">{{ $isPublished ? ($hasDraftChanges ? 'Publish update' : 'Publish') : 'Publish' }}</x-button>
+            </form>
+        @endif
+    </div>
+
     <div class="website-previews">
         {{-- LIVE --}}
         <div class="website-preview-col" data-testid="live-column">
             <div class="website-preview-label">
                 <span class="website-dot {{ $isPublished ? 'is-live' : '' }}" aria-hidden="true"></span>
-                <span>Live</span>
+                <span>Live now</span>
+                <span class="wb-label-note">What visitors see</span>
             </div>
 
             @if ($isPublished)
@@ -57,19 +86,6 @@
                 </a>
             @endif
         </div>
-    </div>
-
-    <div class="website-actions">
-        <x-button variant="outline" icon="eye" href="{{ $previewUrl }}" data-testid="action-preview">Preview</x-button>
-
-        @if ($pageCount > 0)
-            <form method="POST" action="{{ route('customer.workspaces.businesses.website.publish', [$workspaceUid, $businessUid]) }}" class="d-inline">
-                @csrf
-                <x-button variant="{{ $hasDraftChanges ? 'primary' : 'outline' }}" icon="globe" type="submit" data-testid="action-publish">{{ $isPublished ? ($hasDraftChanges ? 'Publish update' : 'Publish') : 'Publish' }}</x-button>
-            </form>
-        @endif
-
-        <x-button variant="ghost" icon="pencil" href="{{ $settingsUrl }}" data-testid="action-edit" data-website-go="settings">Edit</x-button>
     </div>
 
     @if ($website->presentation_changes_pending_at !== null)
@@ -115,29 +131,52 @@
         </x-alert>
     @endif
 
-    @if ($isPublished && $domain === null)
-        {{-- The natural next step after publishing. Gone for good once a domain is connected; the domain itself stays manageable under Settings. --}}
-        <x-card class="website-next-step mt-3" data-testid="connect-domain-card">
-            <div class="d-flex flex-wrap align-items-center justify-content-between gap-3">
-                <div>
-                    <h6 class="mb-1">{{ $pendingDomain ? 'Finish connecting your domain' : 'Connect your domain' }}</h6>
-                    <p class="text-caption mb-0">{{ $pendingDomain ? $pendingDomain->domain . ' isn\'t live yet. Finish the steps to put your website on it.' : 'Put your website on your own address, like www.yourbusiness.com.' }}</p>
-                </div>
-                <x-button variant="primary" icon="link" href="{{ $domainsUrl }}">{{ $pendingDomain ? 'Continue' : 'Connect domain' }}</x-button>
-            </div>
-        </x-card>
-    @endif
+    @php
+        $showDomainCard = $isPublished && $domain === null;
+    @endphp
+    @if ($showDomainCard || ! empty($health))
+        <div class="wb-split">
+            @if ($showDomainCard)
+                {{-- The natural next step after publishing. Gone for good once a domain is connected; the domain itself stays manageable under Settings. --}}
+                <x-card class="website-next-step" data-testid="connect-domain-card">
+                    <div class="wb-domain-next">
+                        <span class="wb-tile" aria-hidden="true"><x-ds-icon name="globe" size="20" /></span>
+                        <div class="wb-grow">
+                            <h6>{{ $pendingDomain ? 'Finish connecting your domain' : 'Connect your domain' }}</h6>
+                            <p class="wb-muted">{{ $pendingDomain ? $pendingDomain->domain . ' isn\'t live yet. Finish the steps to put your website on it.' : 'Use your own address, like www.yourbusiness.com.' }}</p>
+                        </div>
+                        <x-button variant="primary" href="{{ $domainsUrl }}">{{ $pendingDomain ? 'Continue' : 'Connect domain' }}</x-button>
+                    </div>
+                </x-card>
+            @endif
 
-    @if (! empty($health))
-        {{-- Open by default only when something needs fixing now (e.g. a quote form that turns visitors away): never hidden. --}}
-        <details class="website-health-fold mt-3" data-testid="website-health-fold" @if (($health['summary']['fail'] ?? 0) > 0) open @endif>
-            <summary>
-                <span>Website health</span>
-                <span class="text-caption ms-2">{{ $health['summary']['ok'] }} good @if ($health['summary']['warn'] > 0)&middot; {{ $health['summary']['warn'] }} need attention @endif @if ($health['summary']['fail'] > 0)&middot; {{ $health['summary']['fail'] }} to fix now @endif</span>
-            </summary>
-            <div class="mt-2">
-                @include('customer.business.website.studio._health')
-            </div>
-        </details>
+            @if (! empty($health))
+                @php
+                    $hOk = (int) ($health['summary']['ok'] ?? 0);
+                    $hWarn = (int) ($health['summary']['warn'] ?? 0);
+                    $hFail = (int) ($health['summary']['fail'] ?? 0);
+                @endphp
+                {{-- Open by default only when something needs fixing now (e.g. a quote form that turns visitors away): never hidden. --}}
+                <details class="website-health-fold" data-testid="website-health-fold" @if ($hFail > 0) open @endif>
+                    <summary>
+                        <span class="wb-health-main">
+                            <span class="wb-health-line">
+                                <b>Website health</b>
+                                <span class="wb-muted">{{ $hOk }} good @if ($hWarn > 0)&middot; {{ $hWarn }} need attention @endif @if ($hFail > 0)&middot; {{ $hFail }} to fix now @endif</span>
+                            </span>
+                            <span class="wb-health-bar" aria-hidden="true">
+                                @if ($hOk > 0)<span class="ok" style="flex: {{ $hOk }}"></span>@endif
+                                @if ($hWarn > 0)<span class="warn" style="flex: {{ $hWarn }}"></span>@endif
+                                @if ($hFail > 0)<span class="fail" style="flex: {{ $hFail }}"></span>@endif
+                            </span>
+                        </span>
+                        <span class="wb-link">See details <x-ds-icon name="chevron-right" size="14" aria-hidden="true" /></span>
+                    </summary>
+                    <div class="wb-health-body">
+                        @include('customer.business.website.studio._health')
+                    </div>
+                </details>
+            @endif
+        </div>
     @endif
 </div>

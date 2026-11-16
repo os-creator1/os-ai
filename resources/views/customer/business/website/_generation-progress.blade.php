@@ -7,9 +7,13 @@
     partials/section-router/_styles). A confirmed dialog can call window.WebsiteGenerationProgress.start(form).
 --}}
 <template id="generation-progress-template">
-    <div class="text-center my-4" data-generation-progress role="status" aria-live="polite">
+    <div class="text-center my-4 wb-progress" data-generation-progress role="status" aria-live="polite">
         <x-motiongrove />
         <p class="mt-3 mb-0" data-testid="generation-progress-text">Building your website&hellip; this can take a minute or two. Please keep this page open.</p>
+        {{-- Inside the Website builder (.wb) the panel is restyled as the design's "Rebuilding your website" card; elsewhere these stay hidden. --}}
+        <div class="wb-progress-track wb-only" aria-hidden="true" style="display:none"><span></span></div>
+        <div class="wb-progress-step wb-only" style="display:none"><span class="wb-progress-spin" aria-hidden="true"></span>Writing your pages</div>
+        <div class="wb-progress-note wb-only" style="display:none">Keep this page open until it finishes.</div>
     </div>
 </template>
 

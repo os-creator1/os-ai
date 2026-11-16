@@ -69,7 +69,15 @@
             strip.scrollLeft = tab.offsetLeft - (strip.clientWidth - tab.offsetWidth) / 2;
         }
 
-        content.addEventListener('section-router:updated', function () { fitPreviews(content); revealActiveTab(); });
+        function syncHeaderActions(event) {
+            var key = event && event.detail && event.detail.key ? event.detail.key : content.getAttribute('data-section-key');
+
+            Array.prototype.forEach.call(document.querySelectorAll('[data-website-only]'), function (el) {
+                el.hidden = el.getAttribute('data-website-only') !== key;
+            });
+        }
+
+        content.addEventListener('section-router:updated', function (event) { fitPreviews(content); revealActiveTab(); syncHeaderActions(event); });
         window.addEventListener('resize', function () { fitPreviews(content); });
         fitPreviews(content);
         revealActiveTab();
