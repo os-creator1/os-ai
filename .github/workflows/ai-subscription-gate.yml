@@ -26,8 +26,14 @@ concurrency:
 
 jobs:
   focused-tests:
-    # Ignore unrelated labels while retaining synchronize and manual dispatch runs.
-    if: github.event.action != 'labeled' || github.event.label.name == 'ai:testing'
+    # This gate belongs only to the controlled AI loop. Ordinary manual PR
+    # pushes have no ai:testing label and must never show a failed AI gate.
+    # Labeled ai:testing runs and subsequent pushes to that labeled PR still run;
+    # explicit workflow_dispatch remains available for the controlled PR.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.action == 'labeled' && github.event.label.name == 'ai:testing') ||
+      (github.event.action == 'synchronize' && contains(github.event.pull_request.labels.*.name, 'ai:testing'))
     name: Prove scope and focused tests
     runs-on: ubuntu-latest
     timeout-minutes: 90
