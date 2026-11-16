@@ -112,14 +112,22 @@ class PlatformOwnerReliabilityHotfixTest extends TestCase
         foreach ([
             fn () => $gateway->createOrRetrieveCustomer(null, 'key'),
             fn () => $gateway->retrievePaymentIntent('pi_x'),
-            fn () => $gateway->verifyWebhookSignature('{}', 't=1,v1=x', 'whsec_x'),
         ] as $action) {
             try {
                 $action();
-                $this->fail('A provider action ran without valid Stripe configuration.');
+                $this->fail('An outbound provider action ran without valid Stripe configuration.');
             } catch (\RuntimeException $e) {
                 $this->assertStringContainsString('services.stripe', $e->getMessage());
             }
+        }
+
+        // Incoming webhook verification is independent of outbound API
+        // credentials, but still rejects invalid signatures without side effects.
+        try {
+            $gateway->verifyWebhookSignature('{}', 't=1,v1=x', 'whsec_x');
+            $this->fail('Invalid webhook signature was accepted.');
+        } catch (\App\Exceptions\Usage\WebhookSignatureVerificationException $e) {
+            $this->assertSame('Webhook signature verification failed.', $e->getMessage());
         }
     }
 
