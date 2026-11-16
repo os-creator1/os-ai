@@ -95,18 +95,23 @@ class UnifiedConversationsInboxTest extends TestCase
     {
         $this->activeAccount($this->business);
         $this->box('15551110001', 'Older text', now()->subHours(3));
-        $this->email('Newer email', 't-new', now()->subHour());
+        $this->box('15551110002', 'Newer text', now()->subHour());
+        $this->email('Mailbox-only email', 't-new', now());
         $this->authenticateAs($this->owner);
 
         $all = $this->list('all');
-        $this->assertLessThan(strpos($all, 'Older text'), strpos($all, 'Newer email'), 'the newer email row comes before the older SMS row');
+        $this->assertStringContainsString('Older text', $all);
+        $this->assertStringContainsString('Newer text', $all);
+        $this->assertLessThan(strpos($all, 'Older text'), strpos($all, 'Newer text'), 'SMS leads are newest first');
+        $this->assertStringNotContainsString('Mailbox-only email', $all);
 
         $sms = $this->list('sms');
         $this->assertStringContainsString('Older text', $sms);
-        $this->assertStringNotContainsString('Newer email', $sms);
+        $this->assertStringContainsString('Newer text', $sms);
+        $this->assertStringNotContainsString('Mailbox-only email', $sms);
 
         $email = $this->list('email');
-        $this->assertStringContainsString('Newer email', $email);
+        $this->assertStringContainsString('Mailbox-only email', $email);
         $this->assertStringNotContainsString('Older text', $email);
         $this->assertStringContainsString('data-channel="email"', $email);
     }
@@ -121,7 +126,8 @@ class UnifiedConversationsInboxTest extends TestCase
 
         $all = $this->list('all');
         $this->assertSame(1, substr_count($all, 'data-role="conversation-row-title"'), 'the person appears once in All');
-        $this->assertStringContainsString('SMS · Email', $all);
+        $this->assertStringContainsString('First, a text', $all);
+        $this->assertStringNotContainsString('Then an email', $all, 'email appears inside the lead timeline, not the list preview');
 
         $json = $this->post($this->route('timeline', [$box->uid]))->assertOk()->json();
         $html = $json['timeline'];
@@ -140,14 +146,15 @@ class UnifiedConversationsInboxTest extends TestCase
     public function test_an_unmatched_email_stays_its_own_thread_and_never_borrows_a_contacts_identity(): void
     {
         $this->activeAccount($this->business);
-        // A Contact who happens to share the sender's NAME is not the sender.
+        // A matching display name must never link a mailbox message to a lead.
         $this->contactWithEmails($this->business, ['someone.else@example.com'], $this->locA->id, 'Stranger');
         $this->email('Who is this', 't-un', now(), 'stranger@example.com');
         $this->authenticateAs($this->owner);
 
-        $all = $this->list('all');
-        $this->assertStringContainsString('stranger@example.com', $all);
-        $this->assertStringContainsString('data-channel="email"', $all);
+        $this->assertStringNotContainsString('stranger@example.com', $this->list('all'));
+        $email = $this->list('email');
+        $this->assertStringContainsString('stranger@example.com', $email);
+        $this->assertStringContainsString('data-channel="email"', $email);
 
         $opened = $this->post($this->route('email_thread'), ['thread' => 't-un'])->assertOk()->json();
         $this->assertArrayNotHasKey('conversation_uid', $opened);
@@ -207,7 +214,8 @@ class UnifiedConversationsInboxTest extends TestCase
         $this->email('Something else', 't-else', now()->subMinute());
         $this->authenticateAs($this->owner);
 
-        $found = $this->list('all', ['search' => 'Invoice']);
+        $this->assertStringNotContainsString('Invoice question', $this->list('all', ['search' => 'Invoice']));
+        $found = $this->list('email', ['search' => 'Invoice']);
         $this->assertStringContainsString('Invoice question', $found);
         $this->assertStringNotContainsString('Something else', $found);
 
@@ -310,17 +318,16 @@ class UnifiedConversationsInboxTest extends TestCase
     {
         $this->activeAccount($this->business);
         $contact = $this->contactWithEmails($this->business, ['pat@example.com'], $this->locA->id, 'Pat');
-        $this->box($contact->phone, 'See you today', now());
+        $box = $this->box($contact->phone, 'See you today', now());
         $this->email('Invoice for May', 't-inv', now()->subDay(), 'pat@example.com', contactId: $contact->id);
         $this->authenticateAs($this->owner);
 
-        $found = $this->list('all', ['search' => 'Invoice']);
-
-        $this->assertSame(1, substr_count($found, 'data-role="conversation-row-title"'), 'the person is found, once');
-        $this->assertStringContainsString('Invoice for May', $found);
-        $this->assertStringContainsString('SMS · Email', $found);
-        // And the plain SMS search still works.
+        // All searches leads, not every email in their historical timeline.
+        $this->assertSame([], $this->rowIds($this->list('all', ['search' => 'Invoice'])));
+        $this->assertStringContainsString('Invoice for May', $this->list('email', ['search' => 'Invoice']));
         $this->assertStringContainsString('See you today', $this->list('all', ['search' => $contact->phone]));
+        $timeline = $this->post($this->route('timeline', [$box->uid]))->assertOk()->json('timeline');
+        $this->assertStringContainsString('Invoice for May', $timeline);
     }
 
     /** @return list<string> row ids in page order */
@@ -342,41 +349,38 @@ class UnifiedConversationsInboxTest extends TestCase
 
         $this->authenticateAs($this->owner);
 
-        $one = $this->rowIds($this->list('all', ['page' => 1]));
-        $two = $this->rowIds($this->list('all', ['page' => 2]));
-        $three = $this->rowIds($this->list('all', ['page' => 3]));
+        $this->assertSame([], $this->rowIds($this->list('all')), '60 mailbox emails are not 60 leads');
+        $one = $this->rowIds($this->list('email', ['page' => 1]));
+        $two = $this->rowIds($this->list('email', ['page' => 2]));
+        $three = $this->rowIds($this->list('email', ['page' => 3]));
 
         $this->assertCount(50, $one);
         $this->assertCount(10, $two);
         $this->assertSame([], $three);
         $this->assertSame([], array_intersect($one, $two), 'no thread is repeated across pages');
-        $this->assertSame(array_map(fn ($i) => 'email:t-' . $i, range(0, 59)), array_merge($one, $two), 'newest first, page after page');
+        $this->assertSame(array_map(fn ($i) => 'email:t-' . $i, range(0, 59)), array_merge($one, $two));
     }
 
     public function test_mixed_sms_and_email_pages_are_bounded_ordered_and_not_duplicated(): void
     {
         $this->activeAccount($this->business);
         $base = now()->startOfMinute();
-        $expected = [];
+        $expectedSms = [];
+        $expectedEmails = [];
 
         for ($i = 0; $i < 30; $i++) {
             $box = $this->box('1555222' . str_pad((string) $i, 4, '0', STR_PAD_LEFT), 'Text ' . $i, $base->copy()->subMinutes(2 * $i));
             $this->email('Subject ' . $i, 't-' . $i, $base->copy()->subMinutes(2 * $i + 1));
-            $expected[] = $box->uid;
-            $expected[] = 'email:t-' . $i;
+            $expectedSms[] = $box->uid;
+            $expectedEmails[] = 'email:t-' . $i;
         }
 
         $this->authenticateAs($this->owner);
 
-        $one = $this->rowIds($this->list('all', ['page' => 1]));
-        $two = $this->rowIds($this->list('all', ['page' => 2]));
-
-        $this->assertCount(50, $one);
-        $this->assertCount(10, $two);
-        $this->assertSame($expected, array_merge($one, $two));
-
-        // SMS-only pagination is unchanged: its own 50-row pages.
-        $this->assertCount(30, $this->rowIds($this->list('sms')));
+        $this->assertSame($expectedSms, $this->rowIds($this->list('all')));
+        $this->assertSame($expectedSms, $this->rowIds($this->list('sms')));
+        $this->assertSame($expectedEmails, $this->rowIds($this->list('email')));
+        $this->assertSame([], $this->rowIds($this->list('all', ['page' => 2])));
     }
 
     public function test_a_contact_in_an_inaccessible_location_is_not_named_in_email_lists_but_the_visible_email_still_is(): void
@@ -398,14 +402,13 @@ class UnifiedConversationsInboxTest extends TestCase
 
         $this->authenticateAs($staff, ['chat_box', 'view_contact']);
 
-        foreach (['email', 'all'] as $channel) {
-            $html = $this->list($channel);
-            $this->assertStringContainsString('About a quote', $html, "$channel: the visible email stays visible");
-            $this->assertStringContainsString('secret@example.com', $html, "$channel: shown by its permitted address");
-            $this->assertStringNotContainsString('Restricted', $html, "$channel: the restricted Contact's name is never disclosed");
-            $this->assertStringContainsString('Allowed', $html, "$channel: an accessible Contact is named");
-            $this->assertStringContainsString('Unplaced', $html, "$channel: a Location-less Contact is named");
-        }
+        $html = $this->list('email');
+        $this->assertStringContainsString('About a quote', $html, 'the visible email stays visible in Email');
+        $this->assertStringContainsString('secret@example.com', $html, 'shown by its permitted address');
+        $this->assertStringNotContainsString('Restricted', $html, 'the restricted Contact name is never disclosed');
+        $this->assertStringContainsString('Allowed', $html, 'an accessible Contact is named');
+        $this->assertStringContainsString('Unplaced', $html, 'a Location-less Contact is named');
+        $this->assertSame([], $this->rowIds($this->list('all')), 'mailbox contacts are not lead conversations');
 
         // A full-reach owner still sees the name.
         $this->authenticateAs($this->owner);
