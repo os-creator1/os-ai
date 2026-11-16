@@ -43,6 +43,7 @@
         protected $fillable = [
             'user_id',
             'business_id',
+            'contact_id',
             'location_id',
             'from',
             'to',
@@ -215,6 +216,7 @@
          */
         public static function displayContactsFor(Business $business, iterable $boxes): array
         {
+            $boxes = is_array($boxes) ? $boxes : iterator_to_array($boxes, false);
             $byPhone = [];
 
             foreach ($boxes as $box) {
@@ -246,17 +248,68 @@
                 ->get()
                 ->groupBy(static fn (Contacts $contact): string => (string) $contact->phone);
 
+            // A verified link (written when the Contact's phone changed) outranks the number: the
+            // Contact must still be one of THIS Business's. It never matches by name or by another
+            // Contact now holding the old number.
+            $linkedIds = [];
+
+            foreach ($boxes as $box) {
+                if ($box->contact_id !== null) {
+                    $linkedIds[(int) $box->id] = (int) $box->contact_id;
+                }
+            }
+
+            $linked = $linkedIds === [] ? collect() : Contacts::query()
+                ->where('business_id', $business->id)
+                ->whereIn('id', array_values(array_unique($linkedIds)))
+                ->get()
+                ->keyBy('id');
+
             foreach ($byPhone as $phone => $boxIds) {
                 $candidates = $matches->get((string) $phone);
 
                 $display = ($candidates !== null && $candidates->count() === 1) ? $candidates->first() : null;
 
                 foreach ($boxIds as $boxId) {
-                    $result[$boxId] = $display;
+                    $result[$boxId] = isset($linkedIds[$boxId]) && $linked->has($linkedIds[$boxId])
+                        ? $linked->get($linkedIds[$boxId])
+                        : $display;
                 }
             }
 
             return $result;
+        }
+
+        /**
+         * Called just before a MANUAL phone change: keep this Contact's existing conversations
+         * attached to it. Verified only — the old number must belong to exactly this one Contact in
+         * the Business (several same-number Contacts are ambiguous, so nothing is linked), and only
+         * the Business's own, not-yet-linked conversations on that number are touched. `to` and the
+         * messages are never rewritten and SMS routing is not involved.
+         *
+         * @return int conversations linked
+         */
+        public static function linkConversationsToContact(Contacts $contact): int
+        {
+            $phone = ChatBoxBusinessBackfillV1::normalizeCounterparty((string) $contact->phone);
+
+            if ($phone === '' || $contact->business_id === null) {
+                return 0;
+            }
+
+            $variants = [$phone, '+' . $phone];
+
+            $holders = Contacts::query()->where('business_id', $contact->business_id)->whereIn('phone', $variants)->pluck('id');
+
+            if ($holders->count() !== 1 || (int) $holders->first() !== (int) $contact->id) {
+                return 0;
+            }
+
+            return self::query()
+                ->where('business_id', $contact->business_id)
+                ->whereNull('contact_id')
+                ->whereIn('to', $variants)
+                ->update(['contact_id' => $contact->id]);
         }
 
         /**
