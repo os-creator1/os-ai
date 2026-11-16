@@ -553,6 +553,8 @@
                 \App\Library\Timeline\Sources\BusinessEmailMessagesSource::class,
                 \App\Library\Timeline\Sources\AutomationActivitySource::class,
                 \App\Library\Timeline\Sources\ContactRecordSource::class,
+                // Manual edits to the contact's name, email, phone and group (append-only rows).
+                \App\Library\Timeline\Sources\ContactEditActivitySource::class,
                 // Implementation Contract 17 §12.G — Payments & Contracts joins
                 // the timeline the same way every other domain has: by
                 // implementing TimelineSource and being tagged here. The

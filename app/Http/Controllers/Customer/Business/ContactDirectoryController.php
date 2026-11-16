@@ -175,8 +175,28 @@ class ContactDirectoryController extends CustomerBaseController
         $input = $request->validate(['email' => ['nullable', 'string', 'max:191']]);
         $back = redirect()->route('customer.workspaces.businesses.people.show', [$workspaceUid, $businessUid, $contactUid]);
 
+        $recorder = app(\App\Library\Contacts\ContactEditRecorder::class);
+
         try {
-            $saved = app(ContactEmailIdentity::class)->save($contact, $input['email'] ?? null);
+            // The canonical email update and its audit event must commit or roll back together.
+            // Lock the contact before taking the old snapshot to serialize concurrent manual saves.
+            $saved = DB::transaction(function () use ($contact, $business, $input, $recorder): ?string {
+                $locked = Contacts::query()
+                    ->where('business_id', $business->id)
+                    ->lockForUpdate()
+                    ->findOrFail($contact->id);
+                $before = $recorder->snapshot($locked);
+                $saved = app(ContactEmailIdentity::class)->save($locked, $input['email'] ?? null);
+                $recorder->record(
+                    $business,
+                    $locked,
+                    ['email' => $before['email']],
+                    ['email' => $recorder->snapshot($locked)['email']],
+                    Auth::id() !== null ? (int) Auth::id() : null,
+                );
+
+                return $saved;
+            });
         } catch (\InvalidArgumentException $exception) {
             return $back->withInput()->withErrors(['email' => $exception->getMessage()]);
         }
@@ -600,8 +620,10 @@ class ContactDirectoryController extends CustomerBaseController
         $identity = app(ContactEmailIdentity::class);
         $notes = trim((string) ($input['notes'] ?? ''));
         $ambiguous = $identity->status($contact)['state'] === ContactEmailIdentity::STATE_AMBIGUOUS;
+        $recorder = app(\App\Library\Contacts\ContactEditRecorder::class);
+        $before = $recorder->snapshot($contact);
 
-        DB::transaction(function () use ($contact, $current, $target, $moving, $phone, $input, $notes, $normalizedEmail, $ambiguous, $identity): void {
+        DB::transaction(function () use ($contact, $current, $target, $moving, $phone, $input, $notes, $normalizedEmail, $ambiguous, $identity, $recorder, $before, $business): void {
             if ($moving) {
                 $this->moveToGroup($contact, $target);
             }
@@ -628,6 +650,9 @@ class ContactDirectoryController extends CustomerBaseController
                 $current->updateCache();
                 $target->updateCache();
             }
+
+            // Same transaction as the write: an edit and its record stand or fall together.
+            $recorder->record($business, $contact, $before, $recorder->snapshot($contact), Auth::id() !== null ? (int) Auth::id() : null);
         });
 
         session()->flash('flash_success', 'Contact saved.');

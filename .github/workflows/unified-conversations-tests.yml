@@ -82,10 +82,11 @@ jobs:
           tests/Feature/Conversations/ChatBoxLocationAclTest.php
           tests/Feature/Security/ConversationsViewAsSendTest.php
           --stop-on-failure
-      - name: Run existing contact timeline regression
+      - name: Run contact timeline and manual edit audit regressions
         run: >-
           php artisan test
           tests/Feature/Conversations/ContactActivityTimelineTest.php
+          tests/Feature/Conversations/ContactEditActivityTest.php
           --stop-on-failure
       - name: Run Conversations screen and Design System regression tests
         run: >-
