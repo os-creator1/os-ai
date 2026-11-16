@@ -172,6 +172,10 @@ class GuidedWebsiteGenerationClient
             'Respond with a single JSON object: {"pages": [{"page_key": string, "title": string, "seo_title": string|null, "meta_description": string|null, "sections": [...]}]}.',
         ];
 
+        // The exact section wire format and per-type data schema WebsiteSectionValidator enforces.
+        // Without it the model returns flat or free-form sections and every page fails validation.
+        array_splice($instructions, -1, 0, self::sectionFormatInstructions($plan));
+
         // A short, plain About page reads better and converts better than a long story.
         if (collect($plan)->contains(fn ($page) => ($page['page_type'] ?? null) === 'about')) {
             array_splice($instructions, -1, 0, ['Keep the About page concise: at most two short paragraphs (about 120 words in total) in the owner\'s own voice, never padded.']);
@@ -217,6 +221,43 @@ class GuidedWebsiteGenerationClient
             ['role' => 'system', 'content' => implode("\n", $instructions)],
             ['role' => 'user', 'content' => json_encode($userPayload)],
         ];
+    }
+
+    /**
+     * Prompt lines describing the exact section JSON the output validator accepts, limited to the
+     * section types the plan actually allows. Mirrors WebsiteSectionValidator's rules; the guided
+     * validator still rejects anything that does not match.
+     *
+     * @return array<int, string>
+     */
+    public static function sectionFormatInstructions(array $plan): array
+    {
+        $schemas = [
+            'hero' => '{"type":"hero","data":{"heading":string(max 120),"subheading":string|null(max 240),"primary_cta":{"label":string(max 40),"url":string}|null,"secondary_cta":{"label":string(max 40),"url":string}|null}}',
+            'text' => '{"type":"text","data":{"heading":string|null(max 120),"body":string(required, max 5000)}}',
+            'image_text' => '{"type":"image_text","data":{"heading":string|null(max 120),"body":string(required, max 3000),"image":null,"image_position":"left"|"right"}}',
+            'services' => '{"type":"services","data":{"heading":string|null,"items":[{"name":string(required, max 120),"description":string|null(max 500),"price_label":null}]}} (1-12 items; use only services from confirmed_facts, and leave price_label null unless a price is a confirmed fact)',
+            'testimonials' => '{"type":"testimonials","data":{"heading":string|null,"items":[{"quote":string,"author_name":string,"author_title":string|null}]}} (only real reviews supplied in confirmed_facts; otherwise do not use this type)',
+            'faq' => '{"type":"faq","data":{"heading":string|null,"items":[{"question":string(max 200),"answer":string(max 1000)}]}} (1-20 items)',
+            'cta' => '{"type":"cta","data":{"heading":string(required, max 120),"body":string|null(max 300),"buttons":[{"label":string(max 40),"url":string}]}} (1-2 buttons)',
+            'contact_details' => '{"type":"contact_details","data":{"show_phone":boolean,"show_email":boolean,"show_address":boolean}}',
+        ];
+
+        $allowed = collect($plan)->pluck('allowed_section_types')->flatten()->unique()->all();
+        $lines = [
+            'Every entry of "sections" must be an object of exactly this shape: {"type": <section type>, "data": {...}}. Put every field of a section inside its "data" object — never beside "type" — and use only the field names below. A section without "type" and a "data" object is rejected.',
+            'Every page needs exactly one "hero" section; place it first.',
+            'Button/CTA urls must be a same-site path that is the slug of a page in the plan (for example "/photo-booth-contact"), an https:// URL, a tel: link or a mailto: link. Never invent another URL.',
+            'Section schemas (use only the types in that page\'s allowed_section_types; omit optional fields or use null):',
+        ];
+
+        foreach ($schemas as $type => $schema) {
+            if (in_array($type, $allowed, true)) {
+                $lines[] = '- ' . $schema;
+            }
+        }
+
+        return $lines;
     }
 
     /**
