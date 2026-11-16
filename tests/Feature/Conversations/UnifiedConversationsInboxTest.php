@@ -122,18 +122,21 @@ class UnifiedConversationsInboxTest extends TestCase
         $contact = $this->contactWithEmails($this->business, ['pat@example.com'], $this->locA->id, 'Pat');
         $box = $this->box($contact->phone, 'First, a text', now()->subHours(2));
         $this->email('Then an email', 't-pat', now()->subHour(), 'pat@example.com', contactId: $contact->id);
+        $this->email('Sent a follow-up', 't-pat-sent', now()->subMinutes(30), 'pat@example.com', 'outbound', $contact->id);
         $this->authenticateAs($this->owner);
 
         $all = $this->list('all');
         $this->assertSame(1, substr_count($all, 'data-role="conversation-row-title"'), 'the person appears once in All');
         $this->assertStringContainsString('First, a text', $all);
         $this->assertStringNotContainsString('Then an email', $all, 'email appears inside the lead timeline, not the list preview');
+        $this->assertStringNotContainsString('Sent a follow-up', $all);
 
         $json = $this->post($this->route('timeline', [$box->uid]))->assertOk()->json();
         $html = $json['timeline'];
         $this->assertLessThan(strpos($html, 'Then an email'), strpos($html, 'First, a text'));
         $this->assertStringContainsString('data-channel="sms"', $html);
         $this->assertStringContainsString('data-channel="email"', $html);
+        $this->assertStringContainsString('Sent a follow-up', $html, 'outgoing email belongs in the lead timeline');
         $this->assertTrue($json['composer']['sms']);
         $this->assertTrue($json['composer']['email'], 'both channels are offered when both are usable');
 
