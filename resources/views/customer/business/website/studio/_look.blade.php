@@ -16,12 +16,14 @@
         $hero = isset($lookTheme['hero_asset_uid'], $lookAssets[$lookTheme['hero_asset_uid']]) ? ['url' => \App\Library\Website\Media\WebsiteMediaPayload::thumbUrl($lookAssets[$lookTheme['hero_asset_uid']]), 'alt' => $lookAssets[$lookTheme['hero_asset_uid']]->alt_text] : null;
     @endphp
     <x-card data-testid="studio-look">
-        <h6 class="mb-25">Your website's look</h6>
-        <p class="text-caption mb-2">Colour and images used across your site.</p>
+        <h6 class="wb-look-title">Your website's look</h6>
+        <p class="wb-muted mb-0">Colour and images used across your site.</p>
 
         <form method="POST" action="{{ route('customer.workspaces.businesses.website.look.update', [$workspaceUid, $businessUid]) }}" enctype="multipart/form-data">
             @csrf
 
+            <div class="wb-look-group" data-look-group="colors">
+            <span class="wb-eyebrow">Colors</span>
             <div class="website-look-field">
                 <label class="website-look-label" for="look-brand-color">Primary colour</label>
                 <div class="website-look-color">
@@ -59,6 +61,10 @@
                 @endforeach
             </details>
 
+            </div>
+
+            <div class="wb-look-group" data-look-group="images">
+            <span class="wb-eyebrow">Images</span>
             <div class="website-look-field">
                 <span class="website-look-label">Logo</span>
                 <div class="website-look-upload">
@@ -105,6 +111,10 @@
                 @error('hero') <div class="text-danger small mt-50">{{ $message }}</div> @enderror
             </div>
 
+            </div>
+
+            <div class="wb-look-group" data-look-group="legal">
+            <span class="wb-eyebrow">Legal links</span>
             <div class="website-look-field" data-testid="legal-links">
                 <span class="website-look-label">Privacy notice &amp; legal links</span>
                 <p class="text-caption mb-50">Your website collects inquiries, so link to <em>your own</em> published privacy notice. We never write or copy a policy for you; leave blank if you don't have one yet.</p>
@@ -114,7 +124,9 @@
                 @error('terms_url') <div class="text-danger small mt-50">{{ $message }}</div> @enderror
             </div>
 
-            <div class="d-flex justify-content-end mt-2">
+            </div>
+
+            <div class="d-flex justify-content-end mt-3">
                 <button type="submit" class="btn btn-primary" data-testid="look-save">Save changes</button>
             </div>
         </form>
