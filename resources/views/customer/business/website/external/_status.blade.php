@@ -1,5 +1,5 @@
 {{--
-    The state of the check, in the owner's words, on every tab. Variables: $latest (newest crawl of the CURRENT
+    The state of the check, in the owner's words, on every tab (the header with the primary action is _header). Variables: $latest (newest crawl of the CURRENT
     address, any status, or null), $report (newest finished report of the current address, or null: the results the
     tab below describes), $crawlUrl, $cancelUrl, $settingsUrl.
 
@@ -16,68 +16,45 @@
     $budget = (int) ($latest?->page_budget ?? 0);
 @endphp
 
-{{-- ---- header bar: latest report time, current status, the one primary action ---- --}}
-<div class="d-flex justify-content-between align-items-center flex-wrap gap-1 mb-2" data-role="status-bar">
-    <div class="text-caption text-muted" data-role="last-checked">
-        @if($report?->finished_at)
-            Latest completed audit: <span title="{{ $report->finished_at->toDayDateTimeString() }}">{{ $report->finished_at->diffForHumans() }}</span>
-            <x-badge :variant="P::statusVariant($report)" data-role="report-status">{{ P::statusLabel($report) }}</x-badge>
-        @else
-            No completed audit yet
-        @endif
-        @if($latest !== null && ($active || ! $reportIsLatest))
-            <span class="ms-1">&middot; Current check: <x-badge :variant="$active ? 'accent' : P::statusVariant($latest)" data-role="current-status">{{ P::statusLabel($latest) }}</x-badge></span>
-        @endif
-    </div>
-    <div class="d-flex gap-1 align-items-center">
-        <a class="btn btn-sm btn-flat-secondary" href="{{ $settingsUrl }}" data-role="settings-link">Settings</a>
-        @if($active)
-            <form method="POST" action="{{ $cancelUrl }}" data-live-post>@csrf<button type="submit" class="btn btn-sm btn-outline-secondary" data-role="cancel-check">Cancel check</button></form>
-        @else
-            <form method="POST" action="{{ $crawlUrl }}" data-live-post>@csrf<button type="submit" class="btn btn-sm btn-primary" data-role="check-again">{{ $report !== null || $latest !== null ? 'Check again now' : 'Start first audit' }}</button></form>
-        @endif
-    </div>
-</div>
-
 @if($active)
     @php
         $pct = $budget > 0 ? min(100, (int) round(($latest->progress_checked / max(1, $budget)) * 100)) : 0;
     @endphp
-    <x-card :padded="true" class="mb-2" data-role="status-running" data-live-status data-active="1">
-        <div class="d-flex align-items-center gap-1 mb-1">
+    <section class="xw-banner is-info" data-role="status-running" data-live-status data-active="1">
+        <div class="xw-rw-title">
             <strong data-live="stage">{{ P::stageLabel($latest->stage) }}</strong>
-            <span class="text-caption text-muted">&middot; started {{ ($latest->started_at ?? $latest->created_at)?->diffForHumans() }}</span>
+            <span class="xw-mut">&middot; started {{ ($latest->started_at ?? $latest->created_at)?->diffForHumans() }}</span>
         </div>
-        <div class="progress mb-1" style="height: 6px;" aria-hidden="true"><div class="progress-bar" data-live="bar" style="width: {{ max(3, $pct) }}%"></div></div>
-        <p class="mb-1" data-role="progress-text">
+        <div class="xw-progress" aria-hidden="true"><span data-live="bar" style="width: {{ max(3, $pct) }}%"></span></div>
+        <p data-role="progress-text">
             <span data-live="discovered">{{ $latest->progress_discovered }}</span> address(es) found &middot;
             <span data-live="checked">{{ $latest->progress_checked }}</span> checked
-            @if($budget > 0)<span class="text-muted">(this check reads at most {{ $budget }} pages)</span>@endif
+            @if($budget > 0)<span class="xw-mut">(this check reads at most {{ $budget }} pages)</span>@endif
         </p>
-        <p class="text-caption text-muted mb-0" role="status" aria-live="polite" data-live="message">
+        <p class="xw-mut" role="status" aria-live="polite" data-live="message">
             @if($report !== null)
                 Showing results from {{ $report->finished_at?->diffForHumans() }}. A new check is running; this page updates by itself when it finishes.
             @else
                 This page updates by itself when the check finishes. You do not need to refresh.
             @endif
         </p>
-    </x-card>
+    </section>
 @elseif($latest === null)
-    <x-alert variant="neutral" icon="info" role="status" class="mb-2" data-role="status-none">Your website has not been checked yet. Choose <strong>Start first audit</strong> to read your public pages and see what to improve.</x-alert>
+    <div class="xw-banner is-info" role="status" data-role="status-none">Your website has not been checked yet. Choose <strong>Start first audit</strong> to read your public pages and see what to improve.</div>
 @elseif($failure !== null)
-    <x-alert :variant="$failure['fault'] === 'site' ? 'danger' : 'warning'" icon="alert-triangle" role="status" class="mb-2" data-role="status-failed" data-fault="{{ $failure['fault'] }}">
-        <strong>{{ $failure['title'] }}.</strong> {{ $failure['body'] }}
+    <div class="xw-banner {{ $failure['fault'] === 'site' ? 'is-bad' : 'is-warn' }}" role="status" data-role="status-failed" data-fault="{{ $failure['fault'] }}">
+        <div><strong>{{ $failure['title'] }}.</strong> {{ $failure['body'] }}</div>
         @if($report !== null)
-            <div class="mt-50">Showing your previous results from {{ $report->finished_at?->diffForHumans() }} below.</div>
+            <div>Showing your previous results from {{ $report->finished_at?->diffForHumans() }} below.</div>
         @endif
-        <div class="text-caption mt-50">Checked {{ $latest->finished_at?->diffForHumans() }}.</div>
-    </x-alert>
+        <div class="xw-mut">Checked {{ $latest->finished_at?->diffForHumans() }}.</div>
+    </div>
 @elseif($latest->status === 'cancelled' && $report !== null)
-    <x-alert variant="neutral" icon="info" role="status" class="mb-2" data-role="status-cancelled">The last check was cancelled. Showing your previous results from {{ $report->finished_at?->diffForHumans() }}.</x-alert>
+    <div class="xw-banner is-info" role="status" data-role="status-cancelled">The last check was cancelled. Showing your previous results from {{ $report->finished_at?->diffForHumans() }}.</div>
 @elseif($latest->status === 'cancelled')
-    <x-alert variant="neutral" icon="info" role="status" class="mb-2" data-role="status-cancelled">The last check was cancelled. Start a new one when you are ready.</x-alert>
+    <div class="xw-banner is-info" role="status" data-role="status-cancelled">The last check was cancelled. Start a new one when you are ready.</div>
 @elseif($reportIsLatest && $report->status === 'partial')
-    <x-alert variant="warning" icon="alert-triangle" role="status" class="mb-2" data-role="status-partial">
-        <strong>Partially completed.</strong> {{ P::finishReason($report->finish_reason, $report->coverage) }}
-    </x-alert>
+    <div class="xw-banner is-warn" role="status" data-role="status-partial">
+        <div><strong>Partially completed.</strong> {{ P::finishReason($report->finish_reason, $report->coverage) }}</div>
+    </div>
 @endif
