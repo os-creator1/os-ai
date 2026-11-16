@@ -5,21 +5,27 @@
     single Photobooth website-setup response.
 --}}
 @if ($responses->isEmpty())
-    <x-empty-state icon="list-checks" title="No questionnaire responses yet" />
+    <div class="wb-empty" data-testid="questionnaires-empty">
+        <span class="wb-tile" aria-hidden="true"><x-ds-icon name="list-checks" size="28" /></span>
+        <h2>No questionnaire answers yet</h2>
+        <p>Send a questionnaire after booking to collect event details &mdash; venue, timing, guest count. Answers show up here.</p>
+        <span class="wb-empty-hint">You can send it automatically with an automation.</span>
+    </div>
 @else
-    <div class="row">
+    <div class="wb-list">
         @foreach ($responses as $response)
-            <div class="col-md-6 mb-3">
-                <x-card title="Website setup">
-                    <p class="text-caption mb-2">
-                        Status: {{ ucfirst(str_replace('_', ' ', $response->status->value)) }}
-                        @if ($response->completed_at)
-                            &middot; completed {{ $response->completed_at->diffForHumans() }}
-                        @endif
-                    </p>
+            <article class="wb-list-card">
+                <h2>Website setup</h2>
+                <p>
+                    Status: {{ ucfirst(str_replace('_', ' ', $response->status->value)) }}
+                    @if ($response->completed_at)
+                        &middot; completed {{ $response->completed_at->diffForHumans() }}
+                    @endif
+                </p>
+                <div class="wb-list-actions">
                     <x-button variant="secondary" href="{{ route('customer.workspaces.businesses.website.edit-setup', [$workspaceUid, $businessUid]) }}">Edit answers</x-button>
-                </x-card>
-            </div>
+                </div>
+            </article>
         @endforeach
     </div>
 @endif
