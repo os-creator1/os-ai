@@ -180,7 +180,7 @@
     .xw-kpi > b { font-size: 26px; font-weight: 800; letter-spacing: -.02em; color: var(--x-text); }
     .xw-kpi > b.is-ok { color: var(--x-ok); }
     .xw-kpi > b.is-bad { color: var(--x-bad); }
-    .xw-kpi > b.is-text { font-size: 18px; padding: 6px 0; letter-spacing: 0; line-height: 1.25; }
+    .xw-kpi > b.is-text { font-size: 16px; padding: 6px 0; letter-spacing: 0; line-height: 1.25; }
     .xw-kpi > small { font-size: 12px; color: var(--x-faint); }
     .xw-kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; }
     .xw-kpi-grid .xw-kpi > b { font-size: 17px; letter-spacing: 0; }
@@ -219,7 +219,7 @@
     .xw-search:focus-within { border-color: var(--x-brand); box-shadow: 0 0 0 3px var(--x-brand-soft); }
     .xw-sel { position: relative; display: inline-flex; align-items: center; gap: 8px; height: 40px; padding: 0 12px; border: 1px solid var(--x-line-soft); border-radius: 10px; background: var(--x-surface); font-size: 13.5px; font-weight: 500; color: var(--x-text-3); }
     .xw-sel > span { color: var(--x-faint); }
-    .xw-sel select { appearance: none; -webkit-appearance: none; border: 0; outline: 0; background: transparent; font: inherit; font-weight: 500; color: inherit; padding: 0 18px 0 0; height: 100%; cursor: pointer; max-width: 160px; }
+    .xw-sel select { appearance: none; -webkit-appearance: none; border: 0; outline: 0; background: transparent; font: inherit; font-weight: 500; color: inherit; padding: 0 18px 0 0; height: 100%; cursor: pointer; max-width: 118px; text-overflow: ellipsis; }
     .xw-sel select option { color: #1F1A19; background: #FFFFFF; }
     .xw-sel > svg.xi { position: absolute; right: 10px; width: 14px; height: 14px; color: var(--x-faint); pointer-events: none; }
     .xw-sel:focus-within { border-color: var(--x-brand); box-shadow: 0 0 0 3px var(--x-brand-soft); }
@@ -227,7 +227,7 @@
     .xw-sel-status { height: 36px; font-weight: 600; padding-right: 30px; }
     .xw-sel-status.is-in_progress, .xw-sel-status.is-waiting { background: var(--x-info-soft); border-color: var(--x-info-line); color: var(--x-info); }
     .xw-sel-status.is-done, .xw-sel-status.is-verified { background: var(--x-ok-soft); border-color: var(--x-ok-line); color: var(--x-ok); }
-    .xw-sel-status select { max-width: none; padding-right: 0; }
+    .xw-sel-status select { max-width: 150px; padding-right: 0; }
     .xw-count { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
     .xw-count b { font-size: 15px; color: var(--x-text); }
 
