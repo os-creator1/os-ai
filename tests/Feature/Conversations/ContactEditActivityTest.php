@@ -129,6 +129,31 @@ class ContactEditActivityTest extends TestCase
         ], $this->editLines($business, $contact));
     }
 
+
+    public function test_profile_email_and_audit_event_roll_back_together_if_recording_fails(): void
+    {
+        [$owner, $business, $workspace] = $this->tenant(WorkspacePlanTier::Growth);
+        $group = $this->group($business);
+        $this->authenticateAs($owner);
+        $contact = $this->person($workspace, $business, $group);
+
+        // Simulate a database failure immediately after INSERT; neither the
+        // canonical email value nor its audit event may survive the transaction.
+        $failOnce = true;
+        DB::listen(function (\Illuminate\Database\Events\QueryExecuted $query) use (&$failOnce): void {
+            if ($failOnce && preg_match('/\\binsert\\s+into\\s+[`"]?contact_edit_events/i', $query->sql)) {
+                $failOnce = false;
+                throw new \RuntimeException('Simulated contact audit failure');
+            }
+        });
+
+        $this->post($this->route('email.update', $workspace, $business, $contact->uid), ['email' => 'changed@example.com'])
+            ->assertStatus(500);
+
+        $this->assertSame('john@example.com', app(\App\Library\Contacts\ContactEmailIdentity::class)->status($contact)['email']);
+        $this->assertSame(0, DB::table('contact_edit_events')->count());
+    }
+
     public function test_without_permission_nothing_is_recorded_and_other_contacts_never_leak(): void
     {
         [$owner, $business, $workspace] = $this->tenant(WorkspacePlanTier::Growth);
