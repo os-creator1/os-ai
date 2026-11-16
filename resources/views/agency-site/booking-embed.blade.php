@@ -4,8 +4,16 @@
     chosen date, time-zone selection and booking completion are all the existing engine's; this file is markup only.
     Contact details are asked after a time is picked (the booking needs them), never before.
 --}}
+<style>
+    /* The scheduler's field styles are scoped to its own page card (.pb-card); the embed has no such card, so the same rules apply to .pb-app. */
+    .pb-app input[type=text], .pb-app input[type=email], .pb-app input[type=tel], .pb-app select {
+        width: 100%; box-sizing: border-box; padding: 11px 12px; border: 1px solid #cfcac1; border-radius: 12px; background: #fff; color: var(--pb-ink, #181413); font: inherit;
+    }
+    .pb-app input:focus, .pb-app select:focus { outline: 2px solid var(--pb-accent, #B4514A); outline-offset: 0; border-color: transparent; }
+</style>
 <section class="pb-app" id="pb-app" data-role="public-scheduler" data-step="date"
          data-config="{{ json_encode($embed['config'], JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_AMP | JSON_HEX_QUOT) }}">
+    <p style="margin: 0 0 14px; color: var(--pb-muted, #5E5652); font-size: 14px">Times are shown in <span id="pb-tz-label">{{ $embed['timezone'] }}</span>.</p>
     <div class="pb-stage">
         <div class="pb-calendar" data-role="calendar">
             <div class="pb-cal-head">

@@ -60,7 +60,7 @@ return [
         ],
         'duration_label' => 'online video call',
         'calendar_title' => 'Pick a time that suits you.',
-        'calendar_lead' => 'Choose a time for your call. Times are shown in your time zone.',
+        'calendar_lead' => 'Choose a time for your call.',
     ],
 
     // Call-only landing pages on the official marketing host. `official_paths` is the ONLY authority on who may publish
