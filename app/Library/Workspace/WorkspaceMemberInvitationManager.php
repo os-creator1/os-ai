@@ -209,8 +209,8 @@ class WorkspaceMemberInvitationManager
      * The invitation row is locked FOR UPDATE, exactly as accept() locks it, so an edit and an acceptance serialize:
      * either the edit commits first and the acceptance applies it, or the acceptance wins and the edit finds the
      * invitation no longer pending and is refused. The grant is re-validated against the EDITING actor's authority
-     * (an Admin can neither edit an Admin invitation nor promote anyone to Admin), and again against the original
-     * inviter at acceptance.
+     * (an Admin can neither edit an Admin invitation nor promote anyone to Admin), and again at acceptance against that same
+     * approving actor (invited_by_user_id stays the original inviter, for audit).
      *
      * @param  array<int, int>  $businessIds
      *
@@ -246,6 +246,9 @@ class WorkspaceMemberInvitationManager
                 'business_access_scope' => $scope,
                 'business_ids' => $scope === WorkspaceBusinessAccessScope::Selected ? $businessIds : null,
                 'hidden_modules' => self::cleanHidden($hiddenModules),
+                // The editor vouches for these settings; acceptance re-checks THEIR authority. The original
+                // inviter (invited_by_user_id) is kept as is for audit.
+                'access_approved_by_user_id' => $actorUserId,
             ])->save();
 
             return $locked;
@@ -382,7 +385,7 @@ class WorkspaceMemberInvitationManager
 
                 // Re-validated NOW against the inviter's current authority, role and Business scope.
                 if ($workspace === null || ! $workspace->is_active
-                    || ! $this->actorMayGrant((int) $invitation->invited_by_user_id, $workspace, $invitation->role, $invitation->business_access_scope, $businessIds)) {
+                    || ! $this->actorMayGrant($invitation->grantingUserId(), $workspace, $invitation->role, $invitation->business_access_scope, $businessIds)) {
                     throw new InvalidMemberInvitationException('grant_failed');
                 }
 
@@ -390,7 +393,7 @@ class WorkspaceMemberInvitationManager
 
                 try {
                     $membership = $this->workspaceManager->addMember(
-                        (int) $invitation->invited_by_user_id,
+                        $invitation->grantingUserId(),
                         $workspace,
                         (int) $user->id,
                         $invitation->role,

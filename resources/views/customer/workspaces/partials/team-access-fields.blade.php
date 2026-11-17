@@ -55,7 +55,7 @@
         <div class="sr-bizpick" data-role="business-picker" data-access-picker @if (($selectedScope ?? 'all') === 'all') hidden @endif>
             @foreach ($manageableBusinesses ?? [] as $business)
                 <label class="sr-bizpick__item">
-                    <input type="checkbox" id="{{ $idp }}-biz-{{ $business['uid'] }}" name="business_uids[]" value="{{ $business['uid'] }}" data-label="{{ $business['name'] }}" @checked(in_array($business['uid'], $selectedBusinessUids ?? [], true))>
+                    <input type="checkbox" id="{{ $idp }}-biz-{{ $business['uid'] }}" name="business_uids[]" value="{{ $business['uid'] }}" data-label="{{ $business['name'] }}" @checked(in_array($business['uid'], $selectedBusinessUids ?? [], true)) @disabled(($selectedScope ?? 'all') === 'all')>
                     <span>{{ $business['name'] }}</span>
                 </label>
             @endforeach

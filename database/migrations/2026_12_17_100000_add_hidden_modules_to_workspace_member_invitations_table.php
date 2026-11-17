@@ -17,13 +17,16 @@ return new class extends Migration
     {
         Schema::table('workspace_member_invitations', function (Blueprint $table) {
             $table->json('hidden_modules')->nullable();
+            // Who last approved this invitation's access settings. invited_by_user_id stays the ORIGINAL inviter
+            // (audit); acceptance re-validates and grants as the approver when there is one.
+            $table->unsignedBigInteger('access_approved_by_user_id')->nullable();
         });
     }
 
     public function down(): void
     {
         Schema::table('workspace_member_invitations', function (Blueprint $table) {
-            $table->dropColumn('hidden_modules');
+            $table->dropColumn(['hidden_modules', 'access_approved_by_user_id']);
         });
     }
 };

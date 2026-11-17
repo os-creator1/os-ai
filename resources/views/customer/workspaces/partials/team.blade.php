@@ -329,12 +329,17 @@
 
             function update() {
                 var selected = scope && scope.value === 'selected';
-                if (picker) { picker.hidden = !selected; }
+                if (picker) {
+                    picker.hidden = !selected;
+                    // Disabled boxes are not submitted, so "All Businesses" never posts business_uids (the server
+                    // prohibits them for that scope). Their checked state is kept, so switching back restores it.
+                    picker.querySelectorAll('input[name="business_uids[]"]').forEach(function (i) { i.disabled = !selected; });
+                }
                 var businesses;
                 if (fixed) {
                     businesses = fixed.getAttribute('data-access-business-fixed');
                 } else if (selected) {
-                    var names = Array.prototype.slice.call(box.querySelectorAll('input[name="business_uids[]"]:checked')).map(function (i) { return i.getAttribute('data-label'); });
+                    var names = Array.prototype.slice.call(box.querySelectorAll('input[name="business_uids[]"]:checked:not(:disabled)')).map(function (i) { return i.getAttribute('data-label'); });
                     businesses = names.length ? names.join(', ') : 'no Business chosen yet';
                 } else {
                     businesses = 'all Businesses';

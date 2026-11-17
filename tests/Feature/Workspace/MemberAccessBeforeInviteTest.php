@@ -488,4 +488,135 @@ class MemberAccessBeforeInviteTest extends TestCase
         $this->assertGreaterThanOrEqual(1, $editLocks, 'The edit locks the invitation row FOR UPDATE.');
         $this->assertGreaterThan($editLocks, count($locks), 'So does the acceptance: they serialize on one row.');
     }
+
+    // ── PR #665 corrections: approving actor ────────────────────────────
+
+    public function test_an_owner_promotion_of_an_admin_created_invitation_is_redeemable_and_audited(): void
+    {
+        $admin = $this->staffAdmin(WorkspaceMembershipRole::Admin);
+        $this->postMember($admin, $this->crmOnlyForm('new@example.test'));
+        $inv = $this->invitation();
+        $this->assertSame((int) $admin->user->id, (int) $inv->invited_by_user_id);
+
+        $this->manager()->updateAccess((int) $this->owner->user->id, $inv, WorkspaceMembershipRole::Admin, WorkspaceBusinessAccessScope::All, [], ['ads']);
+
+        $fresh = $inv->fresh();
+        $this->assertSame((int) $admin->user->id, (int) $fresh->invited_by_user_id, 'The original inviter is preserved for audit.');
+        $this->assertSame((int) $this->owner->user->id, (int) $fresh->access_approved_by_user_id);
+
+        $user = $this->manager()->acceptAsNewUser($inv->uid, $this->tokenFor($fresh), ['first_name' => 'N', 'password' => 'a-strong-pass-1']);
+        $m = WorkspaceMembership::where('user_id', $user->id)->firstOrFail();
+        $this->assertSame(WorkspaceMembershipRole::Admin, $m->role);
+        $this->assertSame(['ads'], $this->hidden($m));
+        $this->assertSame(WorkspaceMemberInvitationStatus::Accepted, $fresh->fresh()->status);
+    }
+
+    public function test_an_unedited_invitation_still_uses_the_original_inviter(): void
+    {
+        $admin = $this->staffAdmin(WorkspaceMembershipRole::Admin);
+        $this->postMember($admin, $this->crmOnlyForm('new@example.test'));
+        $inv = $this->invitation();
+        $this->assertNull($inv->access_approved_by_user_id);
+        $this->assertSame((int) $admin->user->id, $inv->grantingUserId());
+
+        // The inviter losing authority still kills it (unchanged behaviour).
+        WorkspaceMembership::where('user_id', $admin->user->id)->update(['role' => WorkspaceMembershipRole::Staff->value]);
+        app(\App\Library\Support\RequestScopedCache::class)->flush(); // a later request would not see this request's cached rows
+        $this->expectException(InvalidMemberInvitationException::class);
+        $this->manager()->acceptAsNewUser($inv->uid, $this->tokenFor($inv), ['first_name' => 'N', 'password' => 'a-strong-pass-1']);
+    }
+
+    public function test_an_owner_expanding_business_access_on_a_scoped_admins_invitation_is_redeemable(): void
+    {
+        $admin = $this->createCustomer();
+        $am = $this->member($this->workspace, $admin->user, WorkspaceMembershipRole::Admin, WorkspaceBusinessAccessScope::Selected);
+        $this->assign($am, $this->business);
+        $this->manager()->invite((int) $admin->user->id, $this->workspace, 'new@example.test', WorkspaceMembershipRole::Staff, WorkspaceBusinessAccessScope::Selected, [$this->business->id]);
+        $inv = $this->invitation();
+
+        // The scoped Admin could never have granted "all Businesses"; the owner can, and it must redeem.
+        $this->manager()->updateAccess((int) $this->owner->user->id, $inv, WorkspaceMembershipRole::Staff, WorkspaceBusinessAccessScope::All, [], null);
+
+        $user = $this->manager()->acceptAsNewUser($inv->uid, $this->tokenFor($inv->fresh()), ['first_name' => 'N', 'password' => 'a-strong-pass-1']);
+        $this->assertSame(WorkspaceBusinessAccessScope::All, WorkspaceMembership::where('user_id', $user->id)->firstOrFail()->business_access_scope);
+    }
+
+    public function test_an_editor_who_later_loses_authority_makes_the_invitation_fail_closed(): void
+    {
+        $admin = $this->staffAdmin(WorkspaceMembershipRole::Admin);
+        $this->postMember($admin, $this->crmOnlyForm('new@example.test'));
+        $inv = $this->invitation();
+        // Another Admin (not owner) is the last approver, then is demoted.
+        $editor = $this->staffAdmin(WorkspaceMembershipRole::Admin);
+        $this->manager()->updateAccess((int) $editor->user->id, $inv, WorkspaceMembershipRole::Staff, WorkspaceBusinessAccessScope::All, [], ['seo']);
+        WorkspaceMembership::where('user_id', $editor->user->id)->update(['role' => WorkspaceMembershipRole::Staff->value]);
+        app(\App\Library\Support\RequestScopedCache::class)->flush();
+
+        try {
+            $this->manager()->acceptAsNewUser($inv->uid, $this->tokenFor($inv->fresh()), ['first_name' => 'N', 'password' => 'a-strong-pass-1']);
+            $this->fail('expected refusal');
+        } catch (InvalidMemberInvitationException $e) {
+            $this->assertSame('grant_failed', $e->reason);
+        }
+
+        $this->assertSame(0, WorkspaceMembership::where('workspace_id', $this->workspace->id)->whereNotIn('user_id', [$admin->user->id, $editor->user->id])->count());
+        $this->assertNull(\App\Models\User::where('email', 'new@example.test')->first());
+    }
+
+    // ── PR #665 corrections: Selected -> All form values ────────────────
+
+    public function test_the_initial_all_state_renders_business_checkboxes_disabled_and_selected_enabled(): void
+    {
+        $this->addSecondBusinessWorkspaceOption();
+        $this->authenticateAs($this->owner);
+        $html = $this->get(route('customer.workspaces.team.show', $this->workspace->uid))->assertOk()->getContent();
+        $invite = substr($html, strpos($html, 'data-section="team-add"'));
+        $invite = substr($invite, 0, strpos($invite, 'Send invitation'));
+
+        preg_match_all('/<input type="checkbox"[^>]*name="business_uids\[\]"[^>]*>/', $invite, $boxes);
+
+        if ($boxes[0] === []) {
+            $this->markTestSkipped('Single-Business Workspace: the picker is not rendered.');
+        }
+
+        foreach ($boxes[0] as $box) {
+            $this->assertStringContainsString(' disabled', $box, 'All Businesses (the default) must not submit Business ids.');
+        }
+    }
+
+    public function test_the_values_a_browser_submits_for_all_businesses_are_accepted_and_stray_ids_stay_rejected(): void
+    {
+        // What the fixed form posts for All: no business_uids at all (disabled boxes are not submitted).
+        $this->postMember($this->owner, $this->crmOnlyForm('new@example.test', ['business_access_scope' => 'all']))->assertSessionHas('flash_success');
+        $inv = $this->invitation();
+
+        $this->authenticateAs($this->owner);
+        $this->post(route('customer.workspaces.invitations.access', [$this->workspace->uid, $inv->uid]), [
+            'role' => 'staff', 'business_access_scope' => 'all', 'visible_modules' => ['crm'],
+        ])->assertSessionHas('flash_success');
+        $this->assertSame(WorkspaceBusinessAccessScope::All, $inv->fresh()->business_access_scope);
+        $this->assertNull($inv->fresh()->business_ids);
+
+        // Server-side validation stays strict: ids with the All scope are still refused, on both forms.
+        $this->postMember($this->owner, $this->crmOnlyForm('x@example.test', ['business_access_scope' => 'all', 'business_uids' => [$this->business->uid]]))
+            ->assertSessionHasErrors('business_uids');
+        $this->post(route('customer.workspaces.invitations.access', [$this->workspace->uid, $inv->uid]), [
+            'role' => 'staff', 'business_access_scope' => 'all', 'business_uids' => [$this->business->uid],
+        ])->assertSessionHasErrors('business_uids');
+    }
+
+    public function test_the_page_script_no_longer_unchecks_the_shared_picker_so_selections_survive_a_round_trip(): void
+    {
+        $this->authenticateAs($this->owner);
+        $html = $this->get(route('customer.workspaces.team.show', $this->workspace->uid))->assertOk()->getContent();
+
+        $this->assertStringContainsString('select[name="business_access_scope"]:not([data-access-scope])', $html, 'The legacy handler (which clears checked boxes) skips the shared partial.');
+        $this->assertStringContainsString('i.disabled = !selected', $html, 'The shared partial disables, never clears, the boxes.');
+    }
+
+    private function addSecondBusinessWorkspaceOption(): void
+    {
+        // The picker renders only when the viewer can grant more than one Business; nothing to add in a
+        // one-Business Workspace (the test above skips itself then).
+    }
 }
