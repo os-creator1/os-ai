@@ -216,6 +216,27 @@ final class WebsiteGenerationCoordinator
     }
 
     /**
+     * Runs `$callback` only while `$token` is STILL the Website's current lease, holding the Website row lock for the
+     * whole callback, so the check and the write are one atomic step. An obsolete worker (lease expired and reclaimed,
+     * or released and re-taken by a newer generation) gets `false` and changes nothing. Unlike runExclusive() it never
+     * throws on a held lease: it is for the lease OWNER settling its own work.
+     */
+    public function settleOwned(Website $website, string $token, \Closure $callback): bool
+    {
+        return DB::transaction(function () use ($website, $token, $callback) {
+            $locked = Website::whereKey($website->id)->lockForUpdate()->first();
+
+            if ($locked === null || $locked->generation_lease_token === null || ! hash_equals((string) $locked->generation_lease_token, $token)) {
+                return false;
+            }
+
+            $callback($locked);
+
+            return true;
+        });
+    }
+
+    /**
      * A queued job restarts the lease clock when it actually begins running, so time spent waiting in the queue never
      * eats into the lease the job needs for the provider call and the commit. Compare-and-swap on the token: false
      * means this job no longer owns the lease (it was reclaimed as stale) and must do nothing at all.

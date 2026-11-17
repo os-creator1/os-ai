@@ -2,9 +2,12 @@
 
 namespace App\Jobs\Website;
 
+use App\Enums\Questionnaire\QuestionnaireResponseStatus;
 use App\Library\Website\GuidedGeneration\GuidedGenerationCommitService;
 use App\Library\Website\GuidedGeneration\WebsiteGenerationCoordinator;
+use App\Library\Website\Setup\WebsiteSetupSessionManager;
 use App\Models\Business;
+use App\Models\QuestionnaireResponse;
 use App\Models\Website;
 use App\Models\WebsiteGuidedGenerationAttempt;
 use App\Models\WebsiteTemplate;
@@ -51,6 +54,8 @@ class RunGuidedWebsiteGenerationJob implements ShouldQueue
         public readonly ?array $catalogItemUids,
         public readonly ?array $serviceAreas,
         public readonly ?array $blueprint,
+        // First-time wizard generation only: the pinned setup response to complete on success or unfreeze on failure.
+        public readonly ?int $setupResponseId = null,
     ) {
         $this->onQueue('default');
     }
@@ -70,8 +75,11 @@ class RunGuidedWebsiteGenerationJob implements ShouldQueue
 
             $args = [$business, $website, $template, $this->actorUserId, $this->idempotencyKey, $this->leaseToken, $this->customSection, $this->customerFaq, $this->catalogItemUids, $this->serviceAreas, $this->blueprint];
 
-            $this->mode === WebsiteGuidedGenerationAttempt::MODE_REBUILD ? $service->rebuild(...$args) : $service->generateFull(...$args);
+            $attempt = $this->mode === WebsiteGuidedGenerationAttempt::MODE_REBUILD ? $service->rebuild(...$args) : $service->generateFull(...$args);
+
+            $this->settleSetupResponse($attempt->status === WebsiteGuidedGenerationAttempt::STATUS_SUCCEEDED);
         } catch (Throwable $e) {
+            $this->settleSetupResponse(false);
             $coordinator->abandon($website, $this->leaseToken, 'Generation stopped unexpectedly: ' . $e->getMessage());
 
             throw $e;
@@ -85,8 +93,51 @@ class RunGuidedWebsiteGenerationJob implements ShouldQueue
     {
         $website = Website::find($this->websiteId);
 
+        $this->settleSetupResponse(false);
+
         if ($website !== null) {
             app(WebsiteGenerationCoordinator::class)->abandon($website, $this->leaseToken, 'Generation did not finish: ' . $e->getMessage());
+        }
+    }
+
+    /**
+     * Wizard runs only: a succeeded run completes the setup session (as the synchronous path always did); anything
+     * else clears the generation freeze so the owner can retry from the review screen.
+     *
+     * FENCED: it acts only while this job's own lease token is still the Website's current lease (one atomic step
+     * under the Website row lock), and only on a response that is still in progress and frozen. A timed-out or
+     * superseded job whose lease was reclaimed therefore can never complete or unfreeze a newer generation's
+     * response. Never throws.
+     */
+    private function settleSetupResponse(bool $succeeded): void
+    {
+        if ($this->setupResponseId === null) {
+            return;
+        }
+
+        try {
+            $website = Website::find($this->websiteId);
+
+            if ($website === null) {
+                return;
+            }
+
+            app(WebsiteGenerationCoordinator::class)->settleOwned($website, $this->leaseToken, function () use ($succeeded) {
+                $response = QuestionnaireResponse::whereKey($this->setupResponseId)->lockForUpdate()->first();
+
+                if ($response === null
+                    || (int) $response->business_id !== $this->businessId
+                    || (int) $response->website_id !== $this->websiteId
+                    || $response->status !== QuestionnaireResponseStatus::InProgress
+                    || $response->generation_started_at === null) {
+                    return;
+                }
+
+                $manager = app(WebsiteSetupSessionManager::class);
+                $succeeded ? $manager->complete($response) : $manager->recordGenerationFailure($response);
+            });
+        } catch (Throwable $e) {
+            report($e);
         }
     }
 }

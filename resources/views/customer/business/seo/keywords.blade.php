@@ -540,7 +540,7 @@
                                 if (locs.length) { list.classList.remove('d-none'); say('Pick a city from the list.', false); }
                                 else if (data.status === 'not_initialized') { say('Locations are not initialized yet. Tracking cannot start until they are loaded; you can still add the keyword without tracking.', true); }
                                 else if (data.status === 'partial') { say('No matching city found. Some locations are still loading, so try again later.', true); }
-                                else { say('No matching city. Check the spelling (US or Lithuanian cities).', true); }
+                                else { say('No matching city. Check the spelling (supported countries: {{ \App\Library\Seo\Rank\SeoRankLocationCatalog::supportedCountriesLabel() }}).', true); }
                                 changed();
                             })
                             .catch(function () {

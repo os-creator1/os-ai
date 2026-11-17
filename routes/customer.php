@@ -2228,6 +2228,16 @@
                 Route::post('/stop', 'Business\ExternalWebsiteController@stop')->middleware('throttle:10,1')->name('stop');
             });
 
+            // Existing website -> MotionGrove-hosted website: an owner-reviewed plan (URLs, 301 redirects, titles). Never
+            // publishes, never touches the live external site or a domain.
+            Route::prefix('from-existing')->name('existing.')->group(function () {
+                Route::get('/', 'Business\ExistingSiteRebuildController@show')->name('show');
+                Route::post('/prepare', 'Business\ExistingSiteRebuildController@prepare')->middleware('throttle:10,1')->name('prepare');
+                Route::post('/confirm', 'Business\ExistingSiteRebuildController@confirm')->middleware('throttle:20,1')->name('confirm');
+                Route::post('/start', 'Business\ExistingSiteRebuildController@start')->middleware('throttle:10,1')->name('start');
+                Route::post('/apply', 'Business\ExistingSiteRebuildController@applyToDraft')->middleware('throttle:10,1')->name('apply');
+            });
+
             Route::prefix('studio')->name('studio.')->group(function () {
                 Route::get('/{tab?}', 'Business\WebsiteStudioController@show')->name('show');
             });

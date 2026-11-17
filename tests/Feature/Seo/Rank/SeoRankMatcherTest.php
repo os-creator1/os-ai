@@ -293,4 +293,77 @@ class SeoRankMatcherTest extends TestCase
         $this->assertSame('inactive-primary.com', SeoRankIdentity::forBusiness($business->fresh())->domain);
         $this->assertSame(1, Website::query()->where('business_id', $business->id)->count());
     }
+
+    // ----------------- external-site identity (Toronto, before/after migration) -----------------
+
+    private function externalToronto(string $mode = 'external', string $status = 'completed', ?string $connection = 'reachable', string $crawlHost = 'photoboothcompanyoftoronto.com'): \App\Models\Business
+    {
+        [, $business] = $this->rankTenant(domain: null);
+        DB::table('businesses')->where('id', $business->id)->update(['website_url' => 'https://www.photoboothcompanyoftoronto.com/', 'website_mode' => $mode]);
+
+        $crawl = new \App\Models\ExternalSiteCrawl();
+        $crawl->forceFill([
+            'uid' => (string) Str::uuid(), 'business_id' => $business->id, 'start_url' => 'https://www.photoboothcompanyoftoronto.com/', 'host' => $crawlHost,
+            'status' => $status, 'rule_set_version' => \App\Library\ExternalSite\Audit\ExternalAuditCatalog::VERSION, 'trigger' => 'manual', 'connection_state' => $connection,
+        ])->save();
+
+        return $business->fresh();
+    }
+
+    public function test_an_external_business_matches_its_verified_external_domain_exactly(): void
+    {
+        $identity = SeoRankIdentity::forBusiness($this->externalToronto());
+
+        $this->assertSame('photoboothcompanyoftoronto.com', $identity->domain);
+        $this->assertTrue($identity->canMatchOrganic());
+
+        $found = $this->matcher()->organic($identity, [$this->item(2, 'other.example'), $this->item(5, 'photoboothcompanyoftoronto.com', 'https://www.photoboothcompanyoftoronto.com/corporate-photo-booth-rental-toronto/')], 100);
+        $this->assertSame(SeoRankObservationStatus::Found, $found['status']);
+        $this->assertSame(5, $found['position']);
+
+        // Exact domain only: a look-alike or a subdomain of another site never matches.
+        $this->assertSame(SeoRankObservationStatus::NotFound, $this->matcher()->organic($identity, [$this->item(1, 'photoboothcompanyoftoronto.com.evil.example'), $this->item(2, 'notphotoboothcompanyoftoronto.com'), $this->item(3, 'blog.photoboothcompanyoftoronto.com')], 100)['status']);
+    }
+
+    public function test_an_external_address_is_not_an_identity_unless_it_is_verified(): void
+    {
+        foreach ([
+            'failed audit' => fn () => $this->externalToronto('external', 'failed', 'network_error'),
+            'audit never reached the site' => fn () => $this->externalToronto('external', 'completed', 'crawler_blocked'),
+            'address redirects elsewhere' => fn () => $this->externalToronto('external', 'completed', 'redirects_elsewhere'),
+            'audit of a different host' => fn () => $this->externalToronto('external', 'completed', 'reachable', 'someone-else.example'),
+            'audit still queued' => fn () => $this->externalToronto('external', 'queued', null),
+            'completed audit without connection proof' => fn () => $this->externalToronto('external', 'completed', null),
+        ] as $label => $make) {
+            $this->assertNull(SeoRankIdentity::forBusiness($make()->fresh())->domain, $label);
+        }
+
+        // Free-text website_url without the external mode is never trusted (existing behaviour).
+        $hosted = $this->externalToronto('hosted');
+        $this->assertNull(SeoRankIdentity::forBusiness($hosted)->domain);
+        $this->assertSame(SeoRankObservationStatus::NotMatched, $this->matcher()->organic(SeoRankIdentity::forBusiness($hosted), [$this->item(1, 'photoboothcompanyoftoronto.com')], 100)['status']);
+    }
+
+    public function test_toronto_rank_matching_before_and_after_website_migration(): void
+    {
+        // BEFORE: the Business keeps its external site.
+        $business = $this->externalToronto();
+        $this->assertSame('photoboothcompanyoftoronto.com', SeoRankIdentity::forBusiness($business)->domain);
+
+        // DURING: hosted build started (mode hosted, draft only, no active domain): nothing is matched rather than guessed.
+        DB::table('businesses')->where('id', $business->id)->update(['website_mode' => 'hosted']);
+        $this->assertNull(SeoRankIdentity::forBusiness($business->fresh())->domain);
+
+        // AFTER: the hosted site's active primary domain is the identity.
+        $this->giveDomain($business->fresh(), 'photoboothcompanyoftoronto.com');
+        $this->assertSame('photoboothcompanyoftoronto.com', SeoRankIdentity::forBusiness($business->fresh())->domain);
+    }
+
+    public function test_a_hosted_domain_wins_over_the_external_address(): void
+    {
+        $business = $this->externalToronto();
+        $this->giveDomain($business, 'new-hosted-site.example');
+
+        $this->assertSame('new-hosted-site.example', SeoRankIdentity::forBusiness($business->fresh())->domain);
+    }
 }

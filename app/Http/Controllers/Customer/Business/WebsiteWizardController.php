@@ -1146,6 +1146,9 @@ class WebsiteWizardController extends CustomerBaseController
             ]);
         }
 
+        // True once the queued job owns the lease; from then on only the job may release it.
+        $handedOff = false;
+
         try {
             try {
                 $response = $this->sessionManager->beginGeneration($business, $response, $expectedRevision);
@@ -1190,25 +1193,39 @@ class WebsiteWizardController extends CustomerBaseController
                 $customerFaq = WizardPresentationAnswers::customerFaq($response);
                 $idempotencyKey = $this->stableIdempotencyKey($response, $website);
 
-                $stage = 'generate_full';
-                $attempt = $this->guidedGeneration->generateFull($business, $website->fresh(), $template, $actorUserId, $idempotencyKey, $leaseToken, $customSection, $customerFaq, WizardPresentationAnswers::catalogSelection($response), WizardPresentationAnswers::serviceAreas($response), WizardPresentationAnswers::blueprintContext($response));
+                $stage = 'queue_generation';
 
-                if ($attempt->status !== WebsiteGuidedGenerationAttempt::STATUS_SUCCEEDED) {
-                    $this->sessionManager->recordGenerationFailure($response);
+                // The AI call runs on the queue, never inside this request (a slow provider call used to outlive the web
+                // server's timeout and surface as a 504 mid-wizard). The lease taken above travels with the job as its
+                // fencing token; the job completes (or unfreezes) the setup response and always releases the lease.
+                $startedAt = now()->subSecond()->getTimestamp();
+                \App\Jobs\Website\RunGuidedWebsiteGenerationJob::dispatch(
+                    (int) $website->id, (int) $business->id, (string) $template->key, $actorUserId, $idempotencyKey,
+                    WebsiteGuidedGenerationAttempt::MODE_FULL_GENERATION, $leaseToken, $customSection, $customerFaq,
+                    WizardPresentationAnswers::catalogSelection($response), WizardPresentationAnswers::serviceAreas($response),
+                    WizardPresentationAnswers::blueprintContext($response), (int) $response->id,
+                );
+                $handedOff = true;
 
-                    return redirect()->route('customer.workspaces.businesses.website.setup.review', [$workspaceUid, $businessUid])->with([
-                        'status' => 'error',
-                        // A failure_reason is for support (it may carry internals); the customer gets a calm, safe sentence.
-                        'message' => \App\Library\Website\GuidedGeneration\GenerationFailureMessage::forCustomer($attempt->failure_reason),
+                // A synchronous queue (local/dev/tests) has already finished the run by now: answer with the real outcome.
+                if (config('queue.default') === 'sync') {
+                    $attempt = WebsiteGuidedGenerationAttempt::where('website_id', $website->id)->where('created_at', '>=', \Illuminate\Support\Carbon::createFromTimestamp($startedAt))->orderByDesc('id')->first();
+
+                    if ($attempt === null || $attempt->status !== WebsiteGuidedGenerationAttempt::STATUS_SUCCEEDED) {
+                        return redirect()->route('customer.workspaces.businesses.website.setup.review', [$workspaceUid, $businessUid])->with([
+                            'status' => 'error',
+                            // A failure_reason is for support (it may carry internals); the customer gets a calm, safe sentence.
+                            'message' => \App\Library\Website\GuidedGeneration\GenerationFailureMessage::forCustomer($attempt?->failure_reason),
+                        ]);
+                    }
+
+                    return redirect()->route('customer.workspaces.businesses.website.preview', [$workspaceUid, $businessUid])->with([
+                        'status' => 'success',
+                        'message' => 'Your website is ready! Review it below, then connect a domain or publish whenever you\'re ready.',
                     ]);
                 }
 
-                $this->sessionManager->complete($response);
-
-                return redirect()->route('customer.workspaces.businesses.website.preview', [$workspaceUid, $businessUid])->with([
-                    'status' => 'success',
-                    'message' => 'Your website is ready! Review it below, then connect a domain or publish whenever you\'re ready.',
-                ]);
+                return redirect()->route('customer.workspaces.businesses.website.generation.progress', [$workspaceUid, $businessUid, 'since' => $startedAt, 'mode' => WebsiteGuidedGenerationAttempt::MODE_FULL_GENERATION]);
             } catch (Throwable $e) {
                 // Independent-review correction round 3 (item 1) —
                 // `generation_started_at` must never remain set forever
@@ -1232,7 +1249,9 @@ class WebsiteWizardController extends CustomerBaseController
                 ]);
             }
         } finally {
-            $this->generationCoordinator->release($website, $leaseToken);
+            if (! $handedOff) {
+                $this->generationCoordinator->release($website, $leaseToken);
+            }
         }
     }
 

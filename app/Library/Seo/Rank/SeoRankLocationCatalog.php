@@ -11,7 +11,7 @@ use Illuminate\Support\Facades\DB;
  * Local cache of the provider's FREE location catalogue (seo_rank_locations) and
  * the only way a search geography becomes a paid request: a typed string is
  * never sent anywhere, it must resolve to a cached row. Supported geographies
- * are US and Lithuanian cities (SUPPORTED), English.
+ * are US, Canadian and Lithuanian cities (SUPPORTED), English.
  *
  * search()/find() are pure local queries. sync() is the one provider call (a
  * free endpoint) and is run by the scheduled command, never by a web request.
@@ -28,6 +28,8 @@ class SeoRankLocationCatalog
      */
     public const SUPPORTED = [
         'US' => ['City'],
+        // Canada (e.g. Toronto, Ontario; Mississauga; Vaughan) is a City in the provider's own catalogue.
+        'CA' => ['City'],
         'LT' => ['City', 'Municipality'],
     ];
     public const LANGUAGE = 'en';
@@ -36,6 +38,18 @@ class SeoRankLocationCatalog
     public static function supportedCountries(): array
     {
         return array_keys(self::SUPPORTED);
+    }
+
+    /** Display names for the supported countries, for user-facing wording only (never for lookups). */
+    public const COUNTRY_NAMES = ['US' => 'United States', 'CA' => 'Canada', 'LT' => 'Lithuania'];
+
+    /** "United States, Canada or Lithuania" - derived from SUPPORTED so UI copy cannot drift from it. */
+    public static function supportedCountriesLabel(): string
+    {
+        $names = array_map(fn (string $c) => self::COUNTRY_NAMES[$c] ?? $c, self::supportedCountries());
+        $last = array_pop($names);
+
+        return $names === [] ? (string) $last : implode(', ', $names) . ' or ' . $last;
     }
 
     /** @return list<string> */
