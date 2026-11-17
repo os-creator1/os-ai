@@ -54,6 +54,8 @@
     .sr-bizpick__item input:checked + span::before { content: "\2713\00a0"; }
     .sr-bizpick__item input:focus-visible + span, .sr-seg input:focus-visible + span { outline: 2px solid var(--bs-primary, #4f46e5); outline-offset: 1px; }
     .sr-member__access:has(input[value="all"]:checked) .sr-bizpick { display: none; }
+    .sr-member__modules { display: grid; gap: .5rem; }
+    .sr-modules { display: grid; gap: .5rem; grid-template-columns: repeat(auto-fill, minmax(15rem, 1fr)); }
     .sr-member__delete { display: flex; justify-content: flex-end; }
     @media (max-width: 575.98px) { .sr-member__manage { margin-left: 0; } .sr-member__inline select { flex: 1 1 8rem; } }
 </style>
@@ -250,6 +252,23 @@
                                             </form>
                                         @else
                                             <p class="sr-hint mb-0">Business access can only be changed by a manager who can see this member's complete assigned Businesses.</p>
+                                        @endif
+
+                                        @if ($viewerCanManageLifecycle)
+                                            <form method="POST" data-member-action="modules" data-member-uid="{{ $member['uid'] }}" class="sr-member__section sr-member__modules" data-role="visible-modules">
+                                                @csrf
+                                                <span class="sr-label">Visible modules</span>
+                                                <p class="sr-hint mb-0">Switch off what this person should not see. It only hides: it never gives access beyond their role or plan, and anything running in the background keeps running.</p>
+                                                <div class="sr-modules">
+                                                    @foreach (\App\Enums\Workspace\WorkspaceMemberModule::cases() as $module)
+                                                        <div class="form-check form-switch">
+                                                            <input class="form-check-input" type="checkbox" role="switch" id="module-{{ $member['uid'] }}-{{ $module->value }}" name="visible_modules[]" value="{{ $module->value }}" @checked(in_array($module->value, $member['visible_modules'], true))>
+                                                            <label class="form-check-label" for="module-{{ $member['uid'] }}-{{ $module->value }}">{{ $module->label() }}<small class="d-block text-muted">{{ $module->hint() }}</small></label>
+                                                        </div>
+                                                    @endforeach
+                                                </div>
+                                                <div><x-button type="submit" variant="secondary" size="sm">Save</x-button></div>
+                                            </form>
                                         @endif
                                     @elseif ($viewerCanManageLifecycle)
                                         <form method="POST" data-member-action="reactivate" data-member-uid="{{ $member['uid'] }}" class="sr-member__section">

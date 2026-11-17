@@ -1164,6 +1164,7 @@
         Route::post('{workspaceUid}/members', 'Workspace\WorkspaceController@storeMember')->name('members.store');
         Route::post('{workspaceUid}/members/{memberUid}/role', 'Workspace\WorkspaceController@updateMemberRole')->name('members.role');
         Route::post('{workspaceUid}/members/{memberUid}/access', 'Workspace\WorkspaceController@updateMemberAccess')->name('members.access');
+        Route::post('{workspaceUid}/members/{memberUid}/modules', 'Workspace\WorkspaceController@updateMemberModules')->name('members.modules');
         Route::post('{workspaceUid}/members/{memberUid}/deactivate', 'Workspace\WorkspaceController@deactivateMember')->name('members.deactivate');
         Route::post('{workspaceUid}/members/{memberUid}/remove', 'Workspace\WorkspaceController@removeMember')->name('members.remove');
         Route::post('{workspaceUid}/members/{memberUid}/reactivate', 'Workspace\WorkspaceController@reactivateMember')->name('members.reactivate');

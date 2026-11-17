@@ -32,7 +32,7 @@ final class ContactSearchTool implements ReadTool
 
     public function available(AssistantContext $context): bool
     {
-        return $context->can('view_contact');
+        return $context->can('view_contact') && ! $context->entitlements->moduleHidden(\App\Enums\Workspace\WorkspaceMemberModule::Contacts);
     }
 
     public function read(AssistantContext $context, array $args): ToolResult

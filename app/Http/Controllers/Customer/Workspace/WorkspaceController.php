@@ -36,6 +36,7 @@ use App\Http\Requests\Customer\Workspace\StoreWorkspaceMemberRequest;
 use App\Http\Requests\Customer\Workspace\StoreWorkspaceRequest;
 use App\Http\Requests\Customer\Workspace\TransferWorkspaceOwnershipRequest;
 use App\Http\Requests\Customer\Workspace\UpdateWorkspaceMemberAccessRequest;
+use App\Http\Requests\Customer\Workspace\UpdateWorkspaceMemberModulesRequest;
 use App\Http\Requests\Customer\Workspace\UpdateWorkspaceMemberRoleRequest;
 use App\Enums\Entitlement\WorkspacePlanTier;
 use App\Library\Business\BusinessManager;
@@ -1160,6 +1161,34 @@ class WorkspaceController extends CustomerBaseController
     }
 
     /**
+     * Settings → Team → Edit member → Visible modules. Saves which modules this ONE
+     * member sees in THIS Workspace. Authority is WorkspaceManager's target-role
+     * rule (owner for anyone, an active Admin for Staff); a failure is the same 404
+     * as an unknown memberUid, and the member can never be widened past their
+     * role, permissions or plan -- this only ever hides.
+     */
+    public function updateMemberModules(UpdateWorkspaceMemberModulesRequest $request, string $workspaceUid, string $memberUid): RedirectResponse
+    {
+        $actorUserId = (int) Auth::id();
+        $workspace = $this->resolveAccessibleWorkspace($workspaceUid, $actorUserId);
+        $membership = $this->resolveAccessibleMembership($workspace, $memberUid);
+
+        try {
+            $this->workspaceManager->changeMemberVisibleModules($actorUserId, $membership, $request->validated('visible_modules') ?? []);
+        } catch (UnauthorizedWorkspaceManagementException) {
+            abort(404);
+        } catch (InactiveWorkspaceMutationException) {
+            return redirect()->back()->with('flash_error', 'An inactive Workspace cannot be managed.');
+        } catch (InactiveWorkspaceMembershipMutationException) {
+            return redirect()->back()->with('flash_error', 'An inactive member must be reactivated before their modules can change.');
+        }
+
+        return redirect()
+            ->route('customer.workspaces.team.show', $workspaceUid)
+            ->with('flash_success', 'Visible modules updated.');
+    }
+
+    /**
      * Deactivates one membership -- target-role authority (owner for Admin
      * targets, owner-or-active-Admin for Staff) is entirely
      * WorkspaceManager::deactivateMember()'s own rule. Every scoped
@@ -1723,6 +1752,7 @@ class WorkspaceController extends CustomerBaseController
                         ->values()
                         ->all(),
                     'is_active' => (bool) $membership->is_active,
+                    'visible_modules' => array_map(fn (\App\Enums\Workspace\WorkspaceMemberModule $m): string => $m->value, \App\Library\Workspace\MemberModuleVisibility::visibleFor($membership)),
                 ];
             })
             ->all();

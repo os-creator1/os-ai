@@ -1270,7 +1270,7 @@ class WorkspaceMemberManagementHttpTest extends TestCase
         $rows = $response->original->getData()['directory'];
         $this->assertCount(2, $rows);
         $this->assertSame(
-            ['uid', 'name', 'role', 'scope', 'assigned_business_count', 'assigned_business_uids', 'is_active'],
+            ['uid', 'name', 'role', 'scope', 'assigned_business_count', 'assigned_business_uids', 'is_active', 'visible_modules'],
             array_keys($rows[0])
         );
         $uids = array_column($rows, 'uid');

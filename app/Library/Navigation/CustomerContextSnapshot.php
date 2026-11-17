@@ -7,6 +7,7 @@ use App\Enums\Entitlement\WorkspacePlanTier;
 use App\Enums\Workspace\WorkspaceBusinessAccessScope;
 use App\Enums\Workspace\WorkspaceMembershipRole;
 use App\Library\ViewAs\ViewAsContext;
+use App\Library\Workspace\MemberModuleVisibility;
 use Illuminate\Database\Query\JoinClause;
 use Illuminate\Support\Facades\DB;
 
@@ -73,6 +74,7 @@ final class CustomerContextSnapshot
                 'm.role as membership_role',
                 'm.business_access_scope as membership_scope',
                 'm.is_active as membership_is_active',
+                'm.hidden_modules as membership_hidden_modules',
                 'pc.tier as plan_tier',
                 'pc.display_name as plan_display_name',
                 'b.id as business_id',
@@ -149,6 +151,11 @@ final class CustomerContextSnapshot
                 tier: $row->plan_tier !== null ? WorkspacePlanTier::tryFrom((string) $row->plan_tier) : null,
                 tierDisplayName: $row->plan_display_name !== null ? (string) $row->plan_display_name : null,
                 businesses: $businesses,
+                // Per-member module visibility rides the membership row this query already reads, so
+                // the shell's entitlement snapshot pays no extra query for it. The owner is never narrowed.
+                hiddenModules: ($isOwner || ! $membershipActive)
+                    ? []
+                    : MemberModuleVisibility::normalize(is_string($row->membership_hidden_modules) ? json_decode($row->membership_hidden_modules, true) : null),
             );
         }
 

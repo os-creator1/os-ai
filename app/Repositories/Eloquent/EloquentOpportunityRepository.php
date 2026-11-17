@@ -120,6 +120,8 @@ class EloquentOpportunityRepository extends EloquentBaseRepository implements Op
     {
         // 'suggestions' is not a column: 'only' = optional profile suggestions, 'exclude' = everything else.
         $suggestions = $filters['suggestions'] ?? null;
+        // Per-viewer narrowing (WorkspaceMemberModule): advisor types the caller must not list. Never a column filter.
+        $excludeTypes = array_values(array_filter((array) ($filters['exclude_types'] ?? []), 'is_string'));
         $filters = Arr::only($filters, ['status', 'freshness', 'worker_key']);
 
         $query = $this->query()->where('business_id', $business->id)
@@ -131,6 +133,10 @@ class EloquentOpportunityRepository extends EloquentBaseRepository implements Op
             // Plan entitlement: rows for types the plan no longer includes stay in
             // storage but are never listed.
             ->whereNotIn('type', $this->eligibility->ineligibleTypes($business));
+
+        if ($excludeTypes !== []) {
+            $query->whereNotIn('type', $excludeTypes);
+        }
 
         if ($suggestions === 'only') {
             $query->whereIn('type', OpportunityTypeRegistry::optionalProfileSuggestionTypes());

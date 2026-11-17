@@ -115,7 +115,7 @@ final class CustomerShellComposer
             (new Business)->forceFill(['id' => $business->id]),
             CustomerMenuBuilder::ENTITLEMENT_GATED_FEATURES,
             $context->userId,
-        );
+        )->narrowedBy($workspace->hiddenModules);
 
         $built = is_array($built) ? $built : [];
         $built[$key] = $entitlements;

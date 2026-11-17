@@ -35,26 +35,41 @@ final class WebsiteAndListingsTool implements ReadTool
 
     public function available(AssistantContext $context): bool
     {
-        return true;
+        // Website and Google Business Profile (SEO) are each switchable per member: offered while either is visible.
+        return ! ($context->entitlements->moduleHidden(\App\Enums\Workspace\WorkspaceMemberModule::Website) && $context->entitlements->moduleHidden(\App\Enums\Workspace\WorkspaceMemberModule::Seo));
     }
 
     public function read(AssistantContext $context, array $args): ToolResult
     {
         $row = $this->status->forBusiness((int) $context->business->id);
-        $data = ['website_status' => $row->websiteStatus ?? 'none', 'google_connection' => $row->googleConnectionState ?? 'not_connected'];
-        $facts = [['label' => 'Website', 'value' => $row->websiteStatus === null ? 'Not created yet' : ucfirst(str_replace('_', ' ', $row->websiteStatus))]];
+        $showWebsite = ! $context->entitlements->moduleHidden(\App\Enums\Workspace\WorkspaceMemberModule::Website);
+        $showGoogle = ! $context->entitlements->moduleHidden(\App\Enums\Workspace\WorkspaceMemberModule::Seo);
+        $data = [];
+        $facts = [];
+
+        if ($showWebsite) {
+            $data['website_status'] = $row->websiteStatus ?? 'none';
+            $facts[] = ['label' => 'Website', 'value' => $row->websiteStatus === null ? 'Not created yet' : ucfirst(str_replace('_', ' ', $row->websiteStatus))];
+        }
+
+        if ($showGoogle) {
+            $data['google_connection'] = $row->googleConnectionState ?? 'not_connected';
+        }
+
         $limitations = [];
         $links = [];
 
-        $site = $context->action('website');
+        $site = $showWebsite ? $context->action('website') : null;
 
         if ($site !== null && $site['fullUrl'] !== null) {
             $links[] = ['label' => 'Open your website', 'url' => $site['fullUrl']];
         }
 
-        $locations = $this->google->forBusiness($context->workspace, $context->business, $context->user);
+        $locations = $showGoogle ? $this->google->forBusiness($context->workspace, $context->business, $context->user) : null;
 
-        if ($locations === null) {
+        if (! $showGoogle) {
+            // Nothing about Google listings is said or implied for a member who cannot see SEO.
+        } elseif ($locations === null) {
             $limitations[] = 'Google Business Profile details are not available to you or not part of your plan.';
         } else {
             $data['google_locations'] = array_map(fn ($l): array => [

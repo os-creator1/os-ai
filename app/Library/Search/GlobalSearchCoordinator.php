@@ -18,6 +18,13 @@ use App\Models\User;
  */
 final class GlobalSearchCoordinator
 {
+    /** Which switchable module owns each search domain (documents belong to no switchable module). */
+    private const MODULE_BY_SOURCE = [
+        'contacts' => \App\Enums\Workspace\WorkspaceMemberModule::Contacts,
+        'opportunities' => \App\Enums\Workspace\WorkspaceMemberModule::Crm,
+        'conversations' => \App\Enums\Workspace\WorkspaceMemberModule::Conversations,
+    ];
+
     /** Results per domain. Small and bounded — a top-bar dropdown, not a search page. */
     public const PER_SOURCE_LIMIT = 5;
 
@@ -48,8 +55,15 @@ final class GlobalSearchCoordinator
 
         $grouped = [];
 
+        // Per-member module visibility: a domain the owner switched off for this person is never
+        // searched (so its records cannot surface through the top-bar search either).
+        $hidden = app(\App\Library\Workspace\MemberModuleVisibility::class)->hiddenFor((int) $user->id, (int) $business->workspace_id);
+
         foreach ($this->sources as $key => $source) {
-            $grouped[$key] = $query === '' ? [] : $source->search($business, $query, $user, self::PER_SOURCE_LIMIT);
+            $module = self::MODULE_BY_SOURCE[$key] ?? null;
+            $searchable = $query !== '' && ! ($module !== null && in_array($module, $hidden, true));
+
+            $grouped[$key] = $searchable ? $source->search($business, $query, $user, self::PER_SOURCE_LIMIT) : [];
         }
 
         return $grouped;

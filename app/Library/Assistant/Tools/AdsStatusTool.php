@@ -37,7 +37,8 @@ final class AdsStatusTool implements ReadTool
 
     public function available(AssistantContext $context): bool
     {
-        return $context->entitled('ai_coo_basic') && $context->can('business_advisor');
+        return $context->entitled('ai_coo_basic') && $context->can('business_advisor')
+            && ! $context->entitlements->moduleHidden(\App\Enums\Workspace\WorkspaceMemberModule::Ads);
     }
 
     public function read(AssistantContext $context, array $args): ToolResult

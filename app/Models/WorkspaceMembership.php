@@ -23,6 +23,7 @@ class WorkspaceMembership extends Model
         'location_access_scope',
         'is_active',
         'removed_at',
+        'hidden_modules',
     ];
 
     protected $casts = [
@@ -31,6 +32,9 @@ class WorkspaceMembership extends Model
         'location_access_scope' => LocationAccessScope::class,
         'is_active' => 'boolean',
         'removed_at' => 'datetime',
+        // Modules switched OFF for this member in this Workspace (WorkspaceMemberModule
+        // values). NULL / [] = nothing hidden: the member's existing access, unchanged.
+        'hidden_modules' => 'array',
     ];
 
     public function workspace(): BelongsTo

@@ -92,6 +92,9 @@
                 // ResolveCustomerContext having already run (must stay
                 // directly after it).
                 CustomerAccountAccessGate::class,
+                // Per-member module visibility: 404 for a module the owner
+                // switched off for this person (direct URLs and JSON alike).
+                \App\Http\Middleware\EnforceMemberModuleVisibility::class,
             ],
 
             'api' => [

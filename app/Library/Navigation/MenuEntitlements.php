@@ -2,6 +2,7 @@
 
 namespace App\Library\Navigation;
 
+use App\Enums\Workspace\WorkspaceMemberModule;
 use App\Library\Entitlement\EntitlementManager;
 use App\Models\Business;
 use App\Models\Workspace;
@@ -33,6 +34,8 @@ final class MenuEntitlements
     private function __construct(
         private readonly array $allowed,
         public readonly bool $evaluated,
+        /** @var list<WorkspaceMemberModule> modules the owner switched off for THIS viewer */
+        private readonly array $hiddenModules = [],
     ) {
     }
 
@@ -78,6 +81,72 @@ final class MenuEntitlements
         }
 
         return new self($allowed, true);
+    }
+
+    /**
+     * Per-member module visibility (Settings → Team → Visible modules).
+     *
+     * NOT a policy and NOT a grant: it can only turn answers OFF. Every feature
+     * key a hidden module is entitled by is answered "not entitled" for this
+     * viewer, so everything that already reads this snapshot — the sidebar, Home
+     * cards and links, the assistant's tools, the tenancy trait's entitlement
+     * step — follows without a second code path. Returns a new object; EntitlementManager's
+     * own decisions, and every background caller that asks it directly, are
+     * untouched, which is why hiding a module never stops it running.
+     *
+     * @param  list<WorkspaceMemberModule>  $hidden
+     */
+    public function narrowedBy(array $hidden): self
+    {
+        if ($hidden === []) {
+            return $this;
+        }
+
+        $allowed = $this->allowed;
+
+        foreach ($hidden as $module) {
+            foreach ($module->featureKeys() as $featureKey) {
+                if (array_key_exists($featureKey, $allowed)) {
+                    $allowed[$featureKey] = false;
+                }
+            }
+        }
+
+        $merged = [];
+
+        foreach (array_merge($this->hiddenModules, $hidden) as $module) {
+            $merged[$module->value] = $module;
+        }
+
+        return new self($allowed, $this->evaluated, array_values($merged));
+    }
+
+    public function moduleHidden(WorkspaceMemberModule $module): bool
+    {
+        return in_array($module, $this->hiddenModules, true);
+    }
+
+    /**
+     * Whether a route belongs to a module this viewer cannot see. Used by the
+     * menu and the dashboard link gate, which share this one rule.
+     */
+    public function routeHidden(?string $routeName): bool
+    {
+        if ($this->hiddenModules === []) {
+            return false;
+        }
+
+        $module = WorkspaceMemberModule::forRouteName($routeName);
+
+        return $module !== null && $this->moduleHidden($module);
+    }
+
+    /**
+     * @return list<WorkspaceMemberModule>
+     */
+    public function hiddenModules(): array
+    {
+        return $this->hiddenModules;
     }
 
     /**

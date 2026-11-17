@@ -74,6 +74,9 @@ final class GrowthOpportunityReader
         $types = array_values(array_diff(
             array_keys(GrowthRuleRegistry::all()),
             $this->eligibility->ineligibleTypes($business),
+            // Per-viewer: a module the owner switched off for this person keeps its
+            // recommendations out of every Growth read (Home, assistant, Growth Center).
+            $this->eligibility->hiddenTypesForViewer($business, $viewer->userId),
         ));
 
         $query = Opportunity::query()
