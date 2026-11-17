@@ -56,6 +56,14 @@
     .sr-member__access:has(input[value="all"]:checked) .sr-bizpick { display: none; }
     .sr-member__modules { display: grid; gap: .5rem; }
     .sr-modules { display: grid; gap: .5rem; grid-template-columns: repeat(auto-fill, minmax(15rem, 1fr)); }
+    .sr-access { border: 1px solid var(--bs-border-color, #e5e7eb); border-radius: .5rem; padding: .85rem 1rem; margin: 1rem 0 0; display: grid; gap: .85rem; min-width: 0; }
+    .sr-access__title { font-size: .95rem; font-weight: 600; margin: 0; padding: 0 .25rem; float: none; width: auto; }
+    .sr-access__row { display: grid; gap: .85rem; grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr)); }
+    .sr-access__modules { display: grid; gap: .5rem; }
+    .sr-access__modules-head { display: grid; gap: .15rem; }
+    .sr-access__summary { margin: 0; font-size: .85rem; color: var(--bs-secondary-color, #6b7280); }
+    .sr-access__summary strong { color: inherit; font-weight: 600; }
+    .sr-invite__actions { display: flex; justify-content: flex-end; margin-top: 1rem; }
     .sr-member__delete { display: flex; justify-content: flex-end; }
     @media (max-width: 575.98px) { .sr-member__manage { margin-left: 0; } .sr-member__inline select { flex: 1 1 8rem; } }
 </style>
@@ -88,49 +96,33 @@
                         </div>
                     </div>
 
-                    <div class="d-flex gap-3 align-items-start flex-wrap">
-                        <div class="sr-field flex-grow-1" style="min-width:220px">
-                            <label for="member_email">Email address</label>
-                            <input type="email" id="member_email" name="member_email" value="{{ old('member_email') }}" autocomplete="off"
-                                   placeholder="name@company.com" required
-                                   class="form-control @error('member_email') is-invalid @enderror">
-                            @if ($errors->first('member_email'))
-                                <p class="sr-error">{{ $errors->first('member_email') }}</p>
-                            @else
-                                <p class="sr-hint">Anyone can be invited: if they're new to MotionGrove they'll set up their sign-in from the email.</p>
-                            @endif
-                        </div>
-                        <div class="sr-field" style="min-width:160px">
-                            <label for="member-role">Role</label>
-                            <select class="form-select" id="member-role" name="role">
-                                <option value="staff">Staff</option>
-                                @if ($viewerIsOwner)
-                                    <option value="admin">Admin</option>
-                                @endif
-                            </select>
-                        </div>
-                        <div class="sr-field" style="padding-top:22px">
-                            <button type="submit" class="btn btn-primary d-inline-flex align-items-center gap-1">
-                                <x-ds-icon name="plus" size="16" /> Invite member
-                            </button>
-                        </div>
+                    <div class="sr-field" style="max-width:420px">
+                        <label for="member_email">Email address</label>
+                        <input type="email" id="member_email" name="member_email" value="{{ old('member_email') }}" autocomplete="off"
+                               placeholder="name@company.com" required
+                               class="form-control @error('member_email') is-invalid @enderror">
+                        @if ($errors->first('member_email'))
+                            <p class="sr-error">{{ $errors->first('member_email') }}</p>
+                        @else
+                            <p class="sr-hint">Anyone can be invited: if they're new to MotionGrove they'll set up their sign-in from the email.</p>
+                        @endif
                     </div>
 
-                    @if ($singleManageableBusiness !== null)
-                        {{-- Exactly one Business this person can grant: nothing to choose, so the new
-                             member gets access to that one Business only (selected scope — least
-                             privilege, never a hidden "all Businesses" grant). --}}
-                        <input type="hidden" name="business_access_scope" value="selected">
-                        <input type="hidden" name="business_uids[]" value="{{ $singleManageableBusiness['uid'] }}">
-                    @else
-                        <div class="sr-field mt-3" style="max-width:260px">
-                            <label for="member-scope">Business access</label>
-                            <select class="form-select" id="member-scope" name="business_access_scope">
-                                <option value="all">All Businesses</option>
-                                <option value="selected">Selected Businesses</option>
-                            </select>
-                        </div>
-                    @endif
+                    @include('customer.workspaces.partials.team-access-fields', [
+                        'idp' => 'invite',
+                        'roleSelectId' => 'member-role',
+                        'scopeSelectId' => 'member-scope',
+                        'selectedRole' => old('role', 'staff'),
+                        'selectedScope' => old('business_access_scope', 'all'),
+                        'selectedBusinessUids' => old('business_uids', []),
+                        'selectedModules' => old('modules_submitted') ? old('visible_modules', []) : \App\Enums\Workspace\WorkspaceMemberModule::values(),
+                    ])
+
+                    <div class="sr-invite__actions">
+                        <button type="submit" class="btn btn-primary d-inline-flex align-items-center gap-1">
+                            <x-ds-icon name="plus" size="16" /> Send invitation
+                        </button>
+                    </div>
                 </form>
             </div>
         </div>
@@ -154,7 +146,8 @@
                                     <span class="sr-chip">{{ $invitation['role'] }}</span>
                                     <span class="sr-chip {{ $invitation['status'] === 'Pending' ? 'sr-chip--success' : '' }}">{{ $invitation['status'] }}</span>
                                 </div>
-                                <div class="sr-list__sub">{{ $invitation['status'] === 'Expired' ? 'Expired' : 'Expires' }} {{ $invitation['expires'] }}</div>
+                                <div class="sr-list__sub">{{ $invitation['status'] === 'Expired' ? 'Expired' : 'Expires' }} {{ $invitation['expires'] }}
+                                    · {{ $invitation['scope'] === 'all' ? 'All Businesses' : 'Selected Businesses' }}@if (count($invitation['visible_modules']) < count(\App\Enums\Workspace\WorkspaceMemberModule::cases())) · {{ count(\App\Enums\Workspace\WorkspaceMemberModule::cases()) - count($invitation['visible_modules']) }} {{ count(\App\Enums\Workspace\WorkspaceMemberModule::cases()) - count($invitation['visible_modules']) === 1 ? 'module' : 'modules' }} hidden @endif</div>
                                 @if ($viewerCanManageInvitation)
                                     <div class="d-flex gap-2 mt-2">
                                         <form method="POST" data-invitation-action="resend" data-invitation-uid="{{ $invitation['uid'] }}">
@@ -166,6 +159,23 @@
                                             <button type="submit" class="btn btn-sm btn-sr-danger-outline">Revoke</button>
                                         </form>
                                     </div>
+                                    <details class="mt-2" data-role="edit-invitation-access">
+                                        <summary class="btn btn-sm btn-outline-secondary">Edit access</summary>
+                                        <form method="POST" data-invitation-action="access" data-invitation-uid="{{ $invitation['uid'] }}">
+                                            @csrf
+                                            @include('customer.workspaces.partials.team-access-fields', [
+                                                'idp' => 'inv-' . $invitation['uid'],
+                                                'selectedRole' => $invitation['role_key'],
+                                                'selectedScope' => $invitation['scope'],
+                                                'selectedBusinessUids' => $invitation['business_uids'],
+                                                'selectedModules' => $invitation['visible_modules'],
+                                            ])
+                                            <div class="sr-invite__actions">
+                                                <button type="submit" class="btn btn-sm btn-primary">Save access</button>
+                                            </div>
+                                            <p class="sr-hint mb-0 mt-1">Saving updates this invitation. It does not send another email.</p>
+                                        </form>
+                                    </details>
                                 @endif
                             </div>
                         </li>
@@ -303,3 +313,40 @@
         </div>
     </div>
 </div>
+
+<script>
+    // Concise access summary, shown before the invitation is sent (and when editing it). Display only.
+    (function () {
+        document.querySelectorAll('[data-access-form]').forEach(function (box) {
+            var out = box.querySelector('[data-access-summary]');
+            var role = box.querySelector('[data-access-role]');
+            var scope = box.querySelector('[data-access-scope]');
+            var picker = box.querySelector('[data-access-picker]');
+            var fixed = box.querySelector('[data-access-business-fixed]');
+            var switches = Array.prototype.slice.call(box.querySelectorAll('input[name="visible_modules[]"]'));
+
+            function esc(t) { var d = document.createElement('div'); d.textContent = t; return d.innerHTML; }
+
+            function update() {
+                var selected = scope && scope.value === 'selected';
+                if (picker) { picker.hidden = !selected; }
+                var businesses;
+                if (fixed) {
+                    businesses = fixed.getAttribute('data-access-business-fixed');
+                } else if (selected) {
+                    var names = Array.prototype.slice.call(box.querySelectorAll('input[name="business_uids[]"]:checked')).map(function (i) { return i.getAttribute('data-label'); });
+                    businesses = names.length ? names.join(', ') : 'no Business chosen yet';
+                } else {
+                    businesses = 'all Businesses';
+                }
+                var hidden = switches.filter(function (s) { return !s.checked; }).map(function (s) { return s.getAttribute('data-label'); });
+                var modules = hidden.length === 0 ? 'all modules' : (hidden.length + ' hidden (' + hidden.join(', ') + ')');
+                var roleLabel = role && role.value === 'admin' ? 'Admin' : 'Staff';
+                if (out) { out.innerHTML = '<strong>' + esc(roleLabel) + '</strong> · ' + esc(businesses) + ' · ' + esc(modules); }
+            }
+
+            box.addEventListener('change', update);
+            update();
+        });
+    })();
+</script>

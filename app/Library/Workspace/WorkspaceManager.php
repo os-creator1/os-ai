@@ -344,8 +344,9 @@ class WorkspaceManager
         WorkspaceBusinessAccessScope $scope,
         LocationAccessScope $locationScope,
         array $businessIds = [],
+        ?array $hiddenModules = null,
     ): WorkspaceMembership {
-        return DB::transaction(function () use ($actorUserId, $workspace, $memberUserId, $role, $scope, $locationScope, $businessIds) {
+        return DB::transaction(function () use ($actorUserId, $workspace, $memberUserId, $role, $scope, $locationScope, $businessIds, $hiddenModules) {
             $lockedWorkspace = $this->workspaceRepository->findForUpdate($workspace->id);
 
             if ($lockedWorkspace === null) {
@@ -376,7 +377,7 @@ class WorkspaceManager
                         throw new WorkspaceMembershipAlreadyExistsException($lockedWorkspace->id, $memberUserId, false);
                     }
 
-                    return $this->reinstateRemovedMember($actorUserId, $lockedWorkspace, $existing, $role, $scope, $locationScope, $normalizedIds);
+                    return $this->reinstateRemovedMember($actorUserId, $lockedWorkspace, $existing, $role, $scope, $locationScope, $normalizedIds, $hiddenModules);
                 }
 
                 $idsMatch = true;
@@ -396,6 +397,10 @@ class WorkspaceManager
             }
 
             $membership = $this->membershipRepository->create($lockedWorkspace, $memberUserId, $role, $scope, $locationScope);
+
+            // Module restrictions are written inside this same transaction as the membership itself, so the
+            // member is never visible, even to a concurrent reader, without them.
+            $this->applyHiddenModules($membership, $hiddenModules);
 
             if ($scope === WorkspaceBusinessAccessScope::Selected && $normalizedIds !== []) {
                 $this->membershipBusinessRepository->syncForMembership($membership, $normalizedIds);
@@ -421,6 +426,17 @@ class WorkspaceManager
     }
 
     /**
+     * @param  array<int, string>|null  $hiddenModules  WorkspaceMemberModule values to hide; null/[] = nothing hidden
+     */
+    private function applyHiddenModules(WorkspaceMembership $membership, ?array $hiddenModules): void
+    {
+        $values = array_map(fn (WorkspaceMemberModule $m): string => $m->value, MemberModuleVisibility::normalize($hiddenModules ?? []));
+
+        $membership->forceFill(['hidden_modules' => $values === [] ? null : $values])->save();
+        app(MemberModuleVisibility::class)->forget();
+    }
+
+    /**
      * Intentional re-add of a previously REMOVED member (never of a merely
      * deactivated one). Authority over the requested role was already
      * asserted by addMember(), under the Workspace lock. Nothing from the
@@ -439,6 +455,7 @@ class WorkspaceManager
         WorkspaceBusinessAccessScope $scope,
         LocationAccessScope $locationScope,
         array $normalizedIds,
+        ?array $hiddenModules = null,
     ): WorkspaceMembership {
         $this->membershipBusinessRepository->syncForMembership(
             $membership,
@@ -447,6 +464,8 @@ class WorkspaceManager
         WorkspaceMembershipLocation::query()->where('workspace_membership_id', $membership->id)->delete();
 
         $this->membershipRepository->reinstate($membership, $role, $scope, $locationScope);
+        // Nothing from the old membership is restored, module restrictions included.
+        $this->applyHiddenModules($membership, $hiddenModules);
 
         WorkspaceMembershipRemoval::query()
             ->where('workspace_membership_id', $membership->id)
@@ -675,17 +694,9 @@ class WorkspaceManager
                 throw new InactiveWorkspaceMembershipMutationException($lockedMembership->id);
             }
 
-            $visible = array_map(
-                fn (WorkspaceMemberModule $m): string => $m->value,
-                MemberModuleVisibility::normalize(array_values($visibleModules)),
-            );
+            $hidden = MemberModuleVisibility::hiddenFromVisible($visibleModules);
 
-            $hidden = array_values(array_map(
-                fn (WorkspaceMemberModule $m): string => $m->value,
-                array_filter(WorkspaceMemberModule::cases(), fn (WorkspaceMemberModule $m): bool => ! in_array($m->value, $visible, true)),
-            ));
-
-            $lockedMembership->hidden_modules = $hidden === [] ? null : $hidden;
+            $lockedMembership->hidden_modules = $hidden;
             $lockedMembership->save();
 
             app(MemberModuleVisibility::class)->forget();
