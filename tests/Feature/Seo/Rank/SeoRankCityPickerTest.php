@@ -174,8 +174,12 @@ class SeoRankCityPickerTest extends TestCase
         // US cached, Lithuania not: an empty result may only mean "still loading".
         $this->search($workspace, $business, 'Vilnius')->assertOk()->assertExactJson(['locations' => [], 'status' => 'partial']);
 
-        // Everything cached: a plain no-match.
+        // US and Lithuania cached, Canada not: still "may be loading".
         $this->seedVilnius();
+        $this->search($workspace, $business, 'Zzzz')->assertOk()->assertExactJson(['locations' => [], 'status' => 'partial']);
+
+        // Every supported country cached: a plain no-match.
+        $this->seedCanada();
         $this->search($workspace, $business, 'Zzzz')->assertOk()->assertExactJson(['locations' => [], 'status' => 'ok']);
 
         // Nothing cached at all.

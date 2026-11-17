@@ -195,6 +195,19 @@ class GrowthWorkHistoryTest extends TestCase
         return $this->get($this->growth('work'))->assertOk()->getContent();
     }
 
+    public function test_naming_answered_conversations_from_plain_rows_does_not_make_the_replies_section_unavailable(): void
+    {
+        // The read model names conversations from plain {id, to} rows that carry no verified Contact link.
+        $box = $this->conversation([['incoming', 10], ['outgoing', 9, 'sent']]);
+
+        $this->assertSame([$box => null], \App\Models\ChatBox::displayNamesFor($this->business, [(object) ['id' => $box, 'to' => '15550002222']]));
+
+        $html = $this->workAs(['business_advisor', 'chat_box']);
+
+        $this->assertStringNotContainsString("We couldn't read your conversations just now.", $html);
+        $this->assertSame(1, substr_count($html, 'data-role="reply-row"'));
+    }
+
     public function test_customer_replies_are_reported_from_recorded_send_states_and_never_as_a_booking(): void
     {
         $this->conversation([['incoming', 10], ['outgoing', 9, 'sent']]);
