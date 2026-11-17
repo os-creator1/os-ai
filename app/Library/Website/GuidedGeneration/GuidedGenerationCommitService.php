@@ -560,6 +560,8 @@ final class GuidedGenerationCommitService
                 GenerationBatchDiagnostics::log($websiteId, $attemptId, $attempts, $stage, count($aiPlan), $diagnostic);
             } else {
                 try {
+                    // Generic aliases ("/contact") become the planned page's real path; unresolvable ones stay and are rejected below.
+                    $pages = InternalLinkResolver::correct($pages, $aiPlan);
                     $this->validator->validate($pages, $aiPlan, $prohibitedClaims);
 
                     return [$pages, $attempts];

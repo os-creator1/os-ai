@@ -155,6 +155,8 @@ class GuidedWebsiteGenerationClient
             'page_key' => $page['page_key'],
             'page_type' => $page['page_type'],
             'is_home' => $page['is_home'],
+            // The page's real address: the only value an internal link to this page may use.
+            'path' => $page['is_home'] ? '/' : '/' . ltrim((string) $page['slug'], '/'),
             'allowed_section_types' => $page['allowed_section_types'],
             'entity' => $page['entity'],
         ], $plan);
@@ -169,6 +171,7 @@ class GuidedWebsiteGenerationClient
             'You may use an image_text section to pair written content with a photo, but never choose or name the photo itself: leave its "image" field as null (or omit it) and the system will attach a real photo automatically. Never set background_image on a hero, and never set "image" on anything else, to any value at all.',
             'Never write any of these prohibited phrases: ' . implode('; ', $profile?->prohibited_claims ?? []),
             'For each page, draft a title, seo_title (max 70 characters, descriptive and distinct, never boilerplate or keyword-stuffed) and meta_description (max 160 characters, a genuine one-sentence summary of that specific page) — never copy the same title, seo_title, or meta_description across two pages.',
+            'Internal links (a button url, or a hero primary_cta/secondary_cta url) must be EXACTLY one of these page paths, copied character for character: ' . implode(' ', \App\Library\Website\GuidedGeneration\InternalLinkResolver::paths($plan)) . ' (the home page is "/"). Never invent or guess a path such as /contact, /booking, /services or /about unless it is in that list; each page\'s own path is also given as "path" in the plan. Use an https:// URL only for an external link.',
             'Respond with a single JSON object: {"pages": [{"page_key": string, "title": string, "seo_title": string|null, "meta_description": string|null, "sections": [...]}]}.',
         ];
 
@@ -247,7 +250,7 @@ class GuidedWebsiteGenerationClient
         $lines = [
             'Every entry of "sections" must be an object of exactly this shape: {"type": <section type>, "data": {...}}. Put every field of a section inside its "data" object — never beside "type" — and use only the field names below. A section without "type" and a "data" object is rejected.',
             'Every page needs exactly one "hero" section; place it first.',
-            'Button/CTA urls must be a same-site path that is the slug of a page in the plan (for example "/photo-booth-contact"), an https:// URL, a tel: link or a mailto: link. Never invent another URL.',
+            'Button/CTA urls must be one of the exact page paths listed in these instructions, an https:// URL, a tel: link or a mailto: link. Never invent another URL.',
             'Section schemas (use only the types in that page\'s allowed_section_types; omit optional fields or use null):',
         ];
 
