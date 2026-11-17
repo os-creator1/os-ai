@@ -84,6 +84,20 @@ class EnforceMemberModuleVisibility
             return [];
         }
 
-        return ($context->selectedWorkspace ?? $context->frameWorkspace())?->hiddenModules ?? [];
+        // Legacy routes have no Workspace UID and some resolve their target from a resource ID
+        // rather than the selected shell. The selected Workspace is not an authority for those
+        // resources: a member could select an unrestricted Workspace and reach a restricted
+        // Workspace's module through a legacy URL. Fail closed by blocking a module on
+        // workspace-less routes whenever ANY of this actor's visible memberships hides it.
+        // Tenant-specific access through routes with {workspaceUid} remains independent.
+        $hidden = [];
+
+        foreach ($context->workspaces as $candidate) {
+            foreach ($candidate->hiddenModules as $item) {
+                $hidden[$item->value] = $item;
+            }
+        }
+
+        return array_values($hidden);
     }
 }
