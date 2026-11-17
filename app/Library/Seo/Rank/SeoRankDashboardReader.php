@@ -121,7 +121,58 @@ final class SeoRankDashboardReader
             }
         }
 
+        $rows = self::sortByBestRank($rows);
+
         return ['rows' => $rows, 'summary' => $this->summary($business, $rows, $plan)];
+    }
+
+    /**
+     * The best (lowest) real numeric position visible on a row: the better of its
+     * Google search (organic) and Google Maps (local) results. Null when neither
+     * is a FOUND position — "Not in top N", "Not matched", checking, waiting,
+     * needs-domain and untracked rows have no rank, and absence is never a number.
+     *
+     * @param array<string, mixed> $row
+     */
+    public static function bestRank(array $row): ?int
+    {
+        $positions = [];
+
+        foreach (['organic', 'local'] as $key) {
+            $obs = $row[$key] ?? null;
+
+            if ($obs instanceof SeoRankObservation && $obs->isFound()) {
+                $positions[] = (int) $obs->position;
+            }
+        }
+
+        return $positions === [] ? null : min($positions);
+    }
+
+    /**
+     * Best performers first. Sort key, in order:
+     *   1. rows with a real numeric rank, ascending by best rank (1 is best);
+     *   2. rows still checking or waiting for their first result;
+     *   3. everything else with no rank (not in top N, not matched, needs domain,
+     *      paused, unavailable, SEO-target only).
+     * Ties, and rows inside groups 2 and 3, keep their incoming (created) order.
+     *
+     * @param list<array<string, mixed>> $rows
+     * @return list<array<string, mixed>>
+     */
+    public static function sortByBestRank(array $rows): array
+    {
+        $keyed = [];
+
+        foreach (array_values($rows) as $index => $row) {
+            $best = self::bestRank($row);
+            $pending = in_array($row['state'] ?? null, [self::STATE_CHECKING, self::STATE_WAITING], true);
+            $keyed[] = [$best === null ? ($pending ? 1 : 2) : 0, $best ?? 0, $index, $row];
+        }
+
+        usort($keyed, fn (array $a, array $b) => [$a[0], $a[1], $a[2]] <=> [$b[0], $b[1], $b[2]]);
+
+        return array_map(fn (array $k) => $k[3], $keyed);
     }
 
     /**
@@ -216,6 +267,20 @@ final class SeoRankDashboardReader
         $foundOrganic = array_filter($organic, fn (SeoRankObservation $o) => $o->isFound());
         $foundLocal = array_filter($local, fn (SeoRankObservation $o) => $o->isFound());
 
+        $bestOf = function (array $rows, string $key): ?array {
+            $best = null;
+
+            foreach ($rows as $r) {
+                $obs = $r[$key] ?? null;
+
+                if ($obs instanceof SeoRankObservation && $obs->isFound() && ($best === null || $obs->position < $best['position'])) {
+                    $best = ['position' => (int) $obs->position, 'phrase' => (string) $r['keyword']->phrase];
+                }
+            }
+
+            return $best;
+        };
+
         return [
             'slots_used' => $this->budget->trackedTargetsQuery($business)->count(),
             'slots_limit' => $plan?->trackedTargets,
@@ -224,6 +289,9 @@ final class SeoRankDashboardReader
             'top10' => $organic === [] ? null : count(array_filter($foundOrganic, fn ($o) => $o->position <= 10)),
             'improved' => $organic === [] ? null : count(array_filter($tracked, fn ($r) => ($r['change']['kind'] ?? null) === SeoRankHistoryReader::CHANGE_UP)),
             'local_top3' => $local === [] ? null : count(array_filter($foundLocal, fn ($o) => $o->position <= 3)),
+            // The single best result across tracked keywords, with the phrase that earned it.
+            'best_local' => $bestOf($tracked, 'local'),
+            'best_organic' => $bestOf($tracked, 'organic'),
             // "Based on N of M keywords checked recently", only when some results are stale.
             'basis' => $fresh < $checked ? ['fresh' => $fresh, 'checked' => $checked] : null,
         ];

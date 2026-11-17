@@ -7,13 +7,16 @@
       * a rank-tracked keyword: that phrase + a search location, checked on
         Google by a paid provider within a monthly allowance.
 
-    Every number is real or "—". Absence is never a rank: "Not in top 100" and
+    Every number is real or "—". Absence is never a rank: "Not in top N" and
     "Not matched" are words, never 0 or 101. Provider errors and secrets are
     never shown; only closed states (Checking, Updated, Temporarily
     unavailable, Budget paused).
 
-    Layout: KPI row, then the tracked keywords (primary, left) beside a compact
-    "Add a keyword" card and "Suggested for you" (secondary, right).
+    Three states, one page (design references: Search keywords — start / checking / results):
+      start    no keywords yet: "Start tracking your searches" + Suggested for you;
+      checking tracked keywords exist but none has a result yet and a check is running;
+      results  tracked keywords with their results, best performers first
+               (SeoRankDashboardReader::sortByBestRank).
 
     Escaped Blade output only. Raw, unescaped output is forbidden in this view.
 --}}
@@ -39,277 +42,385 @@
     $readOnlyRank = $rankPlan === null && $rankRows->isNotEmpty();
     $viewingAsClient = $viewingAsClient ?? false;
 
-    // One shared search location is shown once, as a pill by the heading; with several
-    // distinct ones each row names its own.
+    // One shared search location is shown once, as the chip by the heading; with several
+    // distinct ones each row names its own. With nothing tracked yet, the Business's
+    // existing default search location (if any) is what the next keyword will use.
     $searchLocations = $rankRows->pluck('location_label')->filter()->unique()->values();
     $sharedLocation = $searchLocations->count() === 1 ? $searchLocations->first() : null;
+    $chipLocation = $sharedLocation ?? ($searchLocations->isEmpty() ? ($rankDefaults['business']['label'] ?? null) : null);
 
-    $headers = $showRank
-        ? ['Keyword', 'Organic', 'Local', 'Change', 'Website', 'Actions']
-        : ['Keyword', 'Website', 'Actions'];
     $canAdd = Auth::user()->can('manage_seo');
     $suggestions = $suggestions ?? [];
+    $canTrackRank = $rankPlan !== null && ! $viewingAsClient;
+
+    // Which of the three states this is.
+    $startState = $rankPlan !== null && count($rows) === 0;
+    $anyResult = $rankRows->contains(fn ($r) => $r['organic'] !== null || $r['local'] !== null);
+    $checkingState = ! $startState && $showRank && ! $anyResult && $rankRows->contains(fn ($r) => $r['state'] === SeoRankDashboardReader::STATE_CHECKING);
+    $domainBlocked = $rankRows->contains(fn ($r) => $r['organic_blocked'] ?? false);
+    $domainUrl = route('customer.workspaces.businesses.website.domains.index', [$workspaceUid, $businessUid]);
+
+    // The list shows the best seven; the rest sit behind "Show all N".
+    $visibleLimit = 7;
+    $slotsLimitLabel = $rankPlan?->trackedTargets;
 @endphp
 
 @section('content')
     <style>
-        .rank-summary-card .rank-summary-value { font-size: 2.75rem; line-height: 1; font-weight: 700; letter-spacing: -.02em; }
-        .rank-summary-card .rank-summary-of { font-size: 1.1rem; font-weight: 500; color: var(--bs-secondary-color, #6e6b7b); letter-spacing: 0; }
-        .rank-summary-card .card-body, .rank-summary-card { min-height: 8.5rem; }
-        .rank-summary-card .rank-summary-inner { min-height: 6.5rem; display: flex; flex-direction: column; justify-content: space-between; }
-        .rank-summary-card .rank-summary-label { font-size: .8125rem; color: var(--bs-secondary-color, #6e6b7b); }
-        .rank-table td, .rank-table th { vertical-align: middle; }
-        .rank-table tr[data-href] { cursor: pointer; }
-        .rank-pos-bar { height: 3px; border-radius: 2px; background: var(--bs-border-color, #e5e5e5); margin-top: .35rem; max-width: 72px; overflow: hidden; }
-        .rank-pos-bar > i { display: block; height: 100%; background: var(--bs-primary, #7367f0); }
-        .rank-table th, .rank-table td { padding-left: .6rem; padding-right: .6rem; }
-        .rank-table td[data-label="Keyword"] { min-width: 9rem; max-width: 15rem; overflow-wrap: anywhere; }
-        .rank-table td[data-label="Actions"] { white-space: nowrap; }
-        .keyword-side { position: sticky; top: 1rem; }
+        .kw-page { --kw-brand: #B4514A; --kw-brand-d: #8F3B35; --kw-ink: #1F1A19; --kw-mute: #5E5652; --kw-mute2: #6B625E; --kw-faint: #8A817C; --kw-line: #E9E4DF; --kw-line2: #F0EBE6; --kw-field: #D6CFC8; --kw-soft: #FBF9F7; color: var(--kw-ink); display: flex; flex-direction: column; gap: 16px; }
+        .kw-page .kw-ic { width: 16px; height: 16px; flex: none; stroke: currentColor; fill: none; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+        .kw-h1 { margin: 0; font-size: 28px; font-weight: 800; letter-spacing: -.02em; }
+        .kw-sub { margin: 2px 0 0; font-size: 14.5px; color: var(--kw-mute); }
+        .kw-chip { display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 12px; border-radius: 999px; border: 1px solid #E0DAD4; background: #fff; font-size: 13px; font-weight: 500; color: #2E2826; }
+        .kw-chip .kw-ic { width: 14px; height: 14px; color: var(--kw-brand-d); }
+        .kw-card { background: #fff; border: 1px solid var(--kw-line); border-radius: 16px; box-sizing: border-box; }
+        .kw-card-head { display: flex; align-items: center; gap: 10px; padding: 16px 20px; }
+        .kw-card-head b { flex: 1; font-size: 16px; }
+        .kw-mut { font-size: 12.5px; color: var(--kw-mute2); }
+        .kw-faint { color: #A39A94; }
+        .kw-kpis { display: flex; flex-wrap: wrap; gap: 12px; }
+        .kw-kpi { flex: 1 1 150px; display: flex; flex-direction: column; gap: 3px; padding: 14px 16px; border-radius: 14px; background: #fff; border: 1px solid var(--kw-line); }
+        .kw-kpi > span { font-size: 12.5px; color: var(--kw-mute2); font-weight: 500; }
+        .kw-kpi > b { font-size: 24px; font-weight: 800; letter-spacing: -.02em; }
+        .kw-kpi > b .kw-of { font-size: 15px; color: var(--kw-faint); font-weight: 600; }
+        .kw-kpi > small { font-size: 12px; color: var(--kw-faint); }
+        .kw-kpi.is-needs { background: var(--kw-soft); }
+        .kw-kpi.is-needs > b { font-size: 16px; padding: 5px 0; color: var(--kw-faint); }
+        .kw-kpi a, .kw-link { color: var(--kw-brand-d); font-weight: 600; text-decoration: none; }
+        .kw-banner { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; padding: 12px 16px; border-radius: 12px; background: #E4EEF6; color: #1F5682; font-size: 13.5px; }
+        .kw-callout { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; padding: 14px 18px; border-radius: 14px; background: #fff; border: 1px dashed var(--kw-field); }
+        .kw-callout > .kw-ic { width: 18px; height: 18px; color: var(--kw-faint); }
+        .kw-callout > span { flex: 1 1 300px; font-size: 13.5px; color: var(--kw-mute); }
+        .kw-callout > span b { color: var(--kw-ink); }
+        .kw-btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 44px; box-sizing: border-box; padding: 0 20px; border-radius: 10px; border: 0; font-size: 14px; font-weight: 600; white-space: nowrap; background: var(--kw-brand); color: #fff; cursor: pointer; }
+        .kw-btn:hover { background: var(--kw-brand-d); color: #fff; }
+        .kw-btn.is-ghost { border: 1px solid var(--kw-field); background: #fff; color: #2E2826; min-height: 36px; font-size: 13px; padding: 0 14px; }
+        .kw-btn.is-ghost:hover { background: var(--kw-soft); color: #2E2826; }
+        .kw-btn[disabled] { opacity: .55; cursor: not-allowed; }
+        .kw-ctaicon { width: 52px; height: 52px; border-radius: 14px; background: #F8E9E6; color: var(--kw-brand); display: flex; align-items: center; justify-content: center; flex: none; }
+        .kw-ctaicon .kw-ic { width: 24px; height: 24px; }
+        .kw-cta { display: flex; flex-wrap: wrap; align-items: center; gap: 16px; padding: 22px 24px; }
+        .kw-cta .kw-cta-copy { flex: 1 1 300px; display: flex; flex-direction: column; gap: 3px; }
+        .kw-cta .kw-cta-copy b { font-size: 19px; font-weight: 800; }
+        .kw-cta .kw-cta-copy span { font-size: 14px; color: var(--kw-mute); }
+        .kw-sugg { display: flex; align-items: center; gap: 14px; min-height: 58px; padding: 8px 20px; border-top: 1px solid var(--kw-line2); }
+        .kw-sugg > div { flex: 1; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+        .kw-name { font-size: 14.5px; font-weight: 600; color: var(--kw-ink); overflow-wrap: anywhere; text-decoration: none; }
+        a.kw-name:hover { color: var(--kw-brand-d); }
+        .kw-table { width: 100%; border-collapse: collapse; margin: 0; }
+        .kw-table th { height: 40px; padding: 0 14px; background: var(--kw-soft); font-size: 11.5px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--kw-mute2); text-align: left; white-space: nowrap; }
+        .kw-table td { padding: 10px 14px; border-top: 1px solid var(--kw-line2); font-size: 14px; vertical-align: middle; background: transparent; }
+        .kw-table th:first-child, .kw-table td:first-child { padding-left: 20px; }
+        .kw-table th:last-child, .kw-table td:last-child { padding-right: 20px; width: 1%; }
+        .kw-table tr { background: transparent; }
+        .kw-table tr[hidden] { display: none; }
+        .kw-table tr[data-href] { cursor: pointer; }
+        .kw-table tr[data-href]:hover td { background: var(--kw-soft); }
+        .kw-table td[data-label="Keyword"] { min-width: 12rem; }
+        .kw-sub2 { display: block; font-size: 12.5px; color: var(--kw-mute2); margin-top: 2px; }
+        .kw-rk { display: inline-flex; align-items: center; gap: 6px; height: 26px; padding: 0 10px; border-radius: 999px; font-size: 12.5px; font-weight: 700; white-space: nowrap; }
+        .kw-rk-green { background: #E3F3EA; color: #17693F; }
+        .kw-rk-blue { background: #E4EEF6; color: #1F5682; }
+        .kw-rk-amber { background: #FDF1DC; color: #7A4A05; }
+        .kw-rk-neutral { background: #F1EDE9; color: var(--kw-mute2); }
+        .kw-sk { display: inline-block; width: 80px; height: 12px; border-radius: 6px; background: linear-gradient(90deg, #EEE9E4, #F6F2EF, #EEE9E4); vertical-align: middle; }
+        .kw-more { width: 34px; height: 34px; border: 1px solid var(--kw-line); border-radius: 9px; background: #fff; color: #4A4340; display: inline-flex; align-items: center; justify-content: center; padding: 0; }
+        .kw-more:hover { background: var(--kw-soft); }
+        .kw-showall { display: flex; align-items: center; justify-content: center; min-height: 46px; width: 100%; border: 0; border-top: 1px solid var(--kw-line2); background: transparent; font-size: 13.5px; font-weight: 600; color: var(--kw-brand-d); }
+        .kw-add { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 10px; padding: 16px 18px; }
+        .kw-add .kw-f { display: flex; flex-direction: column; gap: 6px; }
+        .kw-add label { font-size: 13px; font-weight: 600; margin: 0; }
+        .kw-add .form-control, .kw-add .form-select { height: 44px; border: 1px solid var(--kw-field); border-radius: 10px; font-size: 14.5px; padding: 0 14px; }
+        .kw-add .kw-foot { flex-basis: 100%; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 14px; }
+        .kw-add .form-check { margin: 0; min-height: 0; }
+        .kw-add .form-check-label { font-size: 12.5px; color: var(--kw-mute2); font-weight: 500; }
+        .kw-page .dropdown-menu { border-radius: 10px; border-color: var(--kw-line); font-size: 13.5px; }
         @media (max-width: 767.98px) {
-            .rank-summary-card .rank-summary-value { font-size: 2.25rem; }
-            .rank-summary-card, .rank-summary-card .card-body, .rank-summary-card .rank-summary-inner { min-height: 0; }
-            .rank-summary-card .rank-summary-inner { gap: .75rem; }
-            .rank-table thead { display: none; }
-            .rank-table, .rank-table tbody, .rank-table tr, .rank-table td { display: block; width: 100%; }
-            .rank-table tr { border: 1px solid var(--bs-border-color, #e5e5e5); border-radius: .5rem; margin-bottom: .75rem; padding: .5rem .75rem; }
-            .rank-table td { display: flex; justify-content: space-between; gap: 1rem; border: 0; padding: .25rem 0; text-align: right; }
-            .rank-table td::before { content: attr(data-label); font-weight: 600; text-align: left; color: var(--bs-secondary-color, #6e6b7b); }
-            .rank-table td[data-label="Keyword"] { display: block; text-align: left; }
-            .rank-table td[data-label="Keyword"]::before { display: none; }
-            .rank-table td[data-label="Actions"] { justify-content: flex-start; flex-wrap: wrap; }
-            .rank-table td[data-label="Actions"]::before { display: none; }
-            .rank-pos-bar { display: none; }
+            .kw-h1 { font-size: 24px; }
+            .kw-table thead { display: none; }
+            .kw-table, .kw-table tbody, .kw-table tr, .kw-table td { display: block; width: 100%; }
+            .kw-table tr { border-top: 1px solid var(--kw-line2); padding: 8px 16px; }
+            .kw-table td { display: flex; justify-content: space-between; align-items: center; gap: 1rem; border: 0; padding: .25rem 0; text-align: right; }
+            .kw-table th:first-child, .kw-table td:first-child, .kw-table th:last-child, .kw-table td:last-child { padding-left: 0; padding-right: 0; width: 100%; }
+            .kw-table td::before { content: attr(data-title); font-weight: 600; text-align: left; color: var(--kw-mute2); font-size: 12.5px; }
+            .kw-table td[data-label="Keyword"] { display: block; text-align: left; }
+            .kw-table td[data-label="Keyword"]::before, .kw-table td[data-label="Actions"]::before { display: none; }
+            .kw-table td[data-label="Actions"] { justify-content: flex-start; }
         }
-        @media (max-width: 1199.98px) { .keyword-side { position: static; } }
     </style>
 
-    <div class="row mb-2">
-        <div class="col-12 d-flex justify-content-between align-items-start flex-wrap gap-1">
-            <div>
-                <h4 class="mb-25">Search keywords</h4>
-                <p class="text-caption mb-0" data-role="page-subtitle">Track the searches that matter to your business.</p>
+    <div class="kw-page">
+        <div class="d-flex flex-wrap align-items-end gap-1">
+            <div style="flex: 1 1 300px">
+                <h1 class="kw-h1">Search keywords</h1>
+                <p class="kw-sub" data-role="page-subtitle">See where you show up when people search for what you offer.</p>
             </div>
-            @if($sharedLocation)
-                <x-badge variant="neutral" data-role="search-location-pill">{{ $sharedLocation }}</x-badge>
+            @if($chipLocation)
+                <span class="kw-chip"><svg class="kw-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 21s-7-6.200-7-11.500a7 7 0 0 1 14 0C19 14.800 12 21 12 21z"></path><circle cx="12" cy="9.500" r="2.500"></circle></svg>Searching from <span data-role="search-location-pill">{{ $chipLocation }}</span></span>
             @endif
         </div>
-    </div>
 
-    <x-flash-alert class="mb-2" />
+        <x-flash-alert />
 
-    @if($errors->any())
-        <x-alert variant="danger" class="mb-2" data-role="keyword-errors">{{ $errors->first() }}</x-alert>
-    @endif
+        @if($errors->any())
+            <x-alert variant="danger" data-role="keyword-errors">{{ $errors->first() }}</x-alert>
+        @endif
 
-    {{-- One truthful status banner. Unavailable (provider off) and paused (spend cap) are mutually exclusive in practice;
-         both say plainly that no new checks run. --}}
-    @if($rankUnavailable)
-        <x-alert variant="neutral" class="mb-2" data-role="rank-unavailable-notice"><strong>Rank checks are unavailable.</strong> No new checks will run. Existing results stay visible.</x-alert>
-    @elseif($rankPaused)
-        <x-alert variant="warning" class="mb-2" data-role="rank-paused-notice"><strong>Rank checks paused until your usage period resets.</strong> Your latest results stay visible.</x-alert>
-    @endif
+        {{-- One truthful status banner. Unavailable (provider off) and paused (spend cap) are mutually exclusive in practice;
+             both say plainly that no new checks run. --}}
+        @if($rankUnavailable)
+            <x-alert variant="neutral" data-role="rank-unavailable-notice"><strong>Rank checks are unavailable.</strong> No new checks will run. Existing results stay visible.</x-alert>
+        @elseif($rankPaused)
+            <x-alert variant="warning" data-role="rank-paused-notice"><strong>Rank checks paused until your usage period resets.</strong> Your latest results stay visible.</x-alert>
+        @endif
 
-    @if($readOnlyRank)
-        <x-alert variant="neutral" class="mb-2" data-role="rank-not-included-notice">Rank tracking is not in your current plan. These results are read-only.</x-alert>
-    @elseif(! $showRank)
-        <p class="text-caption mb-2" data-role="rank-not-included">Rank tracking is not part of your plan.</p>
-    @endif
+        @if($readOnlyRank)
+            <x-alert variant="neutral" data-role="rank-not-included-notice">Rank tracking is not in your current plan. These results are read-only.</x-alert>
+        @elseif(! $showRank)
+            <p class="kw-mut mb-0" data-role="rank-not-included">Rank tracking is not part of your plan.</p>
+        @endif
 
-    {{-- Summary: real data only, "—" when there is nothing to summarise. Hidden where rank tracking does not apply. --}}
-    @if($showRank)
-    <div class="row g-1 mb-2" data-section="rank-summary">
-        <div class="col-6 col-lg">
-            <x-card :padded="true" class="rank-summary-card h-100">
-                <div class="rank-summary-inner">
-                    <span class="rank-summary-label">Keywords tracked</span>
-                    <div class="rank-summary-value" data-role="summary-tracked">{{ $summary['slots_used'] }}@if($summary['slots_limit'] !== null)<span class="rank-summary-of"> / {{ $summary['slots_limit'] }}</span>@endif</div>
+        {{-- ============ START: nothing saved yet ============ --}}
+        @if($startState && $canAdd && count($suggestions) > 0)
+            <section class="kw-card kw-cta" data-section="start-tracking">
+                <span class="kw-ctaicon"><svg class="kw-ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.500"></circle><path d="M16 16l4.500 4.500"></path></svg></span>
+                <div class="kw-cta-copy">
+                    <b>Start tracking your searches</b>
+                    <span>Pick up to {{ $slotsLimitLabel }} keywords. We check your Google Maps rank automatically.</span>
                 </div>
-            </x-card>
-        </div>
-        <div class="col-6 col-lg">
-            <x-card :padded="true" class="rank-summary-card h-100">
-                <div class="rank-summary-inner">
-                    <span class="rank-summary-label">Average position</span>
-                    <div class="rank-summary-value" data-role="summary-average">{{ $summary['average_organic'] === null ? $dash : '#' . $summary['average_organic'] }}</div>
-                </div>
-            </x-card>
-        </div>
-        <div class="col-6 col-lg">
-            <x-card :padded="true" class="rank-summary-card h-100">
-                <div class="rank-summary-inner">
-                    <span class="rank-summary-label">On page one</span>
-                    <div class="rank-summary-value" data-role="summary-top10">{{ $summary['top10'] ?? $dash }}</div>
-                </div>
-            </x-card>
-        </div>
-        <div class="col-6 col-lg">
-            <x-card :padded="true" class="rank-summary-card h-100">
-                <div class="rank-summary-inner">
-                    <span class="rank-summary-label">Improved</span>
-                    <div class="rank-summary-value" data-role="summary-improved">{{ $summary['improved'] ?? $dash }}</div>
-                </div>
-            </x-card>
-        </div>
-        <div class="col-12 col-lg">
-            <x-card :padded="true" class="rank-summary-card h-100">
-                <div class="rank-summary-inner">
-                    <span class="rank-summary-label">Local top 3</span>
-                    <div class="rank-summary-value" data-role="summary-local-top3">{{ $summary['local_top3'] ?? $dash }}</div>
-                </div>
-            </x-card>
-        </div>
-    </div>
-    @if(! empty($summary['basis']))
-        <p class="text-caption mb-2" data-role="summary-basis">Based on {{ $summary['basis']['fresh'] }} of {{ $summary['basis']['checked'] }} {{ $summary['basis']['checked'] === 1 ? 'keyword' : 'keywords' }} checked recently.</p>
-    @endif
-    @endif
+                @if($canTrackRank)
+                    <form method="POST" action="{{ route('customer.workspaces.businesses.seo.keywords.rank.track-suggestions', [$workspaceUid, $businessUid]) }}" data-role="track-all-form">
+                        @csrf
+                        <input type="hidden" name="search_location_code" value="" data-role="track-all-code">
+                        <button class="kw-btn" type="submit" data-role="track-all">Track all {{ count($suggestions) }} {{ count($suggestions) === 1 ? 'suggestion' : 'suggestions' }}</button>
+                    </form>
+                @endif
+            </section>
+        @endif
 
-    <div class="row g-2 align-items-start">
-        <div class="{{ $canAdd ? 'col-xl-8' : 'col-12' }}">
-    <x-card :padded="false" class="mb-2" data-section="keywords">
-        <div class="px-2 pt-2 pb-1"><p class="text-section-heading mb-0">Tracked keywords</p></div>
-        @if(count($rows) === 0)
-            <div class="px-2 pb-2">
-                <p class="mb-0 text-muted" data-role="no-keywords">You have no keywords yet.</p>
+        {{-- ============ CHECKING / RESULTS: summary cards ============ --}}
+        @if($showRank && ! $startState)
+            @php
+                $bestLocal = $summary['best_local'] ?? null;
+                $bestOrganic = $summary['best_organic'] ?? null;
+                $checkingNote = $checkingState ? 'checking…' : null;
+            @endphp
+            <div class="kw-kpis" data-section="rank-summary">
+                <div class="kw-kpi">
+                    <span>Tracking</span>
+                    <b data-role="summary-tracked">{{ $summary['slots_used'] }}@if($summary['slots_limit'] !== null) <span class="kw-of">/ {{ $summary['slots_limit'] }}</span>@endif</b>
+                    <small>{{ $summary['slots_used'] === 1 ? 'keyword' : 'keywords' }}</small>
+                </div>
+                <div class="kw-kpi">
+                    <span>In Maps top 3</span>
+                    <b data-role="summary-local-top3">{{ $checkingState ? $dash : ($summary['local_top3'] ?? $dash) }}</b>
+                    <small>{{ $checkingNote ?? 'the spots most people click' }}</small>
+                </div>
+                <div class="kw-kpi">
+                    <span>Best Maps rank</span>
+                    <b data-role="summary-best-local">{{ $bestLocal ? '#' . $bestLocal['position'] : $dash }}</b>
+                    <small>{{ $checkingNote ?? ($bestLocal['phrase'] ?? 'no Maps result yet') }}</small>
+                </div>
+                @if($bestOrganic !== null)
+                    <div class="kw-kpi">
+                        <span>Best Google search rank</span>
+                        <b data-role="summary-best-organic">#{{ $bestOrganic['position'] }}</b>
+                        <small>{{ $bestOrganic['phrase'] }}</small>
+                    </div>
+                @elseif($domainBlocked)
+                    <div class="kw-kpi is-needs">
+                        <span>Google search rank</span>
+                        <b data-role="summary-best-organic">Needs your domain</b>
+                        <small><a href="{{ $domainUrl }}">Connect domain</a></small>
+                    </div>
+                @else
+                    <div class="kw-kpi">
+                        <span>Google search rank</span>
+                        <b data-role="summary-best-organic">{{ $dash }}</b>
+                        <small>{{ $checkingNote ?? 'no search result yet' }}</small>
+                    </div>
+                @endif
             </div>
-        @else
-            <div class="table-responsive">
-                <table class="table ds-table align-middle mb-0 rank-table" data-role="rank-table">
-                    <thead>
-                        <tr>
-                            @foreach($headers as $header)
-                                <th class="text-label text-uppercase text-muted">{{ $header }}</th>
-                            @endforeach
-                        </tr>
-                    </thead>
-                    <tbody>
-                        @foreach($rows as $row)
-                            @php
-                                $keyword = $row['keyword'];
-                                $target = $row['target'];
-                                $state = $row['state'];
-                                $result = $coverage[$keyword->id] ?? null;
-                                $locationOpen = $keyword->location === null || $keyword->location->isActive();
-                                // The detail page is behind the rank-tracking entitlement (404 without it), so a
-                                // Business that has lost it sees its stored results as plain text: no link, no clickable row.
-                                $detailUrl = ($target !== null && $rankPlan !== null) ? route('customer.workspaces.businesses.seo.rank-targets.show', [$workspaceUid, $businessUid, $target->uid]) : null;
-                                $organicObs = $row['organic'];
-                                $barPct = ($organicObs && $organicObs->status === \App\Enums\Seo\SeoRankObservationStatus::Found && $organicObs->position !== null)
-                                    ? max(4, min(100, 101 - (int) $organicObs->position)) : null;
-                            @endphp
-                            <tr data-role="keyword" data-uid="{{ $keyword->uid }}" data-state="{{ $keyword->lifecycle_state->value }}" data-rank-state="{{ $state }}" @if($detailUrl) data-href="{{ $detailUrl }}" @endif>
-                                <td data-label="Keyword">
-                                    @if($detailUrl)
-                                        <a href="{{ $detailUrl }}" class="fw-bold" data-role="keyword-phrase">{{ $keyword->phrase }}</a>
-                                    @else
-                                        <strong data-role="keyword-phrase">{{ $keyword->phrase }}</strong>
-                                    @endif
-                                    <span class="d-block mt-25">
-                                        @if($state === SeoRankDashboardReader::STATE_UNTRACKED)
-                                            <x-badge variant="neutral" data-role="keyword-state">SEO target</x-badge>
-                                        @elseif($state === SeoRankDashboardReader::STATE_PAUSED)
-                                            <x-badge variant="neutral" data-role="keyword-state">Rank tracking stopped</x-badge>
+            @if(! empty($summary['basis']))
+                <p class="kw-mut mb-0" data-role="summary-basis">Based on {{ $summary['basis']['fresh'] }} of {{ $summary['basis']['checked'] }} {{ $summary['basis']['checked'] === 1 ? 'keyword' : 'keywords' }} checked recently.</p>
+            @endif
+
+            @if($checkingState)
+                <div class="kw-banner" data-role="checking-banner" role="status">
+                    <svg class="kw-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 0 0-14.500-4.500L4 8M4 4v4h4M4 13a8 8 0 0 0 14.500 4.500L20 16M20 20v-4h-4"></path></svg>
+                    <span style="flex: 1">Checking your first rankings — usually takes a few minutes. You can leave this page.</span>
+                </div>
+            @endif
+
+            @if($domainBlocked)
+                <div class="kw-callout" data-role="domain-callout">
+                    <svg class="kw-ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.500"></circle><path d="M3.500 12h17M12 3.500c2.800 2.500 2.800 14.500 0 17M12 3.500c-2.800 2.500-2.800 14.500 0 17"></path></svg>
+                    <span><b>Publish your website on your domain</b> to see where it ranks in normal Google results.</span>
+                    <a class="kw-link" href="{{ $domainUrl }}" style="font-size: 13.5px">Connect domain</a>
+                </div>
+            @endif
+        @endif
+
+        {{-- ============ START: suggestions list ============ --}}
+        @if($startState && $canAdd && count($suggestions) > 0)
+            @include('customer.business.seo._keyword-suggestions', ['suggestions' => $suggestions, 'canTrackRank' => $canTrackRank])
+        @endif
+
+        {{-- ============ CHECKING / RESULTS: tracked keywords ============ --}}
+        @if(! $startState)
+        @php
+            $headers = $showRank
+                ? [['Keyword', 'Keyword'], ['Organic', 'Google search'], ['Local', 'Google Maps'], ['Change', 'Change'], ['Website', 'Website'], ['Actions', '']]
+                : [['Keyword', 'Keyword'], ['Website', 'Website'], ['Actions', '']];
+        @endphp
+        <section class="kw-card" style="overflow: hidden" data-section="keywords">
+            <div class="kw-card-head"><b>Tracked keywords</b>@if($showRank)<span class="kw-mut">Ranks update automatically</span>@endif</div>
+            @if(count($rows) === 0)
+                <div class="px-2 pb-2">
+                    <p class="mb-0 text-muted" data-role="no-keywords">You have no keywords yet.</p>
+                </div>
+            @else
+                <div class="table-responsive">
+                    <table class="kw-table align-middle" data-role="rank-table">
+                        <thead>
+                            <tr>
+                                @foreach($headers as [$label, $title])
+                                    <th>{{ $title }}@if($title === '')<span class="visually-hidden">Actions</span>@endif</th>
+                                @endforeach
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach($rows as $row)
+                                @php
+                                    $keyword = $row['keyword'];
+                                    $target = $row['target'];
+                                    $state = $row['state'];
+                                    $result = $coverage[$keyword->id] ?? null;
+                                    $locationOpen = $keyword->location === null || $keyword->location->isActive();
+                                    // The detail page is behind the rank-tracking entitlement (404 without it), so a
+                                    // Business that has lost it sees its stored results as plain text: no link, no clickable row.
+                                    $detailUrl = ($target !== null && $rankPlan !== null) ? route('customer.workspaces.businesses.seo.rank-targets.show', [$workspaceUid, $businessUid, $target->uid]) : null;
+                                    $hidden = $loop->index >= $visibleLimit;
+                                @endphp
+                                <tr data-role="keyword" data-uid="{{ $keyword->uid }}" data-state="{{ $keyword->lifecycle_state->value }}" data-rank-state="{{ $state }}" @if($detailUrl) data-href="{{ $detailUrl }}" @endif @if($hidden) data-extra="1" hidden @endif>
+                                    <td data-label="Keyword" data-title="Keyword">
+                                        @if($detailUrl)
+                                            <a href="{{ $detailUrl }}" class="kw-name" data-role="keyword-phrase">{{ $keyword->phrase }}</a>
                                         @else
-                                            <x-badge variant="accent" data-role="keyword-state">Rank tracked</x-badge>
+                                            <span class="kw-name" data-role="keyword-phrase">{{ $keyword->phrase }}</span>
                                         @endif
-                                        @if($row['unavailable'] ?? false)
-                                            <x-badge variant="warning" data-role="rank-unavailable">Temporarily unavailable</x-badge>
-                                        @endif
-                                    </span>
-                                    <span class="text-caption d-block" data-role="keyword-location">{{ $keyword->location?->name ?? 'Whole business' }}</span>
-                                    @if($showRank)
-                                        @php $rowLocation = $row['location_label'] && $sharedLocation === null ? $row['location_label'] : null; @endphp
-                                        @if($rowLocation)
-                                            <span class="text-caption d-block" data-role="search-location">{{ $rowLocation }}</span>
-                                        @endif
-                                        @if($row['last_checked_at'])
-                                            <span class="text-caption d-block" data-role="last-checked">
-                                                @if(($row['stale_days'] ?? null) !== null)
-                                                    {{-- Past the freshness window: the position is kept visible but labelled. --}}
-                                                    <span data-role="rank-stale">{{ $row['stale_days'] }} {{ $row['stale_days'] === 1 ? 'day' : 'days' }} ago — may be out of date</span>
-                                                @else
-                                                    Checked {{ $row['last_checked_at']->isToday() ? 'today' : $row['last_checked_at']->diffForHumans() }}
+                                        <span class="kw-sub2">
+                                            <span data-role="keyword-location">{{ $keyword->location?->name ?? 'Whole business' }}</span>
+                                            @if($showRank)
+                                                @php $rowLocation = $row['location_label'] && $sharedLocation === null ? $row['location_label'] : null; @endphp
+                                                @if($rowLocation)
+                                                    · <span data-role="search-location">{{ $rowLocation }}</span>
                                                 @endif
-                                            </span>
-                                        @endif
-                                    @endif
-                                </td>
-                                @if($showRank)
-                                <td data-label="Organic">
-                                    @include('customer.business.seo._rank-badge', ['obs' => $row['organic'], 'kind' => 'organic', 'state' => $state, 'blockedReason' => ($row['organic_blocked'] ?? false) ? SeoRankDashboardReader::NO_DOMAIN_REASON : null])
-                                    @if($barPct !== null)<div class="rank-pos-bar" aria-hidden="true"><i style="width: {{ $barPct }}%"></i></div>@endif
-                                </td>
-                                <td data-label="Local">@include('customer.business.seo._rank-badge', ['obs' => $row['local'], 'kind' => 'local', 'state' => $state, 'blockedReason' => ($row['local_blocked'] ?? false) ? SeoRankDashboardReader::NO_IDENTITY_REASON : null])</td>
-                                <td data-label="Change">@include('customer.business.seo._rank-change', ['change' => $row['change']])</td>
-                                @endif
-                                <td data-label="Website">
-                                    @if($result !== null)
-                                        <span data-role="keyword-coverage" data-status="{{ $result->status->value }}">
-                                            @if($result->status === SeoKeywordCoverageStatus::Covered)
-                                                <x-badge variant="success">Covered</x-badge>
-                                            @elseif($result->status === SeoKeywordCoverageStatus::NotCovered)
-                                                <x-badge variant="warning">Missing</x-badge>
-                                            @elseif($result->status === SeoKeywordCoverageStatus::OnlyOnHiddenPages)
-                                                <x-badge variant="warning">Only on pages hidden from search</x-badge>
-                                            @else
-                                                <x-badge variant="neutral">No published website</x-badge>
+                                                @if($row['last_checked_at'])
+                                                    · <span data-role="last-checked">
+                                                        @if(($row['stale_days'] ?? null) !== null)
+                                                            {{-- Past the freshness window: the position is kept visible but labelled. --}}
+                                                            <span data-role="rank-stale">{{ $row['stale_days'] }} {{ $row['stale_days'] === 1 ? 'day' : 'days' }} ago — may be out of date</span>
+                                                        @else
+                                                            checked {{ $row['last_checked_at']->isToday() ? 'today' : $row['last_checked_at']->diffForHumans() }}
+                                                        @endif
+                                                    </span>
+                                                @endif
                                             @endif
-                                            <span class="visually-hidden">{{ $result->status->label() }}</span>
                                         </span>
-                                        @if($result->status === SeoKeywordCoverageStatus::Covered)
-                                            <details class="mt-25">
-                                                <summary class="text-caption">Found in</summary>
-                                                <p class="text-caption mb-0" data-role="keyword-coverage-detail">
-                                                    In {{ $result->titlePages }} {{ $result->titlePages === 1 ? 'page title' : 'page titles' }},
-                                                    {{ $result->descriptionPages }} {{ $result->descriptionPages === 1 ? 'description' : 'descriptions' }} and
-                                                    {{ $result->bodyPages }} {{ $result->bodyPages === 1 ? 'page' : 'pages' }} of text
-                                                    (of {{ $result->pagesTotal }} published {{ $result->pagesTotal === 1 ? 'page' : 'pages' }}).
-                                                </p>
-                                            </details>
-                                        @endif
-                                    @else
-                                        <span class="text-muted">{{ $dash }}</span>
-                                    @endif
-                                </td>
-                                <td data-label="Actions">
-                                    @can('manage_seo')
-                                        @php
-                                            $canTrack = $rankPlan !== null && ! $viewingAsClient;
-                                            $scopeDefault = $keyword->location ? ($rankDefaults['locations'][$keyword->location->uid] ?? null) : ($rankDefaults['business'] ?? null);
-                                            $slotsSentence = $summary['slots_used'] . ' of ' . ($rankPlan?->trackedTargets) . ' rank-tracked keywords are in use.';
-                                        @endphp
-                                        <div class="d-flex align-items-center gap-50 flex-nowrap row-actions">
-                                            {{-- Starting, resuming and stopping paid rank checks is closed while viewing as a client.
-                                                 A keyword on an archived Location can still be STOPPED (not started, resumed or edited). --}}
-                                            @if($canTrack && ($locationOpen || ! in_array($state, [SeoRankDashboardReader::STATE_UNTRACKED, SeoRankDashboardReader::STATE_PAUSED], true)))
-                                                @if($state === SeoRankDashboardReader::STATE_UNTRACKED && ! $slotsFull)
-                                                    @if($scopeDefault)
-                                                        <form method="POST" action="{{ route('customer.workspaces.businesses.seo.keywords.rank.track', [$workspaceUid, $businessUid, $keyword->uid]) }}">
-                                                            @csrf
-                                                            <button class="btn btn-sm btn-outline-primary text-nowrap" type="submit" data-role="rank-start">Start tracking</button>
-                                                        </form>
-                                                    @else
-                                                        <button class="btn btn-sm btn-outline-primary text-nowrap" type="button" data-role="rank-start" data-rank-dialog="track" data-action="{{ route('customer.workspaces.businesses.seo.keywords.rank.track', [$workspaceUid, $businessUid, $keyword->uid]) }}">Start tracking</button>
-                                                    @endif
-                                                @elseif($state === SeoRankDashboardReader::STATE_UNTRACKED || ($state === SeoRankDashboardReader::STATE_PAUSED && $slotsFull))
-                                                    <span class="text-caption" data-role="rank-slots-full" title="{{ $slotsSentence }}">Slots full<span class="visually-hidden"> — {{ $slotsSentence }}</span></span>
-                                                @elseif($state === SeoRankDashboardReader::STATE_PAUSED)
-                                                    <form method="POST" action="{{ route('customer.workspaces.businesses.seo.rank-targets.restart', [$workspaceUid, $businessUid, $target->uid]) }}">
-                                                        @csrf
-                                                        <button class="btn btn-sm btn-outline-primary text-nowrap" type="submit" data-role="rank-restart">Start tracking</button>
-                                                    </form>
-                                                @else
-                                                    <form method="POST" action="{{ route('customer.workspaces.businesses.seo.rank-targets.stop', [$workspaceUid, $businessUid, $target->uid]) }}">
-                                                        @csrf
-                                                        <button class="btn btn-sm btn-outline-secondary text-nowrap" type="submit" data-role="rank-stop">Stop tracking</button>
-                                                    </form>
-                                                @endif
+                                        <span class="d-flex flex-wrap gap-50 mt-25">
+                                            @if($state === SeoRankDashboardReader::STATE_UNTRACKED)
+                                                <span class="kw-rk kw-rk-neutral" style="height:22px;font-size:11.5px" data-role="keyword-state">SEO target</span>
+                                            @elseif($state === SeoRankDashboardReader::STATE_PAUSED)
+                                                <span class="kw-rk kw-rk-neutral" style="height:22px;font-size:11.5px" data-role="keyword-state">Rank tracking stopped</span>
                                             @endif
-                                            @if($locationOpen)
-                                                <div class="dropdown">
-                                                    <button class="btn btn-sm btn-outline-secondary px-75" type="button" data-bs-toggle="dropdown" aria-expanded="false" aria-label="More actions for {{ $keyword->phrase }}" data-role="keyword-menu">&#8943;</button>
-                                                    <ul class="dropdown-menu dropdown-menu-end">
+                                            @if($row['unavailable'] ?? false)
+                                                <span class="kw-rk kw-rk-amber" style="height:22px;font-size:11.5px" data-role="rank-unavailable">Temporarily unavailable</span>
+                                            @endif
+                                        </span>
+                                    </td>
+                                    @if($showRank)
+                                    <td data-label="Organic" data-title="Google search">
+                                        @include('customer.business.seo._rank-pill', ['obs' => $row['organic'], 'kind' => 'organic', 'state' => $state, 'blockedReason' => ($row['organic_blocked'] ?? false) ? SeoRankDashboardReader::NO_DOMAIN_REASON : null, 'blockedLabel' => 'Needs domain'])
+                                    </td>
+                                    <td data-label="Local" data-title="Google Maps">@include('customer.business.seo._rank-pill', ['obs' => $row['local'], 'kind' => 'local', 'state' => $state, 'blockedReason' => ($row['local_blocked'] ?? false) ? SeoRankDashboardReader::NO_IDENTITY_REASON : null, 'blockedLabel' => 'Needs domain or phone'])</td>
+                                    <td data-label="Change" data-title="Change">@include('customer.business.seo._rank-change', ['change' => $row['change']])</td>
+                                    @endif
+                                    <td data-label="Website" data-title="Website">
+                                        @if($result !== null)
+                                            <span data-role="keyword-coverage" data-status="{{ $result->status->value }}">
+                                                @if($result->status === SeoKeywordCoverageStatus::Covered)
+                                                    <span class="kw-rk kw-rk-green">Covered</span>
+                                                @elseif($result->status === SeoKeywordCoverageStatus::NotCovered)
+                                                    <span class="kw-rk kw-rk-amber">Missing</span>
+                                                @elseif($result->status === SeoKeywordCoverageStatus::OnlyOnHiddenPages)
+                                                    <span class="kw-rk kw-rk-amber">Only on pages hidden from search</span>
+                                                @else
+                                                    <span class="kw-rk kw-rk-neutral">No published website</span>
+                                                @endif
+                                                <span class="visually-hidden">{{ $result->status->label() }}</span>
+                                            </span>
+                                            @if($result->status === SeoKeywordCoverageStatus::Covered)
+                                                <details class="mt-25">
+                                                    <summary class="kw-mut">Found in</summary>
+                                                    <p class="kw-mut mb-0" data-role="keyword-coverage-detail">
+                                                        In {{ $result->titlePages }} {{ $result->titlePages === 1 ? 'page title' : 'page titles' }},
+                                                        {{ $result->descriptionPages }} {{ $result->descriptionPages === 1 ? 'description' : 'descriptions' }} and
+                                                        {{ $result->bodyPages }} {{ $result->bodyPages === 1 ? 'page' : 'pages' }} of text
+                                                        (of {{ $result->pagesTotal }} published {{ $result->pagesTotal === 1 ? 'page' : 'pages' }}).
+                                                    </p>
+                                                </details>
+                                            @endif
+                                        @else
+                                            <span class="kw-mut">{{ $dash }}</span>
+                                        @endif
+                                    </td>
+                                    <td data-label="Actions">
+                                        @can('manage_seo')
+                                            @php
+                                                $canTrack = $canTrackRank;
+                                                $scopeDefault = $keyword->location ? ($rankDefaults['locations'][$keyword->location->uid] ?? null) : ($rankDefaults['business'] ?? null);
+                                                $slotsSentence = $summary['slots_used'] . ' of ' . ($rankPlan?->trackedTargets) . ' rank-tracked keywords are in use.';
+                                                // Starting, resuming and stopping paid rank checks is closed while viewing as a client.
+                                                // A keyword on an archived Location can still be STOPPED (not started, resumed or edited).
+                                                $rankActionsOpen = $canTrack && ($locationOpen || ! in_array($state, [SeoRankDashboardReader::STATE_UNTRACKED, SeoRankDashboardReader::STATE_PAUSED], true));
+                                                $hasMenu = $rankActionsOpen || $locationOpen;
+                                            @endphp
+                                            @if($hasMenu)
+                                            <div class="dropdown row-actions">
+                                                <button class="kw-more" type="button" data-bs-toggle="dropdown" aria-expanded="false" aria-label="More actions for {{ $keyword->phrase }}" data-role="keyword-menu"><svg class="kw-ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1.300"></circle><circle cx="12" cy="12" r="1.300"></circle><circle cx="19" cy="12" r="1.300"></circle></svg></button>
+                                                <ul class="dropdown-menu dropdown-menu-end">
+                                                    @if($rankActionsOpen)
+                                                        @if($state === SeoRankDashboardReader::STATE_UNTRACKED && ! $slotsFull)
+                                                            <li>
+                                                                @if($scopeDefault)
+                                                                    <form method="POST" action="{{ route('customer.workspaces.businesses.seo.keywords.rank.track', [$workspaceUid, $businessUid, $keyword->uid]) }}">
+                                                                        @csrf
+                                                                        <button class="dropdown-item" type="submit" data-role="rank-start">Start tracking</button>
+                                                                    </form>
+                                                                @else
+                                                                    <button class="dropdown-item" type="button" data-role="rank-start" data-rank-dialog="track" data-action="{{ route('customer.workspaces.businesses.seo.keywords.rank.track', [$workspaceUid, $businessUid, $keyword->uid]) }}">Start tracking</button>
+                                                                @endif
+                                                            </li>
+                                                        @elseif($state === SeoRankDashboardReader::STATE_UNTRACKED || ($state === SeoRankDashboardReader::STATE_PAUSED && $slotsFull))
+                                                            <li><span class="dropdown-item-text text-muted" data-role="rank-slots-full" title="{{ $slotsSentence }}">Slots full<span class="visually-hidden"> — {{ $slotsSentence }}</span></span></li>
+                                                        @elseif($state === SeoRankDashboardReader::STATE_PAUSED)
+                                                            <li>
+                                                                <form method="POST" action="{{ route('customer.workspaces.businesses.seo.rank-targets.restart', [$workspaceUid, $businessUid, $target->uid]) }}">
+                                                                    @csrf
+                                                                    <button class="dropdown-item" type="submit" data-role="rank-restart">Start tracking</button>
+                                                                </form>
+                                                            </li>
+                                                        @else
+                                                            <li>
+                                                                <form method="POST" action="{{ route('customer.workspaces.businesses.seo.rank-targets.stop', [$workspaceUid, $businessUid, $target->uid]) }}">
+                                                                    @csrf
+                                                                    <button class="dropdown-item" type="submit" data-role="rank-stop">Stop tracking</button>
+                                                                </form>
+                                                            </li>
+                                                        @endif
+                                                    @endif
+                                                    @if($locationOpen)
                                                         <li><button class="dropdown-item" type="button" data-role="keyword-edit" data-edit-action="{{ route('customer.workspaces.businesses.seo.keywords.update', [$workspaceUid, $businessUid, $keyword->uid]) }}" data-phrase="{{ $keyword->phrase }}" data-location="{{ $keyword->location?->uid }}">Edit</button></li>
                                                         <li>
                                                             <form method="POST" action="{{ route('customer.workspaces.businesses.seo.keywords.archive', [$workspaceUid, $businessUid, $keyword->uid]) }}">
@@ -317,34 +428,39 @@
                                                                 <button class="dropdown-item" type="submit" data-role="keyword-archive">Archive</button>
                                                             </form>
                                                         </li>
-                                                    </ul>
-                                                </div>
+                                                    @endif
+                                                </ul>
+                                            </div>
                                             @endif
-                                        </div>
-                                    @endcan
-                                </td>
-                            </tr>
-                        @endforeach
-                    </tbody>
-                </table>
-            </div>
-        @endif
-    </x-card>
-        </div>
+                                        @endcan
+                                    </td>
+                                </tr>
+                            @endforeach
+                        </tbody>
+                    </table>
+                </div>
+                @if(count($rows) > $visibleLimit)
+                    <button type="button" class="kw-showall" data-role="show-all" data-count="{{ count($rows) }}">Show all {{ count($rows) }}</button>
+                @endif
+            @endif
+        </section>
 
+        @if($canAdd && count($suggestions) > 0)
+            @include('customer.business.seo._keyword-suggestions', ['suggestions' => $suggestions, 'canTrackRank' => $canTrackRank])
+        @endif
+        @endif
+
+        {{-- ============ Add a keyword (every state) ============ --}}
         @can('manage_seo')
-        <div class="col-xl-4">
-            <div class="keyword-side">
-            <x-card :padded="true" class="mb-2" data-section="add-keyword">
-                <p class="text-section-heading mb-1">Add a keyword</p>
-                <form method="POST" action="{{ route('customer.workspaces.businesses.seo.keywords.store', [$workspaceUid, $businessUid]) }}" data-role="keyword-add-form">
+            <section class="kw-card" data-section="add-keyword">
+                <form method="POST" action="{{ route('customer.workspaces.businesses.seo.keywords.store', [$workspaceUid, $businessUid]) }}" data-role="keyword-add-form" class="kw-add">
                     @csrf
-                    <div class="mb-1">
-                        <label class="form-label" for="keyword-phrase">Keyword</label>
-                        <input class="form-control" type="text" id="keyword-phrase" name="phrase" maxlength="120" value="{{ old('phrase') }}" placeholder="photo booth rental" required>
+                    <div class="kw-f" style="flex: 2 1 260px">
+                        <label for="keyword-phrase">Add a keyword</label>
+                        <input class="form-control" type="text" id="keyword-phrase" name="phrase" maxlength="120" value="{{ old('phrase') }}" placeholder="e.g. photo booth rental" required>
                     </div>
-                    <div class="mb-1">
-                        <label class="form-label" for="keyword-location">Scope</label>
+                    <div class="kw-f" style="flex: 1 1 180px">
+                        <label for="keyword-location">For</label>
                         <select class="form-select" id="keyword-location" name="location_uid">
                             <option value="">Whole business</option>
                             @foreach($locations as $location)
@@ -352,70 +468,37 @@
                             @endforeach
                         </select>
                     </div>
+                    <button class="kw-btn" type="submit">{{ $canTrackRank ? 'Track keyword' : 'Add keyword' }}</button>
 
-                    @if($rankPlan !== null && ! $viewingAsClient)
-                        <div class="mb-1" data-section="add-rank-tracking">
-                            <div class="d-flex justify-content-between align-items-center">
-                                <div class="form-check mb-0">
-                                    <input type="hidden" name="track_rank" value="0">
-                                    <input class="form-check-input" type="checkbox" id="keyword-track-rank" name="track_rank" value="1" data-role="track-rank-toggle" @checked(! $slotsFull && old('track_rank', '1') === '1') @disabled($slotsFull)>
-                                    <label class="form-check-label" for="keyword-track-rank">Track Google rank</label>
-                                </div>
-                                <span class="text-caption">{{ $summary['slots_used'] }} / {{ $rankPlan->trackedTargets }}</span>
+                    <div class="kw-foot" data-section="add-rank-tracking">
+                        @if($canTrackRank)
+                            <span class="kw-mut" data-role="slots-used">{{ $summary['slots_used'] }} of {{ $rankPlan->trackedTargets }} used · rank is checked automatically</span>
+                            <div class="form-check">
+                                <input type="hidden" name="track_rank" value="0">
+                                <input class="form-check-input" type="checkbox" id="keyword-track-rank" name="track_rank" value="1" data-role="track-rank-toggle" @checked(! $slotsFull && old('track_rank', '1') === '1') @disabled($slotsFull)>
+                                <label class="form-check-label" for="keyword-track-rank">Track Google rank</label>
                             </div>
                             @if($slotsFull)
-                                <p class="text-caption mb-0 mt-50" data-role="slots-full-notice">
+                                <span class="kw-mut" data-role="slots-full-notice">
                                     {{ $summary['slots_used'] }} of {{ $rankPlan->trackedTargets }} rank-tracked keywords are in use. Stop tracking one to free a slot.
-                                </p>
+                                </span>
                             @else
                                 {{-- The existing rank location (its keyword Location's first) is used silently; the chooser
                                      opens only when tracking is on and there is none yet. --}}
                                 <input type="hidden" name="search_location_code" value="" data-role="add-location-code">
-                                <p class="text-caption mb-0 mt-50 d-none" data-role="add-tracking-from">
+                                <span class="kw-mut d-none" data-role="add-tracking-from">
                                     Tracking from: <span data-role="add-location-label"></span> &middot;
                                     <button class="btn btn-link btn-sm p-0 align-baseline" type="button" data-role="change-location">Change</button>
-                                </p>
+                                </span>
                             @endif
-                        </div>
-                    @endif
-
-                    <div class="d-grid"><button class="btn btn-primary" type="submit">Add keyword</button></div>
+                        @endif
+                    </div>
                 </form>
-            </x-card>
-
-            {{-- Ideas from your business type's keyword strategy, filled in ONLY with your own services and
-                 cities. Nothing is saved until "Add" is pressed (an ordinary keyword add, with no rank tracking). --}}
-            @if(count($suggestions) > 0)
-                <x-card :padded="true" class="mb-2" data-section="suggested-keywords">
-                    <p class="text-section-heading mb-25">Suggested for you</p>
-                    <p class="text-caption mb-1">Based on your services and locations.</p>
-                    <ul class="list-unstyled mb-0">
-                        @foreach($suggestions as $suggestion)
-                            <li class="py-50 d-flex justify-content-between align-items-center gap-1 @unless($loop->last) border-bottom @endunless" data-role="suggested-keyword" data-phrase="{{ $suggestion->phrase }}">
-                                <div>
-                                    <strong data-role="suggested-phrase">{{ $suggestion->phrase }}</strong>
-                                    <span class="text-caption d-block">{{ $suggestion->intentLabel() }}@if($suggestion->locationName !== null) · {{ $suggestion->locationName }}@endif</span>
-                                </div>
-                                <form method="POST" action="{{ route('customer.workspaces.businesses.seo.keywords.store', [$workspaceUid, $businessUid]) }}">
-                                    @csrf
-                                    <input type="hidden" name="phrase" value="{{ $suggestion->phrase }}">
-                                    @if($suggestion->locationUid !== null)
-                                        <input type="hidden" name="location_uid" value="{{ $suggestion->locationUid }}">
-                                    @endif
-                                    <button class="btn btn-sm btn-outline-primary" type="submit" data-role="suggestion-add">Add</button>
-                                </form>
-                            </li>
-                        @endforeach
-                    </ul>
-                </x-card>
-            @endif
-            </div>
-        </div>
+            </section>
         @endcan
-    </div>
 
     @if($archived->isNotEmpty())
-        <x-card :padded="true" class="mb-2" data-section="archived-keywords">
+        <x-card :padded="true" data-section="archived-keywords">
             <p class="text-section-heading mb-1">Archived keywords</p>
             <ul class="list-unstyled mb-0">
                 @foreach($archived as $keyword)
@@ -441,6 +524,8 @@
             </ul>
         </x-card>
     @endif
+
+    </div>
 
     {{-- One chooser for every place that needs a search location (Add keyword, Start tracking). --}}
     @can('manage_seo')
@@ -641,6 +726,46 @@
                         // Never trap the customer: save the keyword with rank tracking switched off.
                         toggle.checked = false; render(); addForm.submit();
                     });
+                });
+            }
+
+            // "Track" on a suggestion: save it AND track it from the existing default location; with none, choose one
+            // (or save it without tracking). Without rank tracking the form is a plain add.
+            function hasAnyDefault() {
+                return !!(defaults.business || Object.keys(defaults.locations || {}).some(function (k) { return defaults.locations[k]; }));
+            }
+            document.querySelectorAll('[data-role="suggestion-form"]').forEach(function (form) {
+                var code = form.querySelector('[data-role="suggestion-location-code"]');
+                if (!code) { return; }
+                form.addEventListener('submit', function (e) {
+                    if (code.value) { return; }
+                    var uid = form.getAttribute('data-location-uid');
+                    var loc = (uid && defaults.locations[uid]) || defaults.business || null;
+                    if (loc) { code.value = loc.code; return; }
+                    e.preventDefault();
+                    choose(function (c) { code.value = c.code; form.submit(); }, function () {
+                        form.querySelector('[name="track_rank"]').value = '0'; form.submit();
+                    });
+                });
+            });
+
+            // Track all suggestions: the server recomputes the list; we only supply a location when none exists yet.
+            var trackAll = document.querySelector('[data-role="track-all-form"]');
+            if (trackAll) {
+                trackAll.addEventListener('submit', function (e) {
+                    var code = trackAll.querySelector('[data-role="track-all-code"]');
+                    if (code.value || hasAnyDefault()) { return; }
+                    e.preventDefault();
+                    choose(function (c) { code.value = c.code; trackAll.submit(); });
+                });
+            }
+
+            // Show all N: reveal the rows beyond the first few.
+            var showAll = document.querySelector('[data-role="show-all"]');
+            if (showAll) {
+                showAll.addEventListener('click', function () {
+                    document.querySelectorAll('tr[data-extra]').forEach(function (tr) { tr.hidden = false; });
+                    showAll.remove();
                 });
             }
 

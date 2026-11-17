@@ -76,6 +76,18 @@ class SeoRankUxTest extends TestCase
         return $out;
     }
 
+    /** @return list<string> */
+    private function attrs(string $html, string $query): array
+    {
+        $out = [];
+
+        foreach ($this->xpath($html)->query($query) as $node) {
+            $out[] = (string) $node->nodeValue;
+        }
+
+        return $out;
+    }
+
     private function role(string $html, string $role): array
     {
         return $this->texts($html, "//*[@data-role='{$role}']");
@@ -233,9 +245,11 @@ class SeoRankUxTest extends TestCase
         $html = $this->index($workspace, $business);
         $organic = $this->cell($html, $keyword, 'Organic');
 
-        $this->assertSame(SeoRankDashboardReader::NO_DOMAIN_REASON, $organic);
+        // The cell says it in two words; the full reason is its tooltip.
+        $this->assertSame('Needs domain', $organic);
+        $this->assertSame([SeoRankDashboardReader::NO_DOMAIN_REASON], $this->attrs($html, "//tr[@data-uid='{$keyword->uid}']/td[@data-label='Organic']//*[@data-role='rank-needs-identity']/@title"));
         $this->assertStringNotContainsString('Waiting for first check', $organic);
-        $this->assertNotSame(SeoRankDashboardReader::NO_DOMAIN_REASON, $this->cell($html, $keyword, 'Local'), 'A phone is enough for the local check.');
+        $this->assertNotSame('Needs domain or phone', $this->cell($html, $keyword, 'Local'), 'A phone is enough for the local check.');
 
         $detail = (string) $this->get($this->u('rank-targets.show', $workspace, $business, $target->uid))->assertOk()->getContent();
         $this->assertStringContainsString('Connect your website domain so we can find your site in results.', $detail);
@@ -251,8 +265,10 @@ class SeoRankUxTest extends TestCase
 
         $html = $this->index($workspace, $business);
 
-        $this->assertSame(SeoRankDashboardReader::NO_DOMAIN_REASON, $this->cell($html, $keyword, 'Organic'));
-        $this->assertSame(SeoRankDashboardReader::NO_IDENTITY_REASON, $this->cell($html, $keyword, 'Local'));
+        $this->assertSame('Needs domain', $this->cell($html, $keyword, 'Organic'));
+        $this->assertSame('Needs domain or phone', $this->cell($html, $keyword, 'Local'));
+        $this->assertSame([SeoRankDashboardReader::NO_DOMAIN_REASON], $this->attrs($html, "//tr[@data-uid='{$keyword->uid}']/td[@data-label='Organic']//*[@data-role='rank-needs-identity']/@title"));
+        $this->assertSame([SeoRankDashboardReader::NO_IDENTITY_REASON], $this->attrs($html, "//tr[@data-uid='{$keyword->uid}']/td[@data-label='Local']//*[@data-role='rank-needs-identity']/@title"));
         $this->assertNotEmpty($this->role($this->get($this->u('rank-targets.show', $workspace, $business, $target->uid))->getContent(), 'rank-needs-identity-notice'));
     }
 
