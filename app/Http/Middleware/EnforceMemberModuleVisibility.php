@@ -57,10 +57,12 @@ class EnforceMemberModuleVisibility
      * The modules switched off for this actor in the Workspace this request
      * addresses, read from the CustomerContext ResolveCustomerContext already
      * built from one joined query — so enforcement costs no query of its own.
-     * The route's own {workspaceUid} wins; a route without one uses the Workspace
-     * the context stands in. A Workspace the actor is not a visible member of is
-     * simply absent (nothing to narrow), and the controller's own tenancy step
-     * refuses it as before.
+     * The route's own {workspaceUid} wins. Legacy routes without one have no
+     * authoritative Workspace scope; they are narrowed by the union of hidden
+     * modules across this actor's visible memberships, rather than trusting a
+     * potentially unrelated selected Workspace. Scoped URLs remain independent.
+     * A Workspace the actor is not a visible member of is absent here, and the
+     * controller's own tenancy step still refuses unauthorized resources.
      *
      * @return list<WorkspaceMemberModule>
      */
