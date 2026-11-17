@@ -326,4 +326,59 @@ class ConsultationLandingTemplateTest extends TestCase
         $publish();
         $this->get(route('agency.site.home', $site->public_id))->assertDontSee('data-role="public-scheduler"', false);
     }
+    public function test_consultation_displays_only_approved_agency_testimonials_directly_after_calendar(): void
+    {
+        [$agency, $owner, $type] = $this->agency('Agency Testimonials');
+        $sites = app(AgencySiteManager::class);
+        $this->consultationSite($agency, $owner, $type, 'Free Consultation and Growth Plan', false);
+
+        $sites->save((int) $owner->user_id, $agency, [
+            'consultation.testimonials_title' => 'What clients say',
+            'x.testimonials' => [
+                ['customer_name' => 'Verified Customer', 'business_name' => 'Example Studio', 'quote' => 'We appreciated the consultation.', 'approved' => true, 'visible' => true],
+                ['customer_name' => 'Not Approved', 'quote' => 'Do not publish this.', 'approved' => false, 'visible' => true],
+            ],
+        ]);
+
+        $this->authenticateAs($owner);
+        $preview = $this->get(route('customer.workspaces.agency.site.preview', [
+            'workspaceUid' => $agency->uid, 'page' => 'home',
+        ]))->assertOk()->getContent();
+
+        $hero = strpos($preview, 'data-role="consultation"');
+        $testimonials = strpos($preview, 'data-role="consultation-testimonials"');
+        $this->assertNotFalse($hero);
+        $this->assertNotFalse($testimonials);
+        $this->assertGreaterThan($hero, $testimonials, 'Testimonials appear after the calendar section.');
+        $this->assertStringContainsString('What clients say', $preview);
+        $this->assertStringContainsString('We appreciated the consultation.', $preview);
+        $this->assertStringContainsString('Verified Customer', $preview);
+        $this->assertStringNotContainsString('Do not publish this.', $preview);
+
+        $editor = $this->get(route('customer.workspaces.agency.white-label.show', [
+            'workspaceUid' => $agency->uid, 'tab' => 'landing',
+        ]))->assertOk()->getContent();
+        $this->assertStringContainsString('consultation.testimonials_title', $editor);
+        $this->assertStringContainsString('data-role="callpage-testimonials-slot"', $editor);
+        $this->assertSame(1, substr_count($editor, '<div data-role="shared-testimonials-editor">'), 'Only one shared testimonial editor.');
+        $this->assertSame(1, substr_count($editor, '<div data-scope="testimonials" data-testimonials>'), 'No duplicate testimonial forms.');
+    }
+
+    public function test_consultation_hides_testimonial_section_until_the_agency_approves_a_real_story(): void
+    {
+        [$agency, $owner, $type] = $this->agency('Agency No Testimonials');
+        $sites = app(AgencySiteManager::class);
+        $this->consultationSite($agency, $owner, $type, 'Free Consultation and Growth Plan', false);
+        $sites->save((int) $owner->user_id, $agency, [
+            'x.testimonials' => [
+                ['customer_name' => 'Private Customer', 'quote' => 'Not permitted.', 'approved' => false, 'visible' => true],
+            ],
+        ]);
+
+        $this->authenticateAs($owner);
+        $this->get(route('customer.workspaces.agency.site.preview', [
+            'workspaceUid' => $agency->uid, 'page' => 'home',
+        ]))->assertOk()->assertDontSee('data-role="consultation-testimonials"', false);
+    }
+
 }

@@ -97,6 +97,13 @@
                 </x-card>
             </section>
 
+            <section data-mode-only="callpage" data-callpage-panel="4" data-role="callpage-testimonials" hidden>
+                <x-card title="Customer testimonials">
+                    <p class="text-caption">Your approved customer testimonials appear immediately below the consultation calendar when you publish. Add genuine quotes or videos only with permission; unpublished/unapproved stories stay private.</p>
+                    <div data-role="callpage-testimonials-slot"></div>
+                </x-card>
+            </section>
+
             {{-- ============ 1 · Business & website --}}
             <section data-step-panel="1" {{ $e['step'] === 1 ? '' : 'hidden' }}>
                 <x-card title="Business and website setup">
@@ -209,14 +216,18 @@
                 <x-card title="Customer stories">
                     <p class="text-caption" data-role="testimonial-rule">Only real stories you have permission to publish. Nothing shows until you tick “I have permission”. With none approved, the Customers page and the home section stay hidden.</p>
                     @include('customer.agency.white-label._group', ['group' => $e['groups']['customers'], 'canEdit' => $canEdit])
-                    <h3 class="h6 mt-2">Testimonials</h3>
-                    <div data-scope="testimonials" data-testimonials>
-                        @foreach ($e['testimonials'] as $t)
-                            @include('customer.agency.white-label._testimonial', ['t' => $t, 'canEdit' => $canEdit])
-                        @endforeach
+                    <div data-role="site-testimonials-slot">
+                        <div data-role="shared-testimonials-editor">
+                            <h3 class="h6 mt-2">Testimonials</h3>
+                            <div data-scope="testimonials" data-testimonials>
+                                @foreach ($e['testimonials'] as $t)
+                                    @include('customer.agency.white-label._testimonial', ['t' => $t, 'canEdit' => $canEdit])
+                                @endforeach
+                            </div>
+                            @if ($canEdit)<button type="button" class="btn btn-sm btn-outline-secondary" data-add-testimonial>Add testimonial</button>@endif
+                            <template id="wl-testimonial-template">@include('customer.agency.white-label._testimonial', ['t' => ['customer_name' => '', 'business_name' => '', 'industry' => '', 'quote' => '', 'video' => '', 'featured' => false, 'approved' => false, 'visible' => true], 'canEdit' => true])</template>
+                        </div>
                     </div>
-                    @if ($canEdit)<button type="button" class="btn btn-sm btn-outline-secondary" data-add-testimonial>Add testimonial</button>@endif
-                    <template id="wl-testimonial-template">@include('customer.agency.white-label._testimonial', ['t' => ['customer_name' => '', 'business_name' => '', 'industry' => '', 'quote' => '', 'video' => '', 'featured' => false, 'approved' => false, 'visible' => true], 'canEdit' => true])</template>
                 </x-card>
             </section>
 

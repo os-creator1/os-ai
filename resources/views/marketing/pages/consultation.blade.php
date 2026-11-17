@@ -51,6 +51,40 @@
 </div>
 </div>
 </section>
+
+@php
+    // These are the Agency's real, explicitly approved White Label testimonials;
+    // never fall back to platform/customer stories or generate placeholder endorsements.
+    $stories = $mg->testimonials()['all'] ?? [];
+@endphp
+@if ($stories !== [])
+<section class="sec" data-role="consultation-testimonials" aria-labelledby="consultation-testimonials-title"
+    style="background: #fff; border-top: 1px solid #E7E1DB; padding: 72px 0 84px">
+    <div class="wrap">
+        <div style="max-width: 760px; margin-bottom: 32px">
+            <h2 id="consultation-testimonials-title" class="h2" style="margin: 0">{{ $c['testimonials_title'] ?? 'What our customers say' }}</h2>
+        </div>
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 290px), 1fr)); gap: 20px">
+            @foreach ($stories as $story)
+                <article style="min-width: 0; padding: 24px; border: 1px solid #E7E1DB; border-radius: 16px; background: #FAF8F6; display: flex; flex-direction: column; gap: 16px">
+                    @if ($story['youtubeId'])
+                        @include('marketing.partials.video', ['s' => $story, 'size' => 'sm'])
+                    @endif
+                    @if (filled($story['quote']))
+                        <blockquote style="margin: 0; font-size: 18px; line-height: 1.55; font-weight: 600; color: #181413">“{{ $story['quote'] }}”</blockquote>
+                    @endif
+                    <div style="margin-top: auto; line-height: 1.5">
+                        <strong style="display: block; font-size: 15px">{{ $story['customerName'] }}</strong>
+                        @if (filled($story['businessName']) || filled($story['category']))
+                            <span style="font-size: 13px; color: #5E5652">{{ implode(' · ', array_filter([$story['businessName'], $story['category']])) }}</span>
+                        @endif
+                    </div>
+                </article>
+            @endforeach
+        </div>
+    </div>
+</section>
+@endif
 @endsection
 
 @section('footer')
