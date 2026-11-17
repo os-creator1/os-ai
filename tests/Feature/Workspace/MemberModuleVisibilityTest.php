@@ -173,6 +173,22 @@ class MemberModuleVisibilityTest extends TestCase
 
     // ── A CRM-only member ────────────────────────────────────────────────
 
+    public function test_legacy_unscoped_routes_cannot_bypass_a_hidden_module_by_selecting_another_workspace(): void
+    {
+        [$member] = $this->staff(visible: ['crm']);
+        $other = $this->createIndependentWorkspaceBusiness();
+        $this->member($other['workspace'], $member->user, WorkspaceMembershipRole::Staff);
+
+        // This actor is restricted in the original Workspace but unrestricted in
+        // the second. A legacy contact route has no workspaceUid, so it cannot
+        // safely use the selected shell Workspace as authority for the resource.
+        $this->authenticateAs($member);
+        $this->get(route('customer.contacts.export'))->assertNotFound();
+
+        // Explicitly scoped CRM URLs still work in the Workspace that permits CRM.
+        $this->get($this->url('customer.workspaces.businesses.crm.board'))->assertOk();
+    }
+
     public function test_a_crm_only_member_sees_crm_but_no_seo_ads_or_growth_in_the_sidebar(): void
     {
         [$crmOnly] = $this->staff(visible: ['crm']);
