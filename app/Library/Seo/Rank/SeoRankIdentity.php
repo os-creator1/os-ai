@@ -70,7 +70,7 @@ final class SeoRankIdentity
 
         $report = app(ExternalWebsiteReader::class)->latestReport($business);
 
-        if ($report === null || ! in_array((string) ($report->connection_state ?? ConnectionResult::REACHABLE), [ConnectionResult::REACHABLE], true)) {
+        if ($report === null || (string) $report->connection_state !== ConnectionResult::REACHABLE) {
             return null;
         }
 
