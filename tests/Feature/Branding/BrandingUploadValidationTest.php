@@ -138,6 +138,49 @@ class BrandingUploadValidationTest extends TestCase
         $this->assertSame("images/branding/logo/{$expectedFilename}", $this->readActiveEnvValue('APP_LOGO'));
     }
 
+    public function test_an_upload_is_saved_even_when_the_environment_file_has_no_branding_key_yet(): void
+    {
+        $this->actingAsAdmin(['access backend', 'general settings']);
+
+        // A production .env built from production.env.example has no APP_LOGO / APP_COMPACT_LOGO / APP_DARK_LOGO /
+        // APP_FAVICON lines. The old update-only writer stored the file and silently saved nothing.
+        $path = $this->app->environmentFilePath();
+        file_put_contents($path, implode("\n", array_filter(
+            preg_split("/\r\n|\n|\r/", (string) file_get_contents($path)) ?: [],
+            fn ($line) => ! str_starts_with($line, 'APP_LOGO=') && ! str_starts_with($line, 'APP_DARK_LOGO=')
+        ))."\n");
+        $this->assertNull($this->readActiveEnvValue('APP_LOGO'));
+
+        $contents = base64_decode(self::VALID_PNG_BASE64);
+        $this->post('/admin/settings', $this->baseGeneralSettingsPayload([
+            'app_logo' => UploadedFile::fake()->createWithContent('MyLogo.png', $contents),
+            'logo_dark' => UploadedFile::fake()->createWithContent('Dark.png', $contents),
+        ]));
+
+        $name = hash('sha256', $contents).'.png';
+        $this->assertSame("images/branding/logo/{$name}", $this->readActiveEnvValue('APP_LOGO'));
+        $this->assertSame("images/branding/logo_dark/{$name}", $this->readActiveEnvValue('APP_DARK_LOGO'));
+    }
+
+    public function test_a_failed_environment_write_is_reported_and_leaves_no_orphan_file(): void
+    {
+        $this->actingAsAdmin(['access backend', 'general settings']);
+
+        $this->mock(\App\Library\Settings\PlatformSettingsEnvWriter::class, function ($mock): void {
+            $mock->shouldReceive('set')->andThrow(\App\Library\Settings\Exceptions\EnvironmentFileNotWritableException::for('APP_LOGO'));
+        });
+
+        $contents = base64_decode(self::VALID_PNG_BASE64).'unique-'.bin2hex(random_bytes(4));
+        $name = hash('sha256', $contents).'.png';
+        $response = $this->post('/admin/settings', $this->baseGeneralSettingsPayload([
+            'app_logo' => UploadedFile::fake()->createWithContent('MyLogo.png', $contents),
+        ]));
+
+        $response->assertSessionHas('status', 'error');
+        $this->assertStringContainsString('not writable', (string) session('message'));
+        $this->assertFileDoesNotExist(public_path("images/branding/logo/{$name}"));
+    }
+
     public function test_an_svg_upload_is_rejected_for_every_branding_field(): void
     {
         $this->actingAsAdmin(['access backend', 'general settings']);
