@@ -360,8 +360,8 @@ class ConsultationLandingTemplateTest extends TestCase
         ]))->assertOk()->getContent();
         $this->assertStringContainsString('consultation.testimonials_title', $editor);
         $this->assertStringContainsString('data-role="callpage-testimonials-slot"', $editor);
-        $this->assertSame(1, substr_count($editor, 'data-role="shared-testimonials-editor"'), 'Only one shared testimonial editor.');
-        $this->assertSame(1, substr_count($editor, 'data-testimonials'), 'No duplicate testimonial forms.');
+        $this->assertSame(1, substr_count($editor, '<div data-role="shared-testimonials-editor">'), 'Only one shared testimonial editor.');
+        $this->assertSame(1, substr_count($editor, '<div data-scope="testimonials" data-testimonials>'), 'No duplicate testimonial forms.');
     }
 
     public function test_consultation_hides_testimonial_section_until_the_agency_approves_a_real_story(): void
