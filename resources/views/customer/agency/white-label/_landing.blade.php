@@ -220,12 +220,12 @@
                         <div data-role="shared-testimonials-editor">
                             <h3 class="h6 mt-2">Testimonials</h3>
                             <div data-scope="testimonials" data-testimonials>
-                        @foreach ($e['testimonials'] as $t)
-                            @include('customer.agency.white-label._testimonial', ['t' => $t, 'canEdit' => $canEdit])
-                        @endforeach
-                    </div>
-                    @if ($canEdit)<button type="button" class="btn btn-sm btn-outline-secondary" data-add-testimonial>Add testimonial</button>@endif
-                    <template id="wl-testimonial-template">@include('customer.agency.white-label._testimonial', ['t' => ['customer_name' => '', 'business_name' => '', 'industry' => '', 'quote' => '', 'video' => '', 'featured' => false, 'approved' => false, 'visible' => true], 'canEdit' => true])</template>
+                                @foreach ($e['testimonials'] as $t)
+                                    @include('customer.agency.white-label._testimonial', ['t' => $t, 'canEdit' => $canEdit])
+                                @endforeach
+                            </div>
+                            @if ($canEdit)<button type="button" class="btn btn-sm btn-outline-secondary" data-add-testimonial>Add testimonial</button>@endif
+                            <template id="wl-testimonial-template">@include('customer.agency.white-label._testimonial', ['t' => ['customer_name' => '', 'business_name' => '', 'industry' => '', 'quote' => '', 'video' => '', 'featured' => false, 'approved' => false, 'visible' => true], 'canEdit' => true])</template>
                         </div>
                     </div>
                 </x-card>
