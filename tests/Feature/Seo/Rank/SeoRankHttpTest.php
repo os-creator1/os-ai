@@ -736,13 +736,16 @@ class SeoRankHttpTest extends TestCase
     // location search + forged location
     // ------------------------------------------------------------------
 
-    public function test_the_location_search_returns_cached_us_cities_only_and_makes_no_provider_call(): void
+    public function test_the_location_search_returns_cached_supported_cities_only_and_makes_no_provider_call(): void
     {
         [$owner, $business, $workspace] = $this->coreTenant();
         $this->seedLocation(5001, 'Chicago Heights,Illinois,United States');
         $this->seedLocation(5002, 'Illinois,United States', 'State');
-        $abroad = $this->seedLocation(5003, 'Chicoutimi,Quebec,Canada');
-        $abroad->forceFill(['country_iso' => 'CA'])->save();
+        // Canada is a supported country (a City is offered); the United Kingdom is not.
+        $canada = $this->seedLocation(5003, 'Chicoutimi,Quebec,Canada');
+        $canada->forceFill(['country_iso' => 'CA'])->save();
+        $abroad = $this->seedLocation(5004, 'Chichester,England,United Kingdom');
+        $abroad->forceFill(['country_iso' => 'GB'])->save();
         $this->authenticateAsSeoCustomer($owner);
         Http::fake();
 
@@ -751,6 +754,7 @@ class SeoRankHttpTest extends TestCase
         $this->assertSame([
             ['code' => 5001, 'label' => 'Chicago Heights, Illinois, United States'],
             ['code' => self::CHICAGO, 'label' => 'Chicago, Illinois, United States'],
+            ['code' => 5003, 'label' => 'Chicoutimi, Quebec, Canada'],
         ], $response->json('locations'));
 
         $this->getJson($this->u('keywords.rank-locations', $workspace, $business) . '?q=C')->assertOk()->assertExactJson(['locations' => [], 'status' => 'partial']);

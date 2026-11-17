@@ -64,6 +64,11 @@ class AuthPageRenderTest extends TestCase
 
     public function test_terms_of_use_page_renders_for_a_guest(): void
     {
+        // On the marketing host (the platform host by default) the legacy Terms URL permanently points to the Legal
+        // Center's Terms of Service; everywhere else the legacy page is rendered.
+        $this->get(route('terms-of-use'))->assertStatus(301)->assertRedirect(app(\App\Library\Legal\LegalDocuments::class)->url('terms-of-service'));
+
+        config(['marketing.enabled' => false]);
         $this->get(route('terms-of-use'))->assertOk();
     }
 
