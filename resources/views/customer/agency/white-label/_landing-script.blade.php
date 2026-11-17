@@ -322,6 +322,12 @@
     function mode() { return root.getAttribute('data-mode') === 'callpage' ? 'callpage' : 'site'; }
     function applyMode(initial) {
         var callpage = mode() === 'callpage';
+        // One shared testimonial manager: move its DOM rather than duplicating inputs/saves.
+        var testimonialEditor = root.querySelector('[data-role="shared-testimonials-editor"]');
+        var testimonialSlot = root.querySelector(callpage ? '[data-role="callpage-testimonials-slot"]' : '[data-role="site-testimonials-slot"]');
+        if (testimonialEditor && testimonialSlot && testimonialEditor.parentElement !== testimonialSlot) {
+            testimonialSlot.appendChild(testimonialEditor);
+        }
         document.querySelectorAll('[data-mode-only]').forEach(function (el) { el.style.display = el.getAttribute('data-mode-only') === (callpage ? 'callpage' : 'site') ? '' : 'none'; });
         document.querySelectorAll('[data-step-panel], [data-mode-only="callpage"]').forEach(function (p) {
             if (callpage) { p.hidden = !p.hasAttribute('data-callpage-panel'); }
