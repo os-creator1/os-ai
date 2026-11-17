@@ -372,17 +372,25 @@ final class GuidedGenerationOutputValidator
     private function assertInternalLinksResolve(array $page, array $knownSlugs, int $index, array &$errors): void
     {
         foreach ($page['sections'] ?? [] as $sectionIndex => $section) {
-            $buttons = $section['data']['buttons'] ?? [];
-            foreach ($buttons as $buttonIndex => $button) {
-                $url = (string) ($button['url'] ?? '');
+            // Section buttons and the hero's two calls to action are the only places AI writes link destinations.
+            $links = [];
+            foreach ((array) ($section['data']['buttons'] ?? []) as $buttonIndex => $button) {
+                $links["buttons.{$buttonIndex}.url"] = (string) ($button['url'] ?? '');
+            }
+            foreach (['primary_cta', 'secondary_cta'] as $field) {
+                if (is_array($section['data'][$field] ?? null)) {
+                    $links["{$field}.url"] = (string) ($section['data'][$field]['url'] ?? '');
+                }
+            }
 
+            foreach ($links as $path => $url) {
                 if (! str_starts_with($url, '/')) {
                     continue;
                 }
 
                 $targetSlug = ltrim($url, '/');
                 if ($targetSlug !== '' && ! in_array($targetSlug, $knownSlugs, true)) {
-                    $errors["pages.{$index}.sections.{$sectionIndex}.buttons.{$buttonIndex}.url"][] = "Internal link '{$url}' does not resolve to any page in this generation plan.";
+                    $errors["pages.{$index}.sections.{$sectionIndex}.{$path}"][] = "Internal link '{$url}' does not resolve to any page in this generation plan.";
                 }
             }
         }
