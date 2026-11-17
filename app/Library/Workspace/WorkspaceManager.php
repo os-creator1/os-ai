@@ -6,6 +6,7 @@ use App\DTO\Workspace\WorkspaceOwnershipTransferDisposition;
 use App\Enums\Workspace\LocationAccessScope;
 use App\Enums\Workspace\WorkspaceBusinessAccessScope;
 use App\Enums\Workspace\WorkspaceContextFailureReason;
+use App\Enums\Workspace\WorkspaceMemberModule;
 use App\Enums\Workspace\WorkspaceMembershipRole;
 use App\Enums\Workspace\WorkspaceOwnershipTransferMode;
 use App\Enums\Workspace\WorkspaceTransitionType;
@@ -617,6 +618,79 @@ class WorkspaceManager
             );
 
             return $updated;
+        });
+    }
+
+    /**
+     * Sets which modules ONE member sees in THIS Workspace (Settings → Team → Edit
+     * member → Visible modules).
+     *
+     * `$visibleModules` is what the member SHOULD see; the complement is stored as
+     * the membership's hidden_modules. Unknown values are dropped. This only ever
+     * narrows: it grants nothing beyond the member's role, permissions and plan.
+     *
+     * Authority is the existing target-role rule, not a new one: the owner may
+     * configure anyone; an active Admin may configure Staff only (never another
+     * Admin, and never themself — a Staff actor has no authority at all). The
+     * owner has no membership row and cannot be narrowed.
+     *
+     * @param  array<int, string>  $visibleModules  WorkspaceMemberModule values
+     */
+    public function changeMemberVisibleModules(int $actorUserId, WorkspaceMembership $membership, array $visibleModules): WorkspaceMembership
+    {
+        return DB::transaction(function () use ($actorUserId, $membership, $visibleModules) {
+            $expectedWorkspaceId = (int) $membership->workspace_id;
+
+            $lockedWorkspace = $this->workspaceRepository->findForUpdate($expectedWorkspaceId);
+
+            if ($lockedWorkspace === null) {
+                throw new WorkspaceNotFoundException($expectedWorkspaceId);
+            }
+
+            $lockedMembership = $this->membershipRepository->findForUpdate($membership->id);
+
+            if ($lockedMembership === null) {
+                throw new WorkspaceMembershipNotFoundException($lockedWorkspace->id, $membership->user_id);
+            }
+
+            if ((int) $lockedMembership->workspace_id !== (int) $lockedWorkspace->id) {
+                throw new WorkspaceMembershipWorkspaceMismatchException(
+                    $lockedMembership->id,
+                    (int) $lockedWorkspace->id,
+                    (int) $lockedMembership->workspace_id,
+                );
+            }
+
+            if (! $lockedWorkspace->is_active) {
+                throw new InactiveWorkspaceMutationException($lockedWorkspace->id);
+            }
+
+            if ((int) $lockedMembership->user_id === (int) $lockedWorkspace->owner_user_id) {
+                throw new UnauthorizedWorkspaceManagementException($actorUserId, $lockedWorkspace->id);
+            }
+
+            $this->assertHasAuthorityOverRole($actorUserId, $lockedWorkspace, $lockedMembership->role);
+
+            if (! $lockedMembership->is_active) {
+                throw new InactiveWorkspaceMembershipMutationException($lockedMembership->id);
+            }
+
+            $visible = array_map(
+                fn (WorkspaceMemberModule $m): string => $m->value,
+                MemberModuleVisibility::normalize(array_values($visibleModules)),
+            );
+
+            $hidden = array_values(array_map(
+                fn (WorkspaceMemberModule $m): string => $m->value,
+                array_filter(WorkspaceMemberModule::cases(), fn (WorkspaceMemberModule $m): bool => ! in_array($m->value, $visible, true)),
+            ));
+
+            $lockedMembership->hidden_modules = $hidden === [] ? null : $hidden;
+            $lockedMembership->save();
+
+            app(MemberModuleVisibility::class)->forget();
+
+            return $lockedMembership;
         });
     }
 

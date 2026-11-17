@@ -32,6 +32,8 @@ final class WorkspaceCandidate
         public readonly ?WorkspacePlanTier $tier,
         public readonly ?string $tierDisplayName,
         public readonly array $businesses,
+        /** @var list<\App\Enums\Workspace\WorkspaceMemberModule> modules the owner switched off for THIS actor (never the owner) */
+        public readonly array $hiddenModules = [],
     ) {
     }
 

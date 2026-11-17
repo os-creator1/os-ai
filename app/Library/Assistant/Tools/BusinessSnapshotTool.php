@@ -68,7 +68,7 @@ final class BusinessSnapshotTool implements ReadTool
             $facts[] = ['label' => 'Waiting for your reply', 'value' => (string) $awaiting];
         }
 
-        if ($cur['automations'] !== null) {
+        if ($cur['automations'] !== null && ! $context->entitlements->moduleHidden(\App\Enums\Workspace\WorkspaceMemberModule::Automations)) {
             $data['automation_runs'] = ['current' => $cur['automations']->executionsInRange, 'failed' => $cur['automations']->failed()];
             $facts[] = ['label' => 'Automation runs · ' . $label, 'value' => $cur['automations']->executionsInRange . ' (' . $cur['automations']->failed() . ' failed)'];
         }

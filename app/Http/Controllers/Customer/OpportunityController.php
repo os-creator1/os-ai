@@ -145,6 +145,10 @@ class OpportunityController extends Controller
             $filters['freshness'] = $selectedFreshness;
         }
 
+        // Per-member module visibility: advisor types owned by a module this person cannot see are not listed.
+        $hiddenTypes = app(\App\Library\Growth\GrowthOpportunityEligibility::class)->hiddenAdvisorTypesForViewer($business, (int) Auth::id());
+        $filters += ['exclude_types' => $hiddenTypes];
+
         $opportunities = $this->opportunityRepository->paginateForCustomer($business, $filters + ['suggestions' => 'exclude']);
         $optionalSuggestions = $this->opportunityRepository->paginateForCustomer($business, $filters + ['suggestions' => 'only']);
 

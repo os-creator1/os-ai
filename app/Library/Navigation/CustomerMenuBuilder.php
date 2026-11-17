@@ -1189,6 +1189,13 @@ final class CustomerMenuBuilder
             return null;
         }
 
+        // Per-member module visibility: a module the owner switched off for this
+        // person is absent from their sidebar (children included, since every
+        // child is built through here). Narrowing only; see MenuEntitlements.
+        if ($this->entitlements->routeHidden($routeName)) {
+            return null;
+        }
+
         if ($this->viewingAsClient && ! $this->viewAsRoutes->allowsMenuEntry($routeName)) {
             // Legacy user-scoped and account-level surfaces are outside the
             // viewed Business; the middleware would 404 them, so they are

@@ -78,6 +78,12 @@ final class DashboardLinkGate
             return null;
         }
 
+        // Per-member module visibility: never offer a link into a module the
+        // owner switched off for this person (Home cards, attention items, actions).
+        if ($entitlements->routeHidden($routeName)) {
+            return null;
+        }
+
         return route($routeName, $parameters);
     }
 }

@@ -290,7 +290,11 @@ final class BusinessHomePresenter
         // Growth has an evaluation, its ACL-scoped head is the selector's
         // Opportunity candidate (no second queue read), and Growth items only
         // enrich or queue behind the one move (HomeCommandCenter).
-        if ($statusFailed || $awaitingFailed) {
+        if ($entitlements->moduleHidden(\App\Enums\Workspace\WorkspaceMemberModule::Growth)) {
+            // Per-member module visibility: the owner switched "Next Best Move & Growth"
+            // off for this person, so Home carries no recommendation band at all — not a
+            // degraded one, which would claim a read failed.
+        } elseif ($statusFailed || $awaitingFailed) {
             $failed[] = DashboardSnapshot::BAND_NEXT_BEST_MOVE;
         } else {
             try {
@@ -681,6 +685,14 @@ final class BusinessHomePresenter
             : (config('opportunity.enabled', false)
                 ? $this->opportunities->topForCustomer($business, self::RECOMMENDATION_QUEUE_CAP)
                 : collect());
+
+        // Per-member module visibility: an advisor recommendation that belongs to a module this
+        // viewer cannot see (e.g. the Google Business Profile prompt under SEO) is not a candidate.
+        $hiddenAdvisor = app(\App\Library\Growth\GrowthOpportunityEligibility::class)->hiddenAdvisorTypesForViewer($business, (int) $user->id);
+
+        if ($hiddenAdvisor !== []) {
+            $queue = $queue->reject(fn ($o): bool => in_array('*', $hiddenAdvisor, true) || in_array((string) $o->type, $hiddenAdvisor, true))->values();
+        }
 
         $advisorOpensThisBusiness = $context->isBusinessFrame() && $context->selectedBusiness !== null;
 
