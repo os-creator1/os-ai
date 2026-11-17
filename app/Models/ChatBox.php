@@ -254,8 +254,11 @@
             $linkedIds = [];
 
             foreach ($boxes as $box) {
-                if ($box->contact_id !== null) {
-                    $linkedIds[(int) $box->id] = (int) $box->contact_id;
+                // Callers also pass plain {id, to} rows (Home, Growth, assistant tools) that carry no link: not an error.
+                $contactId = $box->contact_id ?? null;
+
+                if ($contactId !== null) {
+                    $linkedIds[(int) $box->id] = (int) $contactId;
                 }
             }
 
