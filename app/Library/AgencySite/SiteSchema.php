@@ -130,6 +130,7 @@ final class SiteSchema
                 self::text('consultation.duration_label', 'Text after the meeting length', 60),
                 self::text('consultation.calendar_title', 'Calendar heading', 80),
                 self::area('consultation.calendar_lead', 'Text above the calendar', 220),
+                self::text('consultation.testimonials_title', 'Testimonials section heading', 90),
             ]],
             // ---------------------------------------------------------------- Screen 2: the 15 home sections
             'header' => ['step' => 2, 'page' => 'home', 'label' => 'Header & navigation', 'fields' => [
