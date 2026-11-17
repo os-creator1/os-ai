@@ -105,12 +105,13 @@ class WorkspaceMemberInvitationManager
      * @throws WorkspaceMembershipAlreadyExistsException
      * @throws PendingMemberInvitationExistsException
      */
-    public function invite(int $actorUserId, Workspace $workspace, string $email, WorkspaceMembershipRole $role, WorkspaceBusinessAccessScope $scope, array $businessIds): WorkspaceMemberInvitation
+    public function invite(int $actorUserId, Workspace $workspace, string $email, WorkspaceMembershipRole $role, WorkspaceBusinessAccessScope $scope, array $businessIds, ?array $hiddenModules = null): WorkspaceMemberInvitation
     {
         $plaintext = Str::random(64);
         $normalized = self::normalizeEmail($email);
+        $hiddenModules = self::cleanHidden($hiddenModules);
 
-        $invitation = DB::transaction(function () use ($actorUserId, $workspace, $normalized, $role, $scope, $businessIds, $plaintext) {
+        $invitation = DB::transaction(function () use ($actorUserId, $workspace, $normalized, $role, $scope, $businessIds, $plaintext, $hiddenModules) {
             $locked = Workspace::query()->whereKey($workspace->id)->lockForUpdate()->firstOrFail();
 
             if (! $locked->is_active) {
@@ -153,6 +154,7 @@ class WorkspaceMemberInvitationManager
                 'role' => $role,
                 'business_access_scope' => $scope,
                 'business_ids' => $scope === WorkspaceBusinessAccessScope::Selected ? $businessIds : null,
+                'hidden_modules' => $hiddenModules,
                 'token_hash' => Hash::make($plaintext),
                 'status' => WorkspaceMemberInvitationStatus::Pending,
                 'pending_key' => $pendingKey,
@@ -197,6 +199,68 @@ class WorkspaceMemberInvitationManager
         $this->send($updated, $plaintext);
 
         return $updated;
+    }
+
+    /**
+     * Edit a PENDING invitation's access (role, Business access, visible modules) in place. Never creates a second
+     * invitation, never changes the token, expiry or pending key, and never sends an email: the person is already
+     * holding a link, and what they get on acceptance is simply whatever is saved here.
+     *
+     * The invitation row is locked FOR UPDATE, exactly as accept() locks it, so an edit and an acceptance serialize:
+     * either the edit commits first and the acceptance applies it, or the acceptance wins and the edit finds the
+     * invitation no longer pending and is refused. The grant is re-validated against the EDITING actor's authority
+     * (an Admin can neither edit an Admin invitation nor promote anyone to Admin), and again at acceptance against that same
+     * approving actor (invited_by_user_id stays the original inviter, for audit).
+     *
+     * @param  array<int, int>  $businessIds
+     *
+     * @throws UnauthorizedWorkspaceManagementException
+     * @throws InvalidMemberInvitationException when no longer pending
+     * @throws InactiveWorkspaceMutationException
+     */
+    public function updateAccess(int $actorUserId, WorkspaceMemberInvitation $invitation, WorkspaceMembershipRole $role, WorkspaceBusinessAccessScope $scope, array $businessIds, ?array $hiddenModules): WorkspaceMemberInvitation
+    {
+        return DB::transaction(function () use ($actorUserId, $invitation, $role, $scope, $businessIds, $hiddenModules) {
+            $locked = WorkspaceMemberInvitation::query()->whereKey($invitation->id)->lockForUpdate()->firstOrFail();
+            $workspace = Workspace::query()->whereKey($locked->workspace_id)->lockForUpdate()->firstOrFail();
+
+            // Authority over the invitation AS IT STANDS (its current role), before anything about the new values.
+            $this->assertActorMayManage($actorUserId, $locked);
+
+            if (! $locked->isPending()) {
+                throw new InvalidMemberInvitationException('not_pending');
+            }
+
+            if (! $workspace->is_active) {
+                throw new InactiveWorkspaceMutationException((int) $workspace->id);
+            }
+
+            $businessIds = array_values(array_unique(array_map('intval', $businessIds)));
+
+            if (! $this->actorMayGrant($actorUserId, $workspace, $role, $scope, $businessIds)) {
+                throw new UnauthorizedWorkspaceManagementException($actorUserId, (int) $workspace->id);
+            }
+
+            $locked->forceFill([
+                'role' => $role,
+                'business_access_scope' => $scope,
+                'business_ids' => $scope === WorkspaceBusinessAccessScope::Selected ? $businessIds : null,
+                'hidden_modules' => self::cleanHidden($hiddenModules),
+                // The editor vouches for these settings; acceptance re-checks THEIR authority. The original
+                // inviter (invited_by_user_id) is kept as is for audit.
+                'access_approved_by_user_id' => $actorUserId,
+            ])->save();
+
+            return $locked;
+        });
+    }
+
+    /** @return list<string>|null known module values only; nothing hidden is null */
+    private static function cleanHidden(?array $hiddenModules): ?array
+    {
+        $values = array_map(fn (\App\Enums\Workspace\WorkspaceMemberModule $m): string => $m->value, MemberModuleVisibility::normalize($hiddenModules ?? []));
+
+        return $values === [] ? null : $values;
     }
 
     /**
@@ -321,7 +385,7 @@ class WorkspaceMemberInvitationManager
 
                 // Re-validated NOW against the inviter's current authority, role and Business scope.
                 if ($workspace === null || ! $workspace->is_active
-                    || ! $this->actorMayGrant((int) $invitation->invited_by_user_id, $workspace, $invitation->role, $invitation->business_access_scope, $businessIds)) {
+                    || ! $this->actorMayGrant($invitation->grantingUserId(), $workspace, $invitation->role, $invitation->business_access_scope, $businessIds)) {
                     throw new InvalidMemberInvitationException('grant_failed');
                 }
 
@@ -329,13 +393,15 @@ class WorkspaceMemberInvitationManager
 
                 try {
                     $membership = $this->workspaceManager->addMember(
-                        (int) $invitation->invited_by_user_id,
+                        $invitation->grantingUserId(),
                         $workspace,
                         (int) $user->id,
                         $invitation->role,
                         $invitation->business_access_scope,
                         LocationAccessScope::All,
                         $businessIds,
+                        // The restrictions saved with the invitation, written in the same transaction as the membership.
+                        $invitation->hidden_modules,
                     );
                 } catch (Throwable) {
                     throw new InvalidMemberInvitationException('grant_failed');

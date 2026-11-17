@@ -35,8 +35,10 @@ use App\Http\Requests\Customer\Workspace\RenameWorkspaceRequest;
 use App\Http\Requests\Customer\Workspace\StoreWorkspaceMemberRequest;
 use App\Http\Requests\Customer\Workspace\StoreWorkspaceRequest;
 use App\Http\Requests\Customer\Workspace\TransferWorkspaceOwnershipRequest;
+use App\Http\Requests\Customer\Workspace\UpdateWorkspaceInvitationAccessRequest;
 use App\Http\Requests\Customer\Workspace\UpdateWorkspaceMemberAccessRequest;
 use App\Http\Requests\Customer\Workspace\UpdateWorkspaceMemberModulesRequest;
+use App\Library\Workspace\MemberModuleVisibility;
 use App\Http\Requests\Customer\Workspace\UpdateWorkspaceMemberRoleRequest;
 use App\Enums\Entitlement\WorkspacePlanTier;
 use App\Library\Business\BusinessManager;
@@ -932,6 +934,12 @@ class WorkspaceController extends CustomerBaseController
             abort(404);
         }
 
+        // Visible modules are only restricted when the form's module section was submitted; anything else keeps
+        // every module on (an older client, or no choice made).
+        $hiddenModules = $request->boolean('modules_submitted')
+            ? MemberModuleVisibility::hiddenFromVisible($request->validated('visible_modules') ?? [])
+            : null;
+
         $email = (string) $request->validated('member_email');
         $targetUser = $this->findAddableUserByEmail($email);
 
@@ -942,7 +950,7 @@ class WorkspaceController extends CustomerBaseController
                 return $this->memberCannotBeAdded($workspaceUid);
             }
 
-            return $this->inviteMember($workspace, $actorUserId, $workspaceUid, $email, $role, $scope, $businessIds);
+            return $this->inviteMember($workspace, $actorUserId, $workspaceUid, $email, $role, $scope, $businessIds, $hiddenModules);
         }
 
         try {
@@ -953,7 +961,7 @@ class WorkspaceController extends CustomerBaseController
             // does), so every member added through this form keeps the
             // same full Location reach they would have had before this
             // slice landed.
-            $this->workspaceManager->addMember($actorUserId, $workspace, (int) $targetUser->id, $role, $scope, LocationAccessScope::All, $businessIds);
+            $this->workspaceManager->addMember($actorUserId, $workspace, (int) $targetUser->id, $role, $scope, LocationAccessScope::All, $businessIds, $hiddenModules);
         } catch (UnauthorizedWorkspaceManagementException) {
             abort(404);
         } catch (InactiveWorkspaceMutationException) {
@@ -969,10 +977,10 @@ class WorkspaceController extends CustomerBaseController
             ->with('flash_success', 'Member added.');
     }
 
-    private function inviteMember(Workspace $workspace, int $actorUserId, string $workspaceUid, string $email, WorkspaceMembershipRole $role, WorkspaceBusinessAccessScope $scope, array $businessIds): RedirectResponse
+    private function inviteMember(Workspace $workspace, int $actorUserId, string $workspaceUid, string $email, WorkspaceMembershipRole $role, WorkspaceBusinessAccessScope $scope, array $businessIds, ?array $hiddenModules = null): RedirectResponse
     {
         try {
-            $this->invitationManager->invite($actorUserId, $workspace, $email, $role, $scope, $businessIds);
+            $this->invitationManager->invite($actorUserId, $workspace, $email, $role, $scope, $businessIds, $hiddenModules);
         } catch (UnauthorizedWorkspaceManagementException) {
             abort(404);
         } catch (InactiveWorkspaceMutationException) {
@@ -998,6 +1006,50 @@ class WorkspaceController extends CustomerBaseController
     public function resendInvitation(string $workspaceUid, string $invitationUid): RedirectResponse
     {
         return $this->manageInvitation($workspaceUid, $invitationUid, 'Invitation resent.', fn (WorkspaceMemberInvitation $invitation) => $this->invitationManager->resend((int) Auth::id(), $invitation));
+    }
+
+    /**
+     * Edit a pending invitation's access in place (role, Business access, visible modules). Authority and the
+     * pending / race checks are WorkspaceManager-style and live in WorkspaceMemberInvitationManager::updateAccess();
+     * Business ids go through the same resolver and unrestricted-access rule the invite form uses. No email is sent.
+     */
+    public function updateInvitationAccess(UpdateWorkspaceInvitationAccessRequest $request, string $workspaceUid, string $invitationUid): RedirectResponse
+    {
+        $actorUserId = (int) Auth::id();
+        $workspace = $this->resolveAccessibleWorkspace($workspaceUid, $actorUserId);
+        $invitation = WorkspaceMemberInvitation::query()->where('workspace_id', $workspace->id)->where('uid', $invitationUid)->first();
+
+        if ($invitation === null) {
+            abort(404);
+        }
+
+        $role = WorkspaceMembershipRole::from($request->validated('role'));
+        $scope = WorkspaceBusinessAccessScope::from($request->validated('business_access_scope'));
+        $businessIds = [];
+
+        if ($scope === WorkspaceBusinessAccessScope::Selected) {
+            $businessIds = $this->resolveManageableBusinessIds($workspace, $actorUserId, $request->validated('business_uids', []));
+
+            if ($businessIds === null) {
+                abort(404);
+            }
+        } elseif (! $this->actorHasUnrestrictedBusinessAccess($workspace, $actorUserId)) {
+            abort(404);
+        }
+
+        $hidden = MemberModuleVisibility::hiddenFromVisible($request->validated('visible_modules') ?? []);
+
+        try {
+            $this->invitationManager->updateAccess($actorUserId, $invitation, $role, $scope, $businessIds, $hidden);
+        } catch (UnauthorizedWorkspaceManagementException) {
+            abort(404);
+        } catch (InactiveWorkspaceMutationException) {
+            return redirect()->back()->with('flash_error', 'An inactive Workspace cannot be managed.');
+        } catch (InvalidMemberInvitationException) {
+            return redirect()->route('customer.workspaces.team.show', $workspaceUid)->with('flash_error', 'That invitation is no longer pending.');
+        }
+
+        return redirect()->route('customer.workspaces.team.show', $workspaceUid)->with('flash_success', 'Invitation access updated.');
     }
 
     public function revokeInvitation(string $workspaceUid, string $invitationUid): RedirectResponse
@@ -1670,6 +1722,8 @@ class WorkspaceController extends CustomerBaseController
      */
     private function pendingInvitations(Workspace $workspace): array
     {
+        $businessUidsById = $this->workspaceRepository->businessesForWorkspace($workspace)->pluck('uid', 'id');
+
         return WorkspaceMemberInvitation::query()
             ->where('workspace_id', $workspace->id)
             ->where('status', \App\Enums\Workspace\WorkspaceMemberInvitationStatus::Pending->value)
@@ -1681,6 +1735,12 @@ class WorkspaceController extends CustomerBaseController
                 'role' => ucfirst($invitation->role->value),
                 'status' => ucfirst($invitation->displayStatus()->value),
                 'expires' => $invitation->expires_at->format('M j, Y'),
+                'role_key' => $invitation->role->value,
+                'scope' => $invitation->business_access_scope->value,
+                'business_uids' => $businessUidsById
+                    ? collect($invitation->business_ids ?? [])->map(fn ($id) => $businessUidsById->get((int) $id))->filter()->values()->all()
+                    : [],
+                'visible_modules' => MemberModuleVisibility::visibleValues($invitation->hidden_modules),
             ])
             ->all();
     }

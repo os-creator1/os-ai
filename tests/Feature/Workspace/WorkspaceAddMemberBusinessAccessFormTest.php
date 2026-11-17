@@ -47,7 +47,8 @@ class WorkspaceAddMemberBusinessAccessFormTest extends TestCase
         $form = $this->membersForm($workspace->uid);
 
         $this->assertStringNotContainsString('<select class="form-control" id="member-scope"', $form, 'No Business access selector.');
-        $this->assertStringNotContainsString('type="checkbox"', $form, 'No Business checkboxes.');
+        // Module switches are checkboxes now; what must be absent is the Business picker.
+        $this->assertDoesNotMatchRegularExpression('/type="checkbox"[^>]*name="business_uids\[\]"|name="business_uids\[\]"[^>]*type="checkbox"/', $form, 'No Business checkboxes.');
         $this->assertStringNotContainsString('All Businesses', $form);
         $this->assertStringContainsString("They'll get access to Harbor Lane Studios with the role you choose.", $form);
 

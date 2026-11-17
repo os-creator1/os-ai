@@ -106,6 +106,38 @@ final class MemberModuleVisibility
         return array_values($modules);
     }
 
+    /**
+     * The HIDDEN modules (as stored values) for a set of modules that should stay
+     * VISIBLE. Unknown values are dropped; nothing hidden is stored as null so a
+     * member with every module on is indistinguishable from one never configured.
+     *
+     * @param  array<int, mixed>  $visible
+     * @return list<string>|null
+     */
+    public static function hiddenFromVisible(array $visible): ?array
+    {
+        $keep = array_map(fn (WorkspaceMemberModule $m): string => $m->value, self::normalize(array_values($visible)));
+
+        $hidden = array_values(array_map(
+            fn (WorkspaceMemberModule $m): string => $m->value,
+            array_filter(WorkspaceMemberModule::cases(), fn (WorkspaceMemberModule $m): bool => ! in_array($m->value, $keep, true)),
+        ));
+
+        return $hidden === [] ? null : $hidden;
+    }
+
+    /**
+     * Stored hidden values -> the visible modules (for forms), tolerant of null / junk.
+     *
+     * @return list<string>
+     */
+    public static function visibleValues(mixed $hiddenStored): array
+    {
+        $hidden = array_map(fn (WorkspaceMemberModule $m): string => $m->value, self::normalize($hiddenStored));
+
+        return array_values(array_filter(WorkspaceMemberModule::values(), fn (string $v): bool => ! in_array($v, $hidden, true)));
+    }
+
     public function forget(): void
     {
         if (app()->bound('request')) {

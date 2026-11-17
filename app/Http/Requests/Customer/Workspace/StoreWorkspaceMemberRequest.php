@@ -31,6 +31,12 @@ class StoreWorkspaceMemberRequest extends FormRequest
             'business_access_scope' => ['required', Rule::in(['all', 'selected'])],
             'business_uids' => ['array', 'prohibited_if:business_access_scope,all'],
             'business_uids.*' => ['string', 'max:255', 'distinct'],
+            // Visible modules: the switches left ON. `modules_submitted` marks that the form's module section was
+            // actually sent, so a request without it (any older client) keeps every module visible, while a form
+            // with every switch off legitimately sends nothing else.
+            'modules_submitted' => ['nullable', 'boolean'],
+            'visible_modules' => ['nullable', 'array'],
+            'visible_modules.*' => ['string', Rule::in(\App\Enums\Workspace\WorkspaceMemberModule::values()), 'distinct'],
         ];
     }
 

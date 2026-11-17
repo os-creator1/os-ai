@@ -27,6 +27,8 @@ class WorkspaceMemberInvitation extends Model
         'role',
         'business_access_scope',
         'business_ids',
+        'hidden_modules',
+        'access_approved_by_user_id',
         'token_hash',
         'status',
         'pending_key',
@@ -44,6 +46,7 @@ class WorkspaceMemberInvitation extends Model
         'business_access_scope' => WorkspaceBusinessAccessScope::class,
         'status' => WorkspaceMemberInvitationStatus::class,
         'business_ids' => 'array',
+        'hidden_modules' => 'array',
         'expires_at' => 'datetime',
         'last_sent_at' => 'datetime',
         'accepted_at' => 'datetime',
@@ -58,6 +61,15 @@ class WorkspaceMemberInvitation extends Model
     public function workspace(): BelongsTo
     {
         return $this->belongsTo(Workspace::class);
+    }
+
+    /**
+     * The actor whose authority a grant is checked against and exercised as: whoever last approved the access
+     * settings (an editor), else the original inviter. invited_by_user_id itself is never rewritten.
+     */
+    public function grantingUserId(): int
+    {
+        return (int) ($this->access_approved_by_user_id ?? $this->invited_by_user_id);
     }
 
     public function isPending(): bool

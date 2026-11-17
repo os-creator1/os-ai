@@ -348,7 +348,7 @@
                         anchor.setAttribute('href', basePath + '/' + resourcePath);
                     });
 
-                    document.querySelectorAll('select[name="business_access_scope"]').forEach(function (select) {
+                    document.querySelectorAll('select[name="business_access_scope"]:not([data-access-scope])').forEach(function (select) {
                         var form = select.closest('form');
 
                         if (! form) {
