@@ -2,6 +2,7 @@
 
 namespace App\Jobs\Website;
 
+use App\Enums\Questionnaire\QuestionnaireResponseStatus;
 use App\Library\Website\GuidedGeneration\GuidedGenerationCommitService;
 use App\Library\Website\GuidedGeneration\WebsiteGenerationCoordinator;
 use App\Library\Website\Setup\WebsiteSetupSessionManager;
@@ -101,7 +102,12 @@ class RunGuidedWebsiteGenerationJob implements ShouldQueue
 
     /**
      * Wizard runs only: a succeeded run completes the setup session (as the synchronous path always did); anything
-     * else clears the generation freeze so the owner can retry from the review screen. Never throws.
+     * else clears the generation freeze so the owner can retry from the review screen.
+     *
+     * FENCED: it acts only while this job's own lease token is still the Website's current lease (one atomic step
+     * under the Website row lock), and only on a response that is still in progress and frozen. A timed-out or
+     * superseded job whose lease was reclaimed therefore can never complete or unfreeze a newer generation's
+     * response. Never throws.
      */
     private function settleSetupResponse(bool $succeeded): void
     {
@@ -110,14 +116,26 @@ class RunGuidedWebsiteGenerationJob implements ShouldQueue
         }
 
         try {
-            $response = QuestionnaireResponse::find($this->setupResponseId);
+            $website = Website::find($this->websiteId);
 
-            if ($response === null || (int) $response->business_id !== $this->businessId) {
+            if ($website === null) {
                 return;
             }
 
-            $manager = app(WebsiteSetupSessionManager::class);
-            $succeeded ? $manager->complete($response) : $manager->recordGenerationFailure($response);
+            app(WebsiteGenerationCoordinator::class)->settleOwned($website, $this->leaseToken, function () use ($succeeded) {
+                $response = QuestionnaireResponse::whereKey($this->setupResponseId)->lockForUpdate()->first();
+
+                if ($response === null
+                    || (int) $response->business_id !== $this->businessId
+                    || (int) $response->website_id !== $this->websiteId
+                    || $response->status !== QuestionnaireResponseStatus::InProgress
+                    || $response->generation_started_at === null) {
+                    return;
+                }
+
+                $manager = app(WebsiteSetupSessionManager::class);
+                $succeeded ? $manager->complete($response) : $manager->recordGenerationFailure($response);
+            });
         } catch (Throwable $e) {
             report($e);
         }

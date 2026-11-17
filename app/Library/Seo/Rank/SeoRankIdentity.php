@@ -2,6 +2,9 @@
 
 namespace App\Library\Seo\Rank;
 
+use App\Enums\Website\WebsiteMode;
+use App\Library\ExternalSite\ConnectionResult;
+use App\Library\ExternalSite\ExternalWebsiteReader;
 use App\Models\Business;
 use App\Models\Website;
 
@@ -13,6 +16,8 @@ use App\Models\Website;
  *    (Website::activePrimaryDomain(), the same canonical-URL source the public
  *    renderer uses), normalized to a bare host. NOT businesses.website_url,
  *    which is free text.
+ *    When the primary website is EXTERNAL (and no hosted domain is active), the verified external address
+ *    (see verifiedExternalDomain()) is used instead.
  *  - phone: the canonical NAP phone, businesses.phone, normalized.
  *  - cid: reserved. No connected seam supplies a Google CID today; the local
  *    matcher already prefers it when present, so adding one later changes no
@@ -32,13 +37,44 @@ final class SeoRankIdentity
     public static function forBusiness(Business $business): self
     {
         $website = Website::query()->where('business_id', $business->id)->first();
-        $domain = $website?->activePrimaryDomain()?->domain;
+        $domain = self::normalizeHost(is_string($domain = $website?->activePrimaryDomain()?->domain) ? $domain : null);
+
+        // A hosted site's active primary domain always wins (unchanged). Only a Business whose primary website is
+        // EXTERNAL and that has no hosted domain falls back to its audited external address.
+        $domain ??= self::verifiedExternalDomain($business);
 
         return new self(
-            self::normalizeHost(is_string($domain) ? $domain : null),
+            $domain,
             self::normalizePhone($business->phone),
             null,
         );
+    }
+
+    /**
+     * The bare host of the Business's external website, only when it is verified: the primary website mode is
+     * `external` AND the newest finished audit of the CURRENT address reached that site (reachable, not "redirects
+     * elsewhere", not blocked) for exactly that host. businesses.website_url alone is free text and is never trusted.
+     * Matching stays exact-domain: normalizeHost() only strips a leading "www.".
+     */
+    private static function verifiedExternalDomain(Business $business): ?string
+    {
+        if ((string) $business->getRawOriginal('website_mode') !== WebsiteMode::External->value) {
+            return null;
+        }
+
+        $host = self::normalizeHost($business->website_url);
+
+        if ($host === null) {
+            return null;
+        }
+
+        $report = app(ExternalWebsiteReader::class)->latestReport($business);
+
+        if ($report === null || ! in_array((string) ($report->connection_state ?? ConnectionResult::REACHABLE), [ConnectionResult::REACHABLE], true)) {
+            return null;
+        }
+
+        return self::normalizeHost((string) $report->host) === $host ? $host : null;
     }
 
     public function canMatchOrganic(): bool

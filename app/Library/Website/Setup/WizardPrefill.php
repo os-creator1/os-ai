@@ -4,6 +4,7 @@ namespace App\Library\Website\Setup;
 
 use App\Enums\Business\BusinessServiceStatus;
 use App\Library\Catalog\CatalogFeatureList;
+use App\Library\ExternalSite\Rebuild\ExternalConfirmedFacts;
 use App\Models\Business;
 use App\Models\BusinessBackdrop;
 use App\Models\BusinessKnowledgeProfile;
@@ -70,12 +71,16 @@ final class WizardPrefill
 
         if ($module === 'business_location' && ($step['input_type'] ?? null) === 'string_list') {
             $cities = $business->primaryLocation()->first()?->service_area_cities;
+            $own = is_array($cities) ? ServiceAreaList::normalize($cities) : [];
 
-            return is_array($cities) ? ServiceAreaList::normalize($cities) : null;
+            // Areas the owner CONFIRMED from their existing website are offered after the Business's own, for review.
+            $merged = ServiceAreaList::normalize(array_merge($own, ExternalConfirmedFacts::forBusiness($business)['areas']));
+
+            return $merged === [] ? null : $merged;
         }
 
         if ($module === 'business_service' && ($step['input_type'] ?? null) === 'repeatable_group' && isset($step['row_fields'])) {
-            return self::existingServiceRows($business, $step);
+            return self::withConfirmedExternalEvents($business, $step, self::existingServiceRows($business, $step));
         }
 
         // "Do you offer different backdrops?" is already answered when the Business has real, available backdrops.
@@ -166,6 +171,49 @@ final class WizardPrefill
                 'extra_image_paths' => $images->slice(1)->pluck('path')->values()->all(),
             ];
         })->all();
+
+        return $rows === [] ? null : $rows;
+    }
+
+    /**
+     * Event types the owner confirmed from their existing website, as ordinary editable rows built from the
+     * questionnaire's OWN event presets (the platform's wording, never text copied from the old site). Only offered for
+     * the event step, only when the step has that preset, and never duplicating a row the Business already has.
+     *
+     * @param  array<string, mixed>  $step
+     * @param  array<int, array<string, mixed>>|null  $rows
+     * @return array<int, array<string, mixed>>|null
+     */
+    private static function withConfirmedExternalEvents(Business $business, array $step, ?array $rows): ?array
+    {
+        if (($step['item_kind'] ?? null) !== 'event') {
+            return $rows;
+        }
+
+        $rows ??= [];
+        $present = array_map(fn ($r) => mb_strtolower((string) ($r['name'] ?? '')), $rows);
+        $presets = collect((array) ($step['presets'] ?? []))->keyBy('key');
+
+        foreach (ExternalConfirmedFacts::forBusiness($business)['events'] as $kind) {
+            $preset = $presets->get(ExternalConfirmedFacts::EVENT_PRESETS[$kind]);
+
+            if ($preset === null || in_array(mb_strtolower((string) $preset['label']), $present, true)) {
+                continue;
+            }
+
+            $rows[] = [
+                'key' => 'ext:'.$kind,
+                'name' => (string) $preset['label'],
+                'description' => (string) ($preset['description'] ?? ''),
+                'features' => [],
+                'starting_price' => null,
+                'currency_code' => null,
+                'visible' => true,
+                'preset' => (string) $preset['key'],
+                'image_path' => null,
+                'extra_image_paths' => [],
+            ];
+        }
 
         return $rows === [] ? null : $rows;
     }

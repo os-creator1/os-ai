@@ -164,7 +164,10 @@ class ExistingSiteRebuildController extends CustomerBaseController
             $plan->forceFill(['status' => ExternalRebuildPlan::STARTED, 'started_at' => now()])->save();
         }
 
-        return redirect()->route('customer.workspaces.businesses.website.setup.start', [$workspaceUid, $businessUid]);
+        return redirect()->route('customer.workspaces.businesses.website.setup.start', [$workspaceUid, $businessUid])->with([
+            'status' => 'success',
+            'message' => 'The facts you confirmed (event types and service areas) are pre-filled in the setup questions for you to review and change. Nothing is published.',
+        ]);
     }
 
     /** Write the confirmed redirects (and the titles/descriptions the owner chose to keep) into the DRAFT. */

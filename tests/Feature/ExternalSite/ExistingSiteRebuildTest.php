@@ -143,7 +143,8 @@ class ExistingSiteRebuildTest extends TestCase
         $this->assertSame(WebsiteMode::External->value, Business::find($business->id)->getRawOriginal('website_mode'));
 
         $this->post($this->u('confirm', $workspace, $business), []);
-        $this->post($this->u('start', $workspace, $business))->assertRedirect(route('customer.workspaces.businesses.website.setup.start', [$workspace->uid, $business->uid]));
+        $this->post($this->u('start', $workspace, $business))->assertRedirect(route('customer.workspaces.businesses.website.setup.start', [$workspace->uid, $business->uid]))
+            ->assertSessionHas('status', 'success');
 
         $fresh = Business::find($business->id);
         $this->assertSame(WebsiteMode::Hosted->value, $fresh->getRawOriginal('website_mode'));

@@ -10,11 +10,17 @@ Owner-reviewed path for a Business whose website is hosted elsewhere (`website_m
 - `Apply` (`ExternalRebuildApplier`) merges confirmed redirects into the DRAFT `custom_redirects` (never overwriting owner-defined ones) and copies chosen titles/descriptions into draft pages. Redirects only go live inside a revision the owner publishes.
 - `Start` only switches the primary-site mode to hosted (as the Website screen already offers) and opens the setup wizard. Wizard generation now runs on the queue (`RunGuidedWebsiteGenerationJob`) and returns to the polled progress screen; the job completes or unfreezes the setup response.
 
+## Rank tracking identity
+`SeoRankIdentity` uses the hosted site's active primary domain first (unchanged). Only when the primary website mode is `external` and no hosted domain is active does it use the Business's website host, and only when the newest finished audit of that exact host reached the site (`connection_state` reachable). Matching stays exact-domain.
+
+## Queued wizard safety
+`RunGuidedWebsiteGenerationJob` completes or unfreezes the setup response only through `WebsiteGenerationCoordinator::settleOwned()`: one transaction under the Website row lock that requires the job's own lease token to still be current, and the response to be in progress and frozen. A timed-out or superseded job can therefore never settle a newer generation.
+
 ## Routes
 `customer.workspaces.businesses.website.existing.{show,prepare,confirm,start,apply}`
 
 ## Known limitations
-- Confirmed facts are stored with the plan; they are not yet written into the business profile or wizard answers automatically (the owner confirms them in the wizard, whose generator uses only verified profile data).
+- Confirmed facts are offered in the wizard as display-only prefill (`ExternalConfirmedFacts` -> `WizardPrefill`): confirmed GTA areas follow the Business's own service areas, and confirmed event kinds appear as editable rows built from the questionnaire's own event presets. The owner's saved answers always win, nothing is saved until the owner submits the screen, and no text, price, claim, review or image from the old site is used.
 - Legal pages are listed for the owner; legal text is never copied. Link the owner's privacy/terms address from the site footer.
 - Old internal links are not rewritten; the 301 plan carries the old addresses.
 - Slugs of generated pages are the generator's own; the plan maps old paths to them rather than renaming them.
