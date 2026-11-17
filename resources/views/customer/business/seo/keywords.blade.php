@@ -54,7 +54,8 @@
     $canTrackRank = $rankPlan !== null && ! $viewingAsClient;
 
     // Which of the three states this is.
-    $startState = $rankPlan !== null && count($rows) === 0;
+    // (With nothing to suggest, an empty page keeps its summary cards and the plain empty list.)
+    $startState = $rankPlan !== null && count($rows) === 0 && $canAdd && count($suggestions) > 0;
     $anyResult = $rankRows->contains(fn ($r) => $r['organic'] !== null || $r['local'] !== null);
     $checkingState = ! $startState && $showRank && ! $anyResult && $rankRows->contains(fn ($r) => $r['state'] === SeoRankDashboardReader::STATE_CHECKING);
     $domainBlocked = $rankRows->contains(fn ($r) => $r['organic_blocked'] ?? false);
@@ -181,7 +182,7 @@
         @endif
 
         {{-- ============ START: nothing saved yet ============ --}}
-        @if($startState && $canAdd && count($suggestions) > 0)
+        @if($startState)
             <section class="kw-card kw-cta" data-section="start-tracking">
                 <span class="kw-ctaicon"><svg class="kw-ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.500"></circle><path d="M16 16l4.500 4.500"></path></svg></span>
                 <div class="kw-cta-copy">
@@ -262,7 +263,7 @@
         @endif
 
         {{-- ============ START: suggestions list ============ --}}
-        @if($startState && $canAdd && count($suggestions) > 0)
+        @if($startState)
             @include('customer.business.seo._keyword-suggestions', ['suggestions' => $suggestions, 'canTrackRank' => $canTrackRank])
         @endif
 

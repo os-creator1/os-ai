@@ -140,7 +140,7 @@ class SeoKeywordsPageStatesTest extends TestCase
         $this->assertSame([], $this->texts($html, "//*[@data-section='rank-summary']"));
         $this->assertNotEmpty($this->texts($html, "//*[@data-section='add-keyword']//input[@name='phrase']"), 'The add-a-keyword panel is always there.');
         $this->assertSame(['Track keyword'], $this->texts($html, "//*[@data-section='add-keyword']//button[@type='submit']"));
-        $this->assertSame(['0 of 5 used · rank is checked automatically'], $this->role($html, 'slots-used'));
+        $this->assertSame(['0 of 20 used · rank is checked automatically'], $this->role($html, 'slots-used'));
     }
 
     public function test_the_start_state_has_no_track_all_for_a_viewer_who_cannot_manage(): void
@@ -201,7 +201,7 @@ class SeoKeywordsPageStatesTest extends TestCase
         $this->assertSame(['Local #2', 'Local #6'], $this->role($html, 'rank-value'), 'Best pill first.');
         $this->assertSame(['#2'], $this->role($html, 'summary-best-local'));
         $this->assertSame(['1'], $this->role($html, 'summary-local-top3'));
-        $this->assertSame(['2 / 5'], $this->role($html, 'summary-tracked'));
+        $this->assertSame(['2 / 20'], $this->role($html, 'summary-tracked'));
         $this->assertSame(['green', 'blue'], array_map(
             fn (string $class) => preg_match('/kw-rk-(green|blue|amber)/', $class, $m) ? $m[1] : '',
             $this->texts($html, "//*[@data-role='rank-value']/@class")
@@ -285,7 +285,7 @@ class SeoKeywordsPageStatesTest extends TestCase
         $this->strategy('photo booth rental {city}');
         $this->authenticateAsCustomer($owner, ['view_seo']);
 
-        $this->post($this->url('keywords.rank.track-suggestions', $workspace, $business), ['search_location_code' => (string) self::CHICAGO])->assertForbidden();
+        $this->post($this->url('keywords.rank.track-suggestions', $workspace, $business), ['search_location_code' => (string) self::CHICAGO])->assertUnauthorized();
 
         $this->assertSame(0, SeoKeyword::query()->count());
     }

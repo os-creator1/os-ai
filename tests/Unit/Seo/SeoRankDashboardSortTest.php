@@ -71,7 +71,7 @@ class SeoRankDashboardSortTest extends TestCase
 
     public function test_rows_without_a_numeric_rank_sit_below_ranked_rows(): void
     {
-        $this->assertSame(['ranked', 'checking', 'notTop', 'needsDomain', 'untracked'], $this->names([
+        $this->assertSame(['ranked', 'checking', 'notTop', 'untracked', 'needsDomain'], $this->names([
             $this->row('notTop', organic: $this->obs('not_found', null), local: $this->obs('not_found', null, 'local')),
             $this->row('untracked', SeoRankDashboardReader::STATE_UNTRACKED),
             $this->row('checking', SeoRankDashboardReader::STATE_CHECKING),

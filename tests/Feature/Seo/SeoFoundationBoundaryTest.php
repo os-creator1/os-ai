@@ -356,7 +356,7 @@ class SeoFoundationBoundaryTest extends TestCase
         $keywordRoutes = collect(Route::getRoutes()->getRoutes())
             ->filter(fn ($route) => str_contains((string) $route->getActionName(), SeoKeywordsController::class));
 
-        $this->assertCount(5, $keywordRoutes, 'index, store, update, archive, reactivate — and nothing else.');
+        $this->assertCount(6, $keywordRoutes, 'index, store, update, archive, reactivate, and track-suggestions (Track all) — and nothing else.');
 
         foreach ($keywordRoutes as $route) {
             $this->assertEmpty(
