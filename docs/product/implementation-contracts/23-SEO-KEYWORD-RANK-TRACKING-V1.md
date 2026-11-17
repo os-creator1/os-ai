@@ -197,7 +197,7 @@ changes `SeoRankIdentity` only, not the schema.
 ## 9. Search geography
 
 One provider location per target, English, mobile only (the schema carries `device`
-for a later desktop). Supported geographies: United States cities and Lithuanian cities/municipalities (`SeoRankLocationCatalog::SUPPORTED`). A typed string is never sent
+for a later desktop). Supported geographies: United States cities, Canadian cities (e.g. Toronto, Ontario) and Lithuanian cities/municipalities (`SeoRankLocationCatalog::SUPPORTED`; codes always come from the provider's free catalogue, `seo:rank-sync-locations` calls only the free locations endpoint for each supported country and never a paid rank check). A typed string is never sent
 to the provider: the picker queries `seo_rank_locations`, the form submits the chosen
 **provider location code**, and the manager re-resolves it (unknown/unsupported →
 refused before any write). The cache is filled by `php artisan seo:rank-sync-locations`

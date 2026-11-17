@@ -557,6 +557,87 @@ class WebsiteWizardControllerTest extends TestCase
         $this->assertSame('completed', QuestionnaireResponse::where('business_id', $business->id)->sole()->status->value);
     }
 
+    /** Runs the one queued job the wizard pushed, the way a worker would. */
+    private function runQueuedWizardJob(): void
+    {
+        $job = null;
+        \Illuminate\Support\Facades\Queue::assertPushed(\App\Jobs\Website\RunGuidedWebsiteGenerationJob::class, function ($pushed) use (&$job) {
+            $job = $pushed;
+
+            return true;
+        });
+        $job->handle(app(\App\Library\Website\GuidedGeneration\GuidedGenerationCommitService::class), app(\App\Library\Website\GuidedGeneration\WebsiteGenerationCoordinator::class));
+    }
+
+    public function test_first_time_generation_is_queued_and_the_request_returns_to_a_progress_screen(): void
+    {
+        [$customer, $business, $workspace] = $this->entitledTenant();
+        $this->authenticateAsCustomer($customer);
+        $this->bindPlanEchoingAiClient();
+        $response = $this->completeAllRequiredSteps($workspace, $business);
+
+        // A real (non-sync) queue: the job is pushed, not run, so no AI call can outlive the web request.
+        config(['queue.default' => 'database']);
+        \Illuminate\Support\Facades\Queue::fake();
+
+        $this->post(route('customer.workspaces.businesses.website.setup.generate', [$workspace->uid, $business->uid]))
+            ->assertRedirect();
+
+        \Illuminate\Support\Facades\Queue::assertPushed(\App\Jobs\Website\RunGuidedWebsiteGenerationJob::class, 1);
+        \Illuminate\Support\Facades\Queue::assertPushed(\App\Jobs\Website\RunGuidedWebsiteGenerationJob::class, fn ($job) => $job->setupResponseId === $response->id && $job->mode === 'full_generation');
+
+        $website = Website::where('business_id', $business->id)->sole();
+        $this->assertSame(0, $website->pages()->count(), 'Nothing was generated inside the request.');
+        $this->assertNotNull($website->fresh()->generation_lease_token, 'The lease travels with the job.');
+        $in = QuestionnaireResponse::findOrFail($response->id);
+        $this->assertSame('in_progress', $in->status->value);
+        $this->assertNotNull($in->generation_started_at);
+
+        // A second click while the job is pending cannot start a second run.
+        $this->post(route('customer.workspaces.businesses.website.setup.generate', [$workspace->uid, $business->uid]))
+            ->assertRedirect(route('customer.workspaces.businesses.website.setup.review', [$workspace->uid, $business->uid]))
+            ->assertSessionHas('status', 'error');
+        \Illuminate\Support\Facades\Queue::assertPushed(\App\Jobs\Website\RunGuidedWebsiteGenerationJob::class, 1);
+
+        $progress = $this->get(route('customer.workspaces.businesses.website.generation.progress', [$workspace->uid, $business->uid, 'since' => 0, 'mode' => 'full_generation']))->assertOk();
+        $progress->assertSee(route('customer.workspaces.businesses.website.preview', [$workspace->uid, $business->uid]), false);
+        $this->getJson(route('customer.workspaces.businesses.website.generation.status', [$workspace->uid, $business->uid, 'since' => 0]))->assertJson(['state' => 'running']);
+
+        // The worker runs it: the website exists, the setup is completed and the lease is released.
+        $this->runQueuedWizardJob();
+
+        $this->assertGreaterThan(0, $website->pages()->count());
+        $this->assertSame('completed', QuestionnaireResponse::findOrFail($response->id)->status->value);
+        $this->assertNull($website->fresh()->generation_lease_token);
+        $this->getJson(route('customer.workspaces.businesses.website.generation.status', [$workspace->uid, $business->uid, 'since' => 0, 'mode' => 'full_generation']))->assertJson(['state' => 'succeeded']);
+        $this->assertNull($website->fresh()->published_revision_id, 'Generation never publishes.');
+    }
+
+    public function test_a_failed_queued_first_time_generation_unfreezes_the_setup_so_it_can_be_retried(): void
+    {
+        [$customer, $business, $workspace] = $this->entitledTenant();
+        $this->authenticateAsCustomer($customer);
+        $this->bindPlanEchoingAiClientThatFailsOnce();
+        $response = $this->completeAllRequiredSteps($workspace, $business);
+
+        config(['queue.default' => 'database']);
+        \Illuminate\Support\Facades\Queue::fake();
+
+        $this->post(route('customer.workspaces.businesses.website.setup.generate', [$workspace->uid, $business->uid]))->assertRedirect();
+        $this->runQueuedWizardJob(); // the AI client fails closed on its first call
+
+        $in = QuestionnaireResponse::findOrFail($response->id);
+        $this->assertSame('in_progress', $in->status->value, 'Still retryable.');
+        $this->assertNull($in->generation_started_at);
+        $website = Website::where('business_id', $business->id)->sole();
+        $this->assertNull($website->generation_lease_token);
+        $this->assertSame(0, $website->pages()->count());
+        $this->getJson(route('customer.workspaces.businesses.website.generation.status', [$workspace->uid, $business->uid, 'since' => 0, 'mode' => 'full_generation']))->assertJson(['state' => 'failed']);
+
+        // The review screen (the retry point) still renders.
+        $this->get(route('customer.workspaces.businesses.website.setup.review', [$workspace->uid, $business->uid]))->assertOk();
+    }
+
     public function test_every_primary_cta_choice_including_book_now_applies_and_generates_a_website(): void
     {
         foreach (['quote_request', 'call', 'book_now'] as $cta) {

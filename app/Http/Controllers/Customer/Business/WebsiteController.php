@@ -832,10 +832,14 @@ class WebsiteController extends CustomerBaseController
     {
         $this->authorize('website');
         $this->resolveEntitledBusiness($workspaceUid, $businessUid);
+        $firstTime = (string) $request->query('mode') === WebsiteGuidedGenerationAttempt::MODE_FULL_GENERATION;
 
         return view('customer.business.website.generation-progress', [
             'statusUrl' => route('customer.workspaces.businesses.website.generation.status', [$workspaceUid, $businessUid, 'since' => (int) $request->query('since', 0), 'mode' => (string) $request->query('mode', '')]),
             'pagesUrl' => route('customer.workspaces.businesses.website.pages.index', [$workspaceUid, $businessUid]),
+            // First-time wizard builds land on the preview, and a failure returns to the setup review to retry.
+            'doneUrl' => $firstTime ? route('customer.workspaces.businesses.website.preview', [$workspaceUid, $businessUid]) : route('customer.workspaces.businesses.website.pages.index', [$workspaceUid, $businessUid]),
+            'failUrl' => $firstTime ? route('customer.workspaces.businesses.website.setup.review', [$workspaceUid, $businessUid]) : route('customer.workspaces.businesses.website.pages.index', [$workspaceUid, $businessUid]),
         ]);
     }
 

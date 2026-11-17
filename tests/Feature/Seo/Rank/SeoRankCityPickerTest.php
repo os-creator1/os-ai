@@ -18,7 +18,7 @@ use Tests\Feature\Seo\Rank\Concerns\CreatesRankFixtures;
 use Tests\TestCase;
 
 /**
- * The Start tracking city picker: US + Lithuanian cities from the cached
+ * The Start tracking city picker: US, Canadian and Lithuanian cities from the cached
  * provider catalogue, honest empty/unavailable/not-initialised states, and an
  * Add keyword path that never traps the customer.
  *
@@ -31,6 +31,7 @@ class SeoRankCityPickerTest extends TestCase
     use CreatesRankFixtures;
 
     private const VILNIUS = 9900001;
+    private const TORONTO = 9900101;
 
     protected function setUp(): void
     {
@@ -61,6 +62,18 @@ class SeoRankCityPickerTest extends TestCase
         ])->save();
     }
 
+    /** Fixture codes only: production codes always come from `seo:rank-sync-locations`. */
+    private function seedCanada(): void
+    {
+        foreach ([
+            [self::TORONTO, 'Toronto,Ontario,Canada', 'City'],
+            [9900102, 'Mississauga,Ontario,Canada', 'City'],
+            [9900103, 'Ontario,Canada', 'Province'],
+        ] as [$code, $name, $type]) {
+            (new SeoRankLocation())->forceFill(['provider' => 'dataforseo', 'location_code' => $code, 'location_name' => $name, 'country_iso' => 'CA', 'location_type' => $type])->save();
+        }
+    }
+
     private function search(Workspace $w, Business $b, string $q)
     {
         return $this->getJson($this->u('keywords.rank-locations', $w, $b) . '?q=' . urlencode($q));
@@ -84,6 +97,58 @@ class SeoRankCityPickerTest extends TestCase
 
         Http::assertNothingSent();
         $this->assertSame(0, FakeSeoRankProvider::$submitCalls);
+    }
+
+    public function test_toronto_autocompletes_and_tracks_without_any_paid_check(): void
+    {
+        [$owner, $business, $workspace] = $this->tenant();
+        $this->seedCanada();
+        $this->authenticateAsSeoCustomer($owner);
+        Http::fake();
+        FakeSeoRankProvider::$completeImmediately = false;
+
+        $this->search($workspace, $business, 'Toronto')->assertOk()->assertExactJson([
+            'locations' => [['code' => self::TORONTO, 'label' => 'Toronto, Ontario, Canada']],
+            'status' => 'ok',
+        ]);
+        // The province row is not a city and never appears.
+        $this->assertSame([], $this->search($workspace, $business, 'Ontario')->json('locations'));
+
+        $keyword = $this->keyword($owner, $business, 'photo booth rental toronto');
+        $this->post($this->u('keywords.rank.track', $workspace, $business, $keyword->uid), ['search_location_code' => self::TORONTO])
+            ->assertSessionHas('status', 'success');
+        $target = SeoRankTarget::query()->where('seo_keyword_id', $keyword->id)->firstOrFail();
+        $this->assertSame(self::TORONTO, (int) $target->search_location_code);
+        Http::assertNothingSent();
+    }
+
+    public function test_canadian_codes_that_are_not_cached_cities_are_rejected(): void
+    {
+        [$owner, $business, $workspace] = $this->tenant();
+        $this->seedCanada();
+        $keyword = $this->keyword($owner, $business);
+        $this->authenticateAsSeoCustomer($owner);
+
+        foreach ([9900103 /* Ontario province */, 9999999 /* unknown code */] as $code) {
+            $this->post($this->u('keywords.rank.track', $workspace, $business, $keyword->uid), ['search_location_code' => $code])
+                ->assertSessionHas('message', 'Choose a search location from the list.');
+        }
+        $this->assertSame(0, SeoRankTarget::query()->count());
+        $this->assertSame(0, FakeSeoRankProvider::$submitCalls);
+        $this->assertNull(app(SeoRankLocationCatalog::class)->find(9900103));
+    }
+
+    public function test_ui_copy_names_canada_and_never_only_us_or_lithuania(): void
+    {
+        $this->assertSame('United States, Canada or Lithuania', SeoRankLocationCatalog::supportedCountriesLabel());
+        [$owner, $business, $workspace] = $this->tenant();
+        $this->authenticateAsSeoCustomer($owner);
+        $this->post($this->u('keywords.store', $workspace, $business), ['phrase' => 'first keyword', 'track_rank' => '0']);
+
+        $html = $this->get($this->u('keywords.index', $workspace, $business))->assertOk()->getContent();
+        $this->assertStringContainsString('United States, Canada or Lithuania', $html);
+        $this->assertStringContainsString('e.g. Toronto, Chicago or Vilnius', $html);
+        $this->assertStringNotContainsString('(US or Lithuanian cities)', $html);
     }
 
     public function test_unsupported_countries_and_types_never_appear_or_validate(): void
@@ -130,7 +195,7 @@ class SeoRankCityPickerTest extends TestCase
         $this->assertMatchesRegularExpression('/data-role="rank-location-confirm" disabled>Start tracking</', $html);
         $this->assertStringContainsString('Start tracking turns on once you pick a city from the list.', $html);
         $this->assertStringContainsString('data-role="rank-location-hint" role="status"', $html);
-        $this->assertStringContainsString('e.g. Chicago or Vilnius', $html);
+        $this->assertStringContainsString('e.g. Toronto, Chicago or Vilnius', $html);
         foreach (['No matching city.', 'Locations are temporarily unavailable.', 'Locations are not initialized yet.'] as $copy) {
             $this->assertStringContainsString($copy, $html);
         }
@@ -203,11 +268,13 @@ class SeoRankCityPickerTest extends TestCase
         $this->assertSame(0, FakeSeoRankProvider::$submitCalls);
     }
 
-    public function test_sync_loads_us_and_lithuanian_cities_by_the_rows_own_country(): void
+    public function test_sync_loads_us_canadian_and_lithuanian_cities_by_the_rows_own_country(): void
     {
         SeoRankLocation::query()->delete();
         FakeSeoRankProvider::$locations = [
             ['code' => 1016367, 'name' => 'Chicago,Illinois,United States', 'parent_code' => null, 'country_iso' => 'US', 'type' => 'City'],
+            ['code' => self::TORONTO, 'name' => 'Toronto,Ontario,Canada', 'parent_code' => null, 'country_iso' => 'CA', 'type' => 'City'],
+            ['code' => 9900104, 'name' => 'Ontario,Canada', 'parent_code' => null, 'country_iso' => 'CA', 'type' => 'Province'],
             ['code' => self::VILNIUS, 'name' => 'Vilnius,Vilnius County,Lithuania', 'parent_code' => null, 'country_iso' => 'LT', 'type' => 'City'],
             ['code' => 9900012, 'name' => 'Kaunas,Kaunas County,Lithuania', 'parent_code' => null, 'country_iso' => 'LT', 'type' => 'Municipality'],
             ['code' => 9900013, 'name' => 'Kaunas County,Lithuania', 'parent_code' => null, 'country_iso' => 'LT', 'type' => 'County'],
@@ -215,22 +282,26 @@ class SeoRankCityPickerTest extends TestCase
         ];
         $catalog = app(SeoRankLocationCatalog::class);
 
-        $this->assertSame(['US', 'LT'], $catalog->missingCountries());
-        $this->assertSame(3, $catalog->sync());
+        $this->assertSame(['US', 'CA', 'LT'], $catalog->missingCountries());
+        $this->assertSame(4, $catalog->sync());
         $this->assertSame([], $catalog->missingCountries());
-        $this->assertSame(['LT', 'LT', 'US'], SeoRankLocation::query()->orderBy('country_iso')->orderBy('location_code')->pluck('country_iso')->all());
+        $this->assertSame(['CA', 'LT', 'LT', 'US'], SeoRankLocation::query()->orderBy('country_iso')->orderBy('location_code')->pluck('country_iso')->all());
     }
 
     public function test_the_if_missing_command_calls_the_provider_only_when_a_country_is_missing(): void
     {
         FakeSeoRankProvider::$locations = [
             ['code' => self::VILNIUS, 'name' => 'Vilnius,Vilnius County,Lithuania', 'parent_code' => null, 'country_iso' => 'LT', 'type' => 'City'],
+            ['code' => self::TORONTO, 'name' => 'Toronto,Ontario,Canada', 'parent_code' => null, 'country_iso' => 'CA', 'type' => 'City'],
         ];
 
-        $this->assertSame(['LT'], app(SeoRankLocationCatalog::class)->missingCountries());
+        $this->assertSame(['CA', 'LT'], app(SeoRankLocationCatalog::class)->missingCountries());
         $this->assertSame(0, Artisan::call('seo:rank-sync-locations', ['--if-missing' => true]));
         $this->assertSame([], app(SeoRankLocationCatalog::class)->missingCountries());
         $this->assertNotNull(app(SeoRankLocationCatalog::class)->find(self::VILNIUS));
+        $this->assertNotNull(app(SeoRankLocationCatalog::class)->find(self::TORONTO));
+        $this->assertStringContainsString('CA: cached 1 locations.', Artisan::output());
+        $this->assertSame(0, FakeSeoRankProvider::$submitCalls);
 
         // Everything cached: nothing to do.
         FakeSeoRankProvider::$locations = [];

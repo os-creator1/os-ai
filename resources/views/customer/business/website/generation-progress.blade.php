@@ -23,13 +23,13 @@
         <div class="text-center my-5" data-state="succeeded" hidden role="status" aria-live="polite">
             <h5 class="mb-2" data-testid="generation-success-title">Your draft is ready</h5>
             <p class="mb-3" data-message></p>
-            <x-button variant="primary" href="{{ $pagesUrl }}">Review your pages</x-button>
+            <x-button variant="primary" href="{{ $doneUrl ?? $pagesUrl }}">Review your website</x-button>
         </div>
 
         <div class="text-center my-5" data-state="failed" hidden role="alert">
             <h5 class="mb-2" data-testid="generation-failed-title">We couldn't finish building your website</h5>
             <p class="mb-3" data-message></p>
-            <x-button variant="primary" href="{{ $pagesUrl }}">Back to your pages</x-button>
+            <x-button variant="primary" href="{{ $failUrl ?? $pagesUrl }}">Go back and try again</x-button>
         </div>
     </div>
 

@@ -69,6 +69,7 @@
                 @endif
             </div>
             <a href="{{ $planUrl }}" class="xw-btn xw-btn-line" data-role="open-plan">Open improvement plan {!! ($plan !== null && $plan['counts']['items'] > 0) ? '<span class="xw-faint">('.(int) $plan['counts']['items'].' item(s))</span>' : '' !!}</a>
+            <a href="{{ route('customer.workspaces.businesses.website.existing.show', [$workspaceUid, $businessUid]) }}" class="xw-btn xw-btn-line" data-role="open-rebuild-plan">Plan a MotionGrove rebuild</a>
         </section>
 
         {{-- Numbers: precise labels, no invented score --}}
