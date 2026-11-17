@@ -1370,6 +1370,7 @@
             // behind the keyword's Location ACL. "Check now" only queues work the
             // budget authority has just reserved.
             Route::get('/keywords/rank-locations', 'Business\SeoRankTargetsController@locationSearch')->middleware('throttle:60,1')->name('keywords.rank-locations');
+            Route::post('/keywords/suggestions/track', 'Business\SeoKeywordsController@trackSuggestions')->middleware('throttle:10,1')->name('keywords.rank.track-suggestions');
             Route::post('/keywords/{keywordUid}/rank/track', 'Business\SeoRankTargetsController@track')->middleware('throttle:30,1')->name('keywords.rank.track');
             Route::get('/rank-targets/{targetUid}', 'Business\SeoRankTargetsController@show')->name('rank-targets.show');
             Route::post('/rank-targets/{targetUid}/stop', 'Business\SeoRankTargetsController@stop')->middleware('throttle:30,1')->name('rank-targets.stop');

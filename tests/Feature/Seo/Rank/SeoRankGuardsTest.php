@@ -334,7 +334,7 @@ class SeoRankGuardsTest extends TestCase
         $this->assertSame(['fresh' => 1, 'checked' => 2], $dashboard['summary']['basis']);
 
         $html = $this->html($workspace, $business);
-        $this->assertSame(['#4'], $this->role($html, 'summary-average'));
+        $this->assertSame(['#4'], $this->role($html, 'summary-best-organic'));
         $this->assertSame(['Based on 1 of 2 keywords checked recently.'], $this->role($html, 'summary-basis'));
 
         // Everything fresh: no caveat.
@@ -352,8 +352,8 @@ class SeoRankGuardsTest extends TestCase
 
         $html = $this->html($workspace, $business);
 
-        $this->assertSame(['—'], $this->role($html, 'summary-average'));
-        $this->assertSame(['—'], $this->role($html, 'summary-top10'));
+        $this->assertSame(['—'], $this->role($html, 'summary-best-organic'));
+        $this->assertSame(['—'], $this->role($html, 'summary-best-local'));
         $this->assertSame(['Based on 0 of 1 keyword checked recently.'], $this->role($html, 'summary-basis'));
     }
 }

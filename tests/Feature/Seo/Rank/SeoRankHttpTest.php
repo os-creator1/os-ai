@@ -244,10 +244,9 @@ class SeoRankHttpTest extends TestCase
         $html = $this->index($workspace, $business);
 
         $this->assertStringContainsString('Search keywords', $html);
-        $this->assertStringContainsString('Track the searches that matter to your business', (string) $this->first($html, 'page-subtitle'));
-        $this->assertSame('—', $this->first($html, 'summary-average'));
-        $this->assertSame('—', $this->first($html, 'summary-top10'));
-        $this->assertSame('—', $this->first($html, 'summary-improved'));
+        $this->assertStringContainsString('See where you show up when people search for what you offer.', (string) $this->first($html, 'page-subtitle'));
+        $this->assertSame('—', $this->first($html, 'summary-best-organic'));
+        $this->assertSame('—', $this->first($html, 'summary-best-local'));
         $this->assertSame('—', $this->first($html, 'summary-local-top3'));
         $this->assertSame('0 / 5', $this->first($html, 'summary-tracked'));
         $this->assertSame('You have no keywords yet.', $this->first($html, 'no-keywords'));
@@ -263,7 +262,7 @@ class SeoRankHttpTest extends TestCase
         $html = $this->index($workspace, $business);
 
         $headers = $this->texts($html, "//table[@data-role='rank-table']/thead//th");
-        $this->assertSame(['KEYWORD', 'ORGANIC', 'LOCAL', 'CHANGE', 'WEBSITE', 'ACTIONS'], array_map('mb_strtoupper', $headers));
+        $this->assertSame(['KEYWORD', 'GOOGLE SEARCH', 'GOOGLE MAPS', 'CHANGE', 'WEBSITE', 'ACTIONS'], array_map('mb_strtoupper', $headers));
 
         $this->assertSame('untracked', $this->rowState($html, $keyword));
         $this->assertStringContainsString('SEO target', $this->cell($html, $keyword, 'Keyword'));
@@ -294,7 +293,7 @@ class SeoRankHttpTest extends TestCase
         }
 
         $this->assertSame(['Keyword', 'Organic', 'Local', 'Change', 'Website', 'Actions'], $labels);
-        $this->assertStringContainsString('attr(data-label)', $html);
+        $this->assertStringContainsString('attr(data-title)', $html);
         $this->assertStringContainsString('max-width: 767.98px', $html);
     }
 
@@ -379,11 +378,10 @@ class SeoRankHttpTest extends TestCase
         $this->assertSame('active', $this->rowState($html, $keyword));
         $this->assertSame('#7', $this->cell($html, $keyword, 'Organic'));
         $this->assertSame('Local #3', $this->cell($html, $keyword, 'Local'));
-        $this->assertSame(['Checked today'], $this->role($html, 'last-checked'));
-        $this->assertSame('#7', $this->first($html, 'summary-average'));
-        $this->assertSame('1', $this->first($html, 'summary-top10'));
+        $this->assertSame(['checked today'], $this->role($html, 'last-checked'));
+        $this->assertSame('#7', $this->first($html, 'summary-best-organic'));
+        $this->assertSame('#3', $this->first($html, 'summary-best-local'));
         $this->assertSame('1', $this->first($html, 'summary-local-top3'));
-        $this->assertSame('0', $this->first($html, 'summary-improved'));
     }
 
     public function test_improvements_and_drops_are_shown_as_arrows_with_the_amount(): void
@@ -403,8 +401,7 @@ class SeoRankHttpTest extends TestCase
 
         $this->assertSame('↑ 5', $this->cell($html, $up, 'Change'));
         $this->assertSame('↓ 4', $this->cell($html, $down, 'Change'));
-        $this->assertSame('1', $this->first($html, 'summary-improved'));
-        $this->assertSame('2', $this->first($html, 'summary-top10'));
+        $this->assertSame('#7', $this->first($html, 'summary-best-organic'), 'Best current organic rank across tracked keywords.');
     }
 
     public function test_absence_is_a_word_never_a_number(): void
@@ -420,7 +417,7 @@ class SeoRankHttpTest extends TestCase
 
         $this->assertSame('Not in top 100', $this->cell($html, $keyword, 'Organic'));
         $this->assertSame('Not matched', $this->cell($html, $keyword, 'Local'));
-        $this->assertSame('—', $this->first($html, 'summary-average'));
+        $this->assertSame('—', $this->first($html, 'summary-best-organic'));
         $table = implode(' ', $this->texts($html, "//table[@data-role='rank-table']"));
         $this->assertDoesNotMatchRegularExpression('/#0(?!\d)|#101/', $table);
         $this->assertDoesNotMatchRegularExpression('/#0(?!\d)|#101/', implode(' ', $this->texts($html, "//*[@data-section='rank-summary']")));
@@ -916,7 +913,7 @@ class SeoRankHttpTest extends TestCase
 
         // And the dashboard organic average is the provider average only.
         $index = $this->index($workspace, $business);
-        $this->assertSame('#7', $this->first($index, 'summary-average'));
+        $this->assertSame('#7', $this->first($index, 'summary-best-organic'));
         $this->assertStringNotContainsString(self::GSC_POSITION, implode(' ', $this->texts($index, "//text()[not(ancestor::script) and not(ancestor::style)]")));
     }
 
@@ -978,7 +975,7 @@ class SeoRankHttpTest extends TestCase
         $this->assertStringNotContainsString('hidden phrase', $html);
         $this->assertStringNotContainsString($hiddenTarget->uid, $html);
         $this->assertSame([], $this->texts($html, "//tr[@data-uid='{$hiddenKeyword->uid}']"));
-        $this->assertSame('—', $this->first($html, 'summary-average'), 'A hidden target must not feed the visible average.');
+        $this->assertSame('—', $this->first($html, 'summary-best-organic'), 'A hidden target must not feed the visible summary.');
 
         $this->assertTrue($hiddenTarget->fresh()->isTracking());
         $this->assertSame($before, $this->counts());
@@ -1005,7 +1002,7 @@ class SeoRankHttpTest extends TestCase
         $this->assertStringContainsString($keyword->phrase, $html);
         // Rank tracking does not apply: no "Tracked 0 / —" cards and no rank columns of dashes,
         // just one honest line. The keyword and its Website coverage are still there.
-        foreach (['summary-tracked', 'summary-average', 'summary-top10', 'summary-improved', 'summary-local-top3'] as $summaryRole) {
+        foreach (['summary-tracked', 'summary-best-organic', 'summary-best-local', 'summary-local-top3'] as $summaryRole) {
             $this->assertSame([], $this->role($html, $summaryRole), "{$summaryRole} must not render without the entitlement.");
         }
         $this->assertNotEmpty($this->role($html, 'rank-not-included'));

@@ -183,6 +183,73 @@ class SeoKeywordsController extends CustomerBaseController
         return $this->done($workspaceUid, $businessUid, 'Keyword added.');
     }
 
+    /**
+     * "Track all suggestions". The phrases are NEVER read from the request: the
+     * suggestions are recomputed here from the Business's own strategy, exactly as
+     * the page lists them, and each is saved through the same manager and (when the
+     * Business is entitled and not viewed-as) tracked through the same path as a
+     * single add. The posted search location, when given, applies to every one;
+     * otherwise each uses its existing default location.
+     */
+    public function trackSuggestions(Request $request, string $workspaceUid, string $businessUid): RedirectResponse
+    {
+        [, $business] = $this->resolveSeoTenancy($workspaceUid, $businessUid);
+
+        $this->authorize('manage_seo');
+
+        $input = $request->validate(['search_location_code' => ['nullable', 'integer', 'min:1']]);
+        $actorId = (int) Auth::id();
+        $accessible = $this->locationScope->accessibleLocations($actorId, $business);
+        $activeLocations = $accessible->filter(fn (BusinessLocation $l) => $l->isActive())->values();
+        $visible = $this->keywords->listVisible($actorId, $business, $accessible->pluck('id')->map(fn ($id) => (int) $id)->all());
+        $suggestions = $this->suggester->suggest($business, $activeLocations, $visible, $visible->filter(fn (SeoKeyword $k) => $k->isActive())->count());
+
+        if ($suggestions === []) {
+            return $this->done($workspaceUid, $businessUid, 'There are no suggestions left to add.');
+        }
+
+        $canTrack = $this->rankEntitlement->planFor($business) !== null && ! $this->viewingAsClient($request);
+        $added = 0;
+        $tracked = 0;
+
+        foreach ($suggestions as $suggestion) {
+            $location = $suggestion->locationUid === null ? null : $activeLocations->firstWhere('uid', $suggestion->locationUid);
+
+            try {
+                $keyword = $this->keywords->create($actorId, $business, $suggestion->phrase, $location);
+            } catch (SeoKeywordException $e) {
+                // Ceiling reached or a phrase refused: keep what was saved and say so.
+                if ($added === 0) {
+                    return $this->refused($workspaceUid, $businessUid, $e);
+                }
+
+                break;
+            }
+
+            $added++;
+
+            if ($canTrack) {
+                $code = $input['search_location_code'] ?? $this->rankTargets->defaultLocation($business, $location?->id)?->location_code;
+
+                if (str_starts_with($this->trackNewKeyword($actorId, $business, $keyword->uid, $code), 'Keyword added and rank tracking started.')) {
+                    $tracked++;
+                }
+            }
+        }
+
+        $noun = $added === 1 ? 'keyword' : 'keywords';
+
+        if (! $canTrack) {
+            return $this->done($workspaceUid, $businessUid, "{$added} {$noun} added.");
+        }
+
+        if ($tracked === 0) {
+            return $this->done($workspaceUid, $businessUid, "{$added} {$noun} added. Rank tracking is off: choose a search location, or stop tracking one to free a slot.");
+        }
+
+        return $this->done($workspaceUid, $businessUid, "{$added} {$noun} added, {$tracked} now rank-tracked. " . $this->firstCheckNotice->forBusiness($business));
+    }
+
     public function update(Request $request, string $workspaceUid, string $businessUid, string $keywordUid): RedirectResponse
     {
         [, $business] = $this->resolveSeoTenancy($workspaceUid, $businessUid);
