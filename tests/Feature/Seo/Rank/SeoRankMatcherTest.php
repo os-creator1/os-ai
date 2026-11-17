@@ -333,6 +333,7 @@ class SeoRankMatcherTest extends TestCase
             'address redirects elsewhere' => fn () => $this->externalToronto('external', 'completed', 'redirects_elsewhere'),
             'audit of a different host' => fn () => $this->externalToronto('external', 'completed', 'reachable', 'someone-else.example'),
             'audit still queued' => fn () => $this->externalToronto('external', 'queued', null),
+            'completed audit without connection proof' => fn () => $this->externalToronto('external', 'completed', null),
         ] as $label => $make) {
             $this->assertNull(SeoRankIdentity::forBusiness($make()->fresh())->domain, $label);
         }
