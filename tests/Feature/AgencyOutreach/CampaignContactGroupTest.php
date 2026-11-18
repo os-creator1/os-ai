@@ -248,6 +248,28 @@ class CampaignContactGroupTest extends TestCase
         Queue::assertPushed(OutreachInitialSendJob::class, 3);
     }
 
+    public function test_refresh_replaces_old_phone_membership_when_the_same_crm_contact_changes_phone(): void
+    {
+        $a = $this->outreachAgency('Alpha', ['enrolled' => false]);
+        $group = $this->group($a['business']);
+        $contact = $this->contact($group, '12025550101');
+        $this->agencyActor($a);
+        $this->create($a, ['contact_group_uid' => $group->uid])->assertSessionHasNoErrors();
+
+        $campaign = AgencyProspectCampaign::where('name', 'Spring push')->firstOrFail();
+        $this->assertSame(['12025550101'], $campaign->members()->with('prospect')->get()->pluck('prospect.phone')->all());
+
+        $contact->update(['phone' => '12025550102']);
+        $this->post($this->outreachRoute('campaigns.recipients.refresh', $a['workspace'], [$campaign->uid]))
+            ->assertSessionHas('flash_success');
+
+        $members = $campaign->members()->with('prospect')->get();
+        $this->assertCount(1, $members, 'the outdated phone must not remain enrolled');
+        $this->assertSame('12025550102', $members->first()->prospect->phone);
+        $this->assertSame($contact->id, (int) $members->first()->source_contact_id);
+        $this->assertSame(1, $campaign->fresh()->recipient_report['eligible']);
+    }
+
     public function test_refresh_and_repeated_creation_never_duplicate_prospects_or_members(): void
     {
         $a = $this->outreachAgency('Alpha', ['enrolled' => false]);
