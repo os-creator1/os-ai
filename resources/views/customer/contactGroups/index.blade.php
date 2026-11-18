@@ -43,7 +43,7 @@
                 <h1 class="mgx-title">Contacts</h1>
                 <p class="mgx-sub">Groups keep your contacts organised for messages and automations.</p>
             </div>
-            @can('view_contact_group')
+            @can('view_contact')
                 <a class="mgx-btn is-secondary" data-role="groups-export" href="{{ \App\Library\CrmRouting::route('contacts.export') }}"><svg class="mgx-ic" viewBox="0 0 24 24"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></svg>{{ __('locale.buttons.export') }}</a>
             @endcan
             @can('create_contact_group')
