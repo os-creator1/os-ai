@@ -30,6 +30,11 @@ class GroupDetailPageTest extends TestCase
 
         $page = $this->get($this->showUrl($workspace, $business, $group))->assertOk();
 
+        // Render SVG controls through Feather, never inline Blade components
+        // inside JavaScript string literals (their multiline SVG breaks parsing).
+        $this->assertSame(2, substr_count($page->getContent(), "selectAllButtons.html(feather.icons["));
+        $this->assertSame(2, substr_count($page->getContent(), "$(buttonElement).html(feather.icons["));
+
         $page->assertSee('data-role="group-header"', false);
         // Bootstrap's tab plugin only finds its tab group through `.nav` / `.list-group`.
         $page->assertSee('class="nav mgx-tabs mgx-gd-tabs"', false);
