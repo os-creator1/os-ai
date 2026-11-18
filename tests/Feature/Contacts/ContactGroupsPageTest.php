@@ -222,11 +222,23 @@ class ContactGroupsPageTest extends TestCase
     {
         [$owner, $business, $workspace] = $this->tenant(WorkspacePlanTier::Growth);
         $group = $this->group($business, 'Old name');
+        $group->update([
+            'send_welcome_sms' => true,
+            'unsubscribe_notification' => true,
+            'send_keyword_message' => true,
+        ]);
         $this->authenticateAs($owner);
 
-        $this->patch($this->actionUrl($workspace, $business, $group, ''), ['name' => 'New name', 'return' => 'index'])
-            ->assertRedirect($this->groupsUrl($workspace, $business));
+        $this->patch($this->actionUrl($workspace, $business, $group, ''), [
+            'name' => 'New name',
+            'return' => 'index',
+            // Even a crafted list rename cannot modify other settings.
+            'send_welcome_sms' => false,
+        ])->assertRedirect($this->groupsUrl($workspace, $business));
         $this->assertSame('New name', $group->fresh()->name);
+        $this->assertEquals(1, $group->fresh()->send_welcome_sms);
+        $this->assertEquals(1, $group->fresh()->unsubscribe_notification);
+        $this->assertEquals(1, $group->fresh()->send_keyword_message);
 
         $this->patch($this->actionUrl($workspace, $business, $group, ''), ['name' => 'Third name'])
             ->assertRedirect($this->actionUrl($workspace, $business, $group, '/show'));
