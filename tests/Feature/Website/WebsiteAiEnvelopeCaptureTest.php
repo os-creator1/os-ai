@@ -309,14 +309,25 @@ class WebsiteAiEnvelopeCaptureTest extends TestCase
             outputTokens: 20,
         ));
 
+        $client = app(GuidedWebsiteGenerationClient::class);
+        $buildMessages = new \ReflectionMethod($client, 'buildMessages');
+        $buildMessages->setAccessible(true);
+        $diagnostics = [];
         foreach ($batches as $index => $batch) {
-            app(GuidedWebsiteGenerationClient::class)->generate(
-                $business, $batch, null, 'max-questionnaire-proof:b' . ($index + 1) . ':retry0', $aiPlan
-            );
+            $messages = $buildMessages->invoke($client, $business, $batch, $aiPlan, []);
+            $estimatedInput = app(AiModelRouter::class)->estimateInputTokens($messages);
+            $before = count($this->fakeClient->requests());
+            $client->generate($business, $batch, null, 'max-questionnaire-proof:b' . ($index + 1) . ':retry0', $aiPlan);
+            $diagnostics[] = [
+                'batch' => $index + 1,
+                'estimated_input' => $estimatedInput,
+                'provider_reached' => count($this->fakeClient->requests()) > $before,
+                'diagnostic' => $client->lastGenerationDiagnostic(),
+            ];
         }
 
         $requests = $this->fakeClient->requests();
-        $this->assertCount(count($batches), $requests, 'Every planned batch must reach the provider within the input budget.');
+        $this->assertCount(count($batches), $requests, 'Batch diagnostics: ' . json_encode($diagnostics));
 
         foreach ($requests as $index => $request) {
             $estimated = app(AiModelRouter::class)->estimateInputTokens($request->messages);
