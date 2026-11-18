@@ -141,7 +141,7 @@ class DraftPagePreservationTest extends TestCase
     public function test_too_many_preserved_pages_block_the_rebuild_before_anything_is_deleted(): void
     {
         [$customer, $business, $template, $website] = $this->setup13();
-        foreach (range(1, 7) as $i) {
+        foreach (range(1, WebsitePageStrategy::MAX_PAGES_PER_GENERATION - 13) as $i) {
             $this->page($website, "Extra {$i}", "extra-{$i}");
         }
         $plan = app(WebsitePageStrategy::class)->buildPlan($business, $template, $website);
@@ -150,8 +150,8 @@ class DraftPagePreservationTest extends TestCase
         $attempt = app(GuidedGenerationCommitService::class)->rebuild($business, $website, $template, $customer->user_id, 'idem-block');
 
         $this->assertSame(WebsiteGuidedGenerationAttempt::STATUS_FAILED, $attempt->status);
-        $this->assertStringContainsString('at most 20', (string) $attempt->failure_reason);
-        $this->assertSame(20, $website->pages()->count());
+        $this->assertStringContainsString('at most ' . WebsitePageStrategy::MAX_PAGES_PER_GENERATION, (string) $attempt->failure_reason);
+        $this->assertSame(WebsitePageStrategy::MAX_PAGES_PER_GENERATION, $website->pages()->count());
         $this->assertStringContainsString('OWNER-AUTHORED', json_encode($website->pages()->where('is_home', true)->firstOrFail()->sections));
     }
 }

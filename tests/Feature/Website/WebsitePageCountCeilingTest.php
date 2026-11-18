@@ -4,6 +4,7 @@ namespace Tests\Feature\Website;
 
 use App\Library\Website\WebsiteAiDraftGenerator;
 use App\Library\Website\WebsiteDraftPageService;
+use App\Library\Website\WebsitePageStrategy;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Validation\ValidationException;
 use Tests\Feature\Website\Concerns\CreatesWebsiteFixtures;
@@ -21,7 +22,7 @@ class WebsitePageCountCeilingTest extends TestCase
     use CreatesWebsiteFixtures;
     use RefreshDatabase;
 
-    public function test_the_20th_page_succeeds_and_the_21st_fails(): void
+    public function test_the_last_allowed_page_succeeds_and_the_next_fails(): void
     {
         [, $business] = $this->entitledTenant();
         $website = $this->createWebsite($business);
@@ -30,22 +31,22 @@ class WebsitePageCountCeilingTest extends TestCase
         // Homepage (1) plus 18 sub-pages = 19 pages so far.
         $service->createPage($website, ['title' => 'Home', 'is_home' => true, 'sections' => []]);
 
-        for ($i = 1; $i <= 18; $i++) {
+        for ($i = 1; $i <= WebsitePageStrategy::MAX_PAGES_PER_GENERATION - 2; $i++) {
             $service->createPage($website, ['title' => "Page {$i}", 'slug' => "page-{$i}", 'is_home' => false, 'sections' => []]);
         }
 
-        $this->assertSame(19, $website->pages()->count());
+        $this->assertSame(WebsitePageStrategy::MAX_PAGES_PER_GENERATION - 1, $website->pages()->count());
 
         // The 20th page succeeds.
-        $service->createPage($website, ['title' => 'Page 19', 'slug' => 'page-19', 'is_home' => false, 'sections' => []]);
-        $this->assertSame(20, $website->pages()->count());
+        $service->createPage($website, ['title' => 'Page last', 'slug' => 'page-last', 'is_home' => false, 'sections' => []]);
+        $this->assertSame(WebsitePageStrategy::MAX_PAGES_PER_GENERATION, $website->pages()->count());
 
         // The 21st fails.
         $this->expectException(ValidationException::class);
-        $service->createPage($website, ['title' => 'Page 20', 'slug' => 'page-20', 'is_home' => false, 'sections' => []]);
+        $service->createPage($website, ['title' => 'Page over', 'slug' => 'page-over', 'is_home' => false, 'sections' => []]);
     }
 
-    public function test_the_21st_page_does_not_persist_after_rejection(): void
+    public function test_the_page_over_the_ceiling_does_not_persist_after_rejection(): void
     {
         [, $business] = $this->entitledTenant();
         $website = $this->createWebsite($business);
@@ -53,11 +54,11 @@ class WebsitePageCountCeilingTest extends TestCase
 
         $service->createPage($website, ['title' => 'Home', 'is_home' => true, 'sections' => []]);
 
-        for ($i = 1; $i <= 19; $i++) {
+        for ($i = 1; $i <= WebsitePageStrategy::MAX_PAGES_PER_GENERATION - 1; $i++) {
             $service->createPage($website, ['title' => "Page {$i}", 'slug' => "page-{$i}", 'is_home' => false, 'sections' => []]);
         }
 
-        $this->assertSame(20, $website->pages()->count());
+        $this->assertSame(WebsitePageStrategy::MAX_PAGES_PER_GENERATION, $website->pages()->count());
 
         try {
             $service->createPage($website, ['title' => 'One Too Many', 'slug' => 'one-too-many', 'is_home' => false, 'sections' => []]);
@@ -66,7 +67,7 @@ class WebsitePageCountCeilingTest extends TestCase
             // expected
         }
 
-        $this->assertSame(20, $website->pages()->count());
+        $this->assertSame(WebsitePageStrategy::MAX_PAGES_PER_GENERATION, $website->pages()->count());
         $this->assertDatabaseMissing('website_pages', ['website_id' => $website->id, 'slug' => 'one-too-many']);
     }
 
@@ -78,19 +79,19 @@ class WebsitePageCountCeilingTest extends TestCase
 
         $home = $service->createPage($website, ['title' => 'Home', 'is_home' => true, 'sections' => []]);
 
-        for ($i = 1; $i <= 19; $i++) {
+        for ($i = 1; $i <= WebsitePageStrategy::MAX_PAGES_PER_GENERATION - 1; $i++) {
             $service->createPage($website, ['title' => "Page {$i}", 'slug' => "page-{$i}", 'is_home' => false, 'sections' => []]);
         }
 
-        $this->assertSame(20, $website->pages()->count());
+        $this->assertSame(WebsitePageStrategy::MAX_PAGES_PER_GENERATION, $website->pages()->count());
 
-        // The Website is already at the 20-page ceiling -- updating an
+        // The Website is already at the page ceiling -- updating an
         // existing page must still succeed (updatePage() never counts
         // against the create ceiling).
         $updated = $service->updatePage($website, $home, ['title' => 'Updated Home', 'is_home' => true, 'sections' => []]);
 
         $this->assertSame('Updated Home', $updated->title);
-        $this->assertSame(20, $website->pages()->count());
+        $this->assertSame(WebsitePageStrategy::MAX_PAGES_PER_GENERATION, $website->pages()->count());
     }
 
     /**
@@ -119,7 +120,7 @@ class WebsitePageCountCeilingTest extends TestCase
         $this->assertLessThan($countPosition, $lockPosition, 'The Website row lock must be acquired BEFORE the page count is read, so a concurrent caller for the same Website is serialized and always sees an up-to-date count.');
     }
 
-    public function test_repeated_sequential_creation_at_the_ceiling_never_exceeds_twenty(): void
+    public function test_repeated_sequential_creation_at_the_ceiling_never_exceeds_the_ceiling(): void
     {
         [, $business] = $this->entitledTenant();
         $website = $this->createWebsite($business);
@@ -127,15 +128,15 @@ class WebsitePageCountCeilingTest extends TestCase
 
         $service->createPage($website, ['title' => 'Home', 'is_home' => true, 'sections' => []]);
 
-        for ($i = 1; $i <= 19; $i++) {
+        for ($i = 1; $i <= WebsitePageStrategy::MAX_PAGES_PER_GENERATION - 1; $i++) {
             $service->createPage($website, ['title' => "Page {$i}", 'slug' => "page-{$i}", 'is_home' => false, 'sections' => []]);
         }
 
-        $this->assertSame(20, $website->pages()->count());
+        $this->assertSame(WebsitePageStrategy::MAX_PAGES_PER_GENERATION, $website->pages()->count());
 
         $rejected = 0;
 
-        for ($i = 20; $i <= 22; $i++) {
+        for ($i = WebsitePageStrategy::MAX_PAGES_PER_GENERATION; $i <= WebsitePageStrategy::MAX_PAGES_PER_GENERATION + 2; $i++) {
             try {
                 $service->createPage($website, ['title' => "Page {$i}", 'slug' => "page-{$i}", 'is_home' => false, 'sections' => []]);
             } catch (ValidationException) {
@@ -144,7 +145,7 @@ class WebsitePageCountCeilingTest extends TestCase
         }
 
         $this->assertSame(3, $rejected);
-        $this->assertSame(20, $website->pages()->count());
+        $this->assertSame(WebsitePageStrategy::MAX_PAGES_PER_GENERATION, $website->pages()->count());
     }
 
     public function test_the_existing_ai_batch_page_limit_is_unaffected(): void

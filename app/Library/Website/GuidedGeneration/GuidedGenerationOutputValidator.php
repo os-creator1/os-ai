@@ -47,9 +47,12 @@ final class GuidedGenerationOutputValidator
      * @param  array<int, array{page_key: string, title: string, seo_title: ?string, meta_description: ?string, sections: array}>  $pages
      * @param  array  $plan  WebsitePageStrategy::buildPlan()'s output — the authoritative required page set
      * @param  array<int, string>  $prohibitedClaims
+     * @param  ?array  $linkPlan  the COMPLETE plan, when $plan is only one batch of it: internal links may point at any page
+     *         of the complete plan (a page written in another batch), while coverage, metadata and area checks stay scoped
+     *         to $plan. Null = $plan is the complete plan.
      * @throws ValidationException
      */
-    public function validate(array $pages, array $plan, array $prohibitedClaims = []): void
+    public function validate(array $pages, array $plan, array $prohibitedClaims = [], ?array $linkPlan = null): void
     {
         if ($plan === []) {
             throw ValidationException::withMessages(['plan' => ['The generation plan contains no pages.']]);
@@ -77,7 +80,7 @@ final class GuidedGenerationOutputValidator
         // link target, regardless of whether AI happened to emit content
         // for it correctly above — a CTA is still allowed to point at
         // any real planned page.
-        $knownSlugs = collect($plan)->map(fn ($page) => $page['is_home'] ? '' : (string) $page['slug'])->filter(fn ($slug) => $slug !== '')->values()->all();
+        $knownSlugs = collect($linkPlan ?? $plan)->map(fn ($page) => $page['is_home'] ? '' : (string) $page['slug'])->filter(fn ($slug) => $slug !== '')->values()->all();
 
         foreach ($pages as $index => $page) {
             $pageKey = $page['page_key'] ?? null;
