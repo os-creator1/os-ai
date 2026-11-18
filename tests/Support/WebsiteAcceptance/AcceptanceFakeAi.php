@@ -28,6 +28,8 @@ final class AcceptanceFakeAi extends WebsiteAiGenerationClient
     /** Bind this fake as THE Website AI client (the seam is a container singleton-by-instance). */
     public static function bind(\Illuminate\Contracts\Foundation\Application $app): self
     {
+        // This fake judges the pipeline around AI output, not copy quality (see the class docblock).
+        config(['ai.website_content_quality' => false]);
         $fake = new self($app->make(\App\Library\Ai\AiGateway::class), $app->make(\App\Library\Ai\AiModelRouter::class));
         $app->instance(WebsiteAiGenerationClient::class, $fake);
 

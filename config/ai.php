@@ -134,6 +134,18 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Guided website generation: content-quality enforcement
+    |--------------------------------------------------------------------------
+    |
+    | When true (the product default), AI-written website pages must pass the page-type-aware completeness checks
+    | (App\Library\Website\GuidedGeneration\PageContentQuality) against the business's confirmed facts, or the batch takes
+    | its corrective retry. Tests that exercise unrelated generation mechanics with minimal fake pages switch it off.
+    |
+    */
+    'website_content_quality' => (bool) env('AI_WEBSITE_CONTENT_QUALITY', true),
+
+    /*
+    |--------------------------------------------------------------------------
     | Estimator (§10.1 step 3)
     |--------------------------------------------------------------------------
     |

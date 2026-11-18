@@ -69,6 +69,7 @@ jobs:
         run: >-
           php artisan test
           tests/Feature/Website/GuidedGeneration
+          tests/Unit/Website/PageContentQualityTest.php
           tests/Feature/Website/WebsitePageCountCeilingTest.php
           tests/Feature/Website/WebsitePlanExplanationTest.php
           tests/Feature/Website/WebsiteEventPagesPlanTest.php

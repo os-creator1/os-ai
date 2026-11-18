@@ -50,9 +50,11 @@ final class GuidedGenerationOutputValidator
      * @param  ?array  $linkPlan  the COMPLETE plan, when $plan is only one batch of it: internal links may point at any page
      *         of the complete plan (a page written in another batch), while coverage, metadata and area checks stay scoped
      *         to $plan. Null = $plan is the complete plan.
+     * @param  ?array  $contentFacts  SeoContentFacts::build(): when given, each page is also checked for page-type-aware content
+     *         completeness against those confirmed facts (PageContentQuality). Null = no content-quality rules (structure only).
      * @throws ValidationException
      */
-    public function validate(array $pages, array $plan, array $prohibitedClaims = [], ?array $linkPlan = null): void
+    public function validate(array $pages, array $plan, array $prohibitedClaims = [], ?array $linkPlan = null, ?array $contentFacts = null): void
     {
         if ($plan === []) {
             throw ValidationException::withMessages(['plan' => ['The generation plan contains no pages.']]);
@@ -138,10 +140,22 @@ final class GuidedGenerationOutputValidator
             $this->assertSeoFieldsWithinBounds($page, $index, $errors);
             $this->assertNoProhibitedClaims($page, $prohibitedClaims, $index, $errors);
             $this->assertInternalLinksResolve($page, $knownSlugs, $index, $errors);
+
+            if ($contentFacts !== null) {
+                foreach (PageContentQuality::problems($page, $planPage, $contentFacts, $linkPlan ?? $plan) as $problem) {
+                    $errors["pages.{$index}.content"][] = $problem;
+                }
+            }
         }
 
         $this->assertNoDuplicateSeoFields($pages, $errors);
         $this->assertAreaPagesAreDistinct($pages, $planByKey, $errors);
+
+        if ($contentFacts !== null) {
+            foreach (PageContentQuality::nearDuplicates($pages, $planByKey->all()) as [$a, $b]) {
+                $errors['pages.content.duplicate'][] = "Pages '{$b}' and '{$a}' are nearly identical apart from the service name — each service or event page needs its own explanation.";
+            }
+        }
         $this->assertAboutIsConcise($pages, $planByKey, $errors);
 
         if (! empty($errors)) {
