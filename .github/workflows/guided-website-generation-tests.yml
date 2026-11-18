@@ -58,6 +58,8 @@ jobs:
           tools: composer:v2
       - name: Install Composer dependencies
         run: composer install --no-interaction --prefer-dist --no-progress
+      - name: Verify maximal questionnaire fits the per-batch AI input budget
+        run: php artisan test tests/Feature/Website/WebsiteAiEnvelopeCaptureTest.php --filter=test_the_true_maximum_questionnaire_serializes_within_the_input_token_envelope
       - name: Run new multi-batch tests and enforce nonzero discovery
         shell: bash
         run: |
