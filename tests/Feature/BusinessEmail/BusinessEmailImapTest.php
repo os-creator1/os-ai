@@ -441,7 +441,7 @@ class BusinessEmailImapTest extends TestCase
         $html = $this->get(route('customer.workspaces.businesses.email.show', [$workspace->uid, $business->uid]))->assertOk()->getContent();
         $this->assertStringContainsString('owner@acme-plumbing.com', $html);
         $this->assertStringContainsString('imap.acme-plumbing.com:993', $html);
-        $this->assertStringContainsString('Receiving is set up', $html);
+        $this->assertStringContainsString('Receiving · awaiting first check', $html);
         $this->assertStringNotContainsString('secret-pass-123', $html);
     }
 

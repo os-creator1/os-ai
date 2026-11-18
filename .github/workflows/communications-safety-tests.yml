@@ -8,6 +8,9 @@ on:
       - 'tests/Feature/Messaging/ReconcileMessagingCostsTest.php'
       - 'app/Library/BusinessEmail/ImapBusinessEmailProvider.php'
       - 'tests/Feature/BusinessEmail/BusinessEmailImapTest.php'
+      - 'tests/Feature/BusinessEmail/SmtpGatewayTest.php'
+      - 'app/Library/BusinessEmail/Imap/**'
+      - 'app/Http/Controllers/Gateway/**'
       - '.github/workflows/communications-safety-tests.yml'
 
 permissions:
@@ -61,4 +64,4 @@ jobs:
       - name: Install Composer dependencies
         run: composer install --no-interaction --prefer-dist --no-progress
       - name: Run focused billing and SMTP regression tests
-        run: php artisan test tests/Feature/Messaging/ReconcileMessagingCostsTest.php tests/Feature/BusinessEmail/BusinessEmailImapTest.php --stop-on-failure
+        run: php artisan test tests/Feature/Messaging/ReconcileMessagingCostsTest.php tests/Feature/BusinessEmail/BusinessEmailImapTest.php tests/Feature/BusinessEmail/SmtpGatewayTest.php --stop-on-failure
