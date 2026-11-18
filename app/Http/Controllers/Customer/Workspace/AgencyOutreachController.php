@@ -10,6 +10,7 @@ use App\Http\Requests\Customer\UpdateOutreachScriptRequest;
 use App\Library\AgencyOutreach\AgencyOutreachBusinessResolver;
 use App\Library\AgencyOutreach\AgencyOutreachReadiness;
 use App\Library\AgencyOutreach\OutreachCampaignService;
+use App\Library\AgencyOutreach\OutreachContactGroupBridge;
 use App\Library\AgencyOutreach\OutreachResumeService;
 use App\Library\AgencyOutreach\OutreachScript;
 use App\Library\AgencyOutreach\OutreachScriptDefaults;
@@ -24,13 +25,16 @@ use App\Models\AgencyProspectCampaign;
 use App\Models\AgencyProspectCampaignMember;
 use App\Models\BookingType;
 use App\Models\ChatBox;
+use App\Models\ContactGroups;
 use App\Models\Workspace;
+use App\Repositories\Contracts\ContactsRepository;
 use App\Repositories\Contracts\WorkspaceMembershipRepository;
 use App\Repositories\Contracts\WorkspaceRepository;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\DB;
 
 /**
  * Agency Outreach V1 screens that are new on top of Agency Prospecting:
@@ -152,25 +156,175 @@ class AgencyOutreachController extends CustomerBaseController
     public function storeManagedCampaign(Request $request, string $workspaceUid): RedirectResponse
     {
         $workspace = $this->resolveEntitledWorkspace($workspaceUid);
+        $bridge = app(OutreachContactGroupBridge::class);
+        $business = $bridge->businessFor($workspace, Auth::user());
 
         $validated = $request->validate([
             'name' => ['required', 'string', 'max:255'],
             'opening_message' => ['required', 'string', 'max:1600'],
             'context' => ['nullable', 'string', 'max:10000'],
+            'group_mode' => ['required', 'in:existing,new'],
+            'contact_group_uid' => ['required_if:group_mode,existing', 'nullable', 'string', 'max:64'],
+            'new_group_name' => ['required_if:group_mode,new', 'nullable', 'string', 'max:255'],
+        ], [
+            'group_mode.required' => 'Choose a contact group for this campaign.',
+            'contact_group_uid.required_if' => 'Select a contact group.',
+            'new_group_name.required_if' => 'Enter a name for the new group.',
         ]);
 
-        $campaign = AgencyProspectCampaign::create([
-            'workspace_id' => $workspace->id,
-            'name' => $validated['name'],
-            'context' => $validated['context'] ?? null,
-            'opening_message' => $validated['opening_message'],
-            'status' => AgencyProspectCampaignStatus::Draft->value,
-            'sending_mode' => AgencyProspectCampaign::MODE_MANAGED,
-        ]);
+        if ($business === null) {
+            return back()->withInput()->withErrors(['group_mode' => 'Your Outreach business is not set up, so contact groups cannot be used yet.']);
+        }
+
+        $group = null;
+        $name = null;
+
+        if ($validated['group_mode'] === 'existing') {
+            $group = $bridge->findGroup($business, (string) $validated['contact_group_uid']);
+
+            if ($group === null) {
+                return back()->withInput()->withErrors(['contact_group_uid' => 'That contact group is not available.']);
+            }
+        } else {
+            if (! Auth::user()->can('create_contact_group')) {
+                return back()->withInput()->withErrors(['new_group_name' => 'You do not have permission to create contact groups.']);
+            }
+
+            $name = trim((string) $validated['new_group_name']);
+
+            // Same uniqueness rule as the Contacts "new group" form: per owning customer.
+            if (ContactGroups::where('customer_id', $business->customer_id)->where('name', $name)->exists()) {
+                return back()->withInput()->withErrors(['new_group_name' => 'A contact group with this name already exists. Select it instead.']);
+            }
+        }
+
+        try {
+            $campaign = DB::transaction(function () use ($validated, $workspace, $business, $bridge, $group, $name) {
+                $group ??= app(ContactsRepository::class)->store([
+                    'name' => $name,
+                    'business_id' => $business->id,
+                    'user_id' => $business->customer_id,
+                ]);
+
+                $campaign = AgencyProspectCampaign::create([
+                    'workspace_id' => $workspace->id,
+                    'name' => $validated['name'],
+                    'context' => $validated['context'] ?? null,
+                    'opening_message' => $validated['opening_message'],
+                    'status' => AgencyProspectCampaignStatus::Draft->value,
+                    'sending_mode' => AgencyProspectCampaign::MODE_MANAGED,
+                    'recipient_source' => AgencyProspectCampaign::SOURCE_CONTACT_GROUP,
+                    'contact_group_id' => $group->id,
+                    'contact_group_business_id' => $business->id,
+                ]);
+
+                // Draft only: this snapshots recipients and never queues a send.
+                $bridge->populate($workspace, $campaign, $group);
+
+                return $campaign;
+            });
+        } catch (\DomainException $e) {
+            return back()->withInput()->withErrors(['contact_group_uid' => $e->getMessage()]);
+        }
+
+        $report = $campaign->fresh()->recipient_report ?? [];
 
         return redirect()
             ->route('customer.workspaces.prospecting.campaigns.show', [$workspaceUid, $campaign->uid])
-            ->with('flash_success', 'Campaign created. Add prospects, then start it.');
+            ->with('flash_success', 'Draft created with ' . ($report['eligible'] ?? 0) . ' recipient(s) from "' . ($name ?? $group?->name) . '". Nothing has been sent.');
+    }
+
+    /** Recipient summary for the picker: real counts for one group, nothing written. */
+    public function groupSummary(Request $request, string $workspaceUid): JsonResponse
+    {
+        $workspace = $this->resolveEntitledWorkspace($workspaceUid);
+        $bridge = app(OutreachContactGroupBridge::class);
+        $business = $bridge->businessFor($workspace, Auth::user());
+        $group = $business === null ? null : $bridge->findGroup($business, (string) $request->query('group', ''));
+
+        abort_if($group === null, 404);
+
+        $summary = $bridge->summarize($workspace, $group);
+
+        return response()->json([
+            'name' => $group->name,
+            'group_total' => $summary['group_total'],
+            'eligible' => $summary['eligible'],
+            'excluded' => $summary['excluded'],
+            'too_large' => $summary['too_large'],
+            'reasons' => collect($summary['reasons'])->map(fn ($n, $r) => ['label' => OutreachContactGroupBridge::reasonLabel($r), 'count' => $n])->values(),
+        ]);
+    }
+
+    /** Explicit, draft-only re-snapshot of the linked group. */
+    public function refreshRecipients(string $workspaceUid, AgencyProspectCampaign $campaign): RedirectResponse
+    {
+        $workspace = $this->resolveEntitledWorkspace($workspaceUid);
+        $this->abortUnlessCampaign($workspace, $campaign);
+        $bridge = app(OutreachContactGroupBridge::class);
+        $back = redirect()->route('customer.workspaces.prospecting.campaigns.show', [$workspaceUid, $campaign->uid]);
+
+        $group = $campaign->usesContactGroup() ? $bridge->linkedGroup($workspace, $campaign) : null;
+
+        if ($group === null || $bridge->businessFor($workspace, Auth::user()) === null) {
+            return $back->with('flash_error', 'This campaign has no valid contact group to refresh from.');
+        }
+
+        try {
+            $report = $bridge->populate($workspace, $campaign, $group);
+        } catch (\DomainException $e) {
+            return $back->with('flash_error', $e->getMessage());
+        }
+
+        return $back->with('flash_success', 'Recipients refreshed: ' . $report['eligible'] . ' eligible, ' . $report['excluded'] . ' excluded.');
+    }
+
+    /** Draft-only group change: replaces the group-sourced snapshot, keeps individual enrollments. */
+    public function changeRecipientGroup(Request $request, string $workspaceUid, AgencyProspectCampaign $campaign): RedirectResponse
+    {
+        $workspace = $this->resolveEntitledWorkspace($workspaceUid);
+        $this->abortUnlessCampaign($workspace, $campaign);
+        $bridge = app(OutreachContactGroupBridge::class);
+        $back = redirect()->route('customer.workspaces.prospecting.campaigns.show', [$workspaceUid, $campaign->uid]);
+
+        $validated = $request->validate([
+            'contact_group_uid' => ['required', 'string', 'max:64'],
+            'confirm' => ['accepted'],
+        ], ['confirm.accepted' => 'Confirm that you understand the recipient list will be replaced.']);
+
+        $business = $bridge->businessFor($workspace, Auth::user());
+        $group = $business === null ? null : $bridge->findGroup($business, $validated['contact_group_uid']);
+
+        if ($group === null) {
+            return $back->with('flash_error', 'That contact group is not available.');
+        }
+
+        try {
+            DB::transaction(function () use ($workspace, $campaign, $group, $business, $bridge) {
+                $locked = AgencyProspectCampaign::where('id', $campaign->id)->where('workspace_id', $workspace->id)->lockForUpdate()->first();
+
+                if ($locked === null || $locked->status !== AgencyProspectCampaignStatus::Draft || ! $locked->isManaged()) {
+                    throw new \DomainException('The contact group can only be changed while a campaign is still a draft.');
+                }
+
+                $bridge->clearGroupSnapshot($workspace, $locked);
+                $locked->update([
+                    'recipient_source' => AgencyProspectCampaign::SOURCE_CONTACT_GROUP,
+                    'contact_group_id' => $group->id,
+                    'contact_group_business_id' => $business->id,
+                ]);
+                $bridge->populate($workspace, $locked, $group);
+            });
+        } catch (\DomainException $e) {
+            return $back->with('flash_error', $e->getMessage());
+        }
+
+        return $back->with('flash_success', 'Group changed to "' . $group->name . '". Recipients were rebuilt from it.');
+    }
+
+    private function abortUnlessCampaign(Workspace $workspace, AgencyProspectCampaign $campaign): void
+    {
+        abort_unless((int) $campaign->workspace_id === (int) $workspace->id && $campaign->isManaged(), 404);
     }
 
     public function resumeSending(string $workspaceUid): RedirectResponse

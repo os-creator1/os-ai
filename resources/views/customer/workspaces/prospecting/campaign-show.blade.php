@@ -113,7 +113,7 @@
             @endif
 
             @if($campaign->status->value === 'draft')
-                <x-card title="Enroll a prospect" :padded="true" class="mt-2">
+                <x-card :title="$campaign->usesContactGroup() ? 'Add one prospect (optional)' : 'Enroll a prospect'" :padded="true" class="mt-2">
                     @if($enrollableProspects->isEmpty())
                         <p class="text-caption mb-0">No eligible prospects to enroll.</p>
                     @else
@@ -136,6 +136,97 @@
         </div>
 
         <div class="col-md-6 mb-2">
+            @if($campaign->isManaged())
+                @php
+                    $isDraft = $campaign->status->value === 'draft';
+                    $report = $campaign->recipient_report ?? [];
+                    $groupLinkOk = $linkedGroup !== null && $groupBusiness !== null;
+                @endphp
+                <x-card title="Recipients" :padded="true" class="mb-2" data-role="campaign-recipients">
+                    @if($campaign->usesContactGroup())
+                        @if($linkedGroup === null)
+                            <x-alert variant="warning" data-role="group-missing">This campaign's contact group is no longer available. Choose another group before starting.</x-alert>
+                        @else
+                            <p class="mb-1" data-role="linked-group">
+                                <strong>{{ $linkedGroup->name }}</strong>
+                                <span class="text-caption d-block">{{ number_format($linkedGroupCount) }} {{ \Illuminate\Support\Str::plural('contact', $linkedGroupCount) }} in group</span>
+                                @if($groupBusiness !== null)
+                                    <a href="{{ route('customer.workspaces.businesses.contacts.show', [$workspaceUid, $groupBusiness->uid, $linkedGroup->uid]) }}">Manage this group in Contacts</a>
+                                @endif
+                            </p>
+                        @endif
+
+                        <ul class="mb-1" data-role="recipient-counts">
+                            <li data-role="count-enrolled">{{ $members->count() }} enrolled {{ \Illuminate\Support\Str::plural('recipient', $members->count()) }}</li>
+                            @if(isset($report['group_total']))
+                                <li data-role="count-excluded">{{ $report['excluded'] ?? 0 }} of {{ $report['group_total'] }} contacts excluded at last sync</li>
+                            @endif
+                        </ul>
+
+                        @if($campaign->recipients_synced_at)
+                            <p class="text-caption">Recipient list captured {{ $campaign->recipients_synced_at->diffForHumans() }}.
+                                @unless($isDraft) It is frozen — changes to the group no longer affect this campaign. @endunless</p>
+                        @endif
+
+                        @if(! empty($report['reasons']))
+                            <details class="mb-1" data-role="excluded-contacts">
+                                <summary>Excluded contacts</summary>
+                                <ul class="mb-0">
+                                    @foreach($report['reasons'] as $reason => $count)
+                                        <li>{{ \App\Library\AgencyOutreach\OutreachContactGroupBridge::reasonLabel($reason) }}: {{ $count }}</li>
+                                    @endforeach
+                                </ul>
+                                @if(! empty($report['skipped']))
+                                    <table class="table table-sm mt-1">
+                                        <tbody>
+                                            @foreach($report['skipped'] as $row)
+                                                <tr><td>{{ $row['phone'] !== '' ? $row['phone'] : '(blank)' }}</td><td>{{ \App\Library\AgencyOutreach\OutreachContactGroupBridge::reasonLabel($row['reason']) }}</td></tr>
+                                            @endforeach
+                                        </tbody>
+                                    </table>
+                                    @if(count($report['skipped']) < ($report['excluded'] ?? 0))
+                                        <p class="text-caption mb-0">Showing the first {{ count($report['skipped']) }}.</p>
+                                    @endif
+                                @endif
+                            </details>
+                        @endif
+
+                        @if($isDraft && $groupLinkOk)
+                            <form method="post" action="{{ route('customer.workspaces.prospecting.campaigns.recipients.refresh', [$workspaceUid, $campaign->uid]) }}" class="mb-2">
+                                @csrf
+                                <x-button type="submit" variant="outline" size="sm">Refresh recipients</x-button>
+                                <span class="text-caption">Re-reads the group. Nothing is sent.</span>
+                            </form>
+                        @endif
+                    @else
+                        <p class="text-caption mb-1" data-role="legacy-recipients">This campaign was created before contact groups. Its recipients are the prospects enrolled individually.</p>
+                    @endif
+
+                    @if($isDraft && $groupBusiness !== null)
+                        <form method="post" action="{{ route('customer.workspaces.prospecting.campaigns.recipients.group', [$workspaceUid, $campaign->uid]) }}" data-role="change-group"
+                              onsubmit="return confirm('Changing the group replaces this campaign\'s group recipients with the new group\'s eligible contacts. Prospects you added individually are kept. Nothing is sent.');">
+                            @csrf
+                            <label class="form-label" for="change_group">{{ $campaign->usesContactGroup() ? 'Change group' : 'Use a contact group' }}</label>
+                            <div class="d-flex gap-1">
+                                <select id="change_group" name="contact_group_uid" class="form-select" required>
+                                    <option value="">Select a group…</option>
+                                    @foreach($contactGroups as $group)
+                                        <option value="{{ $group->uid }}" @selected($linkedGroup?->id === $group->id)>{{ $group->name }} ({{ $group->subscribers_count }})</option>
+                                    @endforeach
+                                </select>
+                                <x-button type="submit" variant="outline" size="sm">Apply</x-button>
+                            </div>
+                            <div class="form-check mt-50">
+                                <input class="form-check-input" type="checkbox" name="confirm" value="1" id="confirm_change" required>
+                                <label class="form-check-label text-caption" for="confirm_change">I understand the group's recipients will be replaced by the new group's current eligible contacts.</label>
+                            </div>
+                        </form>
+                    @elseif(! $isDraft)
+                        <p class="text-caption mb-0">The group can no longer be changed because this campaign has started.</p>
+                    @endif
+                </x-card>
+            @endif
+
             <x-card title="Enrolled prospects" :padded="true">
                 @if($members->isEmpty())
                     <p class="text-caption mb-0">No prospects enrolled yet.</p>
