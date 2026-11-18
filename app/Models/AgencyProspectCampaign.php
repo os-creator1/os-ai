@@ -20,7 +20,20 @@ class AgencyProspectCampaign extends Model
         'context',
         'opening_message',
         'sending_mode',
+        'recipient_source',
+        'contact_group_id',
+        'contact_group_business_id',
+        'recipients_synced_at',
+        'recipient_report',
     ];
+
+    /** Recipients come from a Business-scoped CRM contact group. NULL = legacy individual enrollment. */
+    public const SOURCE_CONTACT_GROUP = 'contact_group';
+
+    public function usesContactGroup(): bool
+    {
+        return $this->recipient_source === self::SOURCE_CONTACT_GROUP;
+    }
 
     /** BYO-channel Prospecting runtime (every pre-Outreach campaign). */
     public const MODE_CHANNEL = 'channel';
@@ -35,6 +48,8 @@ class AgencyProspectCampaign extends Model
 
     protected $casts = [
         'status' => AgencyProspectCampaignStatus::class,
+        'recipients_synced_at' => 'datetime',
+        'recipient_report' => 'array',
     ];
 
     public function workspace(): BelongsTo

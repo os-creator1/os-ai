@@ -2507,6 +2507,11 @@
             Route::get('/settings', 'Workspace\AgencyProspectingController@settings')->name('settings.show');
             Route::post('/settings', 'Workspace\AgencyProspectingController@updateSettings')->name('settings.update');
 
+            // Contact-group recipients for managed Outreach campaigns.
+            Route::get('/recipient-groups/summary', 'Workspace\AgencyOutreachController@groupSummary')->name('recipient-groups.summary');
+            Route::post('/campaigns/{campaign}/recipients/refresh', 'Workspace\AgencyOutreachController@refreshRecipients')->name('campaigns.recipients.refresh');
+            Route::post('/campaigns/{campaign}/recipients/group', 'Workspace\AgencyOutreachController@changeRecipientGroup')->name('campaigns.recipients.group');
+
             Route::post('/campaigns/{campaign}/config', 'Workspace\AgencyProspectingController@updateCampaignConfig')->name('campaigns.config');
             Route::post('/campaigns/{campaign}/start', 'Workspace\AgencyProspectingController@startCampaign')->name('campaigns.start');
 

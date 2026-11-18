@@ -314,8 +314,13 @@ class AgencyProspectingController extends CustomerBaseController
         $service = app(\App\Library\AgencyOutreach\OutreachCampaignService::class);
         $readiness = app(\App\Library\AgencyOutreach\AgencyOutreachReadiness::class)->forWorkspace($workspace);
 
+        $bridge = app(\App\Library\AgencyOutreach\OutreachContactGroupBridge::class);
+        $groupBusiness = $bridge->businessFor($workspace, auth()->user());
+
         return view('customer.workspaces.prospecting.campaigns', [
             'workspaceUid' => $workspaceUid,
+            'contactGroups' => $groupBusiness === null ? collect() : $bridge->groupsFor($groupBusiness),
+            'groupBusinessReady' => $groupBusiness !== null,
             'campaigns' => $campaigns,
             'summaries' => $service->summaries($workspace, $campaigns),
             'pausedForFunds' => $service->hasPausedForFunds($workspace),
@@ -349,9 +354,17 @@ class AgencyProspectingController extends CustomerBaseController
         $workspace = $this->resolveEntitledWorkspace($workspaceUid);
         $this->resolveWorkspaceCampaign($workspace, $campaign);
 
+        $bridge = app(\App\Library\AgencyOutreach\OutreachContactGroupBridge::class);
+        $groupBusiness = $campaign->isManaged() ? $bridge->businessFor($workspace, auth()->user()) : null;
+        $linkedGroup = $campaign->usesContactGroup() ? $bridge->linkedGroup($workspace, $campaign) : null;
+
         return view('customer.workspaces.prospecting.campaign-show', [
             'workspaceUid' => $workspaceUid,
             'campaign' => $campaign,
+            'linkedGroup' => $linkedGroup,
+            'linkedGroupCount' => $linkedGroup === null ? null : \App\Models\Contacts::where('group_id', $linkedGroup->id)->count(),
+            'groupBusiness' => $groupBusiness,
+            'contactGroups' => $groupBusiness === null ? collect() : $bridge->groupsFor($groupBusiness),
             'members' => $campaign->members()->with('prospect')->get(),
             'enrollableProspects' => AgencyProspect::where('workspace_id', $workspace->id)
                 ->where('status', AgencyProspectStatus::Active->value)

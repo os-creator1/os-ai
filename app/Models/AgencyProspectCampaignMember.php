@@ -31,6 +31,7 @@ class AgencyProspectCampaignMember extends Model
         'ai_paused_at',
         'ai_paused_by_user_id',
         'sequence_sent_ids',
+        'source_contact_id',
     ];
 
     protected $casts = [

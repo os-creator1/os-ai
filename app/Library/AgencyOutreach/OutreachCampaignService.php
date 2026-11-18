@@ -44,6 +44,12 @@ class OutreachCampaignService
             return $this->fail('Write the first text before starting this campaign.');
         }
 
+        // A campaign built on a contact group needs that group to still be a valid group of
+        // THIS Workspace's Business. Legacy campaigns (no recipient source) are unaffected.
+        if ($campaign->usesContactGroup() && app(OutreachContactGroupBridge::class)->linkedGroup($workspace, $campaign) === null) {
+            return $this->fail('Choose a valid contact group for this campaign before starting it.');
+        }
+
         $reason = $this->readiness->forWorkspace($workspace)->firstBlockingReason();
 
         if ($reason !== null) {
