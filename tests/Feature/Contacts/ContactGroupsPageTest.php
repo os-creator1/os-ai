@@ -125,7 +125,7 @@ class ContactGroupsPageTest extends TestCase
         $this->authenticateAs($owner, ['view_contact_group']);
         $viewOnly = $this->get($url)->assertOk();
         $viewOnly->assertSee('Leads');
-        $viewOnly->assertDontSee('data-role="groups-export"', false, 'Export requires view_contact, not just view_contact_group.');
+        $viewOnly->assertDontSee('data-role="groups-export"', false);
         $viewOnly->assertDontSee('data-role="groups-new"', false);
         $viewOnly->assertDontSee('data-role="groups-create-another"', false);
         $viewOnly->assertDontSee('data-action="delete"', false);
