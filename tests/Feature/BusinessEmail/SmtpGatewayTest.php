@@ -36,6 +36,8 @@ class SmtpGatewayTest extends TestCase
 
     private int $gatewayCalls = 0;
 
+    private ?\Closure $override = null;
+
     protected function setUp(): void
     {
         parent::setUp();
@@ -53,10 +55,15 @@ class SmtpGatewayTest extends TestCase
     private function gateway(Request $request)
     {
         $this->gatewayCalls++;
+
+        if ($this->override !== null) {
+            return ($this->override)();
+        }
+
         $handler = new SmtpGatewayHandler(new ImapHostGuard(fn () => $this->ips), $this->smtp);
         $headers = [];
-        foreach (['x-gateway-timestamp', 'x-gateway-nonce', 'x-gateway-signature'] as $h) {
-            $headers[$h] = $request->header($h)[0] ?? null;
+        foreach (['X-Gateway-Timestamp', 'X-Gateway-Nonce', 'X-Gateway-Signature'] as $h) {
+            $headers[strtolower($h)] = $request->header($h)[0] ?? null;
         }
         [$status, $body] = $handler->handle(basename($request->url()), $request->body(), $headers);
 
@@ -280,7 +287,7 @@ class SmtpGatewayTest extends TestCase
 
     public function test_gateway_unreachable_is_safe_to_retry_but_a_read_timeout_is_ambiguous(): void
     {
-        Http::fake(fn () => throw new ConnectionException('cURL error 7: Failed to connect'));
+        $this->override = fn () => throw new ConnectionException('cURL error 7: Failed to connect');
         try {
             $this->provider()->send($this->blob(), $this->outbound());
             $this->fail();
@@ -289,7 +296,7 @@ class SmtpGatewayTest extends TestCase
             $this->assertFalse($e->isAmbiguous());
         }
 
-        Http::fake(fn () => throw new ConnectionException('cURL error 28: Operation timed out after 45000 ms'));
+        $this->override = fn () => throw new ConnectionException('cURL error 28: Operation timed out after 45000 ms');
         try {
             $this->provider()->send($this->blob(), $this->outbound());
             $this->fail();
@@ -298,7 +305,7 @@ class SmtpGatewayTest extends TestCase
             $this->assertTrue($e->isAmbiguous());
         }
 
-        Http::fake(fn () => Http::response('boom', 502));
+        $this->override = fn () => Http::response('boom', 502);
         try {
             $this->provider()->send($this->blob(), $this->outbound());
             $this->fail();
