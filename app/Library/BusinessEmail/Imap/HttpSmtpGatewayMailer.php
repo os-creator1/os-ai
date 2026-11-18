@@ -84,10 +84,18 @@ final class HttpSmtpGatewayMailer implements SmtpMailer
                 ->withoutRedirecting()
                 ->post(rtrim($url, '/') . '/' . $action);
         } catch (ConnectionException $exception) {
-            // A cURL timeout may follow a delivered request: the provider treats "timed out" as ambiguous.
-            throw new \RuntimeException(SmtpGatewayFailure::message(
-                str_contains($exception->getMessage(), 'cURL error 28') ? SmtpGatewayFailure::TIMEOUT : SmtpGatewayFailure::CONNECT
-            ));
+            // Only DNS resolution and connect failures prove the request was never
+            // transmitted. An empty reply (cURL 52), reset, or other transport
+            // failure may occur AFTER SMTP accepted the message. In those cases
+            // the provider must mark delivery ambiguous and never auto-resend.
+            $message = $exception->getMessage();
+            $code = match (true) {
+                preg_match('/cURL error (?:6|7):/i', $message) === 1 => SmtpGatewayFailure::CONNECT,
+                preg_match('/cURL error 28:/i', $message) === 1 => SmtpGatewayFailure::TIMEOUT,
+                default => SmtpGatewayFailure::OTHER,
+            };
+
+            throw new \RuntimeException(SmtpGatewayFailure::message($code));
         }
 
         if ($response->successful() && $response->json('ok') === true) {
