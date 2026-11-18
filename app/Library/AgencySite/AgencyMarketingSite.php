@@ -296,16 +296,18 @@ final class AgencyMarketingSite extends MarketingSite
 
     // ------------------------------------------------------ testimonials
 
-    /**
-     * Only testimonials the Agency marked as approved (it holds permission to publish them) and that have a
-     * quote or a video. MotionGrove's own stories are never reachable from here: the tree carries none.
-     */
+    /** Preserve the original MotionGrove site's stories in its existing homepage sections. */
     public function testimonials(): array
     {
-        if ($this->context->original) {
-            return parent::testimonials();
-        }
+        return $this->context->original ? parent::testimonials() : $this->approvedAgencyTestimonials();
+    }
 
+    /**
+     * Only this Agency's saved, approved, visible quotes/videos. The consultation calendar must never present
+     * platform stories as if they were this Agency's customers, including in the original branding edition.
+     */
+    public function approvedAgencyTestimonials(): array
+    {
         $slots = [];
 
         foreach ((array) Arr::get($this->tree, 'x.testimonials', []) as $i => $t) {
