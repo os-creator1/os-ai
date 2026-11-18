@@ -8,6 +8,7 @@ use App\Enums\Website\WebsiteAssetPurpose;
 use App\Library\Ai\AiModelRouter;
 use App\Library\Ai\Contracts\AiCompletionClient;
 use App\Library\Ai\Providers\FakeAiCompletionClient;
+use App\Library\Website\GuidedGeneration\GenerationBatchPlanner;
 use App\Library\Website\GuidedGeneration\GuidedGenerationOutputValidator;
 use App\Library\Website\GuidedGeneration\GuidedWebsiteGenerationClient;
 use App\Library\Website\WebsiteAiDraftGenerator;
@@ -296,8 +297,10 @@ class WebsiteAiEnvelopeCaptureTest extends TestCase
     {
         [$business, , , $plan] = $this->buildMaximalBusinessFixture();
         $aiPlan = WebsitePageStrategy::withoutAiUnfillableSections($plan);
+        $batches = GenerationBatchPlanner::batches($aiPlan);
 
-        $this->assertLessThanOrEqual(WebsitePageStrategy::MAX_TOTAL_PAGES, count($plan), 'Precondition: the plan itself must already be capped.');
+        $this->assertLessThanOrEqual(WebsitePageStrategy::MAX_PAGES_PER_GENERATION, count($plan));
+        $this->assertGreaterThan(1, count($batches), 'The maximal site must exercise the multi-batch path.');
 
         $this->fakeClient->setDefaultResult(\App\Library\Ai\AiCompletionResult::success(
             content: json_encode(['pages' => []]),
@@ -306,31 +309,22 @@ class WebsiteAiEnvelopeCaptureTest extends TestCase
             outputTokens: 20,
         ));
 
-        app(GuidedWebsiteGenerationClient::class)->generate($business, $aiPlan, null, 'max-questionnaire-proof');
+        foreach ($batches as $index => $batch) {
+            app(GuidedWebsiteGenerationClient::class)->generate(
+                $business, $batch, null, 'max-questionnaire-proof:b' . ($index + 1) . ':retry0', $aiPlan
+            );
+        }
 
-        $this->assertCount(1, $this->fakeClient->requests());
-        $realMessages = $this->fakeClient->requests()[0]->messages;
+        $requests = $this->fakeClient->requests();
+        $this->assertCount(count($batches), $requests, 'Every planned batch must reach the provider within the input budget.');
 
-        $estimatedInputTokens = app(AiModelRouter::class)->estimateInputTokens($realMessages);
-        $ceiling = 12_000;
-        $headroom = $ceiling - $estimatedInputTokens;
-
-        $this->assertLessThanOrEqual(
-            $ceiling,
-            $estimatedInputTokens,
-            "The real serialized request for the true maximum questionnaire must fit the route's 12,000-input-token ceiling; estimated {$estimatedInputTokens}."
-        );
-
-        // Independent-review correction round 4 (item 5) — MEANINGFUL
-        // headroom, not merely passing: at least 5% of the ceiling (600
-        // tokens) must remain, so a real business slightly larger than
-        // this already-maximal fixture (one more confirmed sentence, one
-        // more service) does not immediately blow the budget.
-        $this->assertGreaterThanOrEqual(
-            $ceiling * 0.05,
-            $headroom,
-            "Expected meaningful headroom below the 12,000-input-token ceiling; only {$headroom} tokens remained for the true maximum questionnaire (estimated {$estimatedInputTokens})."
-        );
+        foreach ($requests as $index => $request) {
+            $estimated = app(AiModelRouter::class)->estimateInputTokens($request->messages);
+            $ceiling = 12_000;
+            $this->assertLessThanOrEqual($ceiling, $estimated, "Batch {$index} input exceeds the route budget: {$estimated} tokens.");
+            $this->assertGreaterThanOrEqual($ceiling * 0.05, $ceiling - $estimated, "Batch {$index} needs at least 5% input headroom.");
+            $this->assertSame(8_000, $request->maxOutputTokens);
+        }
     }
 
     /**
@@ -402,7 +396,7 @@ class WebsiteAiEnvelopeCaptureTest extends TestCase
     {
         [$business, , , $plan] = $this->buildMaximalBusinessFixture();
         $aiPlan = WebsitePageStrategy::withoutAiUnfillableSections($plan);
-        $this->assertLessThanOrEqual(WebsitePageStrategy::MAX_TOTAL_PAGES, count($aiPlan));
+        $this->assertLessThanOrEqual(WebsitePageStrategy::MAX_PAGES_PER_GENERATION, count($aiPlan));
 
         $representativePages = array_map(fn (array $page, int $index) => [
             'page_key' => $page['page_key'],
@@ -413,20 +407,21 @@ class WebsiteAiEnvelopeCaptureTest extends TestCase
         ], $aiPlan, array_keys($aiPlan));
 
         $prohibitedClaims = \App\Models\BusinessKnowledgeProfile::where('business_id', $business->id)->value('prohibited_claims') ?? [];
-
-        // Proves the response is genuinely ACCEPTABLE output for this
-        // exact plan — not merely small. Throws (failing this test) if
-        // the fixture above drifts out of sync with any validator rule.
         app(GuidedGenerationOutputValidator::class)->validate($representativePages, $aiPlan, $prohibitedClaims);
 
-        $responseJson = json_encode(['pages' => $representativePages]);
-        $estimatedOutputTokens = app(AiModelRouter::class)->estimateInputTokens([['role' => 'assistant', 'content' => $responseJson]]);
+        $pageBatches = GenerationBatchPlanner::batches($representativePages);
+        $planBatches = GenerationBatchPlanner::batches($aiPlan);
+        $this->assertSame(count($planBatches), count($pageBatches));
 
-        $this->assertLessThanOrEqual(
-            8_000,
-            $estimatedOutputTokens,
-            "A representative, validator-accepted response for the capped page plan must fit the 8,000-output-token limit; estimated {$estimatedOutputTokens} for " . count($aiPlan) . ' pages.'
-        );
+        foreach ($pageBatches as $index => $pages) {
+            app(GuidedGenerationOutputValidator::class)->validate($pages, $planBatches[$index], $prohibitedClaims, $aiPlan);
+            $responseJson = json_encode(['pages' => $pages]);
+            $estimated = app(AiModelRouter::class)->estimateInputTokens([['role' => 'assistant', 'content' => $responseJson]]);
+            $this->assertLessThanOrEqual(
+                8_000, $estimated,
+                "A representative, validator-accepted response for batch {$index} must fit the 8,000-output-token limit; estimated {$estimated}."
+            );
+        }
     }
 
     private function section(string $type): array
