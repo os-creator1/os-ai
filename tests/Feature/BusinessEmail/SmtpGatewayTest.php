@@ -342,8 +342,8 @@ class SmtpGatewayTest extends TestCase
 
         try {
             config(['business_email.smtp_gateway.serve' => true]);
-            $router->setRoutes(new \\Illuminate\\Routing\\RouteCollection());
-            (new \\App\\Providers\\RouteServiceProvider(app()))->map();
+            $router->setRoutes(new \Illuminate\Routing\RouteCollection());
+            (new \App\Providers\RouteServiceProvider(app()))->map();
 
             $registered = [];
             foreach ($router->getRoutes() as $route) {
