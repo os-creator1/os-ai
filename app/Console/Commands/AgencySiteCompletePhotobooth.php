@@ -68,6 +68,13 @@ class AgencySiteCompletePhotobooth extends Command
             return self::FAILURE;
         }
 
+        $type = $booking->find($agency, $values['x.booking_type_uid'] ?? null);
+        if ((int) ($type?->duration_minutes ?? 0) !== 15) {
+            $this->error('The selected booking type must be 15 minutes. Choose the 15-minute type in White Label → Landing Page first; nothing was changed.');
+
+            return self::FAILURE;
+        }
+
         $changes = [];
         $set = function (string $path, mixed $value) use ($values, &$changes): void {
             if (($values[$path] ?? null) !== $value) {
