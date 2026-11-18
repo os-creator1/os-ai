@@ -54,26 +54,26 @@ class AgencyByoTelnyxMessagingTest extends TestCase
 
         // A ready BYO sender must bypass the managed-number reader entirely.
         // Without this fix the job silently returned no_sending_number.
-        $managed = \Mockery::mock(\App\Library\\AgencyOutreach\\MessagingReadinessReader::class);
+        $managed = \Mockery::mock(\App\Library\AgencyOutreach\MessagingReadinessReader::class);
         $managed->shouldNotReceive('situation');
-        $this->app->instance(\App\Library\\AgencyOutreach\\MessagingReadinessReader::class, $managed);
+        $this->app->instance(\App\Library\AgencyOutreach\MessagingReadinessReader::class, $managed);
 
         $campaign = $this->managedCampaign($workspace);
         $member = $this->enroll($workspace, $campaign, $this->prospect($workspace));
 
-        $this->assertTrue(app(\App\Library\\AgencyOutreach\\OutreachEligibility::class)->check($member)->ok());
-        app()->call([new \App\Jobs\\Outreach\\OutreachInitialSendJob($member->id), 'handle']);
+        $this->assertTrue(app(\App\Library\AgencyOutreach\OutreachEligibility::class)->check($member)->ok());
+        app()->call([new \App\Jobs\Outreach\OutreachInitialSendJob($member->id), 'handle']);
 
         $this->assertCount(1, $this->telnyxMessageRequests());
         $this->assertCount(0, $this->fakeAdapter->sentRequests);
-        $row = \App\Models\\AgencyProspectMessage::query()
+        $row = \App\Models\AgencyProspectMessage::query()
             ->where('campaign_member_id', $member->id)
             ->where('direction', 'outbound')
             ->sole();
         $this->assertSame('sent', $row->status);
 
         // A replay cannot send the same opener twice.
-        app()->call([new \App\Jobs\\Outreach\\OutreachInitialSendJob($member->id), 'handle']);
+        app()->call([new \App\Jobs\Outreach\OutreachInitialSendJob($member->id), 'handle']);
         $this->assertCount(1, $this->telnyxMessageRequests());
     }
 
@@ -82,19 +82,19 @@ class AgencyByoTelnyxMessagingTest extends TestCase
         [, $business, $workspace] = $this->agency();
         $this->byoChannel($workspace, ['default' => true, 'verified' => null]);
 
-        $managed = \Mockery::mock(\App\Library\\AgencyOutreach\\MessagingReadinessReader::class);
+        $managed = \Mockery::mock(\App\Library\AgencyOutreach\MessagingReadinessReader::class);
         $managed->shouldNotReceive('situation');
-        $this->app->instance(\App\Library\\AgencyOutreach\\MessagingReadinessReader::class, $managed);
+        $this->app->instance(\App\Library\AgencyOutreach\MessagingReadinessReader::class, $managed);
 
         $campaign = $this->managedCampaign($workspace);
         $member = $this->enroll($workspace, $campaign, $this->prospect($workspace));
 
-        $this->assertSame('byo_unverified', app(\App\Library\\AgencyOutreach\\OutreachEligibility::class)->check($member)->reason);
-        app()->call([new \App\Jobs\\Outreach\\OutreachInitialSendJob($member->id), 'handle']);
+        $this->assertSame('byo_unverified', app(\App\Library\AgencyOutreach\OutreachEligibility::class)->check($member)->reason);
+        app()->call([new \App\Jobs\Outreach\OutreachInitialSendJob($member->id), 'handle']);
 
         $this->assertCount(0, $this->telnyxMessageRequests());
         $this->assertCount(0, $this->fakeAdapter->sentRequests);
-        $this->assertSame(0, \App\Models\\AgencyProspectMessage::where('campaign_member_id', $member->id)->count());
+        $this->assertSame(0, \App\Models\AgencyProspectMessage::where('campaign_member_id', $member->id)->count());
     }
 
     public function test_managed_sender_without_a_selected_byo_still_requires_managed_number_readiness(): void
@@ -102,13 +102,13 @@ class AgencyByoTelnyxMessagingTest extends TestCase
         [, $business, $workspace] = $this->agency();
         $this->byoChannel($workspace, ['default' => false]);
 
-        $managed = \Mockery::mock(\App\Library\\AgencyOutreach\\MessagingReadinessReader::class);
+        $managed = \Mockery::mock(\App\Library\AgencyOutreach\MessagingReadinessReader::class);
         $managed->shouldReceive('situation')->once()->andReturn(['state' => 'no_number']);
-        $this->app->instance(\App\Library\\AgencyOutreach\\MessagingReadinessReader::class, $managed);
+        $this->app->instance(\App\Library\AgencyOutreach\MessagingReadinessReader::class, $managed);
 
         $campaign = $this->managedCampaign($workspace);
         $member = $this->enroll($workspace, $campaign, $this->prospect($workspace));
-        $this->assertSame('no_sending_number', app(\App\Library\\AgencyOutreach\\OutreachEligibility::class)->check($member)->reason);
+        $this->assertSame('no_sending_number', app(\App\Library\AgencyOutreach\OutreachEligibility::class)->check($member)->reason);
     }
 
     // ------------------------------------------------------------------ outbound: Outreach
