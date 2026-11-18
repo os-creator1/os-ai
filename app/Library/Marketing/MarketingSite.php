@@ -79,6 +79,12 @@ class MarketingSite
         'final_cta' => 'marketing.partials.final-cta',
     ];
 
+    /** The view that renders one home section (an Agency site may add sections of its own). */
+    public function homeSectionView(string $key): string
+    {
+        return self::HOME_SECTIONS[$key];
+    }
+
     public function brandName(): string
     {
         return (string) $this->cfg('site.name', 'MotionGrove');

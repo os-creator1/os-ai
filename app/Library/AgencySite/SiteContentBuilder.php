@@ -356,7 +356,7 @@ final class SiteContentBuilder
         $shown = (array) ($answers['x.home_shown'] ?? []);
 
         // The original site shows everything except the plan promise; an Agency site starts with its promises switched off.
-        foreach ($context->original ? ['commitment'] : SiteSchema::HOME_HIDDEN_BY_DEFAULT as $key) {
+        foreach ($context->original ? ['commitment', 'consultation'] : SiteSchema::HOME_HIDDEN_BY_DEFAULT as $key) {
             if (! in_array($key, $shown, true)) {
                 $hidden[] = $key;
             }
@@ -364,6 +364,11 @@ final class SiteContentBuilder
 
         if (! $hasStories) {
             $hidden[] = 'videos';
+        }
+
+        // The consultation section is the calendar: it needs a bookable type, and the Book a Call landing template already IS it.
+        if (! $context->offersBooking() || ($answers['x.template'] ?? 'home') === SiteSchema::TEMPLATE_BOOK_CALL) {
+            $hidden[] = 'consultation';
         }
 
         if (array_key_exists('faqs.home', $answers) && $answers['faqs.home'] === []) {

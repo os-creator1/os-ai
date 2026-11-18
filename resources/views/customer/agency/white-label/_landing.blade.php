@@ -152,7 +152,7 @@
                                 @if ($g)
                                     <div class="p-2 border-top" data-section-body hidden>
                                         @includeWhen($section['key'] === 'footer', 'customer.agency.white-label._legal-note')
-                                        @include('customer.agency.white-label._group', ['group' => $g, 'canEdit' => $canEdit])
+                                        @include('customer.agency.white-label._group', ['group' => $g, 'canEdit' => $canEdit, 'idPrefix' => 'home-'])
                                     </div>
                                 @endif
                             </li>

@@ -109,6 +109,17 @@ final class AgencyMarketingSite extends MarketingSite
         return $this->homeOrder;
     }
 
+    public function homeSectionView(string $key): string
+    {
+        return $key === 'consultation' ? 'marketing.home.consultation' : parent::homeSectionView($key);
+    }
+
+    /** Is the booking calendar a section of THIS page set's home page? */
+    public function hasConsultationSection(): bool
+    {
+        return in_array('consultation', $this->homeOrder, true);
+    }
+
     public function asset(string $path): string
     {
         // The stylesheet is served per site so the Agency's colours apply; everything else is shared.
@@ -155,7 +166,7 @@ final class AgencyMarketingSite extends MarketingSite
         $url = $this->context->offersBooking() ? $this->context->bookingUrl : null;
 
         // The consultation page IS the booking page: every Book a Call button goes to its own calendar.
-        return $url !== null && $this->isConsultation() ? ($this->context->pageUrl)('home').'#book' : $url;
+        return $url !== null && ($this->isConsultation() || $this->hasConsultationSection()) ? ($this->context->pageUrl)('home').'#book' : $url;
     }
 
     public function nativeBookingReady(): bool
