@@ -204,14 +204,14 @@ final class OutreachContactGroupBridge
 
         $suppressed = $this->suppressedNumbers($business);
         $seen = [];
-        $keepSourceIds = [];
+        $keepMemberIds = [];
         $fieldTags = $this->fieldIds($group);
 
         Contacts::query()
             ->where('group_id', $group->id)
             ->where('business_id', (int) $business->id)
             ->orderBy('id')
-            ->chunkById(self::CHUNK, function ($contacts) use (&$report, &$seen, &$keepSourceIds, $suppressed, $workspace, $campaign, $persist, $fieldTags, $group) {
+            ->chunkById(self::CHUNK, function ($contacts) use (&$report, &$seen, &$keepMemberIds, $suppressed, $workspace, $campaign, $persist, $fieldTags, $group) {
                 $details = $this->details($contacts->pluck('id')->all(), $fieldTags);
                 $candidates = [];
 
@@ -292,13 +292,22 @@ final class OutreachContactGroupBridge
                     }
 
                     $prospect ??= $this->createProspect($workspace, $phone, $contact, $info, $group);
-                    $keepSourceIds[] = (int) $contact->id;
-
-                    // An existing (manually enrolled) row keeps its NULL source: refresh never removes it.
-                    AgencyProspectCampaignMember::firstOrCreate(
+                    // Reconcile by the MEMBERSHIP, not only by source contact id:
+                    // the same CRM contact may now have a different phone/prospect.
+                    // Retain only the current membership, or refresh would text
+                    // both the original and corrected number.
+                    $member = AgencyProspectCampaignMember::firstOrCreate(
                         ['campaign_id' => $campaign->id, 'prospect_id' => $prospect->id],
                         ['workspace_id' => $workspace->id, 'enrolled_at' => now(), 'source_contact_id' => $contact->id],
                     );
+
+                    // Manual enrollments have no source and remain manual.
+                    if ($member->source_contact_id !== null) {
+                        if ((int) $member->source_contact_id !== (int) $contact->id) {
+                            $member->update(['source_contact_id' => $contact->id]);
+                        }
+                        $keepMemberIds[] = (int) $member->id;
+                    }
                 }
             });
 
@@ -309,7 +318,7 @@ final class OutreachContactGroupBridge
                 ->where('workspace_id', $workspace->id)
                 ->where('campaign_id', $campaign->id)
                 ->whereNotNull('source_contact_id')
-                ->whereNotIn('source_contact_id', $keepSourceIds === [] ? [0] : $keepSourceIds)
+                ->whereNotIn('id', $keepMemberIds === [] ? [0] : $keepMemberIds)
                 ->whereDoesntHave('messages')
                 ->delete();
         }
