@@ -256,6 +256,9 @@ class PhotoBoothAgencyLandingTest extends TestCase
     {
         [$agency, $owner, $type, $site] = $this->boothSite();
         $this->officialPath('photobooth', $site);
+        // Bookable does not mean 15 minutes; refuse the original 30-minute fixture before any draft write.
+        $this->artisan('agency-site:complete-photobooth', ['workspace_uid' => $agency->uid, '--apply' => true])->assertFailed();
+        $type->update(['duration_minutes' => 15]);
         $sites = app(AgencySiteManager::class);
         // The owner's existing state: a Book a Call template draft with their own copy and an approved testimonial.
         $sites->save((int) $owner->user_id, $agency, [
