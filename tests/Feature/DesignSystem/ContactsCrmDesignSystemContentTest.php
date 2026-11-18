@@ -97,10 +97,12 @@ class ContactsCrmDesignSystemContentTest extends TestCase
         }
     }
 
-    public function test_runtime_feather_icons_calls_remain_exactly_11_across_the_4_named_files(): void
+    public function test_runtime_feather_icons_calls_remain_exactly_6_across_the_4_named_files(): void
     {
+        // The Groups index left DataTables for the server-rendered MotionGrove
+        // layout, so it no longer builds row icons with feather at runtime.
         $expected = [
-            'resources/views/customer/contactGroups/index.blade.php' => 5,
+            'resources/views/customer/contactGroups/index.blade.php' => 0,
             'resources/views/customer/contactGroups/show.blade.php' => 4,
             'resources/views/customer/Blacklists/index.blade.php' => 1,
             'resources/views/admin/Blacklists/index.blade.php' => 1,
@@ -114,7 +116,7 @@ class ContactsCrmDesignSystemContentTest extends TestCase
             $total += $actual;
         }
 
-        $this->assertSame(11, $total);
+        $this->assertSame(6, $total);
     }
 
     public function test_no_hardcoded_color_or_font_family_literals_introduced(): void

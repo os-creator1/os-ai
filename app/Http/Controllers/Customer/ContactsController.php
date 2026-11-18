@@ -28,6 +28,7 @@
     use App\Models\CsvData;
     use App\Models\CustomerBasedPricingPlan;
     use App\Models\FailedContactImport;
+    use App\Models\JobMonitor;
     use App\Models\Keywords;
     use App\Models\PhoneNumbers;
     use App\Models\PlansCoverageCountries;
@@ -316,7 +317,7 @@
             // a Business-addressable request; a legacy request without
             // workspaceUid/businessUid route params returns null here and
             // is otherwise unaffected.
-            $this->currentBusinessContext();
+            $business = $this->currentBusinessContext();
 
             $this->authorize('view_contact_group');
 
@@ -326,7 +327,44 @@
                 ['name' => __('locale.contacts.contact_groups')],
             ];
 
-            return view('customer.contactGroups.index', compact('breadcrumbs'));
+            // Same ownership scope as search(): the selected Business's
+            // groups, or the caller's own on a legacy (Business-less) request.
+            $scope = function () use ($business) {
+                $query = ContactGroups::query();
+
+                return $business !== null
+                    ? $query->where('business_id', $business->id)
+                    : $query->where('customer_id', auth()->user()->id);
+            };
+
+            $groupsTotal = $scope()->count();
+            $search      = mb_substr(trim((string) request()->query('q', '')), 0, 100);
+
+            $query = $scope();
+            if ($search !== '') {
+                $query->where('name', 'like', '%' . addcslashes($search, '\\%_') . '%');
+            }
+            $groups = $query->orderByDesc('id')->get();
+
+            $groupIds = $groups->pluck('id')->all();
+
+            // Last import per group and the exportable field tags per group,
+            // each in one query rather than one per row.
+            $lastImports = $groupIds === [] ? collect() : JobMonitor::query()
+                ->where('subject_name', ContactGroups::class)
+                ->whereIn('subject_id', $groupIds)
+                ->whereIn('job_type', [ImportContacts::class, ReplicateContacts::class])
+                ->selectRaw('subject_id, MAX(created_at) as last_import_at')
+                ->groupBy('subject_id')
+                ->pluck('last_import_at', 'subject_id');
+
+            $fieldTags = $groupIds === [] ? collect() : ContactGroupFields::query()
+                ->whereIn('contact_group_id', $groupIds)
+                ->get(['contact_group_id', 'tag'])
+                ->groupBy('contact_group_id')
+                ->map(fn ($rows) => $rows->pluck('tag')->all());
+
+            return view('customer.contactGroups.index', compact('breadcrumbs', 'groups', 'groupsTotal', 'search', 'lastImports', 'fieldTags'));
         }
 
         /**
@@ -699,7 +737,15 @@
                 ]);
             }
 
-            $group = $this->contactGroups->update($contact, $request->except('_method', '_token'));
+            $group = $this->contactGroups->update($contact, $request->except('_method', '_token', 'return'));
+
+            // A rename started from the Groups list returns to the list.
+            if ($request->input('return') === 'index') {
+                return CrmRouting::redirectRoute('contacts.index')->with([
+                    'status'  => 'success',
+                    'message' => __('locale.contacts.contact_group_successfully_updated'),
+                ]);
+            }
 
             return CrmRouting::redirectRoute('contacts.show', $group->uid)->withInput(['tab' => 'settings'])->with([
                 'status'  => 'success',

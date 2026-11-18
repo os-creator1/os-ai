@@ -1,654 +1,468 @@
 @extends('layouts/contentLayoutMaster')
 
+{{--
+    Contacts → Groups: the secondary tab next to All contacts, laid out per the
+    approved "ContactGroups" design. Server-rendered from ContactsController@index;
+    every control posts to an existing Contacts route (active, copy, update,
+    destroy, export, contact.create) through CrmRouting.
+--}}
+
 @section('title', __('locale.contacts.contact_groups'))
 
-@section('vendor-style')
-    {{-- vendor css files --}}
-    <link rel="stylesheet" href="{{ asset(mix('vendors/css/tables/datatable/dataTables.bootstrap5.min.css')) }}">
-    <link rel="stylesheet" href="{{ asset(mix('vendors/css/tables/datatable/responsive.bootstrap5.min.css')) }}">
-    <link rel="stylesheet" href="{{ asset(mix('vendors/css/tables/datatable/buttons.bootstrap5.min.css')) }}">
-    <link rel="stylesheet" href="{{ asset(mix('vendors/css/extensions/sweetalert2.min.css')) }}">
-
+@section('page-style')
+    <link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="{{ asset('css/crm/mgx-contacts.css') }}?v=1">
+    <link rel="stylesheet" href="{{ asset('css/crm/mgx-groups.css') }}?v=1">
 @endsection
 
 @section('content')
+    @php
+        $workspaceUid = request()->route('workspaceUid');
+        $businessUid = request()->route('businessUid');
+        $businessScoped = $workspaceUid !== null && $businessUid !== null;
+        $listUrl = \App\Library\CrmRouting::route('contacts.index');
+        $canCreateGroup = auth()->user()->can('create_contact_group');
+        $canUpdateGroup = auth()->user()->can('update_contact_group');
+        $canDeleteGroup = auth()->user()->can('delete_contact_group');
+        $canAddContacts = auth()->user()->can('create_contact');
+        $canExportContacts = auth()->user()->can('view_contact');
+        $newGroupUrl = \App\Library\CrmRouting::route('contacts.create');
+        $groupsTotal = $groupsTotal ?? $groups->count();
+        $search = $search ?? '';
+    @endphp
 
-    <!-- Basic table -->
-    <section id="datatables-basic">
-        {{-- Contacts → Groups: the secondary tab next to All contacts. --}}
-        @include('customer.people._tabs')
+    <section id="contacts-groups" class="mgx-contacts mgx-groups"
+             data-active-url="{{ \App\Library\CrmRouting::route('contacts.active', '__UID__') }}"
+             data-copy-url="{{ \App\Library\CrmRouting::route('contacts.copy', '__UID__') }}"
+             data-update-url="{{ \App\Library\CrmRouting::route('contacts.update', '__UID__') }}"
+             data-destroy-url="{{ \App\Library\CrmRouting::route('contacts.destroy', '__UID__') }}"
+             data-export-url="{{ \App\Library\CrmRouting::route('contact.export', '__UID__') }}">
 
-        <div class="mb-3 mt-2">
-            @can('view_contact_group')
-                <div class="btn-group">
-                    <x-button
-                            class="fw-bold dropdown-toggle"
-                            type="button"
-                            id="bulk_actions"
-                            data-bs-toggle="dropdown"
-                            aria-expanded="false"
-                    >
-                        {{ __('locale.labels.actions') }}
-                    </x-button>
-                    <div class="dropdown-menu" aria-labelledby="bulk_actions">
-                        <a class="dropdown-item bulk-enable" href="#"><x-ds-icon name="check" /> {{ __('locale.datatables.bulk_enable') }}</a>
-                        <a class="dropdown-item bulk-disable" href="#"><x-ds-icon name="stop-circle" /> {{ __('locale.datatables.bulk_disable') }}</a>
-                        <a class="dropdown-item bulk-delete" href="#"><x-ds-icon name="trash" /> {{ __('locale.datatables.bulk_delete') }}</a>
+        <div class="mgx-head">
+            <div>
+                <h1 class="mgx-title">Contacts</h1>
+                <p class="mgx-sub">Groups keep your contacts organised for messages and automations.</p>
+            </div>
+            @can('view_contact')
+                <a class="mgx-btn is-secondary" data-role="groups-export" href="{{ \App\Library\CrmRouting::route('contacts.export') }}"><svg class="mgx-ic" viewBox="0 0 24 24"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></svg>{{ __('locale.buttons.export') }}</a>
+            @endcan
+            @can('create_contact_group')
+                <a class="mgx-btn is-primary" data-role="groups-new" href="{{ $newGroupUrl }}"><svg class="mgx-ic" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>New group</a>
+            @endcan
+        </div>
+
+        @if ($businessScoped)
+            <nav class="mgx-tabs" aria-label="Contacts" data-role="contacts-tabs">
+                <a class="mgx-tab" href="{{ route('customer.workspaces.businesses.people.index', [$workspaceUid, $businessUid]) }}">All contacts</a>
+                <a class="mgx-tab is-on" aria-current="page" href="{{ $listUrl }}">Groups <span class="mgx-count" data-role="groups-count">{{ number_format($groupsTotal) }}</span></a>
+            </nav>
+        @endif
+
+        <div class="mgx-card mgx-gcard">
+            <form method="GET" action="{{ $listUrl }}" role="search" class="mgx-bar" data-role="groups-search">
+                <label class="mgx-search" for="groups-search">
+                    <svg class="mgx-ic" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5"/></svg>
+                    <span class="visually-hidden">Search groups</span>
+                    <input type="search" id="groups-search" name="q" value="{{ $search }}" placeholder="Search groups" maxlength="100" autocomplete="off">
+                </label>
+                <button type="submit" class="visually-hidden">Search</button>
+            </form>
+
+            <div class="mgx-grow is-head" role="row"><span>Group</span><span>Contacts</span><span>Last import</span><span>Created</span><span>Active</span><span></span></div>
+
+            @forelse ($groups as $group)
+                @php
+                    $contactCount = (int) $group->totalSubscribers($group->cache);
+                    $lastImport = $lastImports[$group->id] ?? null;
+                    $showUrl = \App\Library\CrmRouting::route('contacts.show', $group->uid);
+                    $hasMenu = $canAddContacts || $canUpdateGroup || $canCreateGroup || $canExportContacts || $canDeleteGroup;
+                @endphp
+                <div class="mgx-grow" data-role="group-row" data-uid="{{ $group->uid }}" data-name="{{ $group->name }}">
+                    <div class="mgx-who">
+                        <span class="mgx-gico" aria-hidden="true"><svg class="mgx-ic" viewBox="0 0 24 24"><circle cx="9" cy="8" r="3.5"/><path d="M3 20c0-3.3 2.7-5.5 6-5.5s6 2.2 6 5.5M16 5a3.5 3.5 0 0 1 0 6.5M18 14.8c1.8.8 3 2.6 3 5.2"/></svg></span>
+                        <div>
+                            <a class="mgx-name" href="{{ $showUrl }}">{{ $group->name }}</a>
+                            @unless ($group->status)<small>Inactive</small>@endunless
+                        </div>
+                    </div>
+                    <a class="mgx-gcount" data-label="Contacts" href="{{ $showUrl }}">{{ number_format($contactCount) }} {{ $contactCount === 1 ? 'contact' : 'contacts' }}</a>
+                    <span class="mgx-gmu" data-label="Last import">{{ $lastImport !== null ? \Illuminate\Support\Carbon::parse($lastImport)->diffForHumans() : '—' }}</span>
+                    <span class="mgx-gmu" data-label="Created">{{ $group->created_at?->diffForHumans() }}</span>
+                    <span data-label="Active">
+                        <button type="button" class="mgx-sw @if ($group->status) is-on @endif" role="switch" aria-checked="{{ $group->status ? 'true' : 'false' }}" aria-label="Active: {{ $group->name }}" data-action="toggle" @unless ($canUpdateGroup) disabled @endunless></button>
+                    </span>
+                    <div class="mgx-gmenu">
+                        @if ($hasMenu)
+                            <button type="button" class="mgx-dots" aria-label="Group options: {{ $group->name }}" aria-haspopup="menu" aria-expanded="false" data-action="menu"><svg class="mgx-ic" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.3"/><circle cx="12" cy="12" r="1.3"/><circle cx="19" cy="12" r="1.3"/></svg></button>
+                            <div class="mgx-menu" role="menu" hidden>
+                                @if ($canAddContacts)
+                                    <a class="mgx-mi" role="menuitem" data-action="add" href="{{ \App\Library\CrmRouting::route('contact.create', $group->uid) }}"><svg class="mgx-ic" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>Add contacts</a>
+                                @endif
+                                @if ($canUpdateGroup)
+                                    <button type="button" class="mgx-mi" role="menuitem" data-action="rename"><svg class="mgx-ic" viewBox="0 0 24 24"><path d="M4 20h4L19 9l-4-4L4 16zM13.5 6.5l4 4"/></svg>Rename</button>
+                                @endif
+                                @if ($canCreateGroup)
+                                    <button type="button" class="mgx-mi" role="menuitem" data-action="duplicate"><svg class="mgx-ic" viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/></svg>Duplicate</button>
+                                @endif
+                                @if ($canExportContacts)
+                                    <button type="button" class="mgx-mi" role="menuitem" data-action="export" data-fields="{{ json_encode($fieldTags[$group->id] ?? []) }}"><svg class="mgx-ic" viewBox="0 0 24 24"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></svg>Export contacts</button>
+                                @endif
+                                @if ($canDeleteGroup)
+                                    <div class="mgx-msep" role="separator"></div>
+                                    <button type="button" class="mgx-mi is-danger" role="menuitem" data-action="delete"><svg class="mgx-ic" viewBox="0 0 24 24"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/></svg>Delete group</button>
+                                @endif
+                            </div>
+                        @endif
                     </div>
                 </div>
-            @endcan
+            @empty
+                <div class="mgx-empty" data-role="groups-empty">
+                    @if ($search !== '')
+                        <b>No groups match “{{ $search }}”.</b>Try another name, or <a href="{{ $listUrl }}">show all groups</a>.
+                    @else
+                        <b>No groups yet.</b>Create a group to keep contacts organised for messages and automations.
+                    @endif
+                </div>
+            @endforelse
 
             @can('create_contact_group')
-                <div class="btn-group">
-                    <a href="{{\App\Library\CrmRouting::route('contacts.create')}}" class="btn btn-success waves-light waves-effect fw-bold mx-1"><x-ds-icon name="plus-circle" /> New group</a>
-                </div>
+                <a class="mgx-gnew" data-role="groups-create-another" href="{{ $newGroupUrl }}">
+                    <span class="mgx-gplus"><svg class="mgx-ic" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></span>
+                    Create another group<span class="mgx-ghint">— e.g. Past clients, Vendors, Wedding leads</span>
+                </a>
             @endcan
-
-            @can('view_contact_group')
-                <div class="btn-group">
-                    <a href="{{\App\Library\CrmRouting::route('contacts.export')}}" class="btn btn-info waves-light waves-effect fw-bold"> {{__('locale.buttons.export')}} <x-ds-icon name="file-text" /></a>
-                </div>
-            @endcan
-
         </div>
-        <div class="row">
-            <div class="col-12">
-                <x-card :padded="false">
-                    <table class="table datatables-basic">
-                        <thead>
-                        <tr>
-                            <th></th>
-                            <th></th>
-                            <th>{{ __('locale.labels.id') }}</th>
-                            <th>{{__('locale.labels.name')}} </th>
-                            <th>{{__('locale.menu.Contacts')}}</th>
-                            <th>{{__('locale.labels.last_import_date')}}</th>
-                            <th>{{__('locale.labels.created_at')}}</th>
-                            <th>{{__('locale.labels.status')}}</th>
-                            <th>{{__('locale.labels.actions')}}</th>
-                        </tr>
-                        </thead>
-                    </table>
-                </x-card>
-            </div>
+
+        {{-- One dialog serves rename, duplicate and delete; the button it submits is the real action. --}}
+        <div class="mgx-modal" id="groups-dialog" hidden>
+            <form class="mgx-dialog mgx-gdialog" method="POST" action="" role="dialog" aria-modal="true" aria-labelledby="groups-dialog-title" data-role="groups-dialog-form">
+                <div class="mgx-dh">
+                    <div><h2 id="groups-dialog-title"></h2><span id="groups-dialog-sub"></span></div>
+                    <button type="button" class="mgx-x" aria-label="Close" data-dialog-close><svg class="mgx-ic" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+                </div>
+                <div class="mgx-db">
+                    <div class="mgx-fl" id="groups-dialog-field">
+                        <label for="groups-dialog-name">Group name</label>
+                        <input class="mgx-in" id="groups-dialog-name" name="name" maxlength="191" autocomplete="off">
+                    </div>
+                    <p class="mgx-err" id="groups-dialog-error" role="alert"></p>
+                </div>
+                <div class="mgx-df">
+                    <span class="mgx-df-spacer"></span>
+                    <button type="button" class="mgx-btn is-secondary" data-dialog-close>Cancel</button>
+                    <button type="submit" class="mgx-btn is-primary" id="groups-dialog-submit">Save</button>
+                </div>
+            </form>
         </div>
     </section>
-    <!--/ Basic table -->
-
-
 @endsection
 
-
-@section('vendor-script')
-    {{-- vendor files --}}
-    <script src="{{ asset(mix('vendors/js/tables/datatable/jquery.dataTables.min.js')) }}"></script>
-    <script src="{{ asset(mix('vendors/js/tables/datatable/dataTables.bootstrap5.min.js')) }}"></script>
-    <script src="{{ asset(mix('vendors/js/tables/datatable/dataTables.responsive.min.js')) }}"></script>
-    <script src="{{ asset(mix('vendors/js/tables/datatable/responsive.bootstrap5.min.js')) }}"></script>
-    <script src="{{ asset(mix('vendors/js/tables/datatable/datatables.checkboxes.min.js')) }}"></script>
-    <script src="{{ asset(mix('vendors/js/tables/datatable/datatables.buttons.min.js')) }}"></script>
-    <script src="{{ asset(mix('vendors/js/tables/datatable/buttons.html5.min.js')) }}"></script>
-    <script src="{{ asset(mix('vendors/js/tables/datatable/dataTables.rowGroup.min.js')) }}"></script>
-
-    <script src="{{ asset(mix('vendors/js/extensions/sweetalert2.all.min.js')) }}"></script>
-    <script src="{{ asset(mix('vendors/js/extensions/polyfill.min.js')) }}"></script>
-
-@endsection
 @section('page-script')
-    {{-- Page js files --}}
     <script>
-        $(document).ready(function () {
-            "use strict"
+        (function () {
+            'use strict';
 
-            //show response message
-            function showResponseMessage(data) {
+            var root = document.getElementById('contacts-groups');
+            if (!root) { return; }
 
-                if (data.status === 'success') {
-                    toastr['success'](data.message, '{{__('locale.labels.success')}}!!', {
-                        closeButton: true,
-                        positionClass: 'toast-top-right',
-                        progressBar: true,
-                        newestOnTop: true,
-                        rtl: isRtl
-                    });
-                    dataListView.draw(false);
-                } else if (data.status === 'error') {
-                    toastr['error'](data.message, '{{ __('locale.labels.opps') }}!', {
-                        closeButton: true,
-                        positionClass: 'toast-top-right',
-                        progressBar: true,
-                        newestOnTop: true,
-                        rtl: isRtl
-                    });
-                    dataListView.draw(false);
-                } else {
-                    toastr['warning']("{{__('locale.exceptions.something_went_wrong')}}", '{{ __('locale.labels.warning') }}!', {
-                        closeButton: true,
-                        positionClass: 'toast-top-right',
-                        progressBar: true,
-                        newestOnTop: true,
-                        rtl: isRtl
-                    });
+            var csrf = @json(csrf_token());
+            var urls = {
+                active: root.dataset.activeUrl,
+                copy: root.dataset.copyUrl,
+                update: root.dataset.updateUrl,
+                destroy: root.dataset.destroyUrl,
+                exportGroup: root.dataset.exportUrl
+            };
+            var text = {
+                renameTitle: 'Rename group',
+                renameSub: 'Choose a new name for this group.',
+                duplicateTitle: 'Duplicate group',
+                duplicateSub: 'What would you like to name the copy?',
+                deleteTitle: 'Delete this group?',
+                deleteSub: 'This cannot be undone.',
+                save: 'Save',
+                duplicate: 'Duplicate',
+                remove: 'Delete group',
+                nameRequired: 'Enter a group name.',
+                failed: @json(__('locale.exceptions.something_went_wrong'))
+            };
+
+            function url(template, uid) { return template.replace('__UID__', encodeURIComponent(uid)); }
+
+            function notify(kind, message) {
+                if (window.toastr && typeof window.toastr[kind] === 'function') {
+                    window.toastr[kind](message, '', { closeButton: true, positionClass: 'toast-top-right', progressBar: true, newestOnTop: true });
                 }
-
-
-              // Fix: Replace icons after redraw
-              setTimeout(() => {
-                feather.replace();
-              }, 100); // slight delay to ensure DOM update completes
             }
 
-            // init table dom
-            let Table = $("table");
+            function remember(kind, message) {
+                try { sessionStorage.setItem('mgx-groups-notice', JSON.stringify({ kind: kind, message: message })); } catch (e) { /* storage unavailable */ }
+            }
 
-            // init list view datatable
-            let dataListView = $('.datatables-basic').DataTable({
+            try {
+                var pending = sessionStorage.getItem('mgx-groups-notice');
+                if (pending) {
+                    sessionStorage.removeItem('mgx-groups-notice');
+                    var note = JSON.parse(pending);
+                    setTimeout(function () { notify(note.kind, note.message); }, 400);
+                }
+            } catch (e) { /* storage unavailable */ }
 
-                "processing": true,
-                "serverSide": true,
-                "ajax": {
-                    "url": "{{ \App\Library\CrmRouting::route('contacts.search') }}",
-                    "dataType": "json",
-                    "type": "POST",
-                    "data": {_token: "{{csrf_token()}}"}
-                },
-                "columns": [
-                    {"data": 'responsive_id', orderable: false, searchable: false},
-                    {"data": "uid"},
-                    {"data": "uid"},
-                    {"data": "name"},
-                    {"data": "contacts", orderable: false, searchable: false},
-                    {"data": "updated_at"},
-                    {"data": "created_at"},
-                    {"data": "status"},
-                    {"data": "action", orderable: false, searchable: false}
-                ],
+            function post(target, fields) {
+                var body = new FormData();
+                body.append('_token', csrf);
+                Object.keys(fields || {}).forEach(function (key) { body.append(key, fields[key]); });
+                return fetch(target, {
+                    method: 'POST',
+                    body: body,
+                    credentials: 'same-origin',
+                    headers: { 'Accept': 'application/json', 'X-Requested-With': 'XMLHttpRequest' }
+                }).then(function (response) {
+                    return response.json().catch(function () { return {}; }).then(function (data) {
+                        data.httpStatus = response.status;
+                        return data;
+                    });
+                });
+            }
 
-                searchDelay: 1500,
-                columnDefs: [
-                    {
-                        // For Responsive
-                        className: 'control',
-                        orderable: false,
-                        responsivePriority: 2,
-                        targets: 0
-                    },
-                    {
-                        // For Checkboxes
-                        targets: 1,
-                        orderable: false,
-                        responsivePriority: 3,
-                        render: function (data) {
-                            return (
-                                '<div class="form-check"> <input class="form-check-input dt-checkboxes" type="checkbox" value="" id="' +
-                                data +
-                                '" /><label class="form-check-label" for="' +
-                                data +
-                                '"></label></div>'
-                            );
-                        },
-                        checkboxes: {
-                            selectAllRender:
-                                '<div class="form-check"> <input class="form-check-input" type="checkbox" value="" id="checkboxSelectAll" /><label class="form-check-label" for="checkboxSelectAll"></label></div>',
-                            selectRow: true
-                        }
-                    },
-                    {
-                        // Avatar image/badge, Name and post
-                        targets: 3,
-                        responsivePriority: 1,
-                        render: function (data, type, full) {
-                            return (
-                                '<a href="' + full['show'] + '">' + full['name'] + '</a>'
-                            );
-                        }
-                    },
-                    {
-                        // Actions
-                        targets: -1,
-                        title: '{{ __('locale.labels.actions') }}',
-                        orderable: false,
-                        render: function (data, type, full) {
+            function firstError(data) {
+                if (data && data.errors) {
+                    var keys = Object.keys(data.errors);
+                    if (keys.length) { return data.errors[keys[0]][0]; }
+                }
+                return (data && data.message) || text.failed;
+            }
 
-                            let $actions = '';
+            /* ---- row menu ---- */
+            var openMenu = null;
 
-                            if(full['can_create']){
-                                $actions += '<a href="' + full['new_contact'] + '" class="text-info me-1" data-bs-toggle="tooltip" data-bs-placement="top" title="' + full['new_contact_label'] + '">' +
-                                    feather.icons['plus-circle'].toSvg({class: 'font-medium-4'}) +
-                                    '</a>';
-                            }
+            function closeMenu(restoreFocus) {
+                if (!openMenu) { return; }
+                var trigger = openMenu.parentNode.querySelector('[data-action="menu"]');
+                openMenu.hidden = true;
+                openMenu.classList.remove('is-up');
+                if (trigger) {
+                    trigger.setAttribute('aria-expanded', 'false');
+                    trigger.classList.remove('is-open');
+                    if (restoreFocus) { trigger.focus(); }
+                }
+                openMenu = null;
+            }
 
-                            if(full['can_update']){
-                                $actions += '<a href="' + full['show'] + '" class="text-primary me-1" data-bs-toggle="tooltip" data-bs-placement="top" title=' + full['show_label'] + '>' +
-                                    feather.icons['edit'].toSvg({class: 'font-medium-4'}) +
-                                    '</a>';
-                            }
+            function showMenu(trigger) {
+                var menu = trigger.parentNode.querySelector('.mgx-menu');
+                if (!menu) { return; }
+                closeMenu(false);
+                menu.hidden = false;
+                // Open upward when there is no room below, so the menu is never cut off.
+                var rect = trigger.getBoundingClientRect();
+                var room = window.innerHeight - rect.bottom;
+                menu.classList.toggle('is-up', room < menu.offsetHeight + 16 && rect.top > menu.offsetHeight + 16);
+                trigger.setAttribute('aria-expanded', 'true');
+                trigger.classList.add('is-open');
+                openMenu = menu;
+                var first = menu.querySelector('.mgx-mi');
+                if (first) { first.focus(); }
+            }
 
-                            if(full['can_delete']){
-                                $actions +='<span class="action-delete text-danger cursor-pointer" data-bs-toggle="tooltip" data-bs-placement="top" title=' + full['delete'] + ' data-id=' + full['uid'] + '>' +
-                                    feather.icons['trash'].toSvg({class: 'font-medium-4'}) +
-                                    '</span>';
-                            }
-
-                            return (
-                                '<span class="action-copy text-success me-1" data-value='+full['name']+' data-bs-toggle="tooltip" data-bs-placement="top" title=' + full['copy'] + ' data-id=' + full['uid'] + '>' +
-                                feather.icons['copy'].toSvg({class: 'font-medium-4'}) +
-                                '</span>' + $actions
-                            );
-                        }
-                    }
-                ],
-                dom: '<"d-flex justify-content-between align-items-center mx-0 row"<"col-sm-12 col-md-6"l><"col-sm-12 col-md-6"f>>t<"d-flex justify-content-between mx-0 row"<"col-sm-12 col-md-6"i><"col-sm-12 col-md-6"p>>',
-
-                language: {
-                    paginate: {
-                        // remove previous & next text from pagination
-                        previous: '&nbsp;',
-                        next: '&nbsp;'
-                    },
-                    sLengthMenu: "_MENU_",
-                    sZeroRecords: "{{ __('locale.datatables.no_results') }}",
-                    sSearch: "{{ __('locale.datatables.search') }}",
-                    sProcessing: "{{ __('locale.datatables.processing') }}",
-                    sInfo: "{{ __('locale.datatables.showing_entries', ['start' => '_START_', 'end' => '_END_', 'total' => '_TOTAL_']) }}"
-                },
-                responsive: {
-                    details: {
-                        display: $.fn.dataTable.Responsive.display.modal({
-                            header: function (row) {
-                                let data = row.data();
-                                return 'Details of ' + data['name'];
-                            }
-                        }),
-                        type: 'column',
-                        renderer: function (api, rowIdx, columns) {
-                            let data = $.map(columns, function (col) {
-                                return col.title !== '' // ? Do not show row in modal popup if title is blank (for check box)
-                                    ? '<tr data-dt-row="' +
-                                    col.rowIdx +
-                                    '" data-dt-column="' +
-                                    col.columnIndex +
-                                    '">' +
-                                    '<td>' +
-                                    col.title +
-                                    ':' +
-                                    '</td> ' +
-                                    '<td>' +
-                                    col.data +
-                                    '</td>' +
-                                    '</tr>'
-                                    : '';
-                            }).join('');
-
-                            return data ? $('<table class="table"/>').append('<tbody>' + data + '</tbody>') : false;
-                        }
-                    }
-                },
-                aLengthMenu: [[10, 20, 50, 100], [10, 20, 50, 100]],
-                select: {
-                    style: "multi"
-                },
-                order: [[2, "desc"]],
-                displayLength: 10,
+            document.addEventListener('click', function (event) {
+                if (openMenu && !openMenu.parentNode.contains(event.target)) { closeMenu(false); }
             });
 
+            document.addEventListener('keydown', function (event) {
+                if (!openMenu) { return; }
+                if (event.key === 'Escape') { event.preventDefault(); closeMenu(true); return; }
+                if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+                    event.preventDefault();
+                    var items = Array.prototype.slice.call(openMenu.querySelectorAll('.mgx-mi'));
+                    var at = items.indexOf(document.activeElement);
+                    var next = event.key === 'ArrowDown' ? (at + 1) % items.length : (at - 1 + items.length) % items.length;
+                    items[next].focus();
+                }
+            });
 
-            Table.delegate(".get_status", "click", function () {
-                let group_id = $(this).data('id');
-                $.ajax({
-                    url: "{{ url('contacts')}}" + '/' + group_id + '/active',
-                    type: "POST",
-                    data: {
-                        _token: "{{csrf_token()}}"
-                    },
-                    success: function (data) {
-                        showResponseMessage(data);
+            /* ---- dialog (rename / duplicate / delete) ---- */
+            var modal = document.getElementById('groups-dialog');
+            var form = modal.querySelector('form');
+            var nameInput = document.getElementById('groups-dialog-name');
+            var nameField = document.getElementById('groups-dialog-field');
+            var errorBox = document.getElementById('groups-dialog-error');
+            var submitBtn = document.getElementById('groups-dialog-submit');
+            var dialogMode = null;
+            var dialogRow = null;
+            var lastTrigger = null;
+
+            function openDialog(mode, row) {
+                dialogMode = mode;
+                dialogRow = row;
+                var name = row.dataset.name;
+                errorBox.classList.remove('is-on');
+                errorBox.textContent = '';
+                nameInput.classList.remove('is-bad');
+                var asking = mode !== 'delete';
+                nameField.hidden = !asking;
+                nameInput.disabled = !asking;
+                submitBtn.classList.toggle('is-danger', mode === 'delete');
+                submitBtn.classList.toggle('is-primary', mode !== 'delete');
+                document.getElementById('groups-dialog-title').textContent = mode === 'rename' ? text.renameTitle : (mode === 'duplicate' ? text.duplicateTitle : text.deleteTitle);
+                document.getElementById('groups-dialog-sub').textContent = mode === 'rename' ? text.renameSub : (mode === 'duplicate' ? text.duplicateSub : '“' + name + '” ' + text.deleteSub);
+                submitBtn.textContent = mode === 'rename' ? text.save : (mode === 'duplicate' ? text.duplicate : text.remove);
+                nameInput.value = mode === 'duplicate' ? 'Copy of ' + name : name;
+                lastTrigger = document.activeElement;
+                modal.hidden = false;
+                (asking ? nameInput : submitBtn).focus();
+                if (asking) { nameInput.select(); }
+            }
+
+            function closeDialog() {
+                modal.hidden = true;
+                if (lastTrigger && typeof lastTrigger.focus === 'function') { lastTrigger.focus(); }
+            }
+
+            function showDialogError(message) {
+                errorBox.textContent = message;
+                errorBox.classList.add('is-on');
+                nameInput.classList.add('is-bad');
+            }
+
+            modal.addEventListener('click', function (event) {
+                if (event.target === modal || event.target.closest('[data-dialog-close]')) { closeDialog(); }
+            });
+            document.addEventListener('keydown', function (event) {
+                if (event.key === 'Escape' && !modal.hidden) { closeDialog(); }
+            });
+
+            function hiddenField(name, value) {
+                var input = form.querySelector('input[name="' + name + '"]');
+                if (!input) {
+                    input = document.createElement('input');
+                    input.type = 'hidden';
+                    input.name = name;
+                    form.appendChild(input);
+                }
+                input.value = value;
+            }
+
+            form.addEventListener('submit', function (event) {
+                event.preventDefault();
+                if (!dialogRow) { return; }
+                var uid = dialogRow.dataset.uid;
+                var name = nameInput.value.trim();
+                if (dialogMode !== 'delete' && name === '') { showDialogError(text.nameRequired); return; }
+
+                if (dialogMode === 'rename') {
+                    // The existing update route; "return" brings the person back to this list.
+                    form.action = url(urls.update, uid);
+                    hiddenField('_method', 'PATCH');
+                    hiddenField('_token', csrf);
+                    hiddenField('return', 'index');
+                    form.submit();
+                    return;
+                }
+
+                submitBtn.disabled = true;
+                var request = dialogMode === 'duplicate'
+                    ? post(url(urls.copy, uid), { group_name: name })
+                    : post(url(urls.destroy, uid), { _method: 'DELETE' });
+
+                request.then(function (data) {
+                    submitBtn.disabled = false;
+                    if (data.status === 'success') {
+                        remember('success', data.message);
+                        window.location.reload();
+                    } else {
+                        showDialogError(firstError(data));
                     }
+                }).catch(function () {
+                    submitBtn.disabled = false;
+                    showDialogError(text.failed);
                 });
             });
 
-            // On copy
-            Table.delegate(".action-copy", "click", function (e) {
-                e.stopPropagation();
-                let id = $(this).data('id');
-                let group_name = $(this).data('value')
-                Swal.fire({
-                    title: "{{ __('locale.contacts.new_contact_group') }}",
-                    text: "{{ __('locale.contacts.what_would_you_like_to_name_your_group') }}",
-                    input: 'text',
-                    inputValue: 'Copy of ' + group_name,
-                    inputAttributes: {
-                        autocapitalize: 'off'
-                    },
-                    showCancelButton: true,
-                    cancelButtonText:"{{ __('locale.buttons.cancel') }}",
-                    cancelButtonAriaLabel: "{{ __('locale.buttons.cancel') }}",
-                    confirmButtonText: feather.icons['copy'].toSvg({ class: 'font-medium-1 me-50' }) + "{{ __('locale.labels.copy') }}",
-                    customClass: {
-                        confirmButton: 'btn btn-primary',
-                        cancelButton: 'btn btn-outline-danger ms-1'
-                    },
-                    buttonsStyling: false,
-                }).then(function (result) {
-                    if (result.value) {
-                        $.ajax({
-                            url: "{{ url('contacts')}}" + '/' + id + '/copy',
-                            type: "POST",
-                            data: {
-                                _method: 'POST',
-                                group_name: result.value,
-                                _token: "{{csrf_token()}}"
-                            },
-                            success: function (data) {
-                                showResponseMessage(data);
-                            },
-                            error: function (reject) {
-                                if (reject.status === 422) {
-                                    let errors = reject.responseJSON.errors;
-                                    $.each(errors, function (key, value) {
-                                        toastr['warning'](value[0], "{{__('locale.labels.attention')}}", {
-                                            closeButton: true,
-                                            positionClass: 'toast-top-right',
-                                            progressBar: true,
-                                            newestOnTop: true,
-                                            rtl: isRtl
-                                        });
-                                    });
-                                } else {
-                                    toastr['warning'](reject.responseJSON.message, "{{__('locale.labels.attention')}}", {
-                                        closeButton: true,
-                                        positionClass: 'toast-top-right',
-                                        progressBar: true,
-                                        newestOnTop: true,
-                                        rtl: isRtl
-                                    });
-                                }
+            /* ---- row actions ---- */
+            root.addEventListener('click', function (event) {
+                var control = event.target.closest('[data-action]');
+                if (!control || !root.contains(control)) { return; }
+                var row = control.closest('[data-role="group-row"]');
+                if (!row) { return; }
+                var action = control.dataset.action;
+
+                if (action === 'menu') {
+                    event.preventDefault();
+                    if (control.getAttribute('aria-expanded') === 'true') { closeMenu(false); } else { showMenu(control); }
+                    return;
+                }
+                if (action === 'add') { return; }
+
+                if (action === 'toggle') {
+                    var wasOn = control.classList.contains('is-on');
+                    control.disabled = true;
+                    post(url(urls.active, row.dataset.uid)).then(function (data) {
+                        control.disabled = false;
+                        if (data.status === 'success') {
+                            control.classList.toggle('is-on', !wasOn);
+                            control.setAttribute('aria-checked', wasOn ? 'false' : 'true');
+                            var sub = row.querySelector('.mgx-who small');
+                            if (wasOn && !sub) {
+                                sub = document.createElement('small');
+                                sub.textContent = 'Inactive';
+                                row.querySelector('.mgx-who > div').appendChild(sub);
+                            } else if (!wasOn && sub) {
+                                sub.remove();
                             }
-                        })
-                    }
-                })
-            });
-
-            // On Delete
-            Table.delegate(".action-delete", "click", function (e) {
-                e.stopPropagation();
-                let id = $(this).data('id');
-                Swal.fire({
-                    title: "{{ __('locale.labels.are_you_sure') }}",
-                    text: "{{ __('locale.labels.able_to_revert') }}",
-                    icon: 'warning',
-                    showCancelButton: true,
-                    confirmButtonText: "{{ __('locale.labels.delete_it') }}",
-                    customClass: {
-                        confirmButton: 'btn btn-primary',
-                        cancelButton: 'btn btn-outline-danger ms-1'
-                    },
-                    buttonsStyling: false,
-                }).then(function (result) {
-                    if (result.value) {
-                        $.ajax({
-                            url: "{{ url('contacts')}}" + '/' + id,
-                            type: "POST",
-                            data: {
-                                _method: 'DELETE',
-                                _token: "{{csrf_token()}}"
-                            },
-                            success: function (data) {
-                                showResponseMessage(data);
-                            },
-                            error: function (reject) {
-                                if (reject.status === 422) {
-                                    let errors = reject.responseJSON.errors;
-                                    $.each(errors, function (key, value) {
-                                        toastr['warning'](value[0], "{{__('locale.labels.attention')}}", {
-                                            closeButton: true,
-                                            positionClass: 'toast-top-right',
-                                            progressBar: true,
-                                            newestOnTop: true,
-                                            rtl: isRtl
-                                        });
-                                    });
-                                } else {
-                                    toastr['warning'](reject.responseJSON.message, "{{__('locale.labels.attention')}}", {
-                                        positionClass: 'toast-top-right',
-                                        containerId: 'toast-top-right',
-                                        progressBar: true,
-                                        closeButton: true,
-                                        newestOnTop: true
-                                    });
-                                }
-                            }
-                        })
-                    }
-                })
-            });
-
-
-            //Bulk Enable
-            $(".bulk-enable").on('click', function (e) {
-                e.preventDefault();
-
-                Swal.fire({
-                    title: "{{__('locale.labels.are_you_sure')}}",
-                    text: "{{__('locale.contacts.enable_contact_groups')}}",
-                    icon: 'warning',
-                    showCancelButton: true,
-                    confirmButtonText: "{{__('locale.labels.enable_selected')}}",
-                    customClass: {
-                        confirmButton: 'btn btn-primary',
-                        cancelButton: 'btn btn-outline-danger ms-1'
-                    },
-                    buttonsStyling: false,
-
-                }).then(function (result) {
-                    if (result.value) {
-                        let group_ids = [];
-                        let rows_selected = dataListView.column(1).checkboxes.selected();
-
-                        $.each(rows_selected, function (index, rowId) {
-                            group_ids.push(rowId)
-                        });
-
-                        if (group_ids.length > 0) {
-
-                            $.ajax({
-                                url: "{{ \App\Library\CrmRouting::route('contacts.batch_action') }}",
-                                type: "POST",
-                                data: {
-                                    _token: "{{csrf_token()}}",
-                                    action: 'enable',
-                                    ids: group_ids
-                                },
-                                success: function (data) {
-                                    showResponseMessage(data);
-                                },
-                                error: function (reject) {
-                                    if (reject.status === 422) {
-                                        let errors = reject.responseJSON.errors;
-                                        $.each(errors, function (key, value) {
-                                            toastr['warning'](value[0], "{{__('locale.labels.attention')}}", {
-                                                closeButton: true,
-                                                positionClass: 'toast-top-right',
-                                                progressBar: true,
-                                                newestOnTop: true,
-                                                rtl: isRtl
-                                            });
-                                        });
-                                    } else {
-                                        toastr['warning'](reject.responseJSON.message, "{{__('locale.labels.attention')}}", {
-                                            closeButton: true,
-                                            positionClass: 'toast-top-right',
-                                            progressBar: true,
-                                            newestOnTop: true,
-                                            rtl: isRtl
-                                        });
-                                    }
-                                }
-                            })
+                            notify('success', data.message);
                         } else {
-                            toastr['warning']("{{ __('locale.labels.at_least_one_data') }}", "{{ __('locale.labels.attention') }}", {
-                                closeButton: true,
-                                positionClass: 'toast-top-right',
-                                progressBar: true,
-                                newestOnTop: true,
-                                rtl: isRtl
-                            });
+                            notify('error', firstError(data));
                         }
-                    }
-                })
+                    }).catch(function () { control.disabled = false; notify('error', text.failed); });
+                    return;
+                }
+
+                closeMenu(false);
+                event.preventDefault();
+
+                if (action === 'rename' || action === 'duplicate' || action === 'delete') {
+                    openDialog(action, row);
+                    return;
+                }
+
+                if (action === 'export') {
+                    var fields = [];
+                    try { fields = JSON.parse(control.dataset.fields || '[]'); } catch (e) { fields = []; }
+                    if (!fields.length) { notify('warning', text.failed); return; }
+                    // The existing per-group export route takes the field tags as a POST form.
+                    var exporter = document.createElement('form');
+                    exporter.method = 'POST';
+                    exporter.action = url(urls.exportGroup, row.dataset.uid);
+                    exporter.style.display = 'none';
+                    var add = function (name, value) {
+                        var input = document.createElement('input');
+                        input.type = 'hidden'; input.name = name; input.value = value;
+                        exporter.appendChild(input);
+                    };
+                    add('_token', csrf);
+                    add('include_phone', 'true');
+                    fields.forEach(function (tag) { add('contact_fields[]', tag); });
+                    document.body.appendChild(exporter);
+                    exporter.submit();
+                    exporter.remove();
+                }
             });
 
-            //Bulk disable
-            $(".bulk-disable").on('click', function (e) {
-
-                e.preventDefault();
-
-                Swal.fire({
-                    title: "{{__('locale.labels.are_you_sure')}}",
-                    text: "{{__('locale.contacts.disable_contact_groups')}}",
-                    icon: 'warning',
-                    showCancelButton: true,
-                    confirmButtonText: "{{__('locale.labels.disable_selected')}}",
-                    customClass: {
-                        confirmButton: 'btn btn-primary',
-                        cancelButton: 'btn btn-outline-danger ms-1'
-                    },
-                    buttonsStyling: false,
-                }).then(function (result) {
-                    if (result.value) {
-                        let group_ids = [];
-                        let rows_selected = dataListView.column(1).checkboxes.selected();
-
-                        $.each(rows_selected, function (index, rowId) {
-                            group_ids.push(rowId)
-                        });
-
-                        if (group_ids.length > 0) {
-
-                            $.ajax({
-                                url: "{{ \App\Library\CrmRouting::route('contacts.batch_action') }}",
-                                type: "POST",
-                                data: {
-                                    _token: "{{csrf_token()}}",
-                                    action: 'disable',
-                                    ids: group_ids
-                                },
-                                success: function (data) {
-                                    showResponseMessage(data);
-                                },
-                                error: function (reject) {
-                                    if (reject.status === 422) {
-                                        let errors = reject.responseJSON.errors;
-                                        $.each(errors, function (key, value) {
-                                            toastr['warning'](value[0], "{{__('locale.labels.attention')}}", {
-                                                closeButton: true,
-                                                positionClass: 'toast-top-right',
-                                                progressBar: true,
-                                                newestOnTop: true,
-                                                rtl: isRtl
-                                            });
-                                        });
-                                    } else {
-                                        toastr['warning'](reject.responseJSON.message, "{{__('locale.labels.attention')}}", {
-                                            closeButton: true,
-                                            positionClass: 'toast-top-right',
-                                            progressBar: true,
-                                            newestOnTop: true,
-                                            rtl: isRtl
-                                        });
-                                    }
-                                }
-                            })
-                        } else {
-                            toastr['warning']("{{__('locale.labels.at_least_one_data')}}", "{{__('locale.labels.attention')}}", {
-                                closeButton: true,
-                                positionClass: 'toast-top-right',
-                                progressBar: true,
-                                newestOnTop: true,
-                                rtl: isRtl
-                            });
-                        }
-
-                    }
-                })
-            });
-
-
-            //Bulk Delete
-            $(".bulk-delete").on('click', function (e) {
-
-                e.preventDefault();
-
-                Swal.fire({
-                    title: "{{__('locale.labels.are_you_sure')}}",
-                    text: "{{__('locale.contacts.delete_contact_groups')}}",
-                    icon: 'warning',
-                    showCancelButton: true,
-                    confirmButtonText: "{{__('locale.labels.delete_selected')}}",
-                    customClass: {
-                        confirmButton: 'btn btn-primary',
-                        cancelButton: 'btn btn-outline-danger ms-1'
-                    },
-                    buttonsStyling: false,
-                }).then(function (result) {
-                    if (result.value) {
-                        let group_ids = [];
-                        let rows_selected = dataListView.column(1).checkboxes.selected();
-
-                        $.each(rows_selected, function (index, rowId) {
-                            group_ids.push(rowId)
-                        });
-
-                        if (group_ids.length > 0) {
-
-                            $.ajax({
-                                url: "{{ \App\Library\CrmRouting::route('contacts.batch_action') }}",
-                                type: "POST",
-                                data: {
-                                    _token: "{{csrf_token()}}",
-                                    action: 'destroy',
-                                    ids: group_ids
-                                },
-                                success: function (data) {
-                                    showResponseMessage(data);
-                                },
-                                error: function (reject) {
-                                    if (reject.status === 422) {
-                                        let errors = reject.responseJSON.errors;
-                                        $.each(errors, function (key, value) {
-                                            toastr['warning'](value[0], "{{__('locale.labels.attention')}}", {
-                                                closeButton: true,
-                                                positionClass: 'toast-top-right',
-                                                progressBar: true,
-                                                newestOnTop: true,
-                                                rtl: isRtl
-                                            });
-                                        });
-                                    } else {
-                                        toastr['warning'](reject.responseJSON.message, "{{__('locale.labels.attention')}}", {
-                                            closeButton: true,
-                                            positionClass: 'toast-top-right',
-                                            progressBar: true,
-                                            newestOnTop: true,
-                                            rtl: isRtl
-                                        });
-                                    }
-                                }
-                            })
-                        } else {
-                            toastr['warning']("{{__('locale.labels.at_least_one_data')}}", "{{__('locale.labels.attention')}}", {
-                                closeButton: true,
-                                positionClass: 'toast-top-right',
-                                progressBar: true,
-                                newestOnTop: true,
-                                rtl: isRtl
-                            });
-                        }
-
-                    }
-                })
-            });
-
-        });
+            /* ---- search: submit shortly after typing stops ---- */
+            var search = document.getElementById('groups-search');
+            var searchTimer = null;
+            if (search) {
+                search.addEventListener('input', function () {
+                    clearTimeout(searchTimer);
+                    searchTimer = setTimeout(function () { search.form.submit(); }, 450);
+                });
+                if (search.value) {
+                    var end = search.value.length;
+                    search.focus();
+                    search.setSelectionRange(end, end);
+                }
+            }
+        })();
     </script>
 @endsection

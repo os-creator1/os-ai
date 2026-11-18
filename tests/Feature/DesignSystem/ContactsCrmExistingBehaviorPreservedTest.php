@@ -143,10 +143,11 @@ class ContactsCrmExistingBehaviorPreservedTest extends TestCase
     // Plugin wiring (DataTables / Select2 / Flatpickr / SweetAlert2)
     // -----------------------------------------------------------------
 
-    public function test_datatables_ajax_endpoints_are_unchanged_across_the_three_datatable_shells(): void
+    public function test_datatables_ajax_endpoints_are_unchanged_across_the_remaining_datatable_shells(): void
     {
+        // The Groups index is now server-rendered (MotionGrove ContactGroups
+        // layout); the contacts.search JSON endpoint itself is unchanged.
         $expected = [
-            'resources/views/customer/contactGroups/index.blade.php' => "\\App\\Library\\CrmRouting::route('contacts.search')",
             'resources/views/customer/Blacklists/index.blade.php' => "route('customer.blacklists.search')",
             'resources/views/admin/Blacklists/index.blade.php' => "route('admin.blacklists.search')",
         ];
