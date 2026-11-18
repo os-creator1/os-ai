@@ -285,6 +285,8 @@ class PhotoBoothAgencyLandingTest extends TestCase
         // Once the owner publishes: full original homepage + calendar + their testimonial, still no pricing/signup.
         $sites->publish((int) $owner->user_id, $agency);
         $html = $this->get('/photobooth')->assertOk()->getContent();
+        $this->assertStringContainsString('class="mg mg-home mg-book-demo"', $html, 'home calendar keeps the scoped scheduler layout and state styles');
+        $this->assertStringContainsString('book-demo.css', $html);
         $own = route('public.booking.show', $type->public_booking_uuid);
         $this->assertStringContainsString('<h1 id="hero-h" class="hero-h1">More bookings.', $html);
         $this->assertStringContainsString('data-role="public-scheduler"', $html);
