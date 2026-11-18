@@ -3,7 +3,7 @@
     Inputs carry data-path; the editor script saves a section's fields together and the server re-validates every one.
 --}}
 @php
-    $id = 'f-'.md5($field['path']);
+    $id = ($idPrefix ?? '').'f-'.md5($field['path']);
     $value = $field['value'];
     $isList = in_array($field['type'], ['strings', 'rows'], true);
 @endphp

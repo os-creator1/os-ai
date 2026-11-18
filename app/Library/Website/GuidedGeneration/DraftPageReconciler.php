@@ -37,7 +37,7 @@ final class DraftPageReconciler
     /** Roles safe to infer from an unstamped (legacy/owner) page's address; e.g. "check-availability" is never assumed to be Contact. */
     private const DERIVABLE_ROLES = [WebsitePageIntent::ABOUT, WebsitePageIntent::FAQ, WebsitePageIntent::GALLERY, WebsitePageIntent::BACKDROPS];
 
-    private const PAGE_CEILING = 20;
+    private const PAGE_CEILING = \App\Library\Website\WebsitePageStrategy::MAX_PAGES_PER_GENERATION;
 
     /**
      * @param  array<int, array<string, mixed>>  $plan  WebsitePageStrategy plan entries (page_key, slug, is_home, page_type, title)

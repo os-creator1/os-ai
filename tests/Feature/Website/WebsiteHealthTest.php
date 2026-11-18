@@ -128,7 +128,7 @@ class WebsiteHealthTest extends TestCase
 
         $this->assertSame('warn', $services['status']);
         $this->assertStringContainsString('Mirror Photo Booth', $services['detail']);
-        $this->assertStringContainsString('14 pages', $services['detail']);
+        $this->assertStringContainsString(\App\Library\Website\WebsitePageStrategy::MAX_PAGES_PER_GENERATION . ' pages', $services['detail']);
     }
 
     public function test_a_package_changed_after_publishing_is_flagged_for_publish_update(): void

@@ -115,6 +115,23 @@ class ConsultationLandingTemplateTest extends TestCase
         $this->get(route('agency.site.home', $site->public_id))->assertSee('NEXT DRAFT headline');
     }
 
+    public function test_consultation_fields_have_only_one_save_scope_in_either_editor_mode(): void
+    {
+        [$agency, $owner, $type] = $this->agency('Shared Consultation Editor Agency');
+        $site = $this->consultationSite($agency, $owner, $type, 'One editor');
+        $this->authenticateAs($owner);
+
+        foreach (['consultation', 'home'] as $template) {
+            app(AgencySiteManager::class)->save((int) $owner->user_id, $agency, ['x.template' => $template]);
+            $html = $this->get(route('customer.workspaces.agency.white-label.show', ['workspaceUid' => $agency->uid, 'tab' => 'landing']))
+                ->assertOk()->getContent();
+            $this->assertSame(1, substr_count($html, 'data-group="consultation"'), 'no duplicate data-path scope in ' . $template . ' mode');
+            $this->assertStringContainsString('data-role="shared-consultation-editor"', $html);
+            $this->assertStringContainsString('data-role="callpage-consultation-slot"', $html);
+            $this->assertStringContainsString('data-role="site-consultation-slot"', $html);
+        }
+    }
+
     public function test_the_calendar_offers_real_availability_and_completes_a_booking(): void
     {
         [$agency, $owner, $type] = $this->agency('Booking Agency');

@@ -14,6 +14,7 @@ use App\Exceptions\BusinessEmail\BusinessEmailImapException as ImapError;
 use App\Exceptions\BusinessEmail\BusinessEmailProviderException;
 use App\Library\BusinessEmail\Contracts\BusinessEmailProvider;
 use App\Library\BusinessEmail\Contracts\InboundBusinessEmailProvider;
+use App\Library\BusinessEmail\Imap\HttpSmtpGatewayMailer;
 use App\Library\BusinessEmail\Imap\ImapClient;
 use App\Library\BusinessEmail\Imap\ImapHostGuard;
 use App\Library\BusinessEmail\Imap\ImapSettings;
@@ -381,6 +382,16 @@ final class ImapBusinessEmailProvider implements BusinessEmailProvider, InboundB
 
     private function mailer(): SmtpMailer
     {
-        return app()->bound(SmtpMailer::class) ? app(SmtpMailer::class) : new SymfonySmtpMailer();
+        if (app()->bound(SmtpMailer::class)) {
+            return app(SmtpMailer::class);
+        }
+
+        // On a host that cannot reach customer SMTP servers directly, send via the shared HTTPS gateway.
+        // The gateway deployment itself ('serve') always connects directly.
+        if (filled(config('business_email.smtp_gateway.url')) && ! config('business_email.smtp_gateway.serve')) {
+            return new HttpSmtpGatewayMailer();
+        }
+
+        return new SymfonySmtpMailer();
     }
 }

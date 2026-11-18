@@ -1,0 +1,79 @@
+name: Guided Website Generation Regression
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'app/Library/Website/**'
+      - 'tests/Feature/Website/**'
+      - '.github/workflows/guided-website-generation-tests.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: guided-website-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  guided-generation:
+    name: Guided generation (PHP 8.2 + MySQL 8)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      APP_ENV: testing
+      APP_KEY: base64:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+      DB_CONNECTION: mysql
+      DB_HOST: 127.0.0.1
+      DB_PORT: '3306'
+      DB_DATABASE: ultimatesms_testing
+      DB_USERNAME: ultimatesms_test
+      DB_PASSWORD: Choose-A-Local-Test-Password
+      EXPECTED_TEST_DATABASE: ultimatesms_testing
+      QUEUE_CONNECTION: sync
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_DATABASE: ultimatesms_testing
+          MYSQL_USER: ultimatesms_test
+          MYSQL_PASSWORD: Choose-A-Local-Test-Password
+          MYSQL_ROOT_PASSWORD: root
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=10
+    steps:
+      - name: Check out PR
+        uses: actions/checkout@v4
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.2'
+          extensions: curl, dom, exif, fileinfo, gd, intl, mbstring, pdo_mysql, zip
+          coverage: none
+          tools: composer:v2
+      - name: Install Composer dependencies
+        run: composer install --no-interaction --prefer-dist --no-progress
+      - name: Verify maximal questionnaire fits the per-batch AI input budget
+        run: php artisan test tests/Feature/Website/WebsiteAiEnvelopeCaptureTest.php --filter=test_the_true_maximum_questionnaire_serializes_within_the_input_token_envelope
+      - name: Run new multi-batch tests and enforce nonzero discovery
+        shell: bash
+        run: |
+          php artisan test tests/Feature/Website/GuidedGeneration/BatchedGuidedGenerationTest.php --log-junit /tmp/batched-generation.xml
+          php -r '$x = simplexml_load_file("/tmp/batched-generation.xml"); $n = count($x->xpath("//testcase")); fwrite(STDOUT, "Discovered batch tests: $n\n"); if ($n < 1) exit(1);'
+      - name: Run guided generation and affected page-budget regressions
+        run: >-
+          php artisan test
+          tests/Feature/Website/GuidedGeneration
+          tests/Feature/Website/WebsitePageCountCeilingTest.php
+          tests/Feature/Website/WebsitePlanExplanationTest.php
+          tests/Feature/Website/WebsiteEventPagesPlanTest.php
+          tests/Feature/Website/WebsitePageBudgetVisibilityTest.php
+          tests/Feature/Website/WebsiteHealthTest.php
+          tests/Feature/Website/WebsiteServiceAreaPagesTest.php
+          tests/Feature/Website/WebsiteAiEnvelopeCaptureTest.php
+          tests/Feature/Website/WebsiteGenerationAiEnvelopeTest.php

@@ -73,11 +73,16 @@
          */
         public function map()
         {
+            // A dedicated SMTP gateway must not expose the main app's public,
+            // customer, admin or API routes on its gateway hostname.
+            if (config('business_email.smtp_gateway.serve')) {
+                $this->mapSmtpGatewayRoutes();
+
+                return;
+            }
+
             $this->mapApiRoutes();
-
             $this->mapWebRoutes();
-
-            //
         }
 
         /**
@@ -116,6 +121,17 @@
                 ->namespace($this->namespace . '\Customer')
                 ->as('customer.')
                 ->group(base_path('routes/customer.php'));
+        }
+
+        /** Only a deployment explicitly configured as the SMTP gateway exposes these (stateless, signed). */
+        protected function mapSmtpGatewayRoutes()
+        {
+            if (! config('business_email.smtp_gateway.serve')) {
+                return;
+            }
+
+            Route::prefix('internal/smtp-gateway/v1')
+                ->group(base_path('routes/smtp_gateway.php'));
         }
 
         /**

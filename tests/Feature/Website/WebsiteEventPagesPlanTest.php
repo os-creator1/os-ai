@@ -58,7 +58,8 @@ class WebsiteEventPagesPlanTest extends TestCase
             WebsiteAsset::forceCreate(['website_id' => $website->id, 'disk' => 'public', 'path' => "images/e{$i}.png", 'mime_type' => 'image/png', 'size' => 1, 'width' => 1, 'height' => 1, 'content_hash' => str_repeat((string) $i, 64), 'purpose' => 'gallery']);
         }
 
-        return app(WebsitePageStrategy::class)->planWithExplanation($business, $template ?? WebsiteTemplate::findActiveOrFail('photo_booth_modern'), $website);
+        // These tests are about how a TIGHT page budget is spent, so they pass an explicit small budget (the product default is MAX_PAGES_PER_GENERATION).
+        return app(WebsitePageStrategy::class)->planWithExplanation($business, $template ?? WebsiteTemplate::findActiveOrFail('photo_booth_modern'), $website, null, null, null, null, null, null, 14);
     }
 
     private function eventPages(array $result): array

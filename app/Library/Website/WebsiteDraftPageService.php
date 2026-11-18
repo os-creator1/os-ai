@@ -32,7 +32,7 @@ final class WebsiteDraftPageService
      * never itself trigger this ceiling; this is a separate, general
      * invariant enforced on every createPage() call regardless of caller.
      */
-    private const MAX_PAGES = 20;
+    private const MAX_PAGES = WebsitePageStrategy::MAX_PAGES_PER_GENERATION;
 
     public function __construct(
         private readonly WebsiteSectionValidator $sectionValidator,

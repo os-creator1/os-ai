@@ -322,6 +322,12 @@
     function mode() { return root.getAttribute('data-mode') === 'callpage' ? 'callpage' : 'site'; }
     function applyMode(initial) {
         var callpage = mode() === 'callpage';
+        // One consultation editor across page modes: never flush duplicated data-paths from a hidden stale group.
+        var consultationEditor = root.querySelector('[data-role="shared-consultation-editor"]');
+        var consultationSlot = root.querySelector(callpage ? '[data-role="callpage-consultation-slot"]' : '[data-role="site-consultation-slot"]');
+        if (consultationEditor && consultationSlot && consultationEditor.parentElement !== consultationSlot) {
+            consultationSlot.appendChild(consultationEditor);
+        }
         // One shared testimonial manager: move its DOM rather than duplicating inputs/saves.
         var testimonialEditor = root.querySelector('[data-role="shared-testimonials-editor"]');
         var testimonialSlot = root.querySelector(callpage ? '[data-role="callpage-testimonials-slot"]' : '[data-role="site-testimonials-slot"]');

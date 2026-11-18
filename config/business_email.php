@@ -59,6 +59,25 @@ return [
         'io_timeout_seconds' => 20,
     ],
 
+    // Outbound SMTP for "Other email" goes through a shared HTTPS gateway when
+    // the app host cannot reach customers' SMTP servers itself (DigitalOcean
+    // blocks 25/465/587). `url` set => gateway mode; `serve` true => THIS
+    // deployment is the gateway (stateless, no mailbox data). See
+    // docs/business-email-smtp-gateway.md.
+    'smtp_gateway' => [
+        'url' => env('BUSINESS_EMAIL_SMTP_GATEWAY_URL'),
+        'secret' => env('BUSINESS_EMAIL_SMTP_GATEWAY_SECRET'),
+        // Accepted during key rotation only.
+        'previous_secret' => env('BUSINESS_EMAIL_SMTP_GATEWAY_PREVIOUS_SECRET'),
+        'serve' => (bool) env('BUSINESS_EMAIL_SMTP_GATEWAY_SERVE', false),
+        'client_timeout_seconds' => 45,
+        'clock_skew_seconds' => 60,
+        'max_request_bytes' => 131072,
+        'send_per_mailbox_per_hour' => 120,
+        'test_per_mailbox_per_hour' => 20,
+        'send_global_per_hour' => 2000,
+    ],
+
     'oauth' => [
         // Pending-connection nonce TTL, clamped to [60, 3600] by the signer.
         'state_ttl_seconds' => env('BUSINESS_EMAIL_STATE_TTL_SECONDS', 600),
