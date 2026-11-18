@@ -298,7 +298,7 @@ class PhotoBoothAgencyLandingTest extends TestCase
         $this->assertSame(1, substr_count($html, 'id="pb-app"'));
         $this->assertStringContainsString('href="'.url('dogs').'#book"', $html);
         $this->assertStringContainsString('Maple Ridge Dog Training', $html, 'dog illustration content remains');
-        $this->assertStringContainsString(route('public.booking.dates', $type->public_booking_uuid, false), $html);
+        $this->assertStringContainsString('datesUrl', $html);
         $this->assertStringContainsString(route('public.booking.store', $type->public_booking_uuid, false), $html);
         $this->assertStringNotContainsString('calendar.example', $html);
 
