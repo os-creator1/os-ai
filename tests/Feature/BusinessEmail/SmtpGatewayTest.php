@@ -334,6 +334,34 @@ class SmtpGatewayTest extends TestCase
         $this->assertSame([], $this->smtp->sent);
     }
 
+    public function test_dedicated_gateway_mode_registers_no_application_routes(): void
+    {
+        $router = app('router');
+        $originalRoutes = $router->getRoutes();
+        $originalMode = config('business_email.smtp_gateway.serve');
+
+        try {
+            config(['business_email.smtp_gateway.serve' => true]);
+            $router->setRoutes(new \\Illuminate\\Routing\\RouteCollection());
+            (new \\App\\Providers\\RouteServiceProvider(app()))->map();
+
+            $registered = [];
+            foreach ($router->getRoutes() as $route) {
+                $registered[] = $route->uri();
+                $this->assertSame(['POST'], $route->methods());
+            }
+
+            sort($registered);
+            $this->assertSame([
+                'internal/smtp-gateway/v1/send',
+                'internal/smtp-gateway/v1/test',
+            ], $registered);
+        } finally {
+            $router->setRoutes($originalRoutes);
+            config(['business_email.smtp_gateway.serve' => $originalMode]);
+        }
+    }
+
     public function test_direct_mode_is_unchanged_when_no_gateway_url_is_configured(): void
     {
         config(['business_email.smtp_gateway.url' => null]);
