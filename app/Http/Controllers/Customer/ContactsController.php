@@ -737,15 +737,19 @@
                 ]);
             }
 
-            $group = $this->contactGroups->update($contact, $request->except('_method', '_token', 'return'));
-
-            // A rename started from the Groups list returns to the list.
+            // List rename submits only a name. The settings repository treats absent
+            // checkbox fields as false, so passing a rename through it would
+            // silently disable welcome/keyword/unsubscribe automations.
             if ($request->input('return') === 'index') {
+                $contact->update(['name' => $request->validated('name')]);
+
                 return CrmRouting::redirectRoute('contacts.index')->with([
                     'status'  => 'success',
                     'message' => __('locale.contacts.contact_group_successfully_updated'),
                 ]);
             }
+
+            $group = $this->contactGroups->update($contact, $request->except('_method', '_token', 'return'));
 
             return CrmRouting::redirectRoute('contacts.show', $group->uid)->withInput(['tab' => 'settings'])->with([
                 'status'  => 'success',
