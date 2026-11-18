@@ -351,11 +351,12 @@ final class GuidedGenerationCommitService
             $writer = ($blueprint['niche'] ?? null) === \App\Library\Website\Setup\DogBoardingSetup::NICHE ? $this->dogBoardingWriter : $this->blueprintWriter;
             $aiPages = $writer->pages($business, $website, $plan, $blueprint);
             $retryCount = 0;
+            $stopReason = null;
         } else {
             // AI provider calls stay OUTSIDE any database transaction
             // (Blocker 5) — the only writes below happen after this
             // returns.
-            [$aiPages, $retryCount] = $this->generateAndValidate($business, $aiPlan, $prohibitedClaims, $attempt->idempotency_key, (int) $website->id, (int) $attempt->id);
+            [$aiPages, $retryCount, $stopReason] = $this->generateAndValidate($business, $aiPlan, $prohibitedClaims, $attempt->idempotency_key, (int) $website->id, (int) $attempt->id);
         }
 
         if ($fenceToken !== null && ! Website::where('id', $website->id)->where('generation_lease_token', $fenceToken)->exists()) {
@@ -378,11 +379,11 @@ final class GuidedGenerationCommitService
             $attempt->update([
                 'status' => WebsiteGuidedGenerationAttempt::STATUS_FAILED,
                 'retry_count' => $retryCount,
-                'failure_reason' => $this->client->lastCallWasBudgetExhausted()
+                'failure_reason' => $stopReason ?? ($this->client->lastCallWasBudgetExhausted()
                     ? 'The included AI generation budget is used up for this period.'
                     : ($this->client->lastCallWasUnavailable()
                         ? "Website generation isn't available in this environment right now. Your answers are saved — try again once it is."
-                        : 'Generation did not produce a valid page batch.'),
+                        : 'Generation did not produce a valid page batch.')),
                 'completed_at' => now(),
             ]);
 
@@ -537,54 +538,129 @@ final class GuidedGenerationCommitService
     }
 
     /**
-     * @return array{0: ?array, 1: int} the validated page batch (or null
-     *                                  on unrecoverable failure) and how many retries were spent
+     * Bounded, sequential, multi-batch generation of the COMPLETE plan.
+     *
+     *  - The plan is split deterministically (GenerationBatchPlanner::plan) into batches of at most MAX_PAGES_PER_BATCH pages that
+     *    each also fit the route's input-token limit (with 5% headroom), written one provider request at a time. Provider calls stay OUTSIDE any database transaction.
+     *  - Every request is told the whole site's page paths, so an internal link may point at a page of another batch.
+     *  - A batch is validated against ITS OWN plan (exact coverage of its pages), with the complete plan as the link
+     *    universe; the accepted pages so far are then re-validated together with it, so duplicate metadata and near-identical
+     *    service-area copy across batches are caught while the batch can still be corrected.
+     *  - Each batch has at most MAX_RETRIES_PER_BATCH corrective retries, and the whole generation at most
+     *    MAX_AI_REQUESTS_PER_GENERATION provider requests (first tries + retries). A refused-for-budget/unavailable provider
+     *    stops everything immediately: a retry cannot help and must not spend.
+     *  - Only after every batch succeeded is the ASSEMBLED site validated against the complete original plan. A batch that was
+     *    valid on its own never suffices to commit an invalid website. Nothing is written here at all: the caller commits the
+     *    assembled pages in one transaction, so any failure leaves the existing draft and published revision untouched.
+     *
+     * @return array{0: ?array, 1: int, 2: ?string} the validated, assembled pages (null on failure), the corrective retries
+     *                                              spent, and a customer-safe reason when the failure was a budget/limit rather than a bad batch
      */
     private function generateAndValidate(Business $business, array $aiPlan, array $prohibitedClaims, string $idempotencyKey, int $websiteId = 0, ?int $attemptId = null): array
     {
-        $attempts = 0;
+        // Size-aware preflight (no AI call): batches are fitted to the real prompt size, or the plan is refused before any spend.
+        $fit = GenerationBatchPlanner::plan($business, $aiPlan, $this->client);
+        if ($fit['batches'] === null) {
+            GenerationBatchDiagnostics::log($websiteId, $attemptId, 0, GenerationBatchDiagnostics::STAGE_PLAN_OVER_BUDGET, count($aiPlan));
 
-        // §8.4 — exactly one bounded corrective retry against the whole
-        // batch; a second failure ends the attempt. Each retry gets its
-        // OWN idempotency key (the attempt's own base key plus the
-        // retry number) — a retry is a genuinely distinct provider call,
-        // never a duplicate of the first.
-        while ($attempts <= 1) {
-            $pages = $this->client->generate($business, $aiPlan, null, $idempotencyKey . ':retry' . $attempts);
+            return [null, 0, $fit['refusal']];
+        }
 
-            if ($pages === null) {
-                // Customer message stays generic; the stage is recorded for the operator only.
-                $diagnostic = $this->client->lastGenerationDiagnostic() ?? [];
-                $stage = (string) ($diagnostic['stage'] ?? GenerationBatchDiagnostics::STAGE_PROVIDER_NO_CONTENT);
-                unset($diagnostic['stage']);
-                GenerationBatchDiagnostics::log($websiteId, $attemptId, $attempts, $stage, count($aiPlan), $diagnostic);
-            } else {
+        $batches = $fit['batches'];
+        $multi = count($batches) > 1;
+        $requests = 0;
+        $retries = 0;
+        $accepted = [];
+        $acceptedPlan = [];
+        $siteKeys = array_column($aiPlan, 'page_key');
+
+        foreach ($batches as $batchIndex => $batchPlan) {
+            $batchPages = null;
+            $batchKeys = array_column($batchPlan, 'page_key');
+            $detail = $multi ? ['batch' => $batchIndex + 1, 'batches' => count($batches)] : [];
+
+            for ($try = 0; $try <= GenerationBatchPlanner::MAX_RETRIES_PER_BATCH; $try++) {
+                if ($requests >= GenerationBatchPlanner::MAX_AI_REQUESTS_PER_GENERATION) {
+                    GenerationBatchDiagnostics::log($websiteId, $attemptId, $try, GenerationBatchDiagnostics::STAGE_REQUEST_LIMIT_REACHED, count($batchPlan), $detail + ['requests' => $requests]);
+
+                    return [null, $retries, 'Generation stopped at the limit of ' . GenerationBatchPlanner::MAX_AI_REQUESTS_PER_GENERATION . ' AI requests for one generation. Your existing pages were not changed.'];
+                }
+
+                $requests++;
+                $retries += $try > 0 ? 1 : 0;
+
+                // Each request is its own provider call with its own key: the attempt's base key, the batch (multi-batch only,
+                // so a single-batch generation keeps its historical key) and the retry number — never a duplicate of another call.
+                $key = $idempotencyKey . ($multi ? ':b' . ($batchIndex + 1) : '') . ':retry' . $try;
+                $pages = $this->client->generate($business, $batchPlan, null, $key, $multi ? $aiPlan : null, array_values(array_filter(array_column($accepted, 'seo_title'), 'is_string')));
+
+                if ($pages === null) {
+                    // Customer message stays generic; the stage is recorded for the operator only.
+                    $diagnostic = $this->client->lastGenerationDiagnostic() ?? [];
+                    $stage = (string) ($diagnostic['stage'] ?? GenerationBatchDiagnostics::STAGE_PROVIDER_NO_CONTENT);
+                    unset($diagnostic['stage']);
+                    GenerationBatchDiagnostics::log($websiteId, $attemptId, $try, $stage, count($batchPlan), $diagnostic + $detail);
+
+                    if ($this->client->lastCallWasBudgetExhausted() || $this->client->lastCallWasUnavailable()) {
+                        // A retry cannot help and must not spend.
+                        return [null, $retries, null];
+                    }
+
+                    continue;
+                }
+
                 try {
-                    // Generic aliases ("/contact") become the planned page's real path; unresolvable ones stay and are rejected below.
-                    $pages = InternalLinkResolver::correct($pages, $aiPlan);
-                    $this->validator->validate($pages, $aiPlan, $prohibitedClaims);
+                    if ($multi) {
+                        // A provider may echo pages of other batches; those are written elsewhere, so they are dropped here. A
+                        // page_key outside the complete plan (or a malformed entry) is kept so the validator rejects it.
+                        $pages = array_values(array_filter($pages, fn ($page) => ! is_array($page)
+                            || ! isset($page['page_key']) || ! is_string($page['page_key'])
+                            || in_array($page['page_key'], $batchKeys, true)
+                            || ! in_array($page['page_key'], $siteKeys, true)));
+                    }
 
-                    return [$pages, $attempts];
+                    // Generic aliases ("/contact") become the real path of a planned page of the WHOLE site; unresolvable ones are rejected below.
+                    $pages = InternalLinkResolver::correct($pages, $aiPlan);
+                    $this->validator->validate($pages, $batchPlan, $prohibitedClaims, $aiPlan);
+
+                    if ($accepted !== []) {
+                        // Cross-batch: duplicate metadata / near-identical area copy against everything accepted so far.
+                        $this->validator->validate(array_merge($accepted, $pages), array_merge($acceptedPlan, $batchPlan), $prohibitedClaims, $aiPlan);
+                    }
+
+                    $batchPages = $pages;
+                    break;
                 } catch (ValidationException $e) {
-                    GenerationBatchDiagnostics::log($websiteId, $attemptId, $attempts, GenerationBatchDiagnostics::STAGE_VALIDATION_FAILED, count($aiPlan), ['returned_pages' => count($pages)], array_keys($e->errors()));
+                    GenerationBatchDiagnostics::log($websiteId, $attemptId, $try, GenerationBatchDiagnostics::STAGE_VALIDATION_FAILED, count($batchPlan), ['returned_pages' => count($pages)] + $detail, array_keys($e->errors()));
                 } catch (Throwable $e) {
-                    // Acceptance-correction round 2: catches more than
-                    // ValidationException on purpose — a provider that
-                    // returns a well-formed JSON envelope with an
-                    // unexpected inner shape (e.g. `sections` as a
-                    // string, a page entry that isn't an object) must
-                    // still fall through to the bounded retry/failure
-                    // path below, never an uncaught TypeError reaching
-                    // the HTTP layer as a 500 or leaving this attempt
-                    // stuck `pending` forever.
-                    GenerationBatchDiagnostics::log($websiteId, $attemptId, $attempts, GenerationBatchDiagnostics::STAGE_UNEXPECTED_SHAPE, count($aiPlan), ['returned_pages' => count($pages)], [], $e);
+                    // Catches more than ValidationException on purpose — a provider that returns a well-formed JSON envelope with
+                    // an unexpected inner shape must still fall through to the bounded retry/failure path, never an uncaught
+                    // TypeError or an attempt stuck `pending`.
+                    GenerationBatchDiagnostics::log($websiteId, $attemptId, $try, GenerationBatchDiagnostics::STAGE_UNEXPECTED_SHAPE, count($batchPlan), ['returned_pages' => count($pages)] + $detail, [], $e);
                 }
             }
 
-            $attempts++;
+            if ($batchPages === null) {
+                return [null, $retries, null];
+            }
+
+            $accepted = array_merge($accepted, $batchPages);
+            $acceptedPlan = array_merge($acceptedPlan, $batchPlan);
         }
 
-        return [null, $attempts - 1];
+        if ($multi) {
+            // The assembled website against the COMPLETE original plan: every page present exactly once, and the cross-page
+            // checks (duplicate metadata, duplicate/near-identical area pages, broken links) over the whole site.
+            try {
+                $this->validator->validate($accepted, $aiPlan, $prohibitedClaims);
+            } catch (Throwable $e) {
+                GenerationBatchDiagnostics::log($websiteId, $attemptId, 0, GenerationBatchDiagnostics::STAGE_COMPLETE_SITE_INVALID, count($aiPlan), ['returned_pages' => count($accepted)], $e instanceof ValidationException ? array_keys($e->errors()) : [], $e instanceof ValidationException ? null : $e);
+
+                return [null, $retries, null];
+            }
+        }
+
+        return [$accepted, $retries, null];
     }
 
     /**

@@ -48,6 +48,12 @@ class GuidedWebsiteGenerationClient
      */
     public const MAX_OUTPUT_TOKENS = 8_000;
 
+    /** At most this many already-used SEO titles are listed in a later batch's prompt. */
+    public const MAX_USED_TITLES = 30;
+
+    /** A used title is listed only if its JSON form is at most this long (a 70-character title plus quotes and a few escapes), so the preflight worst case is exact. */
+    private const MAX_USED_TITLE_JSON = 96;
+
     /** @var ?array<string, mixed> */
     private ?array $lastDiagnostic = null;
 
@@ -70,12 +76,15 @@ class GuidedWebsiteGenerationClient
     /**
      * @param  array  $plan  WebsitePageStrategy::buildPlan()'s output, already passed through WebsitePageStrategy::withoutAiUnfillableSections()
      * @param  ?string  $idempotencyKey  a stable, durable identity for this attempt (GuidedGenerationCommitService's own material-hash idempotency key) — passed straight through onto the AiRequest/ledger entry instead of a meaningless-for-dedup fresh uuid
+     * @param  ?array  $sitePlan  the COMPLETE site plan when $plan is only one batch of it (bounded multi-batch generation): its
+     *         page paths are the valid internal link targets, so a page may link to one written in another batch. Null = $plan is the whole site.
+     * @param  array<int, string>  $usedSeoTitles  SEO titles already written for earlier batches, so this batch avoids duplicating them
      * @return ?array<int, array{page_key: string, title: string, seo_title: ?string, meta_description: ?string, sections: array}> null on any refusal/failure/malformed output
      */
-    public function generate(Business $business, array $plan, ?int $actorUserId = null, ?string $idempotencyKey = null): ?array
+    public function generate(Business $business, array $plan, ?int $actorUserId = null, ?string $idempotencyKey = null, ?array $sitePlan = null, array $usedSeoTitles = []): ?array
     {
         $this->lastDiagnostic = null;
-        $messages = $this->buildMessages($business, $plan);
+        $messages = $this->buildMessages($business, $plan, $sitePlan, self::promptSafeTitles($usedSeoTitles));
 
         $raw = $this->client->complete($messages, $business, $actorUserId, self::MAX_OUTPUT_TOKENS, $idempotencyKey);
         if ($raw === null) {
@@ -114,6 +123,34 @@ class GuidedWebsiteGenerationClient
     }
 
     /**
+     * Titles that may be listed in a later batch's prompt: strings whose JSON form is bounded, at most MAX_USED_TITLES of them. A
+     * title left out here is still caught by the cross-batch and final validation.
+     *
+     * @param  array<int, mixed>  $titles
+     * @return array<int, string>
+     */
+    public static function promptSafeTitles(array $titles): array
+    {
+        $safe = array_values(array_filter($titles, fn ($title) => is_string($title) && strlen((string) json_encode($title)) <= self::MAX_USED_TITLE_JSON));
+
+        return array_slice($safe, 0, self::MAX_USED_TITLES);
+    }
+
+    /**
+     * The estimated input tokens of the request generate() would send for $batchPlan as one batch of $sitePlan, built by the very
+     * same prompt code and measured by the AI gateway's own estimator. $priorPages is how many pages were written before this batch;
+     * their SEO titles are assumed to be the longest a prompt may carry, so the result is an upper bound for any real titles.
+     *
+     * @param  ?array<string, mixed>  $facts  canonicalFacts() when the caller already holds them (avoids repeated queries)
+     */
+    public function estimateInputTokens(Business $business, array $batchPlan, array $sitePlan, int $priorPages = 0, ?array $facts = null): int
+    {
+        $titles = $priorPages > 0 ? array_fill(0, min($priorPages, self::MAX_USED_TITLES), str_repeat('x', self::MAX_USED_TITLE_JSON - 2)) : [];
+
+        return app(\App\Library\Ai\AiModelRouter::class)->estimateInputTokens($this->buildMessages($business, $batchPlan, $sitePlan, $titles, $facts));
+    }
+
+    /**
      * Why the last generate() call returned null, as sanitized scalars only (never response text): a fixed `stage`
      * plus counts / a fixed json error string / a refusal enum value. Null after a call that produced a pages array.
      *
@@ -141,11 +178,15 @@ class GuidedWebsiteGenerationClient
     }
 
     /**
-     * @param  array  $plan  WebsitePageStrategy::buildPlan()'s output
+     * @param  array  $plan  WebsitePageStrategy::buildPlan()'s output (one batch of it in multi-batch generation)
      * @return array<int, array{role: string, content: string}>
      */
-    private function buildMessages(Business $business, array $plan): array
+    private function buildMessages(Business $business, array $plan, ?array $sitePlan = null, array $usedSeoTitles = [], ?array $facts = null): array
     {
+        // Link targets always come from the COMPLETE site plan; with no site plan the request is the whole site (unchanged prompt).
+        $isBatch = $sitePlan !== null && count($sitePlan) > count($plan);
+        $linkPlan = $sitePlan ?? $plan;
+
         // §7.4/§8.3 — the AI never sees a page's image_slots (it never
         // authors an image reference) and never sees the template's
         // presentation theme (visual choice is never AI's to make).
@@ -166,12 +207,14 @@ class GuidedWebsiteGenerationClient
         $instructions = [
             'You are writing factual, bounded website copy for a real local business.',
             'You may only use the confirmed facts provided below — never invent a fact, statistic, award, review, price, or claim.',
-            'The "plan" array below is the COMPLETE, FINAL list of pages this website will have. You must write content for EXACTLY these page_key values — one output page per plan entry, never fewer, never more, never a page_key that is not in the plan.',
+            $isBatch
+                ? 'The "plan" array below is ONE BATCH of a larger website whose other pages are written in separate requests. You must write content for EXACTLY these page_key values — one output page per plan entry, never fewer, never more, never a page_key that is not in this batch. "site_pages" lists every page of the whole website (for link targets only): never write content for a page that is not in the plan.'
+                : 'The "plan" array below is the COMPLETE, FINAL list of pages this website will have. You must write content for EXACTLY these page_key values — one output page per plan entry, never fewer, never more, never a page_key that is not in the plan.',
             'Each page you output must use only the section types listed in its own plan entry\'s allowed_section_types.',
             'You may use an image_text section to pair written content with a photo, but never choose or name the photo itself: leave its "image" field as null (or omit it) and the system will attach a real photo automatically. Never set background_image on a hero, and never set "image" on anything else, to any value at all.',
             'Never write any of these prohibited phrases: ' . implode('; ', $profile?->prohibited_claims ?? []),
             'For each page, draft a title, seo_title (max 70 characters, descriptive and distinct, never boilerplate or keyword-stuffed) and meta_description (max 160 characters, a genuine one-sentence summary of that specific page) — never copy the same title, seo_title, or meta_description across two pages.',
-            'Internal links (a button url, or a hero primary_cta/secondary_cta url) must be EXACTLY one of these page paths, copied character for character: ' . implode(' ', \App\Library\Website\GuidedGeneration\InternalLinkResolver::paths($plan)) . ' (the home page is "/"). Never invent or guess a path such as /contact, /booking, /services or /about unless it is in that list; each page\'s own path is also given as "path" in the plan. Use an https:// URL only for an external link.',
+            'Internal links (a button url, or a hero primary_cta/secondary_cta url) must be EXACTLY one of these page paths, copied character for character: ' . implode(' ', \App\Library\Website\GuidedGeneration\InternalLinkResolver::paths($linkPlan)) . ' (the home page is "/"). Never invent or guess a path such as /contact, /booking, /services or /about unless it is in that list; each page\'s own path is also given as "path" in the plan. Use an https:// URL only for an external link.',
             'Respond with a single JSON object: {"pages": [{"page_key": string, "title": string, "seo_title": string|null, "meta_description": string|null, "sections": [...]}]}.',
         ];
 
@@ -213,11 +256,26 @@ class GuidedWebsiteGenerationClient
         $userPayload = [
             'business_name' => $business->name,
             'plan' => $planForPrompt,
-            'confirmed_facts' => $this->canonicalFacts($business),
+            'confirmed_facts' => $facts ?? $this->canonicalFacts($business),
         ];
 
         if ($nicheDefaults !== null) {
             $userPayload['niche_defaults'] = $nicheDefaults;
+        }
+
+        if ($isBatch) {
+            // Whole-site context for link targets and distinct metadata. Paths, types and titles only — bounded, never entity facts.
+            $userPayload['site_pages'] = array_map(fn ($page) => [
+                'page_key' => $page['page_key'],
+                'page_type' => $page['page_type'],
+                'path' => $page['is_home'] ? '/' : '/' . ltrim((string) $page['slug'], '/'),
+                'title' => $page['title'],
+            ], array_values($linkPlan));
+
+            if ($usedSeoTitles !== []) {
+                $userPayload['seo_titles_already_used'] = array_slice(array_values($usedSeoTitles), 0, self::MAX_USED_TITLES);
+                $instructions[count($instructions) - 1] = 'Never reuse a seo_title listed in "seo_titles_already_used".' . "\n" . $instructions[count($instructions) - 1];
+            }
         }
 
         return [

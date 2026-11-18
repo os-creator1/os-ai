@@ -107,25 +107,17 @@ final class WebsitePageStrategy
     private const MAX_AREA_NEIGHBORS = 6;
 
     /**
-     * Independent-review correction round 3 — the deterministic ceiling
-     * on the TOTAL number of pages one plan may ever contain, regardless
-     * of how many individually-bounded categories (service_detail,
-     * location, etc.) would otherwise add up. Without this, a plan with
-     * every optional page type present plus the per-type maximums above
-     * could reach roughly 45-50 pages — far more than the
-     * `website_generation` route's 8,000-output-token envelope can ever
-     * afford to write real content for in one response
-     * (WebsiteAiEnvelopeCaptureTest proves a REPRESENTATIVE response for
-     * a full, capped plan — not merely the config — actually fits the
-     * route's 8,000-output-token limit; an earlier, higher value of 20
-     * measurably did not: a realistic ~2-section-per-page response for 20
-     * pages estimated to roughly 10,400 tokens). Fixed/always-eligible
-     * pages (home, overview pages, about, faq, gallery, contact,
-     * backdrops, custom_section) are never trimmed — only the two
-     * aggregate, per-entity categories (service_detail, then location)
-     * are reduced, in that deterministic priority order, to make room.
+     * Explicit operational budget: the most pages one generation may plan. This is a cost/safety ceiling, NOT a limit
+     * derived from one AI response's token envelope — content is written in bounded sequential batches
+     * (GenerationBatchPlanner::MAX_PAGES_PER_BATCH pages per provider request, MAX_AI_REQUESTS_PER_GENERATION requests
+     * overall), so the size of a site is no longer capped by what fits in a single response. Fixed pages (home, overview
+     * pages, about, faq, gallery, contact, backdrops, custom_section) are never trimmed; only per-entity categories are,
+     * and every page left out is reported with a reason in planWithExplanation()'s decisions.
      */
-    public const MAX_TOTAL_PAGES = 14;
+    public const MAX_PAGES_PER_GENERATION = 40;
+
+    /** @deprecated kept so existing callers/tests keep compiling; the budget is MAX_PAGES_PER_GENERATION. */
+    public const MAX_TOTAL_PAGES = self::MAX_PAGES_PER_GENERATION;
 
     /**
      * Independent-review correction round 3 — an "overview" page (
@@ -303,7 +295,7 @@ final class WebsitePageStrategy
      * of guessing. buildPlan() is exactly `['plan']` of this — one
      * algorithm, never two.
      *
-     * Page budget (MAX_TOTAL_PAGES) priority, highest first:
+     * Page budget (MAX_PAGES_PER_GENERATION) priority, highest first:
      *  1. Always: Home, Contact, About, the Services overview, Packages,
      *     the custom section (whichever genuinely exist).
      *  2. The owner's first CORE_SERVICE_PAGES services, in THEIR order
@@ -316,8 +308,10 @@ final class WebsitePageStrategy
      *
      * @return array{plan: array<int, array>, decisions: array<int, array{key: string, title: string, type: string, included: bool, reason: string}>, areas: array{saved: int, planned: int, planned_list: array<int, string>, excluded: array<int, array{area: string, reason: string}>, hub: array<int, string>}, budget: array{max: int, planned: int}}
      */
-    public function planWithExplanation(Business $business, WebsiteTemplate $template, Website $website, ?array $customSection = null, ?array $catalogItemUids = null, ?array $serviceAreas = null, ?Collection $servicesOverride = null, ?bool $backdropsOverride = null, ?Collection $eventsOverride = null): array
+    public function planWithExplanation(Business $business, WebsiteTemplate $template, Website $website, ?array $customSection = null, ?array $catalogItemUids = null, ?array $serviceAreas = null, ?Collection $servicesOverride = null, ?bool $backdropsOverride = null, ?Collection $eventsOverride = null, ?int $pageBudget = null): array
     {
+        // The operational budget (MAX_PAGES_PER_GENERATION by default), never the old single-request token envelope.
+        $budget = max(1, $pageBudget ?? self::MAX_PAGES_PER_GENERATION);
         $manifestByType = collect($template->page_manifest['pages'] ?? [])->keyBy('page_type');
         $allowed = fn (string $type) => $manifestByType->get($type)['allowed_section_types'] ?? [];
         $hasType = fn (string $type) => $manifestByType->has($type);
@@ -344,7 +338,7 @@ final class WebsitePageStrategy
 
         // 1. The always-included pages.
         $mandatory = 1 + (int) $hasOverview + (int) $hasPackages + (int) $hasAbout + (int) $hasContact + (int) $hasCustom;
-        $slots = max(0, self::MAX_TOTAL_PAGES - $mandatory);
+        $slots = max(0, $budget - $mandatory);
 
         $serviceCandidates = $hasType('service_detail') ? $services->take(self::MAX_SERVICE_DETAIL_PAGES)->values() : collect();
 
@@ -527,9 +521,9 @@ final class WebsitePageStrategy
                 ];
                 $decide('service:' . $service->uid, $service->name, 'service_detail', true, $index < self::CORE_SERVICE_PAGES
                     ? 'One of your first ' . self::CORE_SERVICE_PAGES . ' services (your order), so it gets its own page.'
-                    : 'Fits in the ' . self::MAX_TOTAL_PAGES . '-page limit, so it gets its own page.');
+                    : 'Fits in the ' . $budget . '-page limit, so it gets its own page.');
             } else {
-                $decide('service:' . $service->uid, $service->name, 'service_detail', false, 'Not planned: the ' . self::MAX_TOTAL_PAGES . '-page limit is full. Move it higher in your services list to include it.');
+                $decide('service:' . $service->uid, $service->name, 'service_detail', false, 'Not planned: the ' . $budget . '-page limit is full. Move it higher in your services list to include it.');
             }
         }
         foreach ($eventQueue as $index => [$event, $slug]) {
@@ -545,7 +539,7 @@ final class WebsitePageStrategy
                 ];
                 $decide('event:' . $event->uid, $event->name, 'event_detail', true, 'An event type you described in your own words, so it gets its own page (' . $slug . ').');
             } else {
-                $decide('event:' . $event->uid, $event->name, 'event_detail', false, 'Not planned: the ' . self::MAX_TOTAL_PAGES . '-page limit is full. Event pages are planned right after your first ' . self::CORE_SERVICE_PAGES . ' booths and before Gallery, Backdrops and FAQ. It is still listed under "Events we cover".');
+                $decide('event:' . $event->uid, $event->name, 'event_detail', false, 'Not planned: the ' . $budget . '-page limit is full. Event pages are planned right after your first ' . self::CORE_SERVICE_PAGES . ' booths and before Gallery, Backdrops and FAQ. It is still listed under "Events we cover".');
             }
         }
         foreach ($eventExcluded as [$event, $reason]) {
@@ -568,7 +562,7 @@ final class WebsitePageStrategy
                 $plan[] = ['page_key' => 'faq', 'page_type' => 'faq', 'is_home' => false, 'slug' => 'photo-booth-faq', 'title' => 'FAQ', 'allowed_section_types' => $allowed('faq'), 'entity' => null];
                 $decide('faq', 'FAQ', 'faq', true, 'Common questions, answered for your niche.');
             } else {
-                $decide('faq', 'FAQ', 'faq', false, 'Not planned: the ' . self::MAX_TOTAL_PAGES . '-page limit is full, so your own FAQ answers are not shown anywhere on the site.' . $afterEvents . ' Free a page (for example a lower-priority service or area) to include them.');
+                $decide('faq', 'FAQ', 'faq', false, 'Not planned: the ' . $budget . '-page limit is full, so your own FAQ answers are not shown anywhere on the site.' . $afterEvents . ' Free a page (for example a lower-priority service or area) to include them.');
             }
         }
 
@@ -577,7 +571,7 @@ final class WebsitePageStrategy
                 $plan[] = ['page_key' => 'gallery', 'page_type' => 'gallery', 'is_home' => false, 'slug' => 'gallery', 'title' => 'Gallery', 'allowed_section_types' => $allowed('gallery'), 'entity' => null];
                 $decide('gallery', 'Gallery', 'gallery', true, 'You added ' . self::MIN_GALLERY_ASSETS . ' or more gallery photos.');
             } elseif ($galleryReady) {
-                $decide('gallery', 'Gallery', 'gallery', false, 'Not planned: the ' . self::MAX_TOTAL_PAGES . '-page limit is full.' . $afterEvents);
+                $decide('gallery', 'Gallery', 'gallery', false, 'Not planned: the ' . $budget . '-page limit is full.' . $afterEvents);
             } else {
                 $decide('gallery', 'Gallery', 'gallery', false, 'Add at least ' . self::MIN_GALLERY_ASSETS . ' gallery photos to get a Gallery page.');
             }
@@ -593,7 +587,7 @@ final class WebsitePageStrategy
                 $plan[] = ['page_key' => 'backdrops', 'page_type' => 'backdrops', 'is_home' => false, 'slug' => 'backdrops', 'title' => 'Backdrops', 'allowed_section_types' => $allowed('backdrops'), 'entity' => null];
                 $decide('backdrops', 'Backdrops', 'backdrops', true, 'You added backdrops.');
             } elseif ($backdropsReady) {
-                $decide('backdrops', 'Backdrops', 'backdrops', false, 'Not planned: the ' . self::MAX_TOTAL_PAGES . '-page limit is full.' . $afterEvents);
+                $decide('backdrops', 'Backdrops', 'backdrops', false, 'Not planned: the ' . $budget . '-page limit is full.' . $afterEvents);
             } else {
                 $decide('backdrops', 'Backdrops', 'backdrops', false, 'No backdrops added.');
             }
@@ -620,7 +614,7 @@ final class WebsitePageStrategy
                 ];
                 $decide('location:' . $location->id, $title, 'location', true, 'A saved location with real local details.');
             } else {
-                $decide('location:' . $location->id, $title, 'location', false, 'Not planned: the ' . self::MAX_TOTAL_PAGES . '-page limit is full.');
+                $decide('location:' . $location->id, $title, 'location', false, 'Not planned: the ' . $budget . '-page limit is full.');
             }
         }
 
@@ -649,7 +643,7 @@ final class WebsitePageStrategy
             } else {
                 $reason = $index >= self::MAX_AREA_PAGES
                     ? 'Not planned: a website builds at most ' . self::MAX_AREA_PAGES . ' local pages. It is still listed as a service area.'
-                    : 'Not planned: the ' . self::MAX_TOTAL_PAGES . '-page limit is full. It is still listed as a service area.';
+                    : 'Not planned: the ' . $budget . '-page limit is full. It is still listed as a service area.';
                 $areaExcluded[] = ['area' => $area, 'reason' => $reason];
                 $overBudget[] = ['area' => $area, 'reason' => $reason];
                 $decide('area:' . Str::slug($area), 'Serving ' . $area, 'location', false, $reason);
@@ -671,7 +665,7 @@ final class WebsitePageStrategy
                 'hub' => array_values(array_diff($areaCandidates, $plannedAreas)),
             ],
             'budget' => [
-                'max' => self::MAX_TOTAL_PAGES,
+                'max' => $budget,
                 'planned' => count($plan),
                 // The order pages are given the budget in, so what was left out is never a mystery.
                 'priority' => [

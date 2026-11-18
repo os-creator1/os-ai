@@ -42,7 +42,7 @@ class WebsitePageBudgetVisibilityTest extends TestCase
         $areas = array_map(fn ($n) => ['name' => "Town {$n}, WA", 'details' => ['logistics' => "Town {$n} is a {$n}0 minute drive; we load in two hours early."]], range(1, 10));
         $website = $this->createWebsite($business);
 
-        $result = app(WebsitePageStrategy::class)->planWithExplanation($business, WebsiteTemplate::findActiveOrFail('photo_booth_modern'), $website, null, null, $areas);
+        $result = app(WebsitePageStrategy::class)->planWithExplanation($business, WebsiteTemplate::findActiveOrFail('photo_booth_modern'), $website, null, null, $areas, null, null, null, 14);
 
         $this->assertLessThanOrEqual(WebsitePageStrategy::MAX_TOTAL_PAGES, count($result['plan']), 'The ceiling holds.');
 

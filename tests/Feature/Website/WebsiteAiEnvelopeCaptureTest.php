@@ -8,6 +8,7 @@ use App\Enums\Website\WebsiteAssetPurpose;
 use App\Library\Ai\AiModelRouter;
 use App\Library\Ai\Contracts\AiCompletionClient;
 use App\Library\Ai\Providers\FakeAiCompletionClient;
+use App\Library\Website\GuidedGeneration\GenerationBatchPlanner;
 use App\Library\Website\GuidedGeneration\GuidedGenerationOutputValidator;
 use App\Library\Website\GuidedGeneration\GuidedWebsiteGenerationClient;
 use App\Library\Website\WebsiteAiDraftGenerator;
@@ -296,8 +297,14 @@ class WebsiteAiEnvelopeCaptureTest extends TestCase
     {
         [$business, , , $plan] = $this->buildMaximalBusinessFixture();
         $aiPlan = WebsitePageStrategy::withoutAiUnfillableSections($plan);
+        $fit = GenerationBatchPlanner::plan($business, $aiPlan, app(GuidedWebsiteGenerationClient::class));
+        $this->assertNull($fit['refusal'], 'The maximal site must be plannable within the input budget.');
+        $batches = $fit['batches'];
 
-        $this->assertLessThanOrEqual(WebsitePageStrategy::MAX_TOTAL_PAGES, count($plan), 'Precondition: the plan itself must already be capped.');
+        $this->assertLessThanOrEqual(WebsitePageStrategy::MAX_PAGES_PER_GENERATION, count($plan));
+        $this->assertGreaterThan(1, count($batches), 'The maximal site must exercise the multi-batch path.');
+        $this->assertSame(array_column($aiPlan, 'page_key'), array_merge(...array_map(fn ($b) => array_column($b, 'page_key'), $batches)), 'Every planned page is in exactly one batch, in plan order.');
+        $this->assertLessThanOrEqual(GenerationBatchPlanner::MAX_AI_REQUESTS_PER_GENERATION, count($batches));
 
         $this->fakeClient->setDefaultResult(\App\Library\Ai\AiCompletionResult::success(
             content: json_encode(['pages' => []]),
@@ -306,31 +313,38 @@ class WebsiteAiEnvelopeCaptureTest extends TestCase
             outputTokens: 20,
         ));
 
-        app(GuidedWebsiteGenerationClient::class)->generate($business, $aiPlan, null, 'max-questionnaire-proof');
+        $client = app(GuidedWebsiteGenerationClient::class);
+        $buildMessages = new \ReflectionMethod($client, 'buildMessages');
+        $buildMessages->setAccessible(true);
+        $diagnostics = [];
+        $written = 0;
+        foreach ($batches as $index => $batch) {
+            // Worst case for later batches: every earlier page already has a maximum-length SEO title listed in the prompt.
+            $usedTitles = array_fill(0, min($written, GuidedWebsiteGenerationClient::MAX_USED_TITLES), str_repeat('t', 70));
+            $messages = $buildMessages->invoke($client, $business, $batch, $aiPlan, $usedTitles);
+            $estimatedInput = app(AiModelRouter::class)->estimateInputTokens($messages);
+            $before = count($this->fakeClient->requests());
+            $client->generate($business, $batch, null, 'max-questionnaire-proof:b' . ($index + 1) . ':retry0', $aiPlan, $usedTitles);
+            $written += count($batch);
+            $diagnostics[] = [
+                'batch' => $index + 1,
+                'estimated_input' => $estimatedInput,
+                'provider_reached' => count($this->fakeClient->requests()) > $before,
+                'diagnostic' => $client->lastGenerationDiagnostic(),
+            ];
+        }
 
-        $this->assertCount(1, $this->fakeClient->requests());
-        $realMessages = $this->fakeClient->requests()[0]->messages;
+        $requests = $this->fakeClient->requests();
+        $this->assertCount(count($batches), $requests, 'Batch diagnostics: ' . json_encode($diagnostics));
 
-        $estimatedInputTokens = app(AiModelRouter::class)->estimateInputTokens($realMessages);
-        $ceiling = 12_000;
-        $headroom = $ceiling - $estimatedInputTokens;
-
-        $this->assertLessThanOrEqual(
-            $ceiling,
-            $estimatedInputTokens,
-            "The real serialized request for the true maximum questionnaire must fit the route's 12,000-input-token ceiling; estimated {$estimatedInputTokens}."
-        );
-
-        // Independent-review correction round 4 (item 5) — MEANINGFUL
-        // headroom, not merely passing: at least 5% of the ceiling (600
-        // tokens) must remain, so a real business slightly larger than
-        // this already-maximal fixture (one more confirmed sentence, one
-        // more service) does not immediately blow the budget.
-        $this->assertGreaterThanOrEqual(
-            $ceiling * 0.05,
-            $headroom,
-            "Expected meaningful headroom below the 12,000-input-token ceiling; only {$headroom} tokens remained for the true maximum questionnaire (estimated {$estimatedInputTokens})."
-        );
+        foreach ($requests as $index => $request) {
+            $estimated = app(AiModelRouter::class)->estimateInputTokens($request->messages);
+            $ceiling = 12_000;
+            $this->assertLessThanOrEqual(GenerationBatchPlanner::inputTokenLimit(), $estimated, "Batch {$index} input exceeds the 5%-headroom limit: {$estimated} tokens.");
+            $this->assertLessThanOrEqual($ceiling, $estimated, "Batch {$index} input exceeds the route budget: {$estimated} tokens.");
+            $this->assertGreaterThanOrEqual($ceiling * 0.05, $ceiling - $estimated, "Batch {$index} needs at least 5% input headroom.");
+            $this->assertSame(8_000, $request->maxOutputTokens);
+        }
     }
 
     /**
@@ -402,7 +416,7 @@ class WebsiteAiEnvelopeCaptureTest extends TestCase
     {
         [$business, , , $plan] = $this->buildMaximalBusinessFixture();
         $aiPlan = WebsitePageStrategy::withoutAiUnfillableSections($plan);
-        $this->assertLessThanOrEqual(WebsitePageStrategy::MAX_TOTAL_PAGES, count($aiPlan));
+        $this->assertLessThanOrEqual(WebsitePageStrategy::MAX_PAGES_PER_GENERATION, count($aiPlan));
 
         $representativePages = array_map(fn (array $page, int $index) => [
             'page_key' => $page['page_key'],
@@ -413,20 +427,26 @@ class WebsiteAiEnvelopeCaptureTest extends TestCase
         ], $aiPlan, array_keys($aiPlan));
 
         $prohibitedClaims = \App\Models\BusinessKnowledgeProfile::where('business_id', $business->id)->value('prohibited_claims') ?? [];
-
-        // Proves the response is genuinely ACCEPTABLE output for this
-        // exact plan — not merely small. Throws (failing this test) if
-        // the fixture above drifts out of sync with any validator rule.
         app(GuidedGenerationOutputValidator::class)->validate($representativePages, $aiPlan, $prohibitedClaims);
 
-        $responseJson = json_encode(['pages' => $representativePages]);
-        $estimatedOutputTokens = app(AiModelRouter::class)->estimateInputTokens([['role' => 'assistant', 'content' => $responseJson]]);
+        $planBatches = GenerationBatchPlanner::plan($business, $aiPlan, app(GuidedWebsiteGenerationClient::class))['batches'];
+        $this->assertNotNull($planBatches);
+        $pageBatches = [];
+        $offset = 0;
+        foreach ($planBatches as $planBatch) {
+            $pageBatches[] = array_slice($representativePages, $offset, count($planBatch));
+            $offset += count($planBatch);
+        }
 
-        $this->assertLessThanOrEqual(
-            8_000,
-            $estimatedOutputTokens,
-            "A representative, validator-accepted response for the capped page plan must fit the 8,000-output-token limit; estimated {$estimatedOutputTokens} for " . count($aiPlan) . ' pages.'
-        );
+        foreach ($pageBatches as $index => $pages) {
+            app(GuidedGenerationOutputValidator::class)->validate($pages, $planBatches[$index], $prohibitedClaims, $aiPlan);
+            $responseJson = json_encode(['pages' => $pages]);
+            $estimated = app(AiModelRouter::class)->estimateInputTokens([['role' => 'assistant', 'content' => $responseJson]]);
+            $this->assertLessThanOrEqual(
+                8_000, $estimated,
+                "A representative, validator-accepted response for batch {$index} must fit the 8,000-output-token limit; estimated {$estimated}."
+            );
+        }
     }
 
     private function section(string $type): array

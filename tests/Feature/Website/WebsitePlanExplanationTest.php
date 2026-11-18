@@ -46,6 +46,8 @@ class WebsitePlanExplanationTest extends TestCase
         }
     }
 
+    private const TIGHT_BUDGET = 14;
+
     private function explain(object $business, ?array $areas = self::AREAS, int $galleryPhotos = 0): array
     {
         $website = Website::where('business_id', $business->id)->first() ?? $this->createWebsite($business);
@@ -57,7 +59,8 @@ class WebsitePlanExplanationTest extends TestCase
         // (LocalAreaUsefulness); a bare list of city names is covered in WebsiteServiceAreaPagesTest.
         $areas = $areas === null ? null : array_map(fn ($area) => is_array($area) ? $area : ['name' => $area, 'details' => ['logistics' => "We confirmed how serving {$area} works."]], $areas);
 
-        return app(WebsitePageStrategy::class)->planWithExplanation($business, WebsiteTemplate::findActiveOrFail('photo_booth_modern'), $website, null, null, $areas);
+        // These tests are about how a TIGHT page budget is spent, so they pass an explicit small budget (the product default is MAX_PAGES_PER_GENERATION).
+        return app(WebsitePageStrategy::class)->planWithExplanation($business, WebsiteTemplate::findActiveOrFail('photo_booth_modern'), $website, null, null, $areas, null, null, null, self::TIGHT_BUDGET);
     }
 
     public function test_a_360_and_a_mirror_booth_are_planned_before_event_types_when_the_budget_is_tight(): void

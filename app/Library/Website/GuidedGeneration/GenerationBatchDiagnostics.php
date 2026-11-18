@@ -25,6 +25,9 @@ final class GenerationBatchDiagnostics
     public const STAGE_RESPONSE_MISSING_PAGES = 'response_missing_pages';
     public const STAGE_VALIDATION_FAILED = 'validation_failed';
     public const STAGE_UNEXPECTED_SHAPE = 'unexpected_shape';
+    public const STAGE_REQUEST_LIMIT_REACHED = 'request_limit_reached';
+    public const STAGE_COMPLETE_SITE_INVALID = 'complete_site_invalid';
+    public const STAGE_PLAN_OVER_BUDGET = 'plan_over_budget';
 
     private const MAX_PATHS = 20;
 
