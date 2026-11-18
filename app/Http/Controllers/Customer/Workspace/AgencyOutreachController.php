@@ -231,7 +231,7 @@ class AgencyOutreachController extends CustomerBaseController
 
         return redirect()
             ->route('customer.workspaces.prospecting.campaigns.show', [$workspaceUid, $campaign->uid])
-            ->with('flash_success', 'Draft created with ' . ($report['eligible'] ?? 0) . ' recipient(s) from "' . $group->name . '". Nothing has been sent.');
+            ->with('flash_success', 'Draft created with ' . ($report['eligible'] ?? 0) . ' recipient(s) from "' . ($name ?? $group?->name) . '". Nothing has been sent.');
     }
 
     /** Recipient summary for the picker: real counts for one group, nothing written. */
