@@ -29,7 +29,8 @@ use App\Models\Workspace;
  *   campaign_not_managed / _not_active only an ACTIVE `managed` campaign uses this engine
  *   prospect_not_active                stopped or booked
  *   no_business                        the Agency's own Business is not resolvable
- *   no_sending_number                  the Agency Business has no usable sending number
+ *   no_sending_number                  managed messaging has no usable number
+ *   byo_*                              selected agency-owned Telnyx sender is unusable
  *   verification_incomplete            the number's messaging verification is not approved yet
  *   opted_out                          the number is on the Agency Business's Blacklists
  *   manual_hold                        AI is paused for this member (only when asked)
@@ -107,12 +108,27 @@ final class OutreachEligibility
             }
         }
 
-        // The canonical readiness state (the same one the Text messaging page shows), re-read at send time:
-        // a campaign that was Active when its number or verification was fine must stop the moment either is not.
-        $state = app(MessagingReadinessReader::class)->situation($business)['state'] ?? 'no_number';
+        // The transport is selected by the Agency's own Business. The same choice
+        // is used in AgencyOutreachReadiness and OutreachMessageSender: a ready
+        // agency-owned BYO Telnyx sender does NOT need a platform-managed number.
+        // A selected but unusable BYO sender must fail closed, never fall back
+        // to the platform-paid path.
+        $byo = AgencyByoSender::selectedChannel($business);
 
-        if ($state !== 'ready') {
-            return OutreachEligibilityResult::refused($state === 'registration_required' ? 'verification_incomplete' : 'no_sending_number');
+        if ($byo !== null) {
+            $readiness = AgencyByoSender::sendReadiness($byo);
+
+            if (! $readiness['ok']) {
+                return OutreachEligibilityResult::refused('byo_' . $readiness['code']);
+            }
+        } else {
+            // Re-read managed messaging readiness at send time, including number,
+            // carrier verification and assignment. This path is unchanged.
+            $state = app(MessagingReadinessReader::class)->situation($business)['state'] ?? 'no_number';
+
+            if ($state !== 'ready') {
+                return OutreachEligibilityResult::refused($state === 'registration_required' ? 'verification_incomplete' : 'no_sending_number');
+            }
         }
 
         if (OutreachSequence::forWorkspace($workspace)->paused()) {
