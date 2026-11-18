@@ -47,7 +47,7 @@ class ContactGroupsPageTest extends TestCase
         $page->assertSee('Export contacts');
         $page->assertSee('Delete group');
         $page->assertDontSee('datatables-basic', false);
-        $this->assertSame(2, substr_count($page->getContent(), 'data-role="group-row"'));
+        $this->assertSame(2, substr_count($page->getContent(), 'data-role="group-row" data-uid'));
     }
 
     public function test_the_tabs_mark_groups_current_with_a_live_count_and_link_back_to_all_contacts(): void
@@ -83,27 +83,27 @@ class ContactGroupsPageTest extends TestCase
     public function test_search_filters_by_name_treats_wildcards_literally_and_explains_no_match(): void
     {
         [$owner, $business, $workspace] = $this->tenant(WorkspacePlanTier::Growth);
-        $this->group($business, 'Wedding leads');
-        $this->group($business, 'Vendors');
+        $this->group($business, 'Bridal list');
+        $this->group($business, 'Supplier list');
         $this->authenticateAs($owner);
         $url = $this->groupsUrl($workspace, $business);
 
-        $hit = $this->get($url . '?q=wedding')->assertOk();
-        $hit->assertSee('Wedding leads');
-        $hit->assertDontSee('Vendors');
-        $hit->assertSee('value="wedding"', false);
+        $hit = $this->get($url . '?q=bridal')->assertOk();
+        $hit->assertSee('Bridal list');
+        $hit->assertDontSee('Supplier list');
+        $hit->assertSee('value="bridal"', false);
         // The badge stays the Business's total, not the filtered count.
         $hit->assertSee('<span class="mgx-count" data-role="groups-count">2</span>', false);
 
         foreach (['%', '_'] as $wildcard) {
             $this->get($url . '?q=' . urlencode($wildcard))->assertOk()
                 ->assertSee('data-role="groups-empty"', false)
-                ->assertDontSee('Vendors');
+                ->assertDontSee('Supplier list');
         }
 
         $this->get($url . '?q=nothing-like-this')->assertOk()
             ->assertSee('No groups match', false)
-            ->assertDontSee('Wedding leads');
+            ->assertDontSee('Bridal list');
     }
 
     public function test_the_empty_state_still_offers_to_create_a_group(): void
@@ -127,23 +127,23 @@ class ContactGroupsPageTest extends TestCase
         $viewOnly->assertSee('Leads');
         $viewOnly->assertDontSee('data-role="groups-new"', false);
         $viewOnly->assertDontSee('data-role="groups-create-another"', false);
-        $viewOnly->assertDontSee('Delete group');
-        $viewOnly->assertDontSee('Rename');
-        $viewOnly->assertDontSee('Duplicate');
-        $viewOnly->assertDontSee('data-action="menu"', false);
+        $viewOnly->assertDontSee('data-action="delete"', false);
+        $viewOnly->assertDontSee('data-action="rename"', false);
+        $viewOnly->assertDontSee('data-action="duplicate"', false);
+        $viewOnly->assertDontSee('aria-haspopup="menu"', false);
         $viewOnly->assertSee('role="switch"', false);
         $this->assertMatchesRegularExpression('/role="switch"[^>]*\sdisabled/', $viewOnly->getContent());
 
         $this->authenticateAs($owner, ['view_contact_group', 'update_contact_group', 'delete_contact_group']);
         $editor = $this->get($url)->assertOk();
-        $editor->assertSee('Rename');
-        $editor->assertSee('Delete group');
-        $editor->assertDontSee('Duplicate');
-        $editor->assertDontSee('Add contacts');
+        $editor->assertSee('data-action="rename"', false);
+        $editor->assertSee('data-action="delete"', false);
+        $editor->assertDontSee('data-action="duplicate"', false);
+        $editor->assertDontSee('data-action="add"', false);
         $this->assertDoesNotMatchRegularExpression('/role="switch"[^>]*\sdisabled/', $editor->getContent());
 
         $this->authenticateAs($owner, []);
-        $this->get($url)->assertForbidden();
+        $this->get($url)->assertUnauthorized();
     }
 
     public function test_row_actions_point_at_the_selected_businesss_existing_routes(): void

@@ -21,7 +21,6 @@
         $businessUid = request()->route('businessUid');
         $businessScoped = $workspaceUid !== null && $businessUid !== null;
         $listUrl = \App\Library\CrmRouting::route('contacts.index');
-        $canView = auth()->user()->can('view_contact_group');
         $canCreateGroup = auth()->user()->can('create_contact_group');
         $canUpdateGroup = auth()->user()->can('update_contact_group');
         $canDeleteGroup = auth()->user()->can('delete_contact_group');
@@ -44,12 +43,12 @@
                 <h1 class="mgx-title">Contacts</h1>
                 <p class="mgx-sub">Groups keep your contacts organised for messages and automations.</p>
             </div>
-            @if ($canView)
+            @can('view_contact_group')
                 <a class="mgx-btn is-secondary" data-role="groups-export" href="{{ \App\Library\CrmRouting::route('contacts.export') }}"><svg class="mgx-ic" viewBox="0 0 24 24"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></svg>{{ __('locale.buttons.export') }}</a>
-            @endif
-            @if ($canCreateGroup)
+            @endcan
+            @can('create_contact_group')
                 <a class="mgx-btn is-primary" data-role="groups-new" href="{{ $newGroupUrl }}"><svg class="mgx-ic" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>New group</a>
-            @endif
+            @endcan
         </div>
 
         @if ($businessScoped)
@@ -126,12 +125,12 @@
                 </div>
             @endforelse
 
-            @if ($canCreateGroup)
+            @can('create_contact_group')
                 <a class="mgx-gnew" data-role="groups-create-another" href="{{ $newGroupUrl }}">
                     <span class="mgx-gplus"><svg class="mgx-ic" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></span>
                     Create another group<span class="mgx-ghint">— e.g. Past clients, Vendors, Wedding leads</span>
                 </a>
-            @endif
+            @endcan
         </div>
 
         {{-- One dialog serves rename, duplicate and delete; the button it submits is the real action. --}}

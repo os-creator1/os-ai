@@ -311,7 +311,7 @@
          *
          * @throws AuthorizationException
          */
-        public function index(Request $request): View|Factory|Application
+        public function index(): View|Factory|Application
         {
             // Resolve (and fail-closed validate) the Business context for
             // a Business-addressable request; a legacy request without
@@ -338,7 +338,7 @@
             };
 
             $groupsTotal = $scope()->count();
-            $search      = mb_substr(trim((string) $request->query('q', '')), 0, 100);
+            $search      = mb_substr(trim((string) request()->query('q', '')), 0, 100);
 
             $query = $scope();
             if ($search !== '') {
