@@ -101,6 +101,23 @@ class PageContentQualityTest extends TestCase
         $this->assertSame([], $this->problems($this->richHome(), $this->home()));
     }
 
+    public function test_metadata_keywords_do_not_replace_visible_service_area_and_differentiator_copy(): void
+    {
+        $page = $this->page('home', [
+            $this->hero('Magic Mirror Photo Booth Rental in Petal, Mississippi'),
+            $this->text('Equipment', 'Ask us about available equipment for your event.'),
+            $this->text('Planning', 'Contact us to discuss the setup and date.'),
+        ]);
+        $page['seo_title'] = 'Magic Mirror Photo Booth Rental in Petal, Mississippi';
+        $page['meta_description'] = 'Open-Air Photo Booth and 360 Video Booth in Hattiesburg and Laurel, with unlimited prints and custom digital overlays.';
+
+        $problems = implode(' | ', $this->problems($page, $this->home()));
+
+        $this->assertStringContainsString('real services', $problems, 'Keywords only in a meta description do not make the visible page informative.');
+        $this->assertStringContainsString('where the business works', $problems);
+        $this->assertStringContainsString('differentiators', $problems);
+    }
+
     public function test_the_brand_tagline_may_be_secondary_but_not_the_headline(): void
     {
         $page = $this->richHome();
