@@ -81,6 +81,46 @@ class CampaignContactGroupTest extends TestCase
         $this->authenticateAs($a['customer']);
     }
 
+    public function test_source_contact_unsubscribe_or_deletion_blocks_send_even_after_snapshot(): void
+    {
+        $a = $this->outreachAgency('Alpha', ['enrolled' => false]);
+        $group = $this->group($a['business']);
+        $contact = $this->contact($group, '12025550101');
+        $this->agencyActor($a);
+        $this->create($a, ['contact_group_uid' => $group->uid])->assertSessionHasNoErrors();
+
+        $campaign = AgencyProspectCampaign::where('name', 'Spring push')->firstOrFail();
+        $member = $campaign->members()->firstOrFail();
+        $this->assertSame($contact->id, (int) $member->source_contact_id);
+
+        $campaign->update(['status' => 'active']);
+        $contact->update(['status' => Contacts::STATUS_UNSUBSCRIBE]);
+
+        $eligibility = app(\App\Library\AgencyOutreach\OutreachEligibility::class);
+        $this->assertSame('source_contact_unsubscribed_or_changed', $eligibility->check($member)->reason);
+
+        $contact->update(['status' => Contacts::STATUS_SUBSCRIBE, 'phone' => '12025550198']);
+        $this->assertSame('source_contact_unsubscribed_or_changed', $eligibility->check($member)->reason);
+
+        $contact->delete();
+        $this->assertSame('source_contact_unsubscribed_or_changed', $eligibility->check($member)->reason);
+    }
+
+    public function test_disabling_a_linked_group_blocks_campaign_start(): void
+    {
+        $a = $this->outreachAgency('Alpha', ['enrolled' => false]);
+        $group = $this->group($a['business']);
+        $this->contact($group, '12025550101');
+        $this->agencyActor($a);
+        $this->create($a, ['contact_group_uid' => $group->uid])->assertSessionHasNoErrors();
+
+        $campaign = AgencyProspectCampaign::where('name', 'Spring push')->firstOrFail();
+        $group->update(['status' => false]);
+        $this->post($this->outreachRoute('campaigns.start', $a['workspace'], [$campaign->uid]))
+            ->assertSessionHas('flash_error', 'Choose a valid contact group for this campaign before starting it.');
+        $this->assertSame('draft', $campaign->fresh()->status->value);
+    }
+
     public function test_creating_with_an_existing_group_links_it_and_enrolls_eligible_contacts_without_sending(): void
     {
         Queue::fake();
