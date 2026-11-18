@@ -252,6 +252,77 @@ class PhotoBoothAgencyLandingTest extends TestCase
         app(AgencySiteManager::class)->save((int) $otherOwner->user_id, Workspace::query()->findOrFail($site->agency_workspace_id), ['copy.home.hero.title' => 'Hijack']);
     }
 
+    public function test_dogs_can_use_the_exact_photobooth_inline_scheduler_without_losing_dog_content_or_publishing_automatically(): void
+    {
+        [$agency, $type, $site] = $this->dogSite();
+        $this->officialPath('dogs', $site);
+        $sites = app(AgencySiteManager::class);
+        $uid = (string) $agency->uid;
+
+        $beforeValues = AgencySiteManager::values($site->fresh());
+        $beforeLive = $this->get('/dogs')->assertOk()->getContent();
+        $beforeRevisions = \App\Models\AgencySiteRevision::query()->count();
+
+        $this->assertSame(NichePresets::DOG, $beforeValues['x.niche']);
+        $this->assertStringNotContainsString('data-role="public-scheduler"', $beforeLive);
+
+        // The other official path cannot be used to mutate /dogs.
+        $this->artisan('agency-site:enable-dogs-booking', ['workspace_uid' => 'e14e25d2-42f2-4c24-b840-25efcdede356', '--apply' => true])->assertFailed();
+        $this->artisan('agency-site:enable-dogs-booking', ['workspace_uid' => $uid])->assertSuccessful();
+        $this->assertSame($beforeValues, AgencySiteManager::values($site->fresh()), 'the default is a read-only dry run');
+
+        $this->artisan('agency-site:enable-dogs-booking', ['workspace_uid' => $uid, '--apply' => true])->assertSuccessful();
+        $values = AgencySiteManager::values($site->fresh());
+
+        $this->assertSame('home', $values['x.template']);
+        $this->assertSame('book_call', $values['x.goal']);
+        $this->assertContains('consultation', $values['x.home_shown']);
+        $this->assertSame(NichePresets::DOG, $values['x.niche'], 'dog niche is not replaced with platform branding');
+        $this->assertSame($type->public_booking_uuid, $values['x.booking_type_uid'], 'the dog account keeps its own booking type');
+        $this->assertSame($beforeRevisions, \App\Models\AgencySiteRevision::query()->count(), 'the command only writes the draft');
+        $this->assertSame($beforeLive, $this->get('/dogs')->assertOk()->getContent(), 'the published page stays unchanged');
+
+        $configAfterFirstApply = $site->fresh()->config;
+        $this->artisan('agency-site:enable-dogs-booking', ['workspace_uid' => $uid, '--apply' => true])->assertSuccessful();
+        $this->assertSame($configAfterFirstApply, $site->fresh()->config, 'repeating the operation is idempotent');
+
+        $sites->publish((int) $agency->owner_user_id, $agency);
+        $html = $this->get('/dogs')->assertOk()->getContent();
+
+        // Same consultation component, CSS, JS, calendar form, and CTA destination as /photobooth.
+        $this->assertStringContainsString('class="mg mg-home mg-book-demo"', $html);
+        $this->assertStringContainsString('book-demo.css', $html);
+        $this->assertStringContainsString('data-role="consultation"', $html);
+        $this->assertStringContainsString('id="book"', $html);
+        $this->assertStringContainsString('data-role="public-scheduler"', $html);
+        $this->assertSame(1, substr_count($html, 'id="pb-app"'));
+        $this->assertStringContainsString('href="'.url('dogs').'#book"', $html);
+        $this->assertStringContainsString('Maple Ridge Dog Training', $html, 'dog illustration content remains');
+        $this->assertStringContainsString('datesUrl', $html);
+        $this->assertStringContainsString(route('public.booking.store', $type->public_booking_uuid, false), $html);
+        $this->assertStringNotContainsString('calendar.example', $html);
+
+        foreach ($this->hrefs($html) as $href) {
+            $this->assertStringNotContainsString('/pricing', $href);
+            $this->assertStringNotContainsString('/register', $href);
+        }
+    }
+
+    public function test_dogs_booking_enablement_refuses_an_unbookable_calendar(): void
+    {
+        [$agency, $type, $site] = $this->dogSite();
+        $this->officialPath('dogs', $site);
+        $before = $site->fresh()->config;
+
+        $type->update(['is_active' => false]);
+        $this->artisan('agency-site:enable-dogs-booking', [
+            'workspace_uid' => $agency->uid,
+            '--apply' => true,
+        ])->assertFailed();
+
+        $this->assertSame($before, $site->fresh()->config);
+    }
+
     public function test_the_complete_command_adds_the_calendar_to_the_full_original_homepage_without_publishing_or_overwriting(): void
     {
         [$agency, $owner, $type, $site] = $this->boothSite();
