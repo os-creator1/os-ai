@@ -1,21 +1,39 @@
-<div class="row">
-    <div class="col-12">
-        <x-card :padded="false">
-            <table class="table mb-0">
-                <thead class="thead-primary">
-                <tr>
-                    <th scope="col">{{ __('locale.labels.submitted') }}</th>
-                    <th scope="col">{{ __('locale.labels.status') }}</th>
-                    <th scope="col">{{ __('locale.labels.total') }}</th>
-                    <th scope="col">{{ __('locale.labels.processed') }}</th>
-                    <th scope="col">{{ __('locale.labels.failed') }}</th>
-                    <th scope="col">{{ __('locale.labels.message') }}</th>
-                    <th scope="col">{{ __('locale.labels.action') }}</th>
-                </tr>
-                </thead>
-                <tbody>
-                @if ($import_jobs->count() > 0)
-                    @foreach($import_jobs as $job)
+@php
+    $templateHeaders = $contact->getFields->pluck('label')->values()->all();
+@endphp
+@if ($import_jobs->count() === 0)
+    <section class="mgx-card mgx-gd-empty" data-role="imports-empty">
+        <span class="mgx-gd-emptyico" aria-hidden="true"><svg class="mgx-ic" viewBox="0 0 24 24"><path d="M12 20V9M7 14l5-5 5 5M5 4h14"/></svg></span>
+        <div class="mgx-gd-emptytext">
+            <b>No imports yet</b>
+            <span>Upload a CSV or Excel file to add many contacts at once. Each import shows here with how many worked and any that failed.</span>
+        </div>
+        <div class="mgx-gd-emptyactions">
+            <a class="mgx-btn is-primary" data-role="imports-import" href="{{ \App\Library\CrmRouting::route('contact.import', $contact->uid) }}"><svg class="mgx-ic" viewBox="0 0 24 24"><path d="M12 20V9M7 14l5-5 5 5M5 4h14"/></svg>Import contacts</a>
+            <button type="button" class="mgx-btn is-secondary" data-role="imports-template" data-template-name="{{ \Illuminate\Support\Str::slug($contact->name) ?: 'contacts' }}-template.csv" data-template-headers="{{ json_encode($templateHeaders) }}">Download template</button>
+        </div>
+    </section>
+@else
+    <div class="mgx-gd-kwbar">
+        <span class="mgx-mut mgx-gd-kwhint">Each import shows how many contacts worked and how many failed.</span>
+        <button type="button" class="mgx-btn is-secondary" data-role="imports-template" data-template-name="{{ \Illuminate\Support\Str::slug($contact->name) ?: 'contacts' }}-template.csv" data-template-headers="{{ json_encode($templateHeaders) }}">Download template</button>
+        <a class="mgx-btn is-primary" data-role="imports-import" href="{{ \App\Library\CrmRouting::route('contact.import', $contact->uid) }}"><svg class="mgx-ic" viewBox="0 0 24 24"><path d="M12 20V9M7 14l5-5 5 5M5 4h14"/></svg>Import contacts</a>
+    </div>
+    <div class="mgx-card mgx-gd-card mgx-gd-table">
+        <table class="table mb-0">
+            <thead>
+            <tr>
+                <th scope="col">{{ __('locale.labels.submitted') }}</th>
+                <th scope="col">{{ __('locale.labels.status') }}</th>
+                <th scope="col">{{ __('locale.labels.total') }}</th>
+                <th scope="col">{{ __('locale.labels.processed') }}</th>
+                <th scope="col">{{ __('locale.labels.failed') }}</th>
+                <th scope="col">{{ __('locale.labels.message') }}</th>
+                <th scope="col">{{ __('locale.labels.action') }}</th>
+            </tr>
+            </thead>
+            <tbody>
+            @foreach($import_jobs as $job)
                         @php
                             $progress = $contact->getProgress($job);
                         @endphp
@@ -37,7 +55,7 @@
                                        title="Download Failed Records">
                                     </x-button>
                                 @else
-                                    <span class="btn btn-secondary btn-sm disabled" data-bs-toggle="tooltip"
+                                    <span class="mgx-iconbtn is-disabled" data-bs-toggle="tooltip"
                                           data-bs-placement="top" title="No failed records to download">
                                             <x-ds-icon name="download" />
                                         </span>
@@ -45,15 +63,7 @@
                             </td>
                         </tr>
                     @endforeach
-                @else
-                    <tr>
-                        <td class="text-center" colspan="7">
-                            {{ __('locale.datatables.no_results') }}
-                        </td>
-                    </tr>
-                @endif
-                </tbody>
-            </table>
-        </x-card>
+            </tbody>
+        </table>
     </div>
-</div>
+@endif

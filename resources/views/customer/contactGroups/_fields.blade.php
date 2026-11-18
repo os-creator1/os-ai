@@ -1,15 +1,15 @@
-<div class="row" id="basic-table">
-    <div class="col-12">
-        <x-card :title="__('locale.labels.manage_fields')">
-                <p class="card-text">
-                    Manage the fields available to your groups contacts.
-                </p>
+<form action="{{ \App\Library\CrmRouting::route('contact.store-contact-field', $contact->uid) }}" method="post" id="basic-table">
+    {{ csrf_field() }}
+    <section class="mgx-card mgx-gd-card mgx-gd-fields">
+        <div class="mgx-gd-cardhead">
+            <div>
+                <b>Contact fields</b>
+                <span class="mgx-mut">What you store about each contact in this group. Use the tags in messages.</span>
+            </div>
+            <button type="submit" class="mgx-btn is-primary">{{__('locale.buttons.save_changes')}}</button>
+        </div>
 
-            <form action="{{ \App\Library\CrmRouting::route('contact.store-contact-field', $contact->uid) }}"
-                  method="post">
-                {{ csrf_field() }}
-
-                @if($fields->count())
+@if($fields->count())
 
                     <div class="table-responsive">
                         <table class="table field-list">
@@ -117,59 +117,12 @@
                     </div>
                 @endif
 
-                <hr/>
-
-                <div class="card-header">
-                    <h4 class="card-title">New Field</h4>
-                </div>
-
-                <div class="card-body">
-                    <p class="card-text">
-                        Click To add
-                    </p>
-
-                    <span sample-url="{{ \App\Library\CrmRouting::route('contact.contact-sample-field', ['contact' => $contact->uid,"type" => "text" ]) }}"
-                          class="btn btn-relief-primary me-1 add-custom-field-button" type_name="text">
-                        <x-ds-icon name="type" class="me-25" />
-                        Text
-                    </span>
-
-                    <span sample-url="{{ \App\Library\CrmRouting::route('contact.contact-sample-field', ['contact' => $contact->uid,"type" => "number" ]) }}"
-                          class="btn btn-relief-success me-1 add-custom-field-button" type_name="number">
-                        <x-ds-icon name="hash" class="me-25" />
-                        Number
-                    </span>
-
-                    <span sample-url="{{ \App\Library\CrmRouting::route('contact.contact-sample-field', ['contact' => $contact->uid,"type" => "date" ]) }}"
-                          class="btn btn-relief-info me-1 add-custom-field-button" type_name="date">
-                        <x-ds-icon name="calendar" class="me-25" />
-                        Date
-                    </span>
-
-                    <span sample-url="{{ \App\Library\CrmRouting::route('contact.contact-sample-field', ['contact' => $contact->uid,"type" => "datetime" ]) }}"
-                          class="btn btn-relief-warning me-1 add-custom-field-button" type_name="datetime">
-                        <x-ds-icon name="clock" class="me-25" />
-                        Datetime
-                    </span>
-
-                    <span sample-url="{{ \App\Library\CrmRouting::route('contact.contact-sample-field', ['contact' => $contact->uid,"type" => "textarea" ]) }}"
-                          class="btn btn-relief-danger me-1 add-custom-field-button" type_name="textarea">
-                        <x-ds-icon name="file-text" class="me-25" />
-                        Textarea
-                    </span>
-                </div>
-                <hr/>
-                <div class="card-body">
-                    <div class="row">
-                        <div class="col-12">
-
-                            <x-button type="submit" icon="save">{{__('locale.buttons.save_changes')}}</x-button>
-                        </div>
-                    </div>
-                </div>
-
-
-            </form>
-        </x-card>
-    </div>
-</div>
+        <div class="mgx-gd-newfield">
+            <span class="mgx-mut">Add a field:</span>
+            @foreach ([['text', 'Text', 'type'], ['number', 'Number', 'hash'], ['date', 'Date', 'calendar'], ['datetime', 'Date & time', 'clock'], ['textarea', 'Long text', 'file-text']] as [$fieldType, $fieldLabel, $fieldIcon])
+                <button type="button" class="mgx-tok is-btn add-custom-field-button" type_name="{{ $fieldType }}"
+                        sample-url="{{ \App\Library\CrmRouting::route('contact.contact-sample-field', ['contact' => $contact->uid, 'type' => $fieldType]) }}">+ {{ $fieldLabel }}</button>
+            @endforeach
+        </div>
+    </section>
+</form>
