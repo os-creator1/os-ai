@@ -1490,10 +1490,20 @@
             // Message editor: insert existing personalisation tags and show the SMS length.
             var message = document.getElementById('text_message');
             var counter = root.querySelector('[data-role="message-count"]');
-            var gsm = /^[\x20-\x7E\n\r€£¥èéùìòÇØøÅåΔ_ΦΓΛΩΠΨΣΘΞÆæßÉ¤¡ÄÖÑÜ§¿äöñüà]*$/;
+            // Mirror SMSCounter::count(): GSM extension chars consume two septets,
+            // while non-GSM text uses UTF-16 code units (including surrogate pairs).
+            var gsmBasic = /^[\n\f\r\x20-\x5A_\x61-\x7A¡£¤¥§¿ÄÅÆÇÉÑÖØÜßàäåæèéìñòöøùüΓΔΘΛΞΠΣΦΨΩ]$/u;
+            var gsmExtension = /^[\f\[\]\\^{}|~€]$/u;
             function updateCount() {
                 if (!message || !counter) { return; }
-                var text = message.value, length = text.length, single = gsm.test(text) ? 160 : 70, multi = single === 160 ? 153 : 67;
+                var value = message.value, gsmUnits = 0, unicode = false;
+                for (var char of value) {
+                    if (gsmExtension.test(char)) { gsmUnits += 2; }
+                    else if (gsmBasic.test(char)) { gsmUnits++; }
+                    else { unicode = true; }
+                }
+                var length = unicode ? value.length : gsmUnits;
+                var single = unicode ? 70 : 160, multi = unicode ? 67 : 153;
                 var parts = length === 0 ? 0 : (length <= single ? 1 : Math.ceil(length / multi));
                 counter.textContent = length + ' / ' + (parts <= 1 ? single : parts * multi) + ' · ' + parts + (parts === 1 ? ' text' : ' texts');
             }
