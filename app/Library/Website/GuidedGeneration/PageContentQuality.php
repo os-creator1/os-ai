@@ -268,10 +268,10 @@ final class PageContentQuality
         return $headings;
     }
 
-    /** All visible text of a page (title, metadata, every string of every section except type/url). */
+    /** Rendered page section text only; SEO titles/descriptions are not substitutes for useful on-page copy. */
     public static function text(array $page): string
     {
-        $parts = [(string) ($page['title'] ?? ''), (string) ($page['seo_title'] ?? ''), (string) ($page['meta_description'] ?? '')];
+        $parts = [];
         $sections = is_array($page['sections'] ?? null) ? $page['sections'] : [];
         array_walk_recursive($sections, function ($value, $key) use (&$parts) {
             if (is_string($value) && ! in_array($key, ['type', 'url'], true)) {
