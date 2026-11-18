@@ -42,7 +42,7 @@
 @php
     // These are the Agency's real, explicitly approved White Label testimonials;
     // never fall back to platform/customer stories or generate placeholder endorsements.
-    $stories = $mg->testimonials()['all'] ?? [];
+    $stories = $mg->approvedAgencyTestimonials()['all'] ?? [];
 @endphp
 @if ($stories !== [])
 <section class="sec" data-role="consultation-testimonials" aria-labelledby="consultation-testimonials-title"
