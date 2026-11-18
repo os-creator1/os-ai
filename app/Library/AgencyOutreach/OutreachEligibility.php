@@ -5,12 +5,14 @@ namespace App\Library\AgencyOutreach;
 use App\Enums\AgencyProspecting\AgencyProspectCampaignStatus;
 use App\Enums\AgencyProspecting\AgencyProspectStatus;
 use App\Enums\Entitlement\PlatformFeature;
+use App\Library\AgencyProspecting\AgencyProspectPhoneNormalizer;
 use App\Library\Entitlement\EntitlementManager;
 use App\Models\AgencyProspect;
 use App\Models\AgencyProspectCampaign;
 use App\Models\AgencyProspectCampaignMember;
 use App\Models\Blacklists;
 use App\Models\Business;
+use App\Models\Contacts;
 use App\Models\Workspace;
 
 /**
@@ -87,6 +89,22 @@ final class OutreachEligibility
 
         if (self::blacklisted($business, $prospect)) {
             return OutreachEligibilityResult::refused('opted_out');
+        }
+
+        // A group-sourced member is a frozen recipient snapshot, not frozen
+        // consent. The CRM contact may unsubscribe or be deleted after the
+        // draft was built. Recheck before EVERY send, never only at import.
+        if ($member->source_contact_id !== null) {
+            $source = Contacts::query()
+                ->whereKey($member->source_contact_id)
+                ->where('business_id', $business->id)
+                ->first();
+
+            if ($source === null
+                || $source->status !== Contacts::STATUS_SUBSCRIBE
+                || AgencyProspectPhoneNormalizer::normalize((string) $source->getRawOriginal('phone')) !== (string) $prospect->phone) {
+                return OutreachEligibilityResult::refused('source_contact_unsubscribed_or_changed');
+            }
         }
 
         // The canonical readiness state (the same one the Text messaging page shows), re-read at send time:
