@@ -11,6 +11,7 @@ use App\Library\AgencyOutreach\OutreachSendPipeline;
 use App\Library\AgencyOutreach\OutreachSendPlan;
 use App\Models\AgencyProspectCampaignMember;
 use App\Models\AgencyProspectMessage;
+use Illuminate\Support\Facades\Log;
 
 /**
  * The opening message of a `managed` campaign (contract §15), sent when the campaign
@@ -43,6 +44,14 @@ class OutreachInitialSendJob extends Base
         $eligible = $eligibility->check($member, true);
 
         if (! $eligible->ok()) {
+            // No outbound ledger row is claimed before eligibility passes.
+            // Record a redacted reason so an Active campaign cannot fail silently
+            // when its queued opener was skipped (never log phone/text/credentials).
+            Log::warning('outreach.opener_skipped', [
+                'member_id' => $this->campaignMemberId,
+                'reason' => $eligible->reason,
+            ]);
+
             return;
         }
 
