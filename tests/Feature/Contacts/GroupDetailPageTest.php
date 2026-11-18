@@ -23,6 +23,15 @@ class GroupDetailPageTest extends TestCase
     use RefreshDatabase;
     use CreatesCustomerContextFixtures;
 
+    public function test_message_counter_counts_gsm_extensions_and_unicode_code_units(): void
+    {
+        $source = file_get_contents(base_path('resources/views/customer/contactGroups/show.blade.php'));
+        $this->assertStringContainsString('gsmExtension.test(char)', $source);
+        $this->assertStringContainsString('gsmUnits += 2', $source);
+        $this->assertStringContainsString('unicode ? value.length : gsmUnits', $source);
+        $this->assertStringContainsString('unicode ? 67 : 153', $source);
+    }
+
     public function test_the_shared_header_and_all_six_tabs_render_for_the_group(): void
     {
         [$owner, $business, $workspace, $group] = $this->scene();
