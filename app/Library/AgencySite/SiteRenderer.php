@@ -65,7 +65,13 @@ final class SiteRenderer
                 'embed' => $this->booking->embed($agency, $values['x.booking_type_uid'] ?? null),
             ])->render();
         } else {
-            $html = view('marketing.pages.'.$page, ['mg' => $mg, 'page' => $page, 'meta' => $mg->meta($page)])->render();
+            $data = ['mg' => $mg, 'page' => $page, 'meta' => $mg->meta($page)];
+
+            if ($page === 'home' && $mg->hasConsultationSection()) {
+                $data['embed'] = $this->booking->embed(\App\Models\Workspace::query()->findOrFail($site->agency_workspace_id), $values['x.booking_type_uid'] ?? null);
+            }
+
+            $html = view('marketing.pages.'.$page, $data)->render();
         }
         $html = $this->colourize($html, $mg->context());
 

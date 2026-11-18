@@ -81,7 +81,11 @@
             <section data-mode-only="callpage" data-callpage-panel="0" data-role="callpage-content" hidden>
                 <x-card title="Book a Call Landing Page — content">
                     <p class="text-caption">Edit the words on your page. Everything saves as you type and shows in the preview; visitors see it once you publish.</p>
-                    @include('customer.agency.white-label._group', ['group' => $e['groups']['consultation'], 'canEdit' => $canEdit])
+                    <div data-role="callpage-consultation-slot">
+                        <div data-role="shared-consultation-editor">
+                            @include('customer.agency.white-label._group', ['group' => $e['groups']['consultation'], 'canEdit' => $canEdit])
+                        </div>
+                    </div>
                 </x-card>
             </section>
             <section data-mode-only="callpage" data-callpage-panel="1" data-role="callpage-brand" hidden>
@@ -152,7 +156,11 @@
                                 @if ($g)
                                     <div class="p-2 border-top" data-section-body hidden>
                                         @includeWhen($section['key'] === 'footer', 'customer.agency.white-label._legal-note')
-                                        @include('customer.agency.white-label._group', ['group' => $g, 'canEdit' => $canEdit])
+                                        @if ($section['key'] === 'consultation')
+                                            <div data-role="site-consultation-slot"></div>
+                                        @else
+                                            @include('customer.agency.white-label._group', ['group' => $g, 'canEdit' => $canEdit, 'idPrefix' => 'home-'])
+                                        @endif
                                     </div>
                                 @endif
                             </li>

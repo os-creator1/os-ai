@@ -56,13 +56,13 @@ final class SiteSchema
         'book_call' => 'Book a call only — no pricing, plans or signup shown',
     ];
 
-    public const HOME_ORDER_DEFAULT = ['hero', 'trust', 'problem', 'system', 'capabilities', 'people', 'how', 'videos', 'comparison', 'pricing', 'commitment', 'faq', 'final_cta'];
+    public const HOME_ORDER_DEFAULT = ['hero', 'trust', 'problem', 'system', 'capabilities', 'people', 'how', 'videos', 'consultation', 'comparison', 'pricing', 'commitment', 'faq', 'final_cta'];
 
     /** Sections an Agency may switch off. Header and footer always render: they carry navigation and legal links. */
-    public const HOME_HIDEABLE = ['trust', 'problem', 'system', 'capabilities', 'people', 'how', 'videos', 'comparison', 'pricing', 'commitment', 'faq', 'final_cta'];
+    public const HOME_HIDEABLE = ['trust', 'problem', 'system', 'capabilities', 'people', 'how', 'videos', 'consultation', 'comparison', 'pricing', 'commitment', 'faq', 'final_cta'];
 
     /** Shown only once the Agency has deliberately written them: they describe what the Agency promises. */
-    public const HOME_HIDDEN_BY_DEFAULT = ['people', 'commitment'];
+    public const HOME_HIDDEN_BY_DEFAULT = ['people', 'commitment', 'consultation'];
 
     /** @return array{label: string, page: string} */
     public static function homeSectionLabels(): array
@@ -70,7 +70,7 @@ final class SiteSchema
         return [
             'header' => 'Header & navigation', 'hero' => 'Hero', 'trust' => 'Industries you serve', 'problem' => 'Customer problems',
             'system' => 'Connected workflow', 'capabilities' => 'Main capabilities', 'people' => 'Support & onboarding',
-            'how' => 'How it works (summary)', 'videos' => 'Testimonials', 'comparison' => 'Feature comparison', 'pricing' => 'Pricing preview',
+            'how' => 'How it works (summary)', 'videos' => 'Testimonials', 'consultation' => 'Free consultation & booking calendar', 'comparison' => 'Feature comparison', 'pricing' => 'Pricing preview',
             'commitment' => 'Setup commitment', 'faq' => 'FAQ', 'final_cta' => 'Final call to action', 'footer' => 'Footer',
         ];
     }
@@ -121,7 +121,7 @@ final class SiteSchema
                 self::choice('x.niche', 'Which industry examples should the product illustrations use?', NichePresets::NICHES),
                 self::choice('x.goal', 'How should visitors become customers?', self::GOALS),
             ]],
-            // The consultation template's own copy (shown when "What should the home page be?" is the consultation page).
+            // The consultation copy: used by the Book a Call landing page, and by the "Free consultation & booking calendar" section of the full website.
             'consultation' => ['step' => 1, 'page' => 'home', 'label' => 'Consultation landing page', 'fields' => [
                 self::text('consultation.eyebrow', 'Small label above the headline', 40),
                 self::text('consultation.title', 'Headline', 90),

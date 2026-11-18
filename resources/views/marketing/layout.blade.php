@@ -47,7 +47,7 @@
     @endif
 @stack('head')
 </head>
-<body class="mg {{ $page === 'home' ? 'mg-home' : 'mg-inner mg-'.$page }}">
+<body class="mg {{ $page === 'home' ? 'mg-home' : 'mg-inner mg-'.$page }}{{ $page === 'home' && ! empty($embed) ? ' mg-book-demo' : '' }}">
 <a class="skip" href="#main">Skip to content</a>
 @include('marketing.partials.header', ['active' => $page])
 <main id="main">

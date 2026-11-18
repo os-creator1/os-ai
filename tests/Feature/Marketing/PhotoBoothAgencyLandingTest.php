@@ -251,4 +251,63 @@ class PhotoBoothAgencyLandingTest extends TestCase
         $this->expectException(\App\Exceptions\Branding\AgencyWhiteLabelException::class);
         app(AgencySiteManager::class)->save((int) $otherOwner->user_id, Workspace::query()->findOrFail($site->agency_workspace_id), ['copy.home.hero.title' => 'Hijack']);
     }
+
+    public function test_the_complete_command_adds_the_calendar_to_the_full_original_homepage_without_publishing_or_overwriting(): void
+    {
+        [$agency, $owner, $type, $site] = $this->boothSite();
+        $this->officialPath('photobooth', $site);
+        // Bookable does not mean 15 minutes; refuse the original 30-minute fixture before any draft write.
+        $this->artisan('agency-site:complete-photobooth', ['workspace_uid' => $agency->uid, '--apply' => true])->assertFailed();
+        $type->update(['duration_minutes' => 15]);
+        $sites = app(AgencySiteManager::class);
+        // The owner's existing state: a Book a Call template draft with their own copy and an approved testimonial.
+        $sites->save((int) $owner->user_id, $agency, [
+            'x.template' => 'consultation', 'consultation.title' => 'Owner headline',
+            'x.testimonials' => [['customer_name' => 'Real Client', 'business_name' => 'Real Co', 'quote' => 'Owner approved quote.', 'approved' => true]],
+        ]);
+        $liveBefore = $this->get('/photobooth')->getContent();
+        $revisions = \App\Models\AgencySiteRevision::query()->count();
+
+        $this->artisan('agency-site:complete-photobooth', ['workspace_uid' => 'cb403a56-3fb9-4694-b04e-a407495622db'])->assertFailed();
+        $this->artisan('agency-site:complete-photobooth', ['workspace_uid' => $agency->uid])->assertSuccessful();
+        $this->assertSame('consultation', AgencySiteManager::values($site->fresh())['x.template'], 'dry run writes nothing');
+
+        $this->artisan('agency-site:complete-photobooth', ['workspace_uid' => $agency->uid, '--apply' => true])->assertSuccessful();
+        $values = AgencySiteManager::values($site->fresh());
+        $this->assertSame('home', $values['x.template']);
+        $this->assertSame('Owner headline', $values['consultation.title'], 'existing copy is preserved');
+        $this->assertSame($type->public_booking_uuid, $values['x.booking_type_uid']);
+        $this->assertSame('Owner approved quote.', $values['x.testimonials'][0]['quote']);
+        $this->assertSame($revisions, \App\Models\AgencySiteRevision::query()->count(), 'no revision is created');
+        $this->assertSame($liveBefore, $this->get('/photobooth')->getContent(), 'published page is unchanged until published');
+
+        $before = $site->fresh()->config;
+        $this->artisan('agency-site:complete-photobooth', ['workspace_uid' => $agency->uid, '--apply' => true])->assertSuccessful();
+        $this->assertSame($before, $site->fresh()->config, 'idempotent');
+
+        // Once the owner publishes: full original homepage + calendar + their testimonial, still no pricing/signup.
+        $sites->publish((int) $owner->user_id, $agency);
+        $html = $this->get('/photobooth')->assertOk()->getContent();
+        $this->assertStringContainsString('class="mg mg-home mg-book-demo"', $html, 'home calendar keeps the scoped scheduler layout and state styles');
+        $this->assertStringContainsString('book-demo.css', $html);
+        $own = route('public.booking.show', $type->public_booking_uuid);
+        $this->assertStringContainsString('<h1 id="hero-h" class="hero-h1">More bookings.', $html);
+        $this->assertStringContainsString('data-role="public-scheduler"', $html);
+        $this->assertStringContainsString('id="book"', $html);
+        $this->assertStringContainsString('Owner headline', $html);
+        $this->assertStringContainsString('Owner approved quote.', $html);
+        $this->assertSame(1, substr_count($html, 'id="pb-app"'));
+        $this->assertStringContainsString('href="' . url('photobooth') . '#book"', $html, 'Book a Call goes to the on-page calendar');
+        $this->assertStringNotContainsString('calendar.example', $html);
+        $this->assertDoesNotMatchRegularExpression('/Get started|See pricing|Compare plans|free trial|\bsign up\b/i', $this->text($html));
+        foreach ($this->hrefs($html) as $href) {
+            $this->assertStringNotContainsString('/pricing', $href);
+            $this->assertStringNotContainsString('/register', $href);
+        }
+
+        // The platform homepage is unchanged: no calendar section.
+        $home = $this->get('/')->assertOk()->getContent();
+        $this->assertStringNotContainsString('data-role="public-scheduler"', $home);
+        $this->assertStringNotContainsString('data-role="consultation"', $home);
+    }
 }
