@@ -1379,10 +1379,10 @@
 
         contactFields.on('change', function () {
             let selectedValues = contactFields.val();
-            selectAllButtons.html('<x-ds-icon name="check-square" /> {{__('locale.labels.select_all')}}');
+            selectAllButtons.html(feather.icons['check-square'].toSvg() + ' ' + @json(__('locale.labels.select_all')));
 
             if (contactFields.find('option:selected').length === contactFields.find('option').length) {
-                selectAllButtons.html('<x-ds-icon name="square" /> {{__('locale.labels.unselect_all')}}');
+                selectAllButtons.html(feather.icons['square'].toSvg() + ' ' + @json(__('locale.labels.unselect_all')));
             }
             feather.replace();
 
@@ -1402,7 +1402,7 @@
 
                 // uncheck 'include phone' checkbox
                 includePhone.prop('checked', false)
-                $(buttonElement).html('<x-ds-icon name="check-square" /> {{__('locale.labels.select_all')}}');
+                $(buttonElement).html(feather.icons['check-square'].toSvg() + ' ' + @json(__('locale.labels.select_all')));
                 feather.replace();
             } else {
                 // Select all options
@@ -1413,7 +1413,7 @@
 
                 // check 'include phone' checkbox
                 includePhone.prop('checked', true)
-                $(buttonElement).html('<x-ds-icon name="square" /> {{__('locale.labels.unselect_all')}}');
+                $(buttonElement).html(feather.icons['square'].toSvg() + ' ' + @json(__('locale.labels.unselect_all')));
                 feather.replace();
             }
             // Trigger change event to update Select2
