@@ -305,6 +305,20 @@ class SmtpGatewayTest extends TestCase
             $this->assertTrue($e->isAmbiguous());
         }
 
+        foreach ([
+            'cURL error 52: Empty reply from server',
+            'cURL error 56: Recv failure: Connection reset by peer',
+        ] as $postDispatchError) {
+            $this->override = fn () => throw new ConnectionException($postDispatchError);
+            try {
+                $this->provider()->send($this->blob(), $this->outbound());
+                $this->fail();
+            } catch (BusinessEmailProviderException $e) {
+                $this->assertSame(Category::TemporaryProviderFailure, $e->category);
+                $this->assertTrue($e->isAmbiguous(), 'a lost gateway response must never trigger a duplicate email');
+            }
+        }
+
         $this->override = fn () => Http::response('boom', 502);
         try {
             $this->provider()->send($this->blob(), $this->outbound());
