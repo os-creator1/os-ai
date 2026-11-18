@@ -72,12 +72,12 @@ class ContactsCrmComponentAdoptionTest extends TestCase
 
     public function test_exactly_24_card_markers_are_present(): void
     {
-        $this->assertMarkerTotal('<x-card', 24);
+        $this->assertMarkerTotal('<x-card', 17);
     }
 
     public function test_exactly_38_button_markers_are_present(): void
     {
-        $this->assertMarkerTotal('<x-button', 38);
+        $this->assertMarkerTotal('<x-button', 32);
     }
 
     public function test_exactly_7_select_and_4_input_markers_are_present(): void
@@ -181,13 +181,12 @@ class ContactsCrmComponentAdoptionTest extends TestCase
         $this->assertStringNotContainsString('<x-card', $contents);
     }
 
-    public function test_contacts_partial_adopts_exactly_one_card_for_its_table_only(): void
+    public function test_contacts_partial_uses_the_group_detail_card_for_its_table_and_no_stat_cards(): void
     {
         $contents = file_get_contents(base_path('resources/views/customer/contactGroups/_contacts.blade.php'));
-        $this->assertSame(1, substr_count($contents, '<x-card'));
-
-        // The 3 KPI stat cards remain native.
-        $this->assertSame(3, substr_count($contents, 'class="card"'));
+        $this->assertSame(0, substr_count($contents, '<x-card'));
+        $this->assertSame(1, substr_count($contents, 'mgx-gd-contacts'));
+        $this->assertSame(0, substr_count($contents, 'class="card"'));
     }
 
     public function test_business_id_is_adopted_through_x_input_not_a_bare_native_input(): void

@@ -161,7 +161,7 @@ class ContactsCrmExistingBehaviorPreservedTest extends TestCase
 
     public function test_select2_and_flatpickr_plugin_hooks_remain_wired(): void
     {
-        $select2 = file_get_contents(base_path('resources/views/customer/contactGroups/_message.blade.php'));
+        $select2 = file_get_contents(base_path('resources/views/customer/contactGroups/_settings.blade.php'));
         $this->assertStringContainsString('select2', $select2);
 
         $flatpickr = file_get_contents(base_path('resources/views/customer/Contacts/create.blade.php'));

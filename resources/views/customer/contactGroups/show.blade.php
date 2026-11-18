@@ -16,6 +16,9 @@
 @section('page-style')
 
     <link rel="stylesheet" href="{{ asset(mix('css/base/plugins/forms/pickers/form-flat-pickr.css')) }}">
+    <link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="{{ asset('css/crm/mgx-contacts.css') }}?v=1">
+    <link rel="stylesheet" href="{{ asset('css/crm/mgx-group-detail.css') }}?v=1">
 
     <style>
         .customized_select2 .select2-selection--single {
@@ -33,203 +36,70 @@
 
 @section('content')
 
-    <section id="nav-justified">
-        <div class="row">
-            <div class="col-12">
+    @php
+        $gdTab = old('tab');
+        $gdKeywordsActive = in_array($gdTab, ['opt_in_keywords', 'opt_out_keywords', 'keywords'], true);
+        $gdCanContacts = auth()->user()->can('view_contact');
+        $gdCanManage = auth()->user()->can('update_contact_group');
+        $gdCanImport = auth()->user()->can('create_contact_group');
+        // The first tab the actor may see is the landing tab, as before.
+        $gdFirst = $gdCanContacts ? 'contact' : ($gdCanManage ? 'settings' : ($gdCanImport ? 'import_history' : null));
+        $gdActive = $gdTab === null || $gdTab === '' ? $gdFirst : ($gdKeywordsActive ? 'keywords' : $gdTab);
+    @endphp
 
-                <ul class="nav nav-pills mb-2 text-uppercase" role="tablist">
+    <section id="nav-justified" class="mgx-contacts mgx-gd">
+        @include('customer.contactGroups._group_header')
 
-                    {{-- contact --}}
-                    @can('view_contact')
-                        <li class="nav-item">
-                            <a class="nav-link @if (old('tab') == 'contact' || old('tab') == null) active @endif"
-                               id="contact-tab-justified"
-                               data-bs-toggle="tab"
-                               href="#contact"
-                               role="tab"
-                               aria-controls="contact"
-                               aria-selected="true">
-                                <x-ds-icon name="users" /> {{ __('locale.contacts.contacts') }}
-                            </a>
-                        </li>
-                    @endcan
+        {{-- Tab panes --}}
+        <div class="tab-content mgx-gd-panes">
 
-                    @can('update_contact_group')
-                        <li class="nav-item">
-                            <a class="nav-link {{ old('tab') == 'settings' ? 'active':null }}"
-                               id="settings-tab-justified"
-                               data-bs-toggle="tab"
-                               href="#settings"
-                               role="tab"
-                               aria-controls="settings"
-                               aria-selected="true">
-                                <x-ds-icon name="settings" /> {{ __('locale.labels.settings') }}
-                            </a>
-                        </li>
-                    @endcan
-
-
-                    {{-- settings --}}
-                    @can('update_contact_group')
-
-                        {{-- message --}}
-                        <li class="nav-item">
-                            <a class="nav-link {{ old('tab') == 'message' ? 'active':null }}"
-                               id="message-tab-justified"
-                               data-bs-toggle="tab"
-                               href="#message"
-                               role="tab"
-                               aria-controls="message"
-                               aria-selected="true">
-                                <x-ds-icon name="message-circle" /> {{ __('locale.labels.message') }}
-                            </a>
-                        </li>
-
-                        {{--Version 3.9--}}
-                        {{-- Segments --}}
-                        {{--                        <li class="nav-item">--}}
-                        {{--                            <a class="nav-link {{ old('tab') == 'segments' ? 'active':null }}"--}}
-                        {{--                               id="segments-tab-justified"--}}
-                        {{--                               data-bs-toggle="tab"--}}
-                        {{--                               href="#segments"--}}
-                        {{--                               role="tab"--}}
-                        {{--                               aria-controls="segments"--}}
-                        {{--                               aria-selected="true">--}}
-                        {{--                                <x-ds-icon name="server" /> {{ __('locale.labels.segments') }}--}}
-                        {{--                            </a>--}}
-                        {{--                        </li>--}}
-
-                        {{-- Manage Fields --}}
-                        <li class="nav-item">
-                            <a class="nav-link {{ old('tab') == 'fields' ? 'active':null }}"
-                               id="fields-tab-justified"
-                               data-bs-toggle="tab"
-                               href="#fields"
-                               role="tab"
-                               aria-controls="fields"
-                               aria-selected="true">
-                                <x-ds-icon name="edit-3" /> {{ __('locale.labels.manage_fields') }}
-                            </a>
-                        </li>
-                        {{--End Version 3.9--}}
-
-                        {{-- opt in keywords --}}
-                        <li class="nav-item dropdown">
-
-                            <a class="nav-link dropdown-toggle" data-bs-toggle="dropdown" href="#" role="button"
-                               aria-expanded="false"><x-ds-icon name="hash" /> {{ __('locale.menu.Keywords') }}</a>
-                            <ul class="dropdown-menu">
-                                <li>
-                                    <a class="nav-link dropdown-item {{ old('tab') == 'opt_in_keywords' ? 'active':null }}"
-                                       id="opt_in_keywords-tab-justified"
-                                       data-bs-toggle="tab"
-                                       href="#opt_in_keywords"
-                                       role="tab"
-                                       aria-controls="opt_in_keywords"
-                                       aria-selected="true">
-                                        <x-ds-icon name="user-check" /> {{ __('locale.contacts.opt_in_keywords') }}
-                                    </a></li>
-
-                                <li>
-                                    <a class="nav-link dropdown-item {{ old('tab') == 'opt_out_keywords' ? 'active':null }}"
-                                       id="opt_out_keywords-tab-justified"
-                                       data-bs-toggle="tab"
-                                       href="#opt_out_keywords"
-                                       role="tab"
-                                       aria-controls="opt_out_keywords"
-                                       aria-selected="true">
-                                        <x-ds-icon name="user-minus" /> {{ __('locale.contacts.opt_out_keywords') }}
-                                    </a></li>
-                            </ul>
-
-                        </li>
-
-                    @endcan
-
-                    {{-- import history --}}
-                    @can('create_contact_group')
-                        <li class="nav-item">
-                            <a class="nav-link {{ old('tab') == 'import_history' ? 'active':null }}"
-                               id="import-history-tab-justified"
-                               data-bs-toggle="tab"
-                               href="#import-history"
-                               role="tab"
-                               aria-controls="import-history"
-                               aria-selected="true">
-                                <x-ds-icon name="pie-chart" /> {{ __('locale.contacts.import_history') }}
-                            </a>
-                        </li>
-                    @endcan
-
-                </ul>
-
-                {{-- Tab panes --}}
-                <div class="tab-content pt-1">
-
-
-                    {{-- cotnacts --}}
-                    @can('view_contact')
-                        <div class="tab-pane @if (old('tab') == 'contact' || old('tab') == null) active @endif"
-                             id="contact" role="tabpanel" aria-labelledby="contact-tab-justified">
-                            @include('customer.contactGroups._contacts')
-                        </div>
-                    @endcan
-
-                    @can('update_contact_group')
-                        <div class="tab-pane {{ old('tab') == 'settings' ? 'active':null }}" id="settings"
-                             role="tabpanel" aria-labelledby="settings-tab-justified">
-                            @include('customer.contactGroups._settings')
-                        </div>
-                    @endcan
-
-
-                    {{-- settings --}}
-                    @can('update_contact_group')
-                        {{-- message --}}
-                        <div class="tab-pane {{ old('tab') == 'message' ? 'active':null }}" id="message" role="tabpanel"
-                             aria-labelledby="message-tab-justified">
-                            @include('customer.contactGroups._message')
-                        </div>
-
-                        {{--Version 3.9--}}
-                        {{-- segments --}}
-                        <div class="tab-pane {{ old('tab') == 'segments' ? 'active':null }}" id="segments"
-                             role="tabpanel" aria-labelledby="segments-tab-justified">
-                            @include('customer.contactGroups._segments')
-                        </div>
-
-                        {{-- Manage Fields --}}
-                        <div class="tab-pane {{ old('tab') == 'fields' ? 'active':null }}" id="fields"
-                             role="tabpanel" aria-labelledby="fields-tab-justified">
-                            @include('customer.contactGroups._fields')
-                        </div>
-                        {{--End Version 3.9--}}
-
-
-                        {{-- opt in keywords --}}
-                        <div class="tab-pane {{ old('tab') == 'opt_in_keywords' ? 'active':null }}" id="opt_in_keywords"
-                             role="tabpanel" aria-labelledby="opt_in_keywords-tab-justified">
-                            @include('customer.contactGroups._opt_in_keywords')
-                        </div>
-
-                        {{-- opt in out keywords --}}
-                        <div class="tab-pane {{ old('tab') == 'opt_out_keywords' ? 'active':null }}"
-                             id="opt_out_keywords" role="tabpanel" aria-labelledby="opt_out_keywords-tab-justified">
-                            @include('customer.contactGroups._opt_out_keywords')
-                        </div>
-                    @endcan
-
-                    {{-- import history --}}
-                    @can('create_contact_group')
-                        <div class="tab-pane {{ old('tab') == 'import_history' ? 'active':null }}" id="import-history"
-                             role="tabpanel" aria-labelledby="import-history-tab-justified">
-                            @include('customer.contactGroups._import_history')
-                        </div>
-                    @endcan
-
-
+            {{-- contacts --}}
+            @can('view_contact')
+                <div class="tab-pane @if ($gdActive === 'contact') active @endif"
+                     id="contact" role="tabpanel" aria-labelledby="contact-tab-justified">
+                    @include('customer.contactGroups._contacts')
                 </div>
-            </div>
+            @endcan
+
+            @can('update_contact_group')
+                {{-- message --}}
+                <div class="tab-pane @if ($gdActive === 'message') active @endif" id="message" role="tabpanel"
+                     aria-labelledby="message-tab-justified">
+                    @include('customer.contactGroups._message')
+                </div>
+
+                {{-- manage fields --}}
+                <div class="tab-pane @if ($gdActive === 'fields') active @endif" id="fields"
+                     role="tabpanel" aria-labelledby="fields-tab-justified">
+                    @include('customer.contactGroups._fields')
+                </div>
+
+                {{-- keywords: join and leave share one tab --}}
+                <div class="tab-pane @if ($gdActive === 'keywords') active @endif" id="keywords"
+                     role="tabpanel" aria-labelledby="keywords-tab-justified">
+                    <div data-kw-pane="opt_in_keywords" @if ($gdTab === 'opt_out_keywords') hidden @endif>
+                        @include('customer.contactGroups._opt_in_keywords')
+                    </div>
+                    <div data-kw-pane="opt_out_keywords" @if ($gdTab !== 'opt_out_keywords') hidden @endif>
+                        @include('customer.contactGroups._opt_out_keywords')
+                    </div>
+                </div>
+
+                {{-- settings --}}
+                <div class="tab-pane @if ($gdActive === 'settings') active @endif" id="settings"
+                     role="tabpanel" aria-labelledby="settings-tab-justified">
+                    @include('customer.contactGroups._settings')
+                </div>
+            @endcan
+
+            {{-- import history --}}
+            @can('create_contact_group')
+                <div class="tab-pane @if ($gdActive === 'import_history') active @endif" id="import-history"
+                     role="tabpanel" aria-labelledby="import-history-tab-justified">
+                    @include('customer.contactGroups._import_history')
+                </div>
+            @endcan
+
         </div>
     </section>
 
@@ -1570,4 +1440,123 @@
         }
 
     </script>
+
+    {{-- Group Details presentation behaviour: every control below drives an existing route or form. --}}
+    <script>
+        (function () {
+            'use strict';
+            var root = document.getElementById('nav-justified');
+            if (!root) { return; }
+
+            // Links such as "Edit the message" open the matching tab.
+            root.addEventListener('click', function (event) {
+                var go = event.target.closest('[data-goto-tab]');
+                if (!go) { return; }
+                event.preventDefault();
+                var tab = document.getElementById(go.getAttribute('data-goto-tab').replace(/_/g, '-') + '-tab-justified');
+                if (tab) { tab.click(); }
+            });
+
+            // Join / Leave keywords share one tab.
+            root.addEventListener('click', function (event) {
+                var btn = event.target.closest('[data-kw-show]');
+                if (!btn) { return; }
+                var want = btn.getAttribute('data-kw-show');
+                root.querySelectorAll('[data-kw-pane]').forEach(function (pane) {
+                    pane.hidden = pane.getAttribute('data-kw-pane') !== want;
+                });
+            });
+
+            // Copy the sign-up / leave links.
+            root.addEventListener('click', function (event) {
+                var btn = event.target.closest('[data-copy-target]');
+                if (!btn) { return; }
+                var input = root.querySelector(btn.getAttribute('data-copy-target'));
+                if (!input) { return; }
+                var done = function () {
+                    var label = btn.querySelector('[data-copy-label]');
+                    if (!label) { return; }
+                    var original = label.textContent;
+                    label.textContent = 'Copied';
+                    setTimeout(function () { label.textContent = original; }, 1600);
+                };
+                if (navigator.clipboard && navigator.clipboard.writeText) {
+                    navigator.clipboard.writeText(input.value).then(done, function () { input.select(); document.execCommand('copy'); done(); });
+                } else {
+                    input.select(); document.execCommand('copy'); done();
+                }
+            });
+
+            // Message editor: insert existing personalisation tags and show the SMS length.
+            var message = document.getElementById('text_message');
+            var counter = root.querySelector('[data-role="message-count"]');
+            var gsm = /^[\x20-\x7E\n\r€£¥èéùìòÇØøÅåΔ_ΦΓΛΩΠΨΣΘΞÆæßÉ¤¡ÄÖÑÜ§¿äöñüà]*$/;
+            function updateCount() {
+                if (!message || !counter) { return; }
+                var text = message.value, length = text.length, single = gsm.test(text) ? 160 : 70, multi = single === 160 ? 153 : 67;
+                var parts = length === 0 ? 0 : (length <= single ? 1 : Math.ceil(length / multi));
+                counter.textContent = length + ' / ' + (parts <= 1 ? single : parts * multi) + ' · ' + parts + (parts === 1 ? ' text' : ' texts');
+            }
+            if (message) {
+                message.addEventListener('input', updateCount);
+                if (window.jQuery) { window.jQuery(document).on('ajaxComplete', updateCount); }
+                updateCount();
+            }
+            root.addEventListener('click', function (event) {
+                var chip = event.target.closest('[data-insert-tag]');
+                if (!chip || !message) { return; }
+                var at = message.selectionStart === undefined ? message.value.length : message.selectionStart;
+                var end = message.selectionEnd === undefined ? at : message.selectionEnd;
+                var tag = '{' + chip.getAttribute('data-insert-tag') + '}';
+                message.value = message.value.substring(0, at) + tag + message.value.substring(end);
+                message.focus();
+                message.setSelectionRange(at + tag.length, at + tag.length);
+                updateCount();
+            });
+
+            // Import template: the group's own field labels as a CSV header row.
+            root.addEventListener('click', function (event) {
+                var btn = event.target.closest('[data-role="imports-template"]');
+                if (!btn) { return; }
+                var headers = [];
+                try { headers = JSON.parse(btn.getAttribute('data-template-headers') || '[]'); } catch (e) { headers = []; }
+                var csv = headers.map(function (h) { return '"' + String(h).replace(/"/g, '""') + '"'; }).join(',') + '\r\n';
+                var link = document.createElement('a');
+                link.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
+                link.download = btn.getAttribute('data-template-name') || 'contacts-template.csv';
+                document.body.appendChild(link);
+                link.click();
+                link.remove();
+                setTimeout(function () { URL.revokeObjectURL(link.href); }, 1000);
+            });
+
+            // Delete the group: always behind a confirmation, via the existing destroy route.
+            root.addEventListener('click', function (event) {
+                var btn = event.target.closest('[data-role="group-delete"]');
+                if (!btn) { return; }
+                Swal.fire({
+                    title: @json(__('locale.labels.are_you_sure')),
+                    text: @json(__('locale.labels.able_to_revert')),
+                    icon: 'warning',
+                    showCancelButton: true,
+                    confirmButtonText: @json(__('locale.labels.delete_it')),
+                    customClass: { confirmButton: 'btn btn-primary', cancelButton: 'btn btn-outline-danger ms-1' },
+                    buttonsStyling: false
+                }).then(function (result) {
+                    if (!result.value) { return; }
+                    var body = new FormData();
+                    body.append('_token', @json(csrf_token()));
+                    body.append('_method', 'DELETE');
+                    fetch(btn.getAttribute('data-delete-url'), { method: 'POST', body: body, credentials: 'same-origin', headers: { 'Accept': 'application/json', 'X-Requested-With': 'XMLHttpRequest' } })
+                        .then(function (r) { return r.json(); })
+                        .then(function (data) {
+                            if (data.status === 'success') { window.location.href = btn.getAttribute('data-back-url'); return; }
+                            toastr.warning(data.message || @json(__('locale.exceptions.something_went_wrong')));
+                        })
+                        .catch(function () { toastr.warning(@json(__('locale.exceptions.something_went_wrong'))); });
+                });
+            });
+        })();
+    </script>
+
 @endsection

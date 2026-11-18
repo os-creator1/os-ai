@@ -1,15 +1,13 @@
-<div class="row">
-
-    <x-card>
-            <div class="col-md-7 col-12 settings">
-                <form class="form form-vertical" action="{{ \App\Library\CrmRouting::route('contacts.update', $contact->uid) }}" method="post">
+<div class="mgx-gd-settings">
+    <section class="mgx-card mgx-gd-card mgx-gd-form">
+                <form class="mgx-gd-stack settings" action="{{ \App\Library\CrmRouting::route('contacts.update', $contact->uid) }}" method="post">
                     {{ method_field('PUT') }}
                     @csrf
                     <div class="row">
 
                         <div class="col-12">
                             <div class="mb-1">
-                                <label for="name" class="form-label required">{{__('locale.labels.name')}}</label>
+                                <label for="name" class="form-label required">Group name</label>
                                 <input type="text" id="name" class="form-control @error('name') is-invalid @enderror" value="{{ $contact->name }}" name="name" required>
                                 @error('name')
                                 <div class="invalid-feedback">
@@ -87,82 +85,51 @@
 
                     </div>
 
-                    <div class="row">
-                        <div class="col-12">
-                            <div class="divider divider-left divider-primary">
-                                <div class="divider-text text-uppercase fw-bold text-primary">{{ __('locale.labels.settings') }}</div>
+                    <div class="mgx-gd-auto">
+                        <span class="mgx-gd-eyebrow">Automatic texts</span>
+                        <div class="mgx-gd-autorow">
+                            <div>
+                                <b>{{ __('locale.contacts.send_welcome_message') }}?</b>
+                                <span>{!! __('locale.contacts.send_welcome_message_description') !!} <a href="#message" class="mgx-link" data-goto-tab="message">Edit the message</a></span>
                             </div>
+                            <label class="mgx-switch" for="send_welcome_sms">
+                                <input type="checkbox" name="send_welcome_sms" value="1" {{ $contact->send_welcome_sms == 1 ? 'checked': null  }} id="send_welcome_sms">
+                                <span class="mgx-switch-ui"></span><span class="visually-hidden">{{ __('locale.contacts.send_welcome_message') }}</span>
+                            </label>
                         </div>
+                        <div class="mgx-gd-autorow">
+                            <div>
+                                <b>{{ __('locale.contacts.send_unsubscribe_notification') }}?</b>
+                                <span>{!! __('locale.contacts.send_unsubscribe_notification_description') !!}</span>
+                            </div>
+                            <label class="mgx-switch" for="unsubscribe_notification">
+                                <input type="checkbox" name="unsubscribe_notification" value="1" {{ $contact->unsubscribe_notification == 1 ? 'checked': null  }} id="unsubscribe_notification">
+                                <span class="mgx-switch-ui"></span><span class="visually-hidden">{{ __('locale.contacts.send_unsubscribe_notification') }}</span>
+                            </label>
+                        </div>
+                        @can('view_keywords')
+                            <div class="mgx-gd-autorow">
+                                <div>
+                                    <b>{{ __('locale.contacts.send_keyword_message') }}?</b>
+                                    <span>{!! __('locale.contacts.send_keyword_message_description') !!} <a href="#keywords" class="mgx-link" data-goto-tab="keywords">{{ __('locale.menu.Keywords') }}</a></span>
+                                </div>
+                                <label class="mgx-switch" for="send_keyword_message">
+                                    <input type="checkbox" name="send_keyword_message" value="1" {{ $contact->send_keyword_message == 1 ? 'checked': null  }} id="send_keyword_message">
+                                    <span class="mgx-switch-ui"></span><span class="visually-hidden">{{ __('locale.contacts.send_keyword_message') }}</span>
+                                </label>
+                            </div>
+                        @endcan
                     </div>
 
-                    <div class="row">
-
-                        <div class="col-10">
-                            <p class="mb-0 text-primary">{{ __('locale.contacts.send_welcome_message') }}?</p>
-                            <p><small class="">{!! __('locale.contacts.send_welcome_message_description') !!}</small></p>
-                        </div>
-
-                        <div class="col-2">
-                            <div class="mb-1">
-                                <div class="form-check form-switch form-check-primary form-switch-md">
-                                    <input type="checkbox" name="send_welcome_sms" value="1" {{ $contact->send_welcome_sms == 1 ? 'checked': null  }} class="form-check-input" id="send_welcome_sms">
-                                    <label class="form-check-label" for="send_welcome_sms">
-                                        <span class="switch-text-left">{{ __('locale.labels.yes') }}</span>
-                                        <span class="switch-text-right">{{ __('locale.labels.no') }}</span>
-                                    </label>
-                                </div>
-                            </div>
-                        </div>
-
-                    </div>
-
-                    <div class="row mt-2">
-                        <div class="col-10">
-                            <p class="mb-0 text-primary">{{ __('locale.contacts.send_unsubscribe_notification') }}?</p>
-                            <p><small class="">{!! __('locale.contacts.send_unsubscribe_notification_description') !!}</small></p>
-
-                        </div>
-                        <div class="col-2">
-                            <div class="mb-1">
-                                <div class="form-check form-switch form-check-primary form-switch-md">
-                                    <input type="checkbox" name="unsubscribe_notification" value="1" {{ $contact->unsubscribe_notification == 1 ? 'checked': null  }}  class="form-check-input" id="unsubscribe_notification">
-                                    <label class="form-check-label" for="unsubscribe_notification">
-                                        <span class="switch-text-left">{{ __('locale.labels.yes') }}</span>
-                                        <span class="switch-text-right">{{ __('locale.labels.no') }}</span>
-                                    </label>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-
-                    @can('view_keywords')
-                        <div class="row mt-2">
-                            <div class="col-10">
-                                <p class="mb-0 text-primary">{{ __('locale.contacts.send_keyword_message') }}?</p>
-                                <p><small class="">{!! __('locale.contacts.send_keyword_message_description') !!}</small> <a href="#" class="text-danger small">{{ __('locale.menu.Keywords') }}</a></p>
-
-                            </div>
-                            <div class="col-2">
-                                <div class="mb-1">
-                                    <div class="form-check form-switch form-check-primary form-switch-md">
-                                        <input type="checkbox" name="send_keyword_message" value="1" {{ $contact->send_keyword_message == 1 ? 'checked': null  }}  class="form-check-input" id="send_keyword_message">
-                                        <label class="form-check-label" for="send_keyword_message">
-                                            <span class="switch-text-left">{{ __('locale.labels.yes') }}</span>
-                                            <span class="switch-text-right">{{ __('locale.labels.no') }}</span>
-                                        </label>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                    @endcan
-
-                    <div class="row mt-2">
-                        <div class="col-12">
-                            <x-button type="submit" icon="save" class="mb-1">{{__('locale.buttons.save')}}</x-button>
-                        </div>
+                    <div class="mgx-gd-actions">
+                        <button type="submit" class="mgx-btn is-primary">{{ __('locale.buttons.save_changes') }}</button>
                     </div>
                 </form>
-            </div>
-    </x-card>
+    </section>
 
+    @can('delete_contact_group')
+        <button type="button" class="mgx-gd-delete" data-role="group-delete"
+                data-delete-url="{{ \App\Library\CrmRouting::route('contacts.destroy', $contact->uid) }}"
+                data-back-url="{{ \App\Library\CrmRouting::route('contacts.index') }}">Delete this group</button>
+    @endcan
 </div>

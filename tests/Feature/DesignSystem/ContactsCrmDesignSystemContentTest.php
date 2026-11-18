@@ -145,18 +145,18 @@ class ContactsCrmDesignSystemContentTest extends TestCase
         $this->assertStringContainsString('@section(\'page-script\')', $contents);
     }
 
-    public function test_contact_group_show_has_exactly_8_live_partial_includes_and_segments_remains_commented(): void
+    public function test_contact_group_show_has_exactly_8_live_partial_includes_including_the_shared_group_header(): void
     {
         $contents = file_get_contents(base_path('resources/views/customer/contactGroups/show.blade.php'));
 
         $this->assertSame(8, substr_count($contents, '@include('));
 
-        foreach (['_contacts', '_settings', '_message', '_segments', '_fields', '_opt_in_keywords', '_opt_out_keywords', '_import_history'] as $partial) {
+        foreach (['_group_header', '_contacts', '_settings', '_message', '_fields', '_opt_in_keywords', '_opt_out_keywords', '_import_history'] as $partial) {
             $this->assertStringContainsString("@include('customer.contactGroups.{$partial}')", $contents);
         }
 
-        // The nav-tab link to the segments pane stays commented out.
-        $this->assertStringContainsString('{{--                        <li class="nav-item">--}}', $contents);
+        // The segments pane is gone from the page; its (empty) partial file stays.
+        $this->assertStringNotContainsString('_segments', $contents);
     }
 
     public function test_all_three_native_paginator_links_calls_remain(): void
