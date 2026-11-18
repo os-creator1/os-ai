@@ -121,6 +121,7 @@ final class OutreachContactGroupBridge
         return ContactGroups::query()
             ->where('id', (int) $campaign->contact_group_id)
             ->where('business_id', (int) $business->id)
+            ->where('status', 1)
             ->first();
     }
 
