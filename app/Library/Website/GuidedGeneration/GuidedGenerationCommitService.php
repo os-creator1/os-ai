@@ -540,8 +540,8 @@ final class GuidedGenerationCommitService
     /**
      * Bounded, sequential, multi-batch generation of the COMPLETE plan.
      *
-     *  - The plan is split deterministically (GenerationBatchPlanner) into batches of at most MAX_PAGES_PER_BATCH pages,
-     *    written one provider request at a time. Provider calls stay OUTSIDE any database transaction.
+     *  - The plan is split deterministically (GenerationBatchPlanner::plan) into batches of at most MAX_PAGES_PER_BATCH pages that
+     *    each also fit the route's input-token limit (with 5% headroom), written one provider request at a time. Provider calls stay OUTSIDE any database transaction.
      *  - Every request is told the whole site's page paths, so an internal link may point at a page of another batch.
      *  - A batch is validated against ITS OWN plan (exact coverage of its pages), with the complete plan as the link
      *    universe; the accepted pages so far are then re-validated together with it, so duplicate metadata and near-identical
@@ -558,14 +558,15 @@ final class GuidedGenerationCommitService
      */
     private function generateAndValidate(Business $business, array $aiPlan, array $prohibitedClaims, string $idempotencyKey, int $websiteId = 0, ?int $attemptId = null): array
     {
-        $refusal = GenerationBatchPlanner::refusal($aiPlan, WebsitePageStrategy::MAX_PAGES_PER_GENERATION);
-        if ($refusal !== null) {
+        // Size-aware preflight (no AI call): batches are fitted to the real prompt size, or the plan is refused before any spend.
+        $fit = GenerationBatchPlanner::plan($business, $aiPlan, $this->client);
+        if ($fit['batches'] === null) {
             GenerationBatchDiagnostics::log($websiteId, $attemptId, 0, GenerationBatchDiagnostics::STAGE_PLAN_OVER_BUDGET, count($aiPlan));
 
-            return [null, 0, $refusal];
+            return [null, 0, $fit['refusal']];
         }
 
-        $batches = GenerationBatchPlanner::batches($aiPlan);
+        $batches = $fit['batches'];
         $multi = count($batches) > 1;
         $requests = 0;
         $retries = 0;

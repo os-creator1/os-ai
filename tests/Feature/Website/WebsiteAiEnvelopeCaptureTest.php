@@ -297,10 +297,14 @@ class WebsiteAiEnvelopeCaptureTest extends TestCase
     {
         [$business, , , $plan] = $this->buildMaximalBusinessFixture();
         $aiPlan = WebsitePageStrategy::withoutAiUnfillableSections($plan);
-        $batches = GenerationBatchPlanner::batches($aiPlan);
+        $fit = GenerationBatchPlanner::plan($business, $aiPlan, app(GuidedWebsiteGenerationClient::class));
+        $this->assertNull($fit['refusal'], 'The maximal site must be plannable within the input budget.');
+        $batches = $fit['batches'];
 
         $this->assertLessThanOrEqual(WebsitePageStrategy::MAX_PAGES_PER_GENERATION, count($plan));
         $this->assertGreaterThan(1, count($batches), 'The maximal site must exercise the multi-batch path.');
+        $this->assertSame(array_column($aiPlan, 'page_key'), array_merge(...array_map(fn ($b) => array_column($b, 'page_key'), $batches)), 'Every planned page is in exactly one batch, in plan order.');
+        $this->assertLessThanOrEqual(GenerationBatchPlanner::MAX_AI_REQUESTS_PER_GENERATION, count($batches));
 
         $this->fakeClient->setDefaultResult(\App\Library\Ai\AiCompletionResult::success(
             content: json_encode(['pages' => []]),
@@ -313,11 +317,15 @@ class WebsiteAiEnvelopeCaptureTest extends TestCase
         $buildMessages = new \ReflectionMethod($client, 'buildMessages');
         $buildMessages->setAccessible(true);
         $diagnostics = [];
+        $written = 0;
         foreach ($batches as $index => $batch) {
-            $messages = $buildMessages->invoke($client, $business, $batch, $aiPlan, []);
+            // Worst case for later batches: every earlier page already has a maximum-length SEO title listed in the prompt.
+            $usedTitles = array_fill(0, min($written, GuidedWebsiteGenerationClient::MAX_USED_TITLES), str_repeat('t', 70));
+            $messages = $buildMessages->invoke($client, $business, $batch, $aiPlan, $usedTitles);
             $estimatedInput = app(AiModelRouter::class)->estimateInputTokens($messages);
             $before = count($this->fakeClient->requests());
-            $client->generate($business, $batch, null, 'max-questionnaire-proof:b' . ($index + 1) . ':retry0', $aiPlan);
+            $client->generate($business, $batch, null, 'max-questionnaire-proof:b' . ($index + 1) . ':retry0', $aiPlan, $usedTitles);
+            $written += count($batch);
             $diagnostics[] = [
                 'batch' => $index + 1,
                 'estimated_input' => $estimatedInput,
@@ -332,6 +340,7 @@ class WebsiteAiEnvelopeCaptureTest extends TestCase
         foreach ($requests as $index => $request) {
             $estimated = app(AiModelRouter::class)->estimateInputTokens($request->messages);
             $ceiling = 12_000;
+            $this->assertLessThanOrEqual(GenerationBatchPlanner::inputTokenLimit(), $estimated, "Batch {$index} input exceeds the 5%-headroom limit: {$estimated} tokens.");
             $this->assertLessThanOrEqual($ceiling, $estimated, "Batch {$index} input exceeds the route budget: {$estimated} tokens.");
             $this->assertGreaterThanOrEqual($ceiling * 0.05, $ceiling - $estimated, "Batch {$index} needs at least 5% input headroom.");
             $this->assertSame(8_000, $request->maxOutputTokens);
@@ -420,9 +429,14 @@ class WebsiteAiEnvelopeCaptureTest extends TestCase
         $prohibitedClaims = \App\Models\BusinessKnowledgeProfile::where('business_id', $business->id)->value('prohibited_claims') ?? [];
         app(GuidedGenerationOutputValidator::class)->validate($representativePages, $aiPlan, $prohibitedClaims);
 
-        $pageBatches = GenerationBatchPlanner::batches($representativePages);
-        $planBatches = GenerationBatchPlanner::batches($aiPlan);
-        $this->assertSame(count($planBatches), count($pageBatches));
+        $planBatches = GenerationBatchPlanner::plan($business, $aiPlan, app(GuidedWebsiteGenerationClient::class))['batches'];
+        $this->assertNotNull($planBatches);
+        $pageBatches = [];
+        $offset = 0;
+        foreach ($planBatches as $planBatch) {
+            $pageBatches[] = array_slice($representativePages, $offset, count($planBatch));
+            $offset += count($planBatch);
+        }
 
         foreach ($pageBatches as $index => $pages) {
             app(GuidedGenerationOutputValidator::class)->validate($pages, $planBatches[$index], $prohibitedClaims, $aiPlan);

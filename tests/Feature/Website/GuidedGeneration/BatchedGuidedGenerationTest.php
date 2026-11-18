@@ -132,6 +132,15 @@ class BatchedGuidedGenerationTest extends TestCase
         return app(GuidedGenerationCommitService::class)->generateFull($business, $website, $template, $customer->user_id, $key, $fence, null, null, null, $areas);
     }
 
+    /** The batches the service will use for this plan: the very same size-aware preflight it runs. */
+    private function expectedBatches($business, array $plan): array
+    {
+        $fit = GenerationBatchPlanner::plan($business, $plan, app(GuidedWebsiteGenerationClient::class));
+        $this->assertNull($fit['refusal'], (string) $fit['refusal']);
+
+        return $fit['batches'];
+    }
+
     private function requestedKeys(): array
     {
         return array_merge(...array_column($this->calls, 'keys'));
@@ -210,7 +219,7 @@ class BatchedGuidedGenerationTest extends TestCase
         $this->assertSame(0, $attempt->retry_count);
         $this->assertSame(count($plan), $website->pages()->count(), 'Every planned page is committed — none is dropped for the old single-request budget.');
 
-        $this->assertCount((int) ceil(count($plan) / GenerationBatchPlanner::MAX_PAGES_PER_BATCH), $this->calls);
+        $this->assertCount(count($this->expectedBatches($business, $plan)), $this->calls);
         foreach ($this->calls as $call) {
             $this->assertLessThanOrEqual(GenerationBatchPlanner::MAX_PAGES_PER_BATCH, count($call['keys']));
             $this->assertSame(GuidedWebsiteGenerationClient::MAX_OUTPUT_TOKENS, $call['max'], 'The provider token budget is unchanged for every request.');
@@ -256,7 +265,7 @@ class BatchedGuidedGenerationTest extends TestCase
     {
         [, $business, $website, $template] = $this->largeBusiness();
         $plan = $this->plan($business, $template, $website);
-        $batch = array_slice($plan, 0, GenerationBatchPlanner::MAX_PAGES_PER_BATCH);
+        $batch = $this->expectedBatches($business, $plan)[0];
         $contact = collect($plan)->firstWhere('page_type', 'contact');
         $pages = array_map(fn ($entry) => $this->defaultPage($entry), $batch);
         $validator = app(GuidedGenerationOutputValidator::class);
@@ -324,7 +333,7 @@ class BatchedGuidedGenerationTest extends TestCase
     {
         [$customer, $business, $website, $template] = $this->largeBusiness();
         $plan = $this->plan($business, $template, $website);
-        $secondBatchFirstKey = $plan[GenerationBatchPlanner::MAX_PAGES_PER_BATCH]['page_key'];
+        $secondBatchFirstKey = $this->expectedBatches($business, $plan)[1][0]['page_key'];
         $this->provider(function (array $entry, int $call) use ($secondBatchFirstKey) {
             if ($entry['page_key'] === 'home') {
                 return $this->defaultPage($entry, ['seo_title' => 'Shared SEO title']);
@@ -339,7 +348,7 @@ class BatchedGuidedGenerationTest extends TestCase
         $this->assertSame(WebsiteGuidedGenerationAttempt::STATUS_SUCCEEDED, $attempt->status, (string) $attempt->failure_reason);
         $this->assertSame(1, $attempt->retry_count);
         $this->assertSame(count($plan), $website->pages()->count());
-        $this->assertCount((int) ceil(count($plan) / GenerationBatchPlanner::MAX_PAGES_PER_BATCH) + 1, $this->calls, 'Exactly one extra request for the one retry.');
+        $this->assertCount(count($this->expectedBatches($business, $plan)) + 1, $this->calls, 'Exactly one extra request for the one retry.');
     }
 
     public function test_near_identical_area_copy_in_different_batches_is_rejected(): void
@@ -349,7 +358,13 @@ class BatchedGuidedGenerationTest extends TestCase
         $plan = $this->plan($business, $template, $website, $areas);
         $areaKeys = array_values(array_filter(array_column($plan, 'page_key'), fn ($k) => str_starts_with($k, 'area:')));
         $this->assertGreaterThanOrEqual(6, count($areaKeys));
-        $batchOf = fn (string $key) => intdiv(array_search($key, array_column($plan, 'page_key'), true), GenerationBatchPlanner::MAX_PAGES_PER_BATCH);
+        $batchNumber = [];
+        foreach ($this->expectedBatches($business, $plan) as $n => $batch) {
+            foreach ($batch as $entry) {
+                $batchNumber[$entry['page_key']] = $n;
+            }
+        }
+        $batchOf = fn (string $key) => $batchNumber[$key];
         $first = $areaKeys[0];
         $last = end($areaKeys);
         $this->assertNotSame($batchOf($first), $batchOf($last), 'Precondition: the two copied area pages are written in different batches.');
@@ -463,6 +478,97 @@ class BatchedGuidedGenerationTest extends TestCase
         $this->assertSame(WebsiteGuidedGenerationAttempt::STATUS_FAILED, $this->generate($customer2, $business2, $website2, $template2)->status);
     }
 
+    // ------------------------------------------------------------------ input-size aware batching
+
+    public function test_every_batch_prompt_fits_the_input_limit_with_headroom_and_no_page_is_lost(): void
+    {
+        [$customer, $business, $website, $template] = $this->largeBusiness();
+        $plan = $this->plan($business, $template, $website);
+        $this->provider();
+
+        $attempt = $this->generate($customer, $business, $website, $template);
+
+        $this->assertSame(WebsiteGuidedGenerationAttempt::STATUS_SUCCEEDED, $attempt->status, (string) $attempt->failure_reason);
+        $this->assertSame(count($plan), $website->pages()->count());
+        $router = app(\App\Library\Ai\AiModelRouter::class);
+        $this->assertSame(11_400, GenerationBatchPlanner::inputTokenLimit());
+        foreach ($this->calls as $i => $call) {
+            $messages = [['role' => 'system', 'content' => $call['system']], ['role' => 'user', 'content' => json_encode($call['payload'])]];
+            // Re-encoding the decoded payload is not byte-identical to what was sent, so allow no more than the 5% headroom itself.
+            $this->assertLessThanOrEqual(12_000, $router->estimateInputTokens($messages), "Request {$i} stays under the route's input ceiling.");
+            $this->assertSame(8_000, $call['max']);
+        }
+    }
+
+    public function test_a_tighter_input_limit_shrinks_batches_without_dropping_or_reordering_pages(): void
+    {
+        $plan = array_map(fn ($i) => ['page_key' => "p{$i}"], range(1, 23));
+        // Fixed overhead 1,000 + 700 per page + 30 per already-written page (the used-titles list grows).
+        $estimate = fn (array $batch, int $prior) => 1_000 + 700 * count($batch) + 30 * min($prior, 30);
+
+        $roomy = GenerationBatchPlanner::fit($plan, $estimate, 11_400, 100);
+        $tight = GenerationBatchPlanner::fit($plan, $estimate, 3_800, 100);
+
+        $this->assertNull($roomy['refusal']);
+        $this->assertNull($tight['refusal']);
+        $this->assertCount(GenerationBatchPlanner::MAX_PAGES_PER_BATCH, $roomy['batches'][0], 'Roomy limit: capped by the per-batch page limit only.');
+        $this->assertLessThan(GenerationBatchPlanner::MAX_PAGES_PER_BATCH, count($tight['batches'][0]), 'A tighter limit shrinks the batch.');
+        $this->assertGreaterThan(count($roomy['batches']), count($tight['batches']));
+        foreach ([$roomy, $tight] as $result) {
+            $this->assertSame(array_column($plan, 'page_key'), array_merge(...array_map(fn ($b) => array_column($b, 'page_key'), $result['batches'])), 'Stable order, nothing lost, nothing repeated.');
+        }
+        $limit = 3_800;
+        $written = 0;
+        foreach ($tight['batches'] as $batch) {
+            $this->assertLessThanOrEqual($limit, $estimate($batch, $written));
+            $written += count($batch);
+        }
+        $this->assertSame($tight, GenerationBatchPlanner::fit($plan, $estimate, 3_800, 100), 'Deterministic: identical input, identical batches (so identical idempotency keys).');
+    }
+
+    public function test_the_planned_batches_for_a_real_business_fit_the_limit_with_worst_case_titles(): void
+    {
+        [, $business, $website, $template] = $this->largeBusiness();
+        $plan = $this->plan($business, $template, $website);
+        $client = app(GuidedWebsiteGenerationClient::class);
+        $facts = $client->canonicalFacts($business);
+
+        $written = 0;
+        foreach ($this->expectedBatches($business, $plan) as $batch) {
+            $this->assertLessThanOrEqual(GenerationBatchPlanner::inputTokenLimit(), $client->estimateInputTokens($business, $batch, $plan, $written, $facts));
+            $written += count($batch);
+        }
+        $this->assertSame(count($plan), $written);
+    }
+
+    public function test_a_plan_whose_prompt_cannot_fit_is_refused_before_any_ai_request(): void
+    {
+        [$customer, $business, $website, $template] = $this->largeBusiness();
+        $this->homePage($website, ['title' => 'Existing Draft Home']);
+        $this->provider();
+        // A ceiling so small that even one page plus the confirmed facts cannot fit.
+        config(['ai.routes.website_generation.max_input_tokens' => 300]);
+
+        $attempt = $this->generate($customer, $business, $website, $template);
+
+        $this->assertSame(WebsiteGuidedGenerationAttempt::STATUS_FAILED, $attempt->status);
+        $this->assertCount(0, $this->calls, 'Refused before any provider request: nothing spent.');
+        $this->assertStringContainsString('cannot be written within the AI input limit', (string) $attempt->failure_reason);
+        $this->assertSame(['Existing Draft Home'], $website->pages()->pluck('title')->all());
+    }
+
+    public function test_a_plan_needing_more_batches_than_the_request_budget_is_refused_before_any_ai_request(): void
+    {
+        $plan = array_map(fn ($i) => ['page_key' => "p{$i}"], range(1, 30));
+
+        // Every page alone fits, but only one page per batch: 30 batches > the 20-request budget.
+        $fit = GenerationBatchPlanner::fit($plan, fn (array $batch) => 100 * count($batch), 100);
+
+        $this->assertNull($fit['batches']);
+        $this->assertStringContainsString('request limit', (string) $fit['refusal']);
+        $this->assertStringContainsString('Nothing was changed', (string) $fit['refusal']);
+    }
+
     // ------------------------------------------------------------------ idempotency, leases, isolation
 
     public function test_a_repeated_submission_converges_on_the_same_attempt_and_makes_no_further_ai_request(): void
@@ -499,6 +605,7 @@ class BatchedGuidedGenerationTest extends TestCase
         $template = WebsiteTemplate::findActiveOrFail('photo_booth_modern');
         $plan = $this->plan($business, $template, $website);
         $this->assertLessThanOrEqual(GenerationBatchPlanner::MAX_PAGES_PER_BATCH, count($plan));
+        $this->assertCount(1, $this->expectedBatches($business, $plan), 'Precondition: a small plan fits one request.');
         $this->provider();
 
         $attempt = $this->generate($customer, $business, $website, $template, 'idem-small');

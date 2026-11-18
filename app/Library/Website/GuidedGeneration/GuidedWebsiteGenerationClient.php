@@ -48,6 +48,12 @@ class GuidedWebsiteGenerationClient
      */
     public const MAX_OUTPUT_TOKENS = 8_000;
 
+    /** At most this many already-used SEO titles are listed in a later batch's prompt. */
+    public const MAX_USED_TITLES = 30;
+
+    /** A used title is listed only if its JSON form is at most this long (a 70-character title plus quotes and a few escapes), so the preflight worst case is exact. */
+    private const MAX_USED_TITLE_JSON = 96;
+
     /** @var ?array<string, mixed> */
     private ?array $lastDiagnostic = null;
 
@@ -78,7 +84,7 @@ class GuidedWebsiteGenerationClient
     public function generate(Business $business, array $plan, ?int $actorUserId = null, ?string $idempotencyKey = null, ?array $sitePlan = null, array $usedSeoTitles = []): ?array
     {
         $this->lastDiagnostic = null;
-        $messages = $this->buildMessages($business, $plan, $sitePlan, $usedSeoTitles);
+        $messages = $this->buildMessages($business, $plan, $sitePlan, self::promptSafeTitles($usedSeoTitles));
 
         $raw = $this->client->complete($messages, $business, $actorUserId, self::MAX_OUTPUT_TOKENS, $idempotencyKey);
         if ($raw === null) {
@@ -117,6 +123,34 @@ class GuidedWebsiteGenerationClient
     }
 
     /**
+     * Titles that may be listed in a later batch's prompt: strings whose JSON form is bounded, at most MAX_USED_TITLES of them. A
+     * title left out here is still caught by the cross-batch and final validation.
+     *
+     * @param  array<int, mixed>  $titles
+     * @return array<int, string>
+     */
+    public static function promptSafeTitles(array $titles): array
+    {
+        $safe = array_values(array_filter($titles, fn ($title) => is_string($title) && strlen((string) json_encode($title)) <= self::MAX_USED_TITLE_JSON));
+
+        return array_slice($safe, 0, self::MAX_USED_TITLES);
+    }
+
+    /**
+     * The estimated input tokens of the request generate() would send for $batchPlan as one batch of $sitePlan, built by the very
+     * same prompt code and measured by the AI gateway's own estimator. $priorPages is how many pages were written before this batch;
+     * their SEO titles are assumed to be the longest a prompt may carry, so the result is an upper bound for any real titles.
+     *
+     * @param  ?array<string, mixed>  $facts  canonicalFacts() when the caller already holds them (avoids repeated queries)
+     */
+    public function estimateInputTokens(Business $business, array $batchPlan, array $sitePlan, int $priorPages = 0, ?array $facts = null): int
+    {
+        $titles = $priorPages > 0 ? array_fill(0, min($priorPages, self::MAX_USED_TITLES), str_repeat('x', self::MAX_USED_TITLE_JSON - 2)) : [];
+
+        return app(\App\Library\Ai\AiModelRouter::class)->estimateInputTokens($this->buildMessages($business, $batchPlan, $sitePlan, $titles, $facts));
+    }
+
+    /**
      * Why the last generate() call returned null, as sanitized scalars only (never response text): a fixed `stage`
      * plus counts / a fixed json error string / a refusal enum value. Null after a call that produced a pages array.
      *
@@ -147,7 +181,7 @@ class GuidedWebsiteGenerationClient
      * @param  array  $plan  WebsitePageStrategy::buildPlan()'s output (one batch of it in multi-batch generation)
      * @return array<int, array{role: string, content: string}>
      */
-    private function buildMessages(Business $business, array $plan, ?array $sitePlan = null, array $usedSeoTitles = []): array
+    private function buildMessages(Business $business, array $plan, ?array $sitePlan = null, array $usedSeoTitles = [], ?array $facts = null): array
     {
         // Link targets always come from the COMPLETE site plan; with no site plan the request is the whole site (unchanged prompt).
         $isBatch = $sitePlan !== null && count($sitePlan) > count($plan);
@@ -222,7 +256,7 @@ class GuidedWebsiteGenerationClient
         $userPayload = [
             'business_name' => $business->name,
             'plan' => $planForPrompt,
-            'confirmed_facts' => $this->canonicalFacts($business),
+            'confirmed_facts' => $facts ?? $this->canonicalFacts($business),
         ];
 
         if ($nicheDefaults !== null) {
@@ -239,7 +273,7 @@ class GuidedWebsiteGenerationClient
             ], array_values($linkPlan));
 
             if ($usedSeoTitles !== []) {
-                $userPayload['seo_titles_already_used'] = array_slice(array_values($usedSeoTitles), 0, 60);
+                $userPayload['seo_titles_already_used'] = array_slice(array_values($usedSeoTitles), 0, self::MAX_USED_TITLES);
                 $instructions[count($instructions) - 1] = 'Never reuse a seo_title listed in "seo_titles_already_used".' . "\n" . $instructions[count($instructions) - 1];
             }
         }
