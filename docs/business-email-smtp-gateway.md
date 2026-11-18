@@ -19,7 +19,7 @@ app (DigitalOcean) --HTTPS, HMAC-signed--> gateway VPS --SMTP 465/587 + TLS--> c
 ```
 
 * `HttpSmtpGatewayMailer` (app side) is selected automatically when `BUSINESS_EMAIL_SMTP_GATEWAY_URL` is set. Unset = today's direct behaviour (local/dev).
-* The gateway is **the same Laravel codebase** with `BUSINESS_EMAIL_SMTP_GATEWAY_SERVE=true`, exposing only `POST /internal/smtp-gateway/v1/{send,test}` (`routes/smtp_gateway.php`, `SmtpGatewayHandler`). It needs no database content, no queue and no mailbox data; it is stateless apart from Cache counters. A gateway deployment never forwards to another gateway.
+* The gateway is **the same Laravel codebase** with `BUSINESS_EMAIL_SMTP_GATEWAY_SERVE=true`, exposing only `POST /internal/smtp-gateway/v1/{send,test}` (`routes/smtp_gateway.php`, `SmtpGatewayHandler`). In this mode `RouteServiceProvider` deliberately omits the usual public, customer, admin and API routes. **Use a dedicated gateway deployment; never enable `SERVE=true` on the production app**, because its normal routes would become unavailable. Build/clear route caches after changing the mode. It needs no mailbox database content or queue; it is stateless apart from Cache counters. A gateway deployment never forwards to another gateway.
 
 ### Security properties (all covered by `tests/Feature/BusinessEmail/SmtpGatewayTest.php`)
 
