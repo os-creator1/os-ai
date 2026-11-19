@@ -755,6 +755,41 @@ class OutreachSequenceContinuityTest extends TestCase
         $this->assertCount($before + 1, $this->sentBodies(), 'The link is never resent a second time.');
     }
 
+
+    public function test_a_confirmed_manual_reply_arms_its_timed_successor_without_waiting_for_inbound(): void
+    {
+        [$workspace, $business, $member] = $this->started('Hello! Quick question.');
+        OutreachScriptManager::save($workspace, ['sequence_steps' => [
+            $this->step('a', 'Alpha text.'),
+            ['id' => 't', 'body' => 'Nudge after 2h.', 'advance_on' => 'time', 'delay_hours' => 2, 'enabled' => true],
+        ]]);
+        $reconcile = fn (ChatBoxMessage $message) => app(\App\Library\AgencyOutreach\OutreachManualStepFollowUp::class)->reconcile($message->id);
+
+        // A different confirmed manual SMS is never treated as the predecessor.
+        $unrelated = $this->handSend($business, 'Unrelated note.', 'sent');
+        $reconcile($unrelated);
+        $this->assertNull($this->member($member)->followup_at);
+
+        $manual = $this->handSend($business, 'Alpha text.', 'sending');
+        $reconcile($manual);
+        $this->assertNull($this->member($member)->followup_at, 'Unconfirmed send is not delivery evidence.');
+
+        $manual->update(['send_status' => 'sent']);
+        $reconcile($manual);
+        $armed = $this->member($member);
+        $this->assertSame(['a'], $armed->sequence_sent_ids);
+        $this->assertNotNull($armed->followup_at);
+        $this->assertEqualsWithDelta(now()->addHours(2)->timestamp, $armed->followup_at->timestamp, 120);
+        $reconcile($manual);
+        $this->assertEquals($armed->followup_at, $this->member($member)->followup_at, 'A retry never re-arms the timer.');
+
+        AgencyProspectCampaignMember::whereKey($member->id)->update(['followup_at' => now()->subMinute()]);
+        app()->call([new \App\Jobs\Outreach\OutreachFollowUpJob($member->id), 'handle']);
+
+        $this->assertSame(['Hello! Quick question.', 'Nudge after 2h.'], $this->sentBodies());
+        $this->assertSame(['a', 't'], $this->member($member)->sequence_sent_ids);
+    }
+
     public function test_a_manual_message_sent_while_the_opener_was_still_paused_does_not_count(): void
     {
         [$workspace, $business, $member] = $this->started('Hello! Quick question.');
