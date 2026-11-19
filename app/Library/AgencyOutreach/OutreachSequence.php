@@ -397,6 +397,20 @@ final class OutreachSequence
             return null;
         };
 
+        // Deleted steps still own the evidence recorded for them. Their ids are absent
+        // from $allReplySteps, so reserve their exact sends before any currently enabled
+        // step can infer another delivery from the same SMS (A -> B -> A). Keep the
+        // mapping in the next persisted snapshot so later inbounds cannot reassign it.
+        foreach ($stored as $id => $key) {
+            $id = (string) $id;
+            if (! isset($recorded[$id]) || $this->find($id) !== null || ! is_string($key) || $key === '') {
+                continue;
+            }
+
+            $take('', $key, false);
+            $evidence[$id] = $key;
+        }
+
         foreach ($allReplySteps as $step) {
             if (isset($recorded[$step['id']]) && ! isset($explicit[$step['id']])) {
                 $key = $take($text[$step['id']], isset($stored[$step['id']]) ? (string) $stored[$step['id']] : null, true);

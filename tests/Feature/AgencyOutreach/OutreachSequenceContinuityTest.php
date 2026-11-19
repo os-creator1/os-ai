@@ -858,6 +858,38 @@ class OutreachSequenceContinuityTest extends TestCase
         $this->assertSame(['a1' => 'C' . $manual->id], $this->member($member)->sequence_evidence);
     }
 
+
+    public function test_deleting_a_delivered_opener_step_reserves_its_evidence_and_keeps_the_later_identical_step(): void
+    {
+        [$workspace, $business, $member] = $this->started('Alpha text.');
+        $this->aba($workspace);
+        $this->inbound($business, 'ok'); // opener delivered a1; automatic reply delivered b
+
+        $stored = $this->member($member);
+        $opener = AgencyProspectMessage::query()->where('operation_key', 'outreach:opener:' . $member->id)->firstOrFail();
+        $this->assertSame(['a1', 'b'], $stored->sequence_sent_ids);
+        $this->assertSame('L' . $opener->id, $stored->sequence_evidence['a1'] ?? null);
+
+        // Remove a1 entirely, rather than merely disabling it. Its send is still
+        // owned by a1 and MUST NOT be used to claim the later a3 with the same text.
+        OutreachScriptManager::save($workspace, ['sequence_steps' => [
+            $this->step('b', 'Beta text.'),
+            $this->step('a3', 'Alpha text.'),
+        ]]);
+
+        $sequence = OutreachSequence::forWorkspace($workspace);
+        $this->assertSame('a3', $this->nextStepId($workspace, $member));
+        $this->assertNotContains('a3', $sequence->deliveredByContent($member->fresh()));
+        $this->assertSame('L' . $opener->id, $sequence->evidenceFor($member->fresh())['a1'] ?? null);
+
+        $this->inbound($business, 'ok');
+        $this->assertSame(['Alpha text.', 'Beta text.', 'Alpha text.'], $this->sentBodies());
+        $this->assertSame('L' . $opener->id, $this->member($member)->sequence_evidence['a1'] ?? null, 'Deleted-step ownership remains persisted after the next send.');
+
+        $this->inbound($business, 'ok');
+        $this->assertSame(['Alpha text.', 'Beta text.', 'Alpha text.'], $this->sentBodies(), 'The final A is sent only once.');
+    }
+
     public function test_evidence_is_scoped_to_its_own_campaign_member(): void
     {
         [$workspace, $business, $old, $prospect, $oldCampaign] = $this->started('Unrelated opener.');
