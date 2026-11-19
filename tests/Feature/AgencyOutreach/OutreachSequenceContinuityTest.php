@@ -1238,6 +1238,44 @@ class OutreachSequenceContinuityTest extends TestCase
         $this->assertSame((int) $old->id, (int) $armed->chat_box_id, 'Existing conversation link is intentionally left unchanged.');
     }
 
+
+    public function test_recorded_manual_evidence_survives_new_sender_thread_and_step_id_rebuild(): void
+    {
+        [$workspace, $business, $member] = $this->started('Unrelated opener.');
+        OutreachScriptManager::save($workspace, ['sequence_steps' => [
+            $this->step('a', 'Alpha text.'),
+            $this->step('b', 'Beta text.'),
+            $this->step('c', 'Gamma text.'),
+        ]]);
+
+        $manual = $this->handSend($business, 'Alpha text.', 'sent');
+        $this->inbound($business, 'ok'); // B sends; manual A is recorded as its own C<id> evidence
+        $this->assertSame('C' . $manual->id, $this->member($member)->sequence_evidence['a'] ?? null);
+
+        $original = ChatBox::whereKey($manual->box_id)->firstOrFail();
+        $new = app(ConversationHistoryWriter::class)
+            ->conversationFor($business, '+14155559876', '12025551000');
+        $this->assertNotNull($new);
+        $new->save();
+        $this->assertNotEquals($original->id, $new->id);
+        $this->assertEquals($new->id, app(\App\Library\AgencyOutreach\OutreachConversationLinker::class)
+            ->conversationFor($business, $member->prospect)->id);
+
+        OutreachScriptManager::save($workspace, ['sequence_steps' => [
+            $this->step('x', 'Alpha text.'),
+            $this->step('y', 'Beta text.'),
+            $this->step('z', 'Gamma text.'),
+        ]]);
+
+        $sequence = OutreachSequence::forWorkspace($workspace);
+        $this->assertContains('x', $sequence->deliveredByContent($member->fresh()));
+        $this->assertSame('C' . $manual->id, $sequence->evidenceFor($member->fresh())['x'] ?? null);
+        $this->assertSame('z', $this->nextStepId($workspace, $member), 'Old confirmed manual A must not be sent again.');
+
+        $this->inbound($business, 'ok');
+        $this->assertSame(['Unrelated opener.', 'Beta text.', 'Gamma text.'], $this->sentBodies());
+    }
+
     public function test_recovered_successful_manual_retry_arms_timed_successor_after_commit(): void
     {
         [$workspace, $business, $member] = $this->started('Hello! Quick question.');

@@ -3,6 +3,7 @@
 namespace App\Library\AgencyOutreach;
 
 use App\Enums\AgencyProspecting\AgencyProspectStage;
+use App\Library\Automation\Workflow\Triggers\MessageReceivedTriggerSource;
 use App\Library\Conversations\ConversationHistoryWriter;
 use App\Models\AgencyProspect;
 use App\Models\AgencyProspectCampaignMember;
@@ -342,6 +343,61 @@ final class OutreachSequence
 
         foreach ($this->conversationMessages($workspace, $prospect, $first->sent_at ?? $first->created_at, $ledgerKeys) as $message) {
             $pool[] = ['t' => $norm($message['body']), 'k' => 'C' . $message['id']];
+        }
+
+        // A sender-number change creates a NEW ChatBox for the same Business/prospect.
+        // New content inference deliberately reads only the current Conversation,
+        // but evidence ALREADY stored for this member must remain resolvable in its
+        // original thread. Restore only its exact C<id> keys, subject to the same
+        // confirmed-send and campaign-opener boundary; never sweep older threads
+        // for additional candidate messages.
+        $present = array_fill_keys(array_column($pool, 'k'), true);
+        $missing = [];
+
+        foreach ($stored as $id => $key) {
+            if (! isset($recorded[(string) $id]) || ! is_string($key) || isset($present[$key])) {
+                continue;
+            }
+
+            if (preg_match('/^C([1-9][0-9]*)$/D', $key, $match) === 1) {
+                $missing[] = (int) $match[1];
+            }
+        }
+
+        if ($missing !== []) {
+            $business = AgencyOutreachBusinessResolver::forWorkspace($workspace);
+            $contact = MessageReceivedTriggerSource::normalizePhone((string) $prospect->phone);
+
+            if ($business !== null && $contact !== '') {
+                $prior = ChatBoxMessage::query()
+                    ->join('chat_boxes as prior_box', 'prior_box.id', '=', 'chat_box_messages.box_id')
+                    ->leftJoin('business_messaging_operations as op', 'op.id', '=', 'chat_box_messages.business_messaging_operation_id')
+                    ->whereIn('chat_box_messages.id', array_unique($missing))
+                    ->where('prior_box.business_id', (int) $business->id)
+                    ->where('prior_box.to', $contact)
+                    ->where('chat_box_messages.direction', Reports::DIRECTION_OUTGOING)
+                    ->where(function ($q): void {
+                        $q->where('chat_box_messages.source', ConversationHistoryWriter::SOURCE_CONVERSATIONS)
+                            ->orWhere(fn ($legacy) => $legacy
+                                ->whereNull('chat_box_messages.source')
+                                ->whereNull('chat_box_messages.send_status')
+                                ->whereNull('chat_box_messages.business_messaging_operation_id'));
+                    })
+                    ->whereRaw('COALESCE(op.occurred_at, chat_box_messages.created_at) >= ?', [
+                        \Illuminate\Support\Carbon::parse($first->sent_at ?? $first->created_at)->toDateTimeString(),
+                    ])
+                    ->where(function ($q): void {
+                        $q->whereIn('chat_box_messages.send_status', ['sent', 'delivered'])
+                            ->orWhere(fn ($legacy) => $legacy
+                                ->whereNull('chat_box_messages.send_status')
+                                ->whereNull('chat_box_messages.business_messaging_operation_id'));
+                    })
+                    ->get(['chat_box_messages.id', 'chat_box_messages.message']);
+
+                foreach ($prior as $message) {
+                    $pool[] = ['t' => $norm((string) $message->message), 'k' => 'C' . $message->id];
+                }
+            }
         }
 
         // Evidence keys are unique within this campaign member. Reserve a known key
