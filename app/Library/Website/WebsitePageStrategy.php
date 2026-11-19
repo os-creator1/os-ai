@@ -787,7 +787,7 @@ final class WebsitePageStrategy
     public static function withoutAiUnfillableSections(array $plan): array
     {
         foreach ($plan as $index => $page) {
-            $plan[$index]['allowed_section_types'] = array_values(array_diff($page['allowed_section_types'], ['gallery', 'form', 'backdrops', 'custom_section']));
+            $plan[$index]['allowed_section_types'] = array_values(array_diff($page['allowed_section_types'], ['gallery', 'form', 'backdrops', 'custom_section', 'inquiry_panel']));
         }
 
         return $plan;

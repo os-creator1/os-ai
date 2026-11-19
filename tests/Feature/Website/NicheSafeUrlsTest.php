@@ -73,6 +73,14 @@ class NicheSafeUrlsTest extends TestCase
         foreach (array_filter(array_keys($pages), fn ($path) => str_starts_with($path, '/service-')) as $service) {
             $this->assertContains('/contact', $this->links($pages[$service]), "{$service} leads to /contact");
         }
+        // The inquiry panel is niche-neutral: another niche gets it too, pointing at ITS contact address with the neutral wording.
+        foreach (array_filter(array_keys($pages), fn ($path) => str_starts_with($path, '/service-')) as $service) {
+            $this->assertSame(1, substr_count($pages[$service], 'data-testid="inquiry-panel"'), "{$service} has one inquiry panel");
+            preg_match('#<aside\b[^>]*data-testid="inquiry-panel".*?</aside>#s', $pages[$service], $aside);
+            $this->assertMatchesRegularExpression('#href="[^"]*/contact"[^>]*>\s*Request a quote\s*</a>#', $aside[0]);
+            $this->assertStringNotContainsString('photo-booth', $aside[0]);
+        }
+
         foreach ($pages as $path => $html) {
             $this->assertStringNotContainsString('photo-booth-contact', $html, "{$path} never mentions the photo-booth address");
             $this->assertStringContainsString('<link rel="canonical" href="https://' . self::DOMAIN . ($path === '/' ? '/' : $path) . '">', $html);
