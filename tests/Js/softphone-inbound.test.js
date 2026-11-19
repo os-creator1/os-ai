@@ -40,7 +40,8 @@ function boot() {
   const incomingQueue = []; // each GET /incoming pops one scripted responder
   const clients = [];
   const requests = []; // every fetch the script made: [method, url]
-  const state = { mic: null }; // test hook: replaces getUserMedia
+  const state = { mic: null, presence: [], session: null }; // test hooks: replaces getUserMedia; scripted /presence answers
+  const timers = []; // every timer the page set: { f, ms, kind, done, cleared } so tests can fire them deterministically
 
   function FakeRTC() {
     this.handlers = {};
@@ -48,7 +49,7 @@ function boot() {
   }
   FakeRTC.prototype.on = function (evt, fn) { (this.handlers[evt] = this.handlers[evt] || []).push(fn); };
   FakeRTC.prototype.connect = function () { setTimeout(() => (this.handlers['telnyx.ready'] || []).forEach((f) => f()), 0); };
-  FakeRTC.prototype.disconnect = function () {};
+  FakeRTC.prototype.disconnect = function () { this.disconnected = true; };
   FakeRTC.prototype.emit = function (call) { (this.handlers['telnyx.notification'] || []).forEach((f) => f({ type: 'callUpdate', call })); };
 
   const respond = (data, ok = true, status = 200) => Promise.resolve({ ok, status, json: () => Promise.resolve(data) });
@@ -61,14 +62,24 @@ function boot() {
     navigator: { mediaDevices: { getUserMedia: () => (state.mic ? state.mic() : Promise.resolve({ getTracks: () => [] })) } },
     fetch: (url, options) => {
       requests.push([(options && options.method) || 'GET', url]);
-      if (url === '/session') { return respond({ data: { login_token: 'a.b.c' } }); }
-      if (url === '/presence') { return respond({ data: { available: true } }); }
+      if (url === '/session') { return state.session ? state.session() : respond({ data: { login_token: 'a.b.c' } }); }
+      if (url === '/presence') { return state.presence.length ? state.presence.shift()() : respond({ data: { available: true } }); }
       if (url === '/incoming') { return (incomingQueue.shift() || (() => respond({ data: [] })))(); }
       return respond({});
     },
-    setTimeout: (f, ms) => { const t = setTimeout(f, ms); t.unref(); return t; },
-    setInterval: (f, ms) => { const t = setInterval(f, ms); t.unref(); return t; },
-    clearTimeout, clearInterval, console, Promise, JSON, Date, Math, encodeURIComponent, Array, Object, String, RegExp, Error,
+    setTimeout: (f, ms) => {
+      const rec = { f, ms, kind: 'timeout', done: false, cleared: false };
+      rec.handle = setTimeout(() => { if (!rec.done) { rec.done = true; f(); } }, ms); rec.handle.unref(); rec.handle.rec = rec; timers.push(rec);
+      return rec.handle;
+    },
+    setInterval: (f, ms) => {
+      const rec = { f, ms, kind: 'interval', done: false, cleared: false };
+      rec.handle = setInterval(f, ms); rec.handle.unref(); rec.handle.rec = rec; timers.push(rec);
+      return rec.handle;
+    },
+    clearTimeout: (h) => { if (h && h.rec) { h.rec.cleared = true; } clearTimeout(h); },
+    clearInterval: (h) => { if (h && h.rec) { h.rec.cleared = true; } clearInterval(h); },
+    console, Promise, JSON, Date, Math, encodeURIComponent, Array, Object, String, RegExp, Error,
   };
   sandbox.window.crypto = undefined;
   vm.runInNewContext(SOURCE, sandbox);
@@ -77,7 +88,8 @@ function boot() {
   const nameOf = () => root.querySelector('[data-role="softphone-name"]').textContent;
 
   const click = (role) => root.querySelector('[data-role="' + role + '"]').click();
-  return { root, clients, incomingQueue, sdkCall, nameOf, respond, requests, state, click };
+  const live = (kind, minMs) => timers.filter((t) => t.kind === kind && !t.cleared && !t.done && t.ms >= (minMs || 0));
+  return { root, clients, incomingQueue, sdkCall, nameOf, respond, requests, state, click, timers, live };
 }
 
 test('an early caller hangup during identification frees the slot, and a stale answer never reopens the call', async () => {
@@ -231,4 +243,121 @@ test('Cancel while the microphone prompt is pending declines the ringing leg, fr
   assert.equal(callB.hangups, 0);
   assert.equal(h.root.getAttribute('data-state'), 'incoming');
   assert.equal(h.nameOf(), 'Caller B');
+});
+
+// ---------------------------------------------------------------------------------------------------------------------
+// The page's shared session follows the account the SERVER routes this Business to (platform <-> agency BYO Telnyx).
+// The backend answers a presence heartbeat for a session on the wrong account with 409 browser_session_required.
+
+const stale409 = (h) => () => h.respond({ error: { code: 'browser_session_required', message: 'Start a calling session first.' } }, false, 409);
+const heartbeatNow = async (h) => { h.live('interval')[0].f(); await settle(); };
+const settle = async () => { for (let i = 0; i < 4; i++) { await new Promise((resolve) => setTimeout(resolve, 4)); await tick(); } };
+const posts = (h, url) => h.requests.filter((r) => r[0] === 'POST' && r[1] === url).length;
+const fire = (rec) => { rec.done = true; rec.f(); };
+
+test('a 409 browser_session_required re-establishes the shared session on the current account without a reload (platform -> BYO -> platform)', async () => {
+  const h = boot();
+  await settle();
+  assert.equal(h.clients.length, 1);
+  assert.equal(posts(h, '/session'), 1);
+
+  // platform -> BYO: the server now routes to the agency account, so the old platform-signed session is stale.
+  h.state.presence.push(stale409(h));
+  await heartbeatNow(h);
+  await settle();
+  assert.equal(h.clients.length, 2, 'a new session was started');
+  assert.equal(h.clients[0].disconnected, true, 'the stale client was torn down');
+  assert.equal(posts(h, '/session'), 2);
+  assert.ok(h.requests.filter((r) => r[1] === '/presence').length >= 2, 'the new session advertised presence');
+
+  // BYO -> platform (or a WebRTC connection change): the same thing again, still without a reload.
+  h.state.presence.push(stale409(h));
+  await heartbeatNow(h);
+  await settle();
+  assert.equal(h.clients.length, 3);
+  assert.equal(h.clients[1].disconnected, true);
+  assert.equal(h.clients[2].disconnected, undefined, 'the current client stays connected');
+
+  // No duplicate timers: exactly one live heartbeat interval and one pending renewal, and no reconnect left pending.
+  assert.equal(h.live('interval').length, 1, 'one heartbeat timer');
+  assert.equal(h.live('timeout', 40 * 60 * 1000).length, 1, 'one token-renewal timer');
+  assert.equal(h.live('timeout', 1000).filter((t) => t.ms < 40 * 60 * 1000).length, 0, 'no reconnect left pending');
+});
+
+test('overlapping 409 heartbeats start exactly one reconnect', async () => {
+  const h = boot();
+  await settle();
+  h.state.presence.push(stale409(h), stale409(h));
+  const beat = h.live('interval')[0].f;
+  beat(); beat();
+  await settle();
+  assert.equal(h.clients.length, 2, 'one replacement session, not two');
+  assert.equal(posts(h, '/session'), 2);
+});
+
+test('a session that is stale again right after reconnecting backs off instead of looping', async () => {
+  const h = boot();
+  await settle();
+  // The first heartbeat of the replacement session is also refused (the server is still switching).
+  h.state.presence.push(stale409(h), stale409(h));
+  await heartbeatNow(h);
+  await settle();
+  assert.equal(h.clients.length, 2, 'first replacement happened at once');
+
+  const pending = h.live('timeout', 1000).filter((t) => t.ms < 40 * 60 * 1000);
+  assert.equal(pending.length, 1, 'the next reconnect is scheduled, not run in a tight loop');
+  assert.ok(pending[0].ms >= 2000, 'with a back-off delay');
+  assert.equal(h.clients.length, 2, 'nothing else started yet');
+
+  fire(pending[0]);
+  await settle();
+  assert.equal(h.clients.length, 3, 'and it recovers when the server answers normally');
+  assert.equal(h.live('interval').length, 1);
+});
+
+test('a stale session is never interrupted mid-call; it is replaced after the call ends', async () => {
+  const h = boot();
+  await settle();
+  const rtc = h.clients[0];
+
+  const call = ringAndIdentify(h, rtc, 'live-call', 'Caller');
+  await settle();
+  assert.equal(h.root.getAttribute('data-state'), 'incoming');
+
+  h.state.presence.push(stale409(h));
+  await heartbeatNow(h);
+  await settle();
+  assert.equal(h.clients.length, 1, 'no new session while a call is being handled');
+  assert.notEqual(rtc.disconnected, true, 'the call\'s client was not torn down');
+  assert.equal(call.hangups, 0, 'the call was not interrupted');
+
+  // The call ends; the deferred reconnect then runs.
+  call.state = 'hangup';
+  rtc.emit(call);
+  await settle();
+  const waiting = h.live('timeout', 1000).filter((t) => t.ms < 40 * 60 * 1000);
+  assert.equal(waiting.length, 1, 'exactly one reconnect is waiting');
+  fire(waiting[0]);
+  await settle();
+  assert.equal(h.clients.length, 2, 'reconnected after the call');
+  assert.equal(rtc.disconnected, true);
+});
+
+test('an outbound Call never reuses a known-stale shared client', async () => {
+  const h = boot();
+  await settle();
+  const stale = h.clients[0];
+
+  // The replacement session is slow to come up (the first /session request is held), so the page sits in the stale window.
+  h.state.session = () => { h.state.session = null; return new Promise(() => {}); };
+  h.state.presence.push(stale409(h));
+  await heartbeatNow(h);
+  assert.equal(stale.disconnected, true, 'the stale client is gone');
+  assert.equal(posts(h, '/session'), 2, 'the reconnect is waiting for its session');
+
+  h.click('softphone-again'); // Call
+  await settle();
+  assert.equal(posts(h, '/session'), 3, 'the call asked the server for its own fresh session on the current account');
+  assert.equal(h.clients.length, 2);
+  assert.notEqual(h.clients[1], stale, 'the call did not run on the stale client');
 });

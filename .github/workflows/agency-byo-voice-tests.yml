@@ -13,6 +13,8 @@ on:
       - 'app/Models/BusinessVoiceCall.php'
       - 'database/migrations/2026_11_26_090000_add_byo_voice_to_agency_prospecting_channels.php'
       - 'tests/Feature/Voice/**'
+      - 'tests/Js/softphone-*.test.js'
+      - 'public/js/crm/mg-softphone.js'
       - 'routes/**'
       - '.github/workflows/agency-byo-voice-tests.yml'
 
@@ -57,6 +59,8 @@ jobs:
     steps:
       - name: Check out PR
         uses: actions/checkout@v4
+      - name: Softphone JS tests (session switching, reconnect, no stale client)
+        run: node --test tests/Js/softphone-inbound.test.js tests/Js/softphone-controls.test.js
       - name: Set up PHP
         uses: shivammathur/setup-php@v2
         with:
