@@ -90,6 +90,27 @@ class HandleOutreachInboundMessage implements ShouldQueue
         $member = $this->liveManagedMember($prospect);
 
         if ($member === null) {
+            // Ended campaigns no longer claim normal replies, but an inbound
+            // withdrawal of consent still applies to that same prospect.
+            // The central carrier STOP filter handles only whole-message
+            // keywords; Outreach also recognizes clear phrases such as
+            // "please stop texting me" and "remove my number".
+            $last = $this->linker->latestInbound($agencyBusiness, $prospect);
+            if ($last !== null && OutreachStopClassifier::classify((string) $last->message) === OutreachStopClassifier::OPT_OUT) {
+                $endedMember = AgencyProspectCampaignMember::query()
+                    ->where('prospect_id', $prospect->id)
+                    ->where('workspace_id', $prospect->workspace_id)
+                    ->whereHas('campaign', fn ($query) => $query
+                        ->where('sending_mode', AgencyProspectCampaign::MODE_MANAGED)
+                        ->where('status', AgencyProspectCampaignStatus::Ended->value))
+                    ->orderByDesc('id')
+                    ->first();
+
+                if ($endedMember !== null) {
+                    $this->stops->apply($endedMember, true);
+                }
+            }
+
             return;
         }
 
