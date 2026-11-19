@@ -6,6 +6,7 @@ on:
     paths:
       - 'app/Library/AgencyOutreach/OutreachEligibility.php'
       - 'app/Jobs/Outreach/OutreachInitialSendJob.php'
+      - 'app/Http/Middleware/VerifyCsrfToken.php'
       - 'tests/Feature/AgencyOutreach/AgencyByoTelnyxMessagingTest.php'
       - '.github/workflows/outreach-byo-eligibility-tests.yml'
 
