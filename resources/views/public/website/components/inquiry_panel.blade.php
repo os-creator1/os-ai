@@ -2,12 +2,15 @@
     Slice 6A — the inquiry panel of a service/event page: ONE service-specific call to action to the contact page (which carries the
     Forms-module lead form), the business's verified phone, and a few CONFIRMED owner facts. Plain escaped text; the call to action
     resolves exactly like a `cta` button (same-site path -> this surface's real page address), so it never renders a dead link. The
-    phone is the publish-time frozen value ($data['resolved']); Preview falls back to the live business, like `contact_details`.
+    phone is the publish-time frozen value ($data['resolved'], final even when null); Preview alone reads the live business, like `contact_details`.
     Renders nothing when it has no destination, phone or fact to offer.
 --}}
 @php
     $panelCta = app(\App\Library\Website\Design\WebsiteCtaResolver::class)->sectionCta($data['cta'] ?? null, $siteCta ?? null, $pageUrls ?? []);
-    $panelPhone = $data['resolved']['phone'] ?? (($data['show_phone'] ?? false) ? $website->business?->phone : null);
+    // A PUBLISHED page carries `resolved` (frozen at publish, like `contact_details`): that value is final even when it is null, and the
+    // live business is never consulted. Only Preview, which has no snapshot, reads the current business — still honouring Show phone.
+    $panelResolved = $data['resolved'] ?? ['phone' => ($data['show_phone'] ?? false) ? ($website->business?->phone ?: null) : null];
+    $panelPhone = $panelResolved['phone'] ?? null;
     $panelFacts = array_values(array_filter((array) ($data['facts'] ?? []), fn ($fact) => is_string($fact) && trim($fact) !== ''));
 @endphp
 @if ($panelCta !== null || ! empty($panelPhone) || $panelFacts !== [])
