@@ -315,7 +315,12 @@ final class OutreachSequence
         $stored = is_array($member->sequence_evidence) ? $member->sequence_evidence : [];
 
         // 1. Explicit attribution by a still-valid step id; the evidence is consumed here.
-        foreach ($ledger as $row) {
+        // The ledger ORDER is kept: a still-valid scripted send tells where in the sequence the
+        // sends before and after it must lie (see the orphan bound in step 3).
+        $stepIndex = array_flip(array_column($this->steps, 'id'));
+        $validAt = [];   // [ledger position, step index] of every send whose step id still exists
+
+        foreach ($ledger->values() as $pos => $row) {
             $id = $row->sequence_step_id === null ? null : (string) $row->sequence_step_id;
 
             if ($id === null) {
@@ -323,8 +328,9 @@ final class OutreachSequence
             } elseif ($this->find($id) !== null) {
                 $delivered[$id] = true;
                 $explicit[$id] = true;
+                $validAt[] = [$pos, $stepIndex[$id]];
             } else {
-                $orphans[] = ['t' => $norm((string) $row->body), 'k' => 'L' . $row->id];
+                $orphans[] = ['t' => $norm((string) $row->body), 'k' => 'L' . $row->id, 'p' => $pos];
             }
         }
 
@@ -433,10 +439,30 @@ final class OutreachSequence
         // tail, each row allocated to one step and persisted as durable evidence.
         foreach (['exact', 'tail'] as $mode) {
             foreach ($orphans as $i => $unit) {
+                // An orphaned send can only have been replaced by a step lying BETWEEN the steps
+                // of the nearest earlier and nearest later scripted sends that still exist: a row
+                // sent before `b` can never be the later repetition of its wording after `b`.
+                $lower = -1;
+                $upper = PHP_INT_MAX;
+
+                foreach ($validAt as [$pos, $index]) {
+                    if ($pos < $unit['p']) {
+                        $lower = max($lower, $index);
+                    } else {
+                        $upper = min($upper, $index);
+                    }
+                }
+
                 foreach ($steps as $step) {
                     $t = $text[$step['id']];
 
                     if ($t === '' || isset($explicit[$step['id']]) || isset($delivered[$step['id']])) {
+                        continue;
+                    }
+
+                    $at = $stepIndex[$step['id']] ?? -1;
+
+                    if ($at <= $lower || $at >= $upper) {
                         continue;
                     }
 

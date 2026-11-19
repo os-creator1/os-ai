@@ -1110,4 +1110,37 @@ class OutreachSequenceContinuityTest extends TestCase
         $this->assertEqualsWithDelta(now()->addHours(2)->timestamp, $armed->followup_at->timestamp, 120, 'T is due 2h after the SUCCESSFUL attempt, not already overdue.');
         $this->assertEqualsWithDelta(now()->timestamp, $armed->last_outbound_at->timestamp, 120);
     }
+
+    public function test_deleting_a_step_outreach_sent_does_not_hand_its_ledger_row_to_a_later_identical_step(): void
+    {
+        [$workspace, $business, $member] = $this->started('Unrelated opener.');
+        $this->aba($workspace);
+        $this->inbound($business, 'ok');                                                 // Outreach sends a1 (step-tagged ledger row)
+        $this->inbound($business, 'ok');                                                 // Outreach sends b
+        $this->assertSame(['a1', 'b'], $this->member($member)->sequence_sent_ids);
+
+        OutreachScriptManager::save($workspace, ['sequence_steps' => [$this->step('b', 'Beta text.'), $this->step('a3', 'Alpha text.')]]);   // a1 deleted
+
+        $this->assertSame('a3', $this->nextStepId($workspace, $member), 'The a1 row predates b: it cannot satisfy a3.');
+        $this->assertNotContains('a3', OutreachSequence::forWorkspace($workspace)->deliveredByContent($member->fresh()));
+
+        $this->inbound($business, 'ok');
+        $this->inbound($business, 'ok');
+
+        $this->assertSame(['Unrelated opener.', 'Alpha text.', 'Beta text.', 'Alpha text.'], $this->sentBodies(), 'The final A is sent exactly once; nothing after it.');
+    }
+
+    public function test_rebuilding_only_a_later_step_id_still_reconciles_its_row(): void
+    {
+        [$workspace, $business, $member] = $this->started('Unrelated opener.');
+        OutreachScriptManager::save($workspace, ['sequence_steps' => [$this->step('a1', 'Alpha text.'), $this->step('b', 'Beta text.'), $this->step('c', 'Gamma text.')]]);
+        $this->inbound($business, 'ok');
+        $this->inbound($business, 'ok');                                                 // a1 and b sent
+
+        OutreachScriptManager::save($workspace, ['sequence_steps' => [$this->step('a1', 'Alpha text.'), $this->step('y', 'Beta text.'), $this->step('c', 'Gamma text.')]]);   // b rebuilt as y
+
+        $this->assertSame('c', $this->nextStepId($workspace, $member), 'The b row reconciles to y, which lies after a1.');
+        $this->inbound($business, 'ok');
+        $this->assertSame(['Unrelated opener.', 'Alpha text.', 'Beta text.', 'Gamma text.'], $this->sentBodies());
+    }
 }
