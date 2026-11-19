@@ -679,4 +679,43 @@ class OutreachSequenceContinuityTest extends TestCase
 
         $this->assertSame(['Alpha text.', 'Beta text.', 'Alpha text.'], $this->sentBodies(), 'The final A is sent exactly once; nothing after it.');
     }
+
+    public function test_an_opener_that_is_the_first_step_arms_the_following_timed_step(): void
+    {
+        [$workspace, $business, $member] = $this->started('Hello! Quick question.', sendOpener: false);
+        OutreachScriptManager::save($workspace, ['sequence_steps' => [
+            $this->step('a', 'Alpha text.'),
+            ['id' => 't', 'body' => 'Nudge after 2h.', 'advance_on' => 'time', 'delay_hours' => 2, 'enabled' => true],
+        ]]);
+        AgencyProspectCampaign::whereKey($member->campaign_id)->update(['opening_message' => 'Alpha text.']);
+
+        OutreachInitialSendJob::dispatchSync($member->id);
+
+        $armed = $this->member($member);
+        $this->assertSame(['a'], $armed->sequence_sent_ids, 'The opener is recorded as step a.');
+        $this->assertNotNull($armed->followup_at, 'The timed successor is scheduled.');
+        $this->assertEqualsWithDelta(now()->addHours(2)->timestamp, $armed->followup_at->timestamp, 120);
+
+        AgencyProspectCampaignMember::whereKey($member->id)->update(['followup_at' => now()->subMinute()]);
+        app()->call([new \App\Jobs\Outreach\OutreachFollowUpJob($member->id), 'handle']);
+
+        $this->assertSame(['Alpha text.', 'Nudge after 2h.'], $this->sentBodies());
+        $this->assertSame(['a', 't'], $this->member($member)->sequence_sent_ids);
+    }
+
+    public function test_a_manual_message_sent_while_the_opener_was_still_paused_does_not_count(): void
+    {
+        [$workspace, $business, $member] = $this->started('Hello! Quick question.');
+        $message1 = 'Hi, Snap Booth Co here. We book photo booths for local venues and you only pay at 9% when we deliver. Open to hearing more?';
+        // The opener row was claimed two hours ago but only actually sent now (paused for funds, then resumed).
+        AgencyProspectMessage::where('operation_key', 'outreach:opener:' . $member->id)->update(['created_at' => now()->subHours(2), 'sent_at' => now()]);
+        $manual = $this->handSend($business, $message1, 'sent');
+        $manual->forceFill(['created_at' => now()->subHour()])->save();     // between the claim and the real send
+
+        $this->assertNotContains('legacy-1', OutreachSequence::forWorkspace($workspace)->deliveredByContent($member->fresh()));
+        $this->assertSame('legacy-1', $this->nextStepId($workspace, $member));
+
+        $manual->forceFill(['created_at' => now()->addMinute()])->save();   // after the real send: it counts
+        $this->assertContains('legacy-1', OutreachSequence::forWorkspace($workspace)->deliveredByContent($member->fresh()));
+    }
 }

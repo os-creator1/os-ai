@@ -266,7 +266,7 @@ final class OutreachSequence
             ->where('direction', AgencyProspectMessage::DIRECTION_OUTBOUND)
             ->where('status', AgencyProspectMessage::STATUS_SENT)
             ->orderBy('id')
-            ->get(['body', 'sequence_step_id', 'operation_key', 'created_at']);
+            ->get(['body', 'sequence_step_id', 'operation_key', 'created_at', 'sent_at']);
 
         $first = $ledger->first();
 
@@ -314,7 +314,7 @@ final class OutreachSequence
         // is never counted twice; what remains is what a person confirmed sending.
         $ledgerKeys = $ledger->pluck('operation_key')->filter()->map(fn ($k) => (string) $k)->all();
 
-        foreach ($this->conversationBodies($workspace, $prospect, $first->created_at, $ledgerKeys) as $body) {
+        foreach ($this->conversationBodies($workspace, $prospect, $first->sent_at ?? $first->created_at, $ledgerKeys) as $body) {
             $pool[] = $norm($body);
         }
 
