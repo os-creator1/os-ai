@@ -225,7 +225,12 @@ class OutreachCampaignService
                     ->whereIn('campaign_member_id', $memberIds)
                     ->where('direction', AgencyProspectMessage::DIRECTION_OUTBOUND)
                     ->where('status', AgencyProspectMessage::STATUS_PENDING)
-                    ->exists();
+                    // A locking/current read is essential: in InnoDB REPEATABLE
+                    // READ a plain exists() can reuse an earlier snapshot
+                    // established before we waited for member locks, missing a
+                    // just-committed PENDING claim by OutreachSendPipeline.
+                    ->lockForUpdate()
+                    ->first(['id']) !== null;
 
                 if ($sending) {
                     return $this->fail('One or more messages are still sending. End the campaign after these sends finish.');
