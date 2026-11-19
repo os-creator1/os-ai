@@ -207,6 +207,31 @@ class OutreachCampaignService
                 return $this->fail('Only an active or paused campaign can be ended.');
             }
 
+            // Automatic sends claim a PENDING ledger row while holding their
+            // member lock, then perform the provider call outside the DB
+            // transaction. Lock each member in stable order and refuse to
+            // release any contact until all of its in-flight sends settle.
+            // This closes the claim->provider race with End without holding a
+            // database transaction open across network I/O.
+            $memberIds = $locked->members()->orderBy('id')->pluck('id')->all();
+            if ($memberIds !== []) {
+                AgencyProspectCampaignMember::query()
+                    ->whereIn('id', $memberIds)
+                    ->orderBy('id')
+                    ->lockForUpdate()
+                    ->get(['id']);
+
+                $sending = AgencyProspectMessage::query()
+                    ->whereIn('campaign_member_id', $memberIds)
+                    ->where('direction', AgencyProspectMessage::DIRECTION_OUTBOUND)
+                    ->where('status', AgencyProspectMessage::STATUS_PENDING)
+                    ->exists();
+
+                if ($sending) {
+                    return $this->fail('One or more messages are still sending. End the campaign after these sends finish.');
+                }
+            }
+
             $locked->update(['status' => AgencyProspectCampaignStatus::Ended->value]);
 
             return ['ok' => true, 'error' => null, 'message' => 'Campaign ended. Its contacts can be used in new campaigns; message history is preserved.'];
