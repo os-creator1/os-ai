@@ -3,7 +3,9 @@
 namespace App\Library\AgencyOutreach;
 
 use App\Enums\AgencyProspecting\AgencyProspectStage;
+use App\Models\AgencyProspect;
 use App\Models\AgencyProspectCampaignMember;
+use App\Models\AgencyProspectMessage;
 use App\Models\Workspace;
 
 /**
@@ -180,11 +182,26 @@ final class OutreachSequence
     }
 
     /**
-     * The step ids this prospect has already received.
+     * The step ids this prospect has already received: the recorded progress, plus the
+     * first reply step when the campaign opener that was ACTUALLY delivered is that very
+     * message ({@see openerEquivalentStepId}).
      *
      * @return array<int, string>
      */
     public function sentIdsFor(AgencyProspectCampaignMember $member): array
+    {
+        $ids = $this->recordedSentIds($member);
+        $opener = $this->openerEquivalentStepId($member);
+
+        if ($opener !== null && ! in_array($opener, $ids, true)) {
+            $ids[] = $opener;
+        }
+
+        return $ids;
+    }
+
+    /** @return array<int, string> */
+    private function recordedSentIds(AgencyProspectCampaignMember $member): array
     {
         $stored = $member->sequence_sent_ids;
 
@@ -213,6 +230,48 @@ final class OutreachSequence
         }
 
         return $ids;
+    }
+
+    /**
+     * The id of the first enabled reply step, when it is word-for-word (after token
+     * rendering and whitespace normalisation) the opener that was successfully SENT to this
+     * prospect. Derived from the delivered ledger row, never from the campaign being
+     * Active: an opener that was never delivered proves nothing, and a Message 1 that
+     * differs from the opener is never skipped.
+     */
+    public function openerEquivalentStepId(AgencyProspectCampaignMember $member): ?string
+    {
+        $first = $this->enabledSteps()[0] ?? null;
+
+        if ($first === null || $first['advance_on'] !== self::REPLY) {
+            return null;
+        }
+
+        $opener = AgencyProspectMessage::query()
+            ->where('campaign_member_id', $member->id)
+            ->where('operation_key', 'outreach:opener:' . $member->id)
+            ->where('direction', AgencyProspectMessage::DIRECTION_OUTBOUND)
+            ->where('status', AgencyProspectMessage::STATUS_SENT)
+            ->value('body');
+
+        $prospect = $opener === null ? null : AgencyProspect::query()->where('id', $member->prospect_id)->where('workspace_id', $member->workspace_id)->first();
+        $workspace = $prospect === null ? null : Workspace::query()->find($member->workspace_id);
+
+        if ($workspace === null) {
+            return null;
+        }
+
+        $rendered = OutreachScriptRenderer::render(OutreachScriptTokens::canonicalise((string) $first['body']), $workspace, $prospect);
+
+        return self::sameText($rendered, (string) $opener) ? $first['id'] : null;
+    }
+
+    /** Equality after whitespace normalisation (case and wording are never loosened). */
+    public static function sameText(string $a, string $b): bool
+    {
+        $norm = static fn (string $t): string => trim(preg_replace('/\s+/u', ' ', $t) ?? $t);
+
+        return $norm($a) !== '' && $norm($a) === $norm($b);
     }
 
     /**

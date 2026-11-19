@@ -51,7 +51,11 @@ final class OutreachStageMachine
             return new OutreachDecision(OutreachDecision::REJECT, $current, AgencyProspectStage::StoppedOptOut->value, reason: 'rejected');
         }
 
-        if ($reply->stop === OutreachStopClassifier::REJECTED_SOFT && $current >= AgencyProspectStage::Qualification->value) {
+        // A soft "no" ends the conversation once message 1 has been delivered. That includes a
+        // campaign opener that IS message 1 (recognised as sent), which leaves the stage at 1.
+        $firstDelivered = $sequence !== null && $sent !== [];
+
+        if ($reply->stop === OutreachStopClassifier::REJECTED_SOFT && ($current >= AgencyProspectStage::Qualification->value || $firstDelivered)) {
             return new OutreachDecision(OutreachDecision::REJECT, $current, AgencyProspectStage::StoppedOptOut->value, reason: 'rejected');
         }
 

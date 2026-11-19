@@ -361,6 +361,7 @@ class AgencyProspectingController extends CustomerBaseController
         return view('customer.workspaces.prospecting.campaign-show', [
             'workspaceUid' => $workspaceUid,
             'campaign' => $campaign,
+            'diagnostics' => $campaign->isManaged() ? app(\App\Library\AgencyOutreach\OutreachCampaignDiagnostics::class)->forCampaign($workspace, $campaign) : null,
             'linkedGroup' => $linkedGroup,
             'linkedGroupCount' => $linkedGroup === null ? null : \App\Models\Contacts::where('group_id', $linkedGroup->id)->count(),
             'groupBusiness' => $groupBusiness,
