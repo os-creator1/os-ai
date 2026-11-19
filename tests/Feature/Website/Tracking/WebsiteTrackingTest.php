@@ -86,6 +86,33 @@ class WebsiteTrackingTest extends TestCase
         $this->assertSame(['123456789012345'], $other['meta_pixel_ids'], 'other pages only inherit the global setting');
     }
 
+    public function test_gtm_container_uses_its_own_loader_not_the_google_tag_endpoint(): void
+    {
+        [, , , $website] = $this->photoBoothContentTenant();
+        $this->tracking()->save($website, '*', ['google_tag_id' => 'GTM-ABCDE12']);
+
+        $config = $this->config($this->get(self::HOST . '/')->assertOk()->getContent());
+        $this->assertSame(['GTM-ABCDE12'], $config['google_tag_ids']);
+
+        $script = (string) file_get_contents(public_path('js/website-tracking.js'));
+        $this->assertStringContainsString("containerScript.src = 'https://www.googletagmanager.com/gtm.js?id='", $script);
+        $this->assertStringContainsString("script.src = 'https://www.googletagmanager.com/gtag/js?id='", $script);
+        $this->assertStringContainsString("var tags = ids.filter(function (id) { return !/^GTM-/.test(id); });", $script);
+    }
+
+    public function test_existing_page_tracking_is_prefilled_in_an_owner_edit_form(): void
+    {
+        [$customer, , $workspace, $website] = $this->photoBoothContentTenant();
+        $this->tracking()->save($website, 'home', ['meta_pixel_id' => '999999999999']);
+
+        $this->authenticateAsSeoCustomer($customer);
+        $html = $this->get(route('customer.workspaces.businesses.website.tracking.index', [$workspace->uid, $website->business->uid]))->assertOk()->getContent();
+
+        $this->assertStringContainsString('Edit settings for', $html);
+        $this->assertStringContainsString('value="999999999999"', $html);
+        $this->assertStringContainsString('Save changes', $html);
+    }
+
     public function test_disabled_or_removed_tracking_emits_nothing(): void
     {
         [, , , $website] = $this->photoBoothContentTenant();
