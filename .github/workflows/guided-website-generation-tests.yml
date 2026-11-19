@@ -78,3 +78,6 @@ jobs:
           tests/Feature/Website/WebsiteServiceAreaPagesTest.php
           tests/Feature/Website/WebsiteAiEnvelopeCaptureTest.php
           tests/Feature/Website/WebsiteGenerationAiEnvelopeTest.php
+          tests/Feature/Website/Tracking
+          tests/Feature/Website/WebsiteFormsModuleSeamTest.php
+          tests/Feature/Seo/Content/PublicBlogTest.php

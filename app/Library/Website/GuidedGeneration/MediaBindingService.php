@@ -315,7 +315,8 @@ final class MediaBindingService
      */
     public function bind(Website $website, array $pages, ?array $customSection = null, ?array $customerFaq = null): array
     {
-        $pages = $this->bindForms($website, $pages);
+        $formWarnings = [];
+        $pages = $this->bindForms($website, $pages, $formWarnings);
         $pages = $this->bindBackdrops($website, $pages);
         $pages = $this->bindCustomSection($pages, $customSection);
         $pages = $this->bindCustomerFaq($pages, $customerFaq);
@@ -337,7 +338,7 @@ final class MediaBindingService
         // bindCustomSection()/mirrorPackageImages()). Ordered by the
         // owner's own gallery `sort_order`, not insertion id.
         $assets = $website->assets()->where('purpose', WebsiteAssetPurpose::Gallery->value)->orderBy('sort_order')->orderBy('id')->get();
-        $warnings = [];
+        $warnings = $formWarnings;
 
         if ($assets->isEmpty()) {
             $warnings[] = 'No uploaded photos are available yet — every page was generated without any photography.';
@@ -472,24 +473,68 @@ final class MediaBindingService
      * independently of photo availability — a Contact page's form is
      * never conditional on whether any photos have been uploaded yet.
      */
-    private function bindForms(Website $website, array $pages): array
+    private function bindForms(Website $website, array $pages, array &$warnings = []): array
     {
+        $business = $website->business;
+        $lead = $business === null ? null : app(\App\Library\Website\Forms\WebsiteLeadFormResolver::class)->inspect($business);
+        $embed = $lead['embed'] ?? null;
+        $dog = $business !== null && \App\Library\Website\Setup\DogBoardingSetup::appliesToBusiness($business);
+
         foreach ($pages as $index => $page) {
             if (($page['page_type'] ?? null) !== 'contact') {
                 continue;
             }
 
-            $hasForm = collect($page['sections'] ?? [])->contains(fn ($section) => ($section['type'] ?? null) === 'form');
-            if ($hasForm) {
+            $sections = collect($page['sections'] ?? []);
+
+            // Already carries a lead-capture section (a re-bind of an already bound page): leave it alone.
+            if ($sections->contains(fn ($section) => in_array($section['type'] ?? null, ['form', 'forms_module_form'], true))) {
                 continue;
             }
 
+            if ($embed !== null) {
+                // The installed niche lead form: only the stable Website-source deployment uid is stored, never a URL or markup.
+                $pages[$index]['sections'][] = ['type' => 'forms_module_form', 'data' => ['heading' => $dog ? 'Request a stay' : 'Check availability', 'forms_module_deployment_uid' => $embed['uid']]];
+
+                continue;
+            }
+
+            if ($lead !== null && $lead['state'] === \App\Library\Website\Forms\WebsiteLeadFormResolver::STATE_NEEDS_SETUP) {
+                // A blueprint lead form exists but is not live: never insert a broken form, never silently activate one.
+                // The visitor gets the business's real phone/email, and the owner is told what to switch on.
+                $pages[$index]['sections'] = $this->withContactFallback($pages[$index]['sections'] ?? []);
+                $warnings[] = $lead['message'];
+
+                continue;
+            }
+
+            // Another niche installed its blueprint but provides no website lead form: never the photo-booth quote form.
+            // Dog Boarding keeps its own stay-request wording below, as before.
+            if (! $dog && $business !== null && app(\App\Library\Website\Forms\WebsiteLeadFormResolver::class)->belongsToOtherNiche($business)) {
+                $pages[$index]['sections'] = $this->withContactFallback($pages[$index]['sections'] ?? []);
+                $warnings[] = 'No website lead form is set up for your business type yet, so your contact page shows your phone and email. Add an inquiry form in Forms and offer it to Website pages.';
+
+                continue;
+            }
+
+            // No niche lead form is installed (a business outside the blueprint niches): the long-standing quote form.
             $form = WebsiteStarterDraftService::ensurePhotoBoothQuoteForm($website);
-            $dog = $website->business !== null && \App\Library\Website\Setup\DogBoardingSetup::appliesToBusiness($website->business);
             $pages[$index]['sections'][] = ['type' => 'form', 'data' => ['heading' => $dog ? 'Request a stay' : 'Request a quote', 'form_uid' => $form->uid]];
         }
 
         return $pages;
+    }
+
+    /** @param array<int, array<string, mixed>> $sections */
+    private function withContactFallback(array $sections): array
+    {
+        if (collect($sections)->contains(fn ($section) => ($section['type'] ?? null) === 'contact_details')) {
+            return $sections;
+        }
+
+        $sections[] = ['type' => 'contact_details', 'data' => ['show_phone' => true, 'show_email' => true, 'show_address' => false]];
+
+        return $sections;
     }
 
     /**

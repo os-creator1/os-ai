@@ -14,6 +14,8 @@
         @if (! empty($data['heading']))
             <h2 class="wd-section-title">{{ $data['heading'] }}</h2>
         @endif
-        @include('public.forms._embed', ['embed' => $embed])
+        {{-- Only the business's website LEAD form reports conversions (the loader ignores every other frame). --}}
+        @php($lead = ! ($isPreview ?? false) && (app(\App\Library\Website\Forms\WebsiteLeadFormResolver::class)->resolve($website->business)['uid'] ?? null) === $embed['uid'])
+        @include('public.forms._embed', ['embed' => $embed, 'lead' => $lead])
     </div>
 @endif

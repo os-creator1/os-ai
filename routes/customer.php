@@ -2325,6 +2325,10 @@
             Route::put('/forms/{formUid}', 'Business\WebsiteFormsController@update')->name('forms.update');
             Route::get('/forms/{formUid}/submissions', 'Business\WebsiteFormsController@submissions')->name('forms.submissions');
 
+            // Website → Tracking: site-wide and page-specific marketing/conversion tracking (published pages only).
+            Route::get('/tracking', 'Business\WebsiteTrackingController@home')->name('tracking.index');
+            Route::post('/tracking', 'Business\WebsiteTrackingController@save')->name('tracking.save');
+            Route::delete('/tracking', 'Business\WebsiteTrackingController@destroy')->name('tracking.destroy');
             Route::get('/domains', 'Business\WebsiteDomainController@home')->name('domains.index');
             Route::post('/domains', 'Business\WebsiteDomainController@store')->name('domains.store');
             Route::post('/domains/{domainUid}/verify', 'Business\WebsiteDomainController@verify')->name('domains.verify');

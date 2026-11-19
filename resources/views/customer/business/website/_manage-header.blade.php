@@ -1,7 +1,7 @@
 {{--
     Shared header for the Website management screens (Pages / Photos / Forms / Domains): the single "Back to Website"
     link (the main Website screen, never the legacy Pages list), the title with a real page count, Preview site / Add
-    page, and the tab strip. Expects $workspaceUid, $businessUid, $website and $active (pages|photos|forms|domains).
+    page, and the tab strip. Expects $workspaceUid, $businessUid, $website and $active (pages|photos|forms|tracking|domains).
 --}}
 @php
     $manageIds = [$workspaceUid, $businessUid];
@@ -9,6 +9,7 @@
         'pages' => ['Pages', route('customer.workspaces.businesses.website.pages.index', $manageIds)],
         'photos' => ['Photos', route('customer.workspaces.businesses.website.photos.index', $manageIds)],
         'forms' => ['Forms', route('customer.workspaces.businesses.website.forms.index', $manageIds)],
+        'tracking' => ['Tracking', route('customer.workspaces.businesses.website.tracking.index', $manageIds)],
         'domains' => ['Domains', route('customer.workspaces.businesses.website.domains.index', $manageIds)],
     ];
     $managePageCount = $website->pages()->count();

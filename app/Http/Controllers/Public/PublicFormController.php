@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Public;
 
+use App\Enums\Forms\FormDeploymentSource;
 use App\Enums\GoogleAds\LeadAttributionEntrySurface;
 use App\Enums\GoogleAds\LeadAttributionSubjectType;
 use App\Http\Controllers\Controller;
@@ -129,11 +130,25 @@ class PublicFormController extends Controller
         // Show the thank-you of the version the visitor actually completed, when
         // the submission is named and genuinely belongs to this deployment.
         $submitted = $request->query('s');
-        $version = is_string($submitted) && Str::isUuid($submitted)
-            ? FormSubmission::query()->where('uid', $submitted)->where('form_deployment_id', $context->deployment->id)->first()?->version
+        $submission = is_string($submitted) && Str::isUuid($submitted)
+            ? FormSubmission::query()->where('uid', $submitted)->where('form_deployment_id', $context->deployment->id)->first()
             : null;
 
-        return view('public.forms.thanks', ['context' => $context, 'version' => $version ?? $context->version]);
+        // Conversion bridge: ONLY a stored submission of a Website-source deployment is announced to the embedding page. A
+        // spam (honeypot) redirect, an unknown or forged `s`, or a direct-link form carries nothing to announce.
+        // A thank-you reloaded or bookmarked long after the submission announces nothing (no late, repeated conversions).
+        $announce = $submission !== null
+            && $context->deployment->source === FormDeploymentSource::Website->value
+            && $submission->created_at !== null && $submission->created_at->gt(now()->subMinutes(15));
+
+        return view('public.forms.thanks', [
+            'context' => $context,
+            'version' => $submission?->version ?? $context->version,
+            'announce' => $announce ? [
+                'submission_uid' => (string) $submission->uid,
+                'deployment_uid' => (string) $context->deployment->uid,
+            ] : null,
+        ]);
     }
 
     /**

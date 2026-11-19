@@ -126,6 +126,7 @@
             }
         </style>
     @endif
+    @include('public.website._tracking')
 </head>
 {{-- A template-driven site is styled by its design only; the legacy variant classes (header/button/font) would leak the old generic styles into it. --}}
 <body class="website-body @if ($design ?? null) wd wd-{{ $design->key }}@if (! empty($hasSecondaryBrand)) wd-has-secondary @endif @if (! empty($paletteClasses)) {{ $paletteClasses }} @endif @else website-header-{{ $theme['header_variant'] ?? 'default' }} website-button-{{ $theme['button_style'] ?? 'solid' }} website-font-{{ $theme['font'] ?? 'system' }} @endif"

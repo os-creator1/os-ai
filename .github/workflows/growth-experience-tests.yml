@@ -58,7 +58,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: growth-experience-pr
+  group: growth-experience-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 
 jobs:

@@ -72,6 +72,13 @@ final class WebsitePageComposer
             'relatedArticles' => $isPreview ? [] : $this->relatedArticles($website, $page, $pages),
             'siteContact' => $this->contact($meta, $business, $isPreview),
             'isHomePage' => $isHome,
+            // Owner tracking (Website → Tracking): published pages only — never the dashboard, editor or any preview.
+            'tracking' => $website === null || $page === null ? null : app(\App\Library\Website\Tracking\WebsiteTrackingSettings::class)->effective(
+                $website,
+                $data['blog']['tracking_scope_key'] ?? \App\Library\Website\Tracking\WebsiteTrackingSettings::scopeKeyForPage((bool) ($page->is_home ?? $isHome), $page->slug ?? null, ($page->uid ?? null) === 'blog'),
+                ! $isPreview,
+                (bool) ($data['allowIndexing'] ?? false),
+            ),
             // A blog article's trail (Home > Blog > article) comes from the blog renderer; every other page derives its own.
             'breadcrumbs' => $data['breadcrumbsOverride'] ?? ($currentNav !== null ? WebsiteBreadcrumbStructuredData::trail($currentNav, $pages) : []),
             // The ONE head builder. A blog page only layers its article-specific tags over it (headExtra).

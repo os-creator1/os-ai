@@ -213,6 +213,8 @@ class WebsiteBlogRenderer
             'articleJsonLd' => $indexable ? $this->schema->blogPosting($article, $name, $schemaCanonical, $schemaImage, $schemaLogo) : null,
             'blog' => [
                 'mode' => 'article',
+                // Per-article tracking uses the stable article UID, not the mutable public slug.
+                'tracking_scope_key' => \App\Library\Website\Tracking\WebsiteTrackingSettings::articleScopeKey((string) $article->uid),
                 'article' => [
                     'title' => $article->title,
                     'excerpt' => $article->excerpt,
