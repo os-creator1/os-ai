@@ -1079,6 +1079,67 @@ class OutreachSequenceContinuityTest extends TestCase
         $this->assertSame(['a', 'b', 't2'], $this->member($member)->sequence_sent_ids);
     }
 
+
+    public function test_recovered_successful_manual_retry_arms_timed_successor_after_commit(): void
+    {
+        [$workspace, $business, $member] = $this->started('Hello! Quick question.');
+        OutreachScriptManager::save($workspace, ['sequence_steps' => [
+            $this->step('a', 'Alpha text.'),
+            ['id' => 't', 'body' => 'Nudge after 2h.', 'advance_on' => 'time', 'delay_hours' => 2, 'enabled' => true],
+        ]]);
+
+        $manual = $this->handSend($business, 'Alpha text.', 'sending');
+        $sendUid = (string) \Illuminate\Support\Str::uuid();
+        $manual->forceFill([
+            'send_uid' => $sendUid, 'retry_count' => 1, 'send_claimed_at' => now(),
+        ])->save();
+
+        \Illuminate\Support\Facades\DB::table('business_messaging_operations')->insert([
+            'business_id' => $business->id,
+            'transport_mode' => 'managed', 'provider' => 'telnyx', 'direction' => 'outbound',
+            'message_type' => 'sms',
+            'operation_key' => 'conversation:' . $manual->box_id . ':' . $sendUid . ':retry:1',
+            'status' => 'accepted', 'occurred_at' => now(), 'created_at' => now(), 'updated_at' => now(),
+        ]);
+        $this->assertNull($this->member($member)->followup_at);
+        $this->assertCount(1, $this->sentBodies(), 'Only the opener was sent by the fake Outreach adapter.');
+
+        // RefreshDatabase holds an outer test transaction. Capture the after-commit callback
+        // and invoke it only after the recovered row is confirmed, proving the recovery seam
+        // schedules the same reconciliation as a normal accepted manual SMS.
+        $afterCommit = null;
+        \Illuminate\Support\Facades\DB::partialMock()
+            ->shouldReceive('afterCommit')
+            ->once()
+            ->with(\Mockery::on(function ($callback) use (&$afterCommit): bool {
+                if (! is_callable($callback)) {
+                    return false;
+                }
+
+                $afterCommit = $callback;
+
+                return true;
+            }));
+
+        $recovered = \App\Library\Conversations\ManagedSendStateMachine::reconcileSendingRow(
+            $manual->fresh(), (int) $business->id
+        );
+        $this->assertSame('sent', $recovered->send_status);
+        $this->assertNotNull($recovered->business_messaging_operation_id);
+        $this->assertIsCallable($afterCommit);
+        $this->assertNull($this->member($member)->followup_at, 'Reconciliation must not run inside the recovery transaction.');
+
+        $afterCommit(); // actual post-commit transition callback
+        $armed = $this->member($member);
+        $this->assertSame(['a'], $armed->sequence_sent_ids);
+        $this->assertNotNull($armed->followup_at, 'Recovery must arm T without a new inbound.');
+        $this->assertEqualsWithDelta(now()->addHours(2)->timestamp, $armed->followup_at->timestamp, 120);
+
+        $afterCommit(); // repeated recovery notification must not extend the timer
+        $this->assertEquals($armed->followup_at, $this->member($member)->followup_at);
+        $this->assertCount(1, $this->sentBodies(), 'Recovery sends no extra SMS.');
+    }
+
     public function test_a_retried_manual_send_is_anchored_to_the_confirmed_attempt_not_the_old_bubble(): void
     {
         [$workspace, $business, $member] = $this->started('Hello! Quick question.');

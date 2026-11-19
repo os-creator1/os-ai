@@ -4,6 +4,7 @@ namespace App\Library\Conversations;
 
 use App\Enums\Messaging\MessagingOperationStatus;
 use App\Enums\Messaging\ProviderErrorCategory;
+use App\Library\AgencyOutreach\OutreachManualStepFollowUp;
 use App\Library\Messaging\ManagedMessageDispatcher;
 use App\Models\ChatBoxMessage;
 use Illuminate\Support\Facades\DB;
@@ -252,6 +253,26 @@ final class ManagedSendStateMachine
                 'send_status' => $projection->sendStatus,
                 'send_failure_reason' => $projection->failureReason,
             ]);
+
+            // The request that sent this manual SMS may have died after provider acceptance.
+            // Its ordinary ConversationHistoryWriter post-commit hook did not run, so repair
+            // the Outreach follow-up timer after this recovery transaction commits instead.
+            // Never run it for unconfirmed/failed attempts or non-manual message sources.
+            if (self::isTerminalSuccess($projection->sendStatus)
+                && $locked->source === ConversationHistoryWriter::SOURCE_CONVERSATIONS) {
+                $messageId = (int) $locked->id;
+                DB::afterCommit(static function () use ($messageId): void {
+                    try {
+                        app(OutreachManualStepFollowUp::class)->reconcile($messageId);
+                    } catch (\Throwable $e) {
+                        // A confirmed provider send must remain successful even if optional
+                        // Outreach bookkeeping fails. Neither text nor phone is logged.
+                        \Illuminate\Support\Facades\Log::warning('outreach.recovered_manual_followup_failed', [
+                            'message_id' => $messageId, 'exception' => $e::class,
+                        ]);
+                    }
+                });
+            }
 
             return $locked->fresh();
         }
