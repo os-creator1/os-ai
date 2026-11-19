@@ -68,6 +68,18 @@
             </x-card>
         </div>
 
+        @if($channel->provider === \App\Models\SendingServer::TYPE_TELNYX && $channel->status === 'disconnected' && $channel->voice_enabled)
+        <div class="col-12 mb-2">
+            <x-card title="Voice calling (your own Telnyx account)" :padded="true">
+                <p class="text-caption">This Telnyx account was disconnected, so CRM calls are blocked rather than switched to MotionGrove-paid voice. Reconnect the account, or turn voice off to release this choice.</p>
+                <form method="post" action="{{ route('customer.workspaces.prospecting.channels.voice.disable', [$workspaceUid, $channel->uid]) }}">
+                    @csrf
+                    <x-button type="submit" variant="outline" size="sm">Turn voice off</x-button>
+                </form>
+            </x-card>
+        </div>
+        @endif
+
         @if($channel->provider === \App\Models\SendingServer::TYPE_TELNYX && $channel->status !== 'disconnected')
         <div class="col-12 mb-2">
             <x-card title="Voice calling (your own Telnyx account)" :padded="true">

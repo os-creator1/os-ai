@@ -243,6 +243,14 @@ class AgencyVoiceSetupTest extends TestCase
         $this->post($this->route('enable'))->assertNotFound();
     }
 
+    public function test_the_channel_page_offers_voice_off_for_a_disconnected_voice_channel(): void
+    {
+        $this->channel->forceFill(['voice_enabled' => true, 'status' => AgencyProspectingChannel::STATUS_DISCONNECTED])->save();
+
+        $this->get(route('customer.workspaces.prospecting.channels.show', [$this->agency['workspace']->uid, $this->channel->uid]))
+            ->assertOk()->assertSee('Turn voice off')->assertSee('blocked rather than switched');
+    }
+
     public function test_an_unchanged_configuration_is_still_approved(): void
     {
         $this->save();

@@ -37,6 +37,17 @@ final class BrowserCredentialProvisioner
             throw new BrowserCallsUnavailableException('token_unavailable', 'Could not start a calling session.');
         }
 
+        // The browser is now signed into THIS credential. Mark it as the active session, and withdraw any presence that
+        // this user's other credentials (e.g. a platform one from before a switch to the agency's account) still carry, so
+        // inbound routing can never treat the browser as available on an account it is no longer signed into.
+        $credential = BusinessVoiceBrowserCredential::query()->where('business_id', $business->id)->where('user_id', $userId)
+            ->where('agency_prospecting_channel_id', (int) $byo?->channelId)->first();
+        if ($credential !== null) {
+            $credential->forceFill(['session_started_at' => now()])->save();
+            BusinessVoiceBrowserCredential::query()->where('business_id', $business->id)->where('user_id', $userId)
+                ->whereKeyNot($credential->id)->update(['presence_at' => null]);
+        }
+
         return ['login_token' => $token, 'expires_in' => 3600];
     }
 

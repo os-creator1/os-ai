@@ -45,6 +45,9 @@ return new class extends Migration
             // The WebRTC credential connection an agency credential was minted on (NULL for platform-managed rows): a
             // credential is reusable only while the channel still points at that exact connection.
             $table->string('webrtc_connection_id', 64)->nullable();
+            // When this credential last started a softphone session. The browser is signed into the most recently started
+            // one only, so presence (inbound availability) may only ever be advertised for that credential.
+            $table->timestamp('session_started_at')->nullable();
             $table->dropUnique('bvbc_business_user_unique');
             $table->unique(['business_id', 'user_id', 'agency_prospecting_channel_id'], 'bvbc_business_user_channel_unique');
         });
@@ -54,7 +57,7 @@ return new class extends Migration
     {
         Schema::table('business_voice_browser_credentials', function (Blueprint $table): void {
             $table->dropUnique('bvbc_business_user_channel_unique');
-            $table->dropColumn(['agency_prospecting_channel_id', 'webrtc_connection_id']);
+            $table->dropColumn(['agency_prospecting_channel_id', 'webrtc_connection_id', 'session_started_at']);
             $table->unique(['business_id', 'user_id'], 'bvbc_business_user_unique');
         });
 

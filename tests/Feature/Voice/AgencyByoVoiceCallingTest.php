@@ -254,6 +254,56 @@ class AgencyByoVoiceCallingTest extends TestCase
         $this->assertSame(self::BYO_CONN, $this->agentDial()['connection_id']);
     }
 
+    public function test_switching_between_platform_inbound_and_byo_sessions_never_advertises_the_wrong_account(): void
+    {
+        config(['messaging.voice.inbound.enabled' => true]);
+        $presence = fn () => $this->postJson($this->url('presence'));
+        $freshPlatform = fn () => BusinessVoiceBrowserCredential::query()->where('agency_prospecting_channel_id', 0)->whereNotNull('presence_at')->count();
+        $freshByo = fn () => BusinessVoiceBrowserCredential::query()->where('agency_prospecting_channel_id', $this->channel->id)->whereNotNull('presence_at')->count();
+
+        // 1. Platform-managed (voice off): the browser signs into the platform credential and is available for inbound.
+        $this->channel->forceFill(['voice_enabled' => false])->save();
+        $this->postJson($this->url('browser-session'))->assertOk();
+        $presence()->assertOk();
+        $this->assertSame(1, $freshPlatform());
+
+        // 2. The agency's account is selected: the browser signs into the agency credential. The platform credential's
+        //    presence is withdrawn at once, and the heartbeat now belongs to the agency credential only.
+        $this->channel->forceFill(['voice_enabled' => true])->save();
+        $this->postJson($this->url('browser-session'))->assertOk();
+        $this->assertSame(0, $freshPlatform(), 'A platform credential must not stay "online" while the browser is on the agency account.');
+        $presence()->assertOk();
+        $this->assertSame(0, $freshPlatform());
+        $this->assertSame(1, $freshByo());
+
+        // 3. Voice is turned off again while the page still holds the agency session: that heartbeat must NOT refresh the
+        //    platform credential (the browser is not signed into it); the browser is told to start a new session.
+        $this->channel->forceFill(['voice_enabled' => false])->save();
+        $presence()->assertStatus(409)->assertJsonPath('error.code', 'browser_session_required');
+        $this->assertSame(0, $freshPlatform());
+
+        // 4. A fresh session signs the browser into the platform credential again; the agency one is withdrawn.
+        $this->postJson($this->url('browser-session'))->assertOk();
+        $presence()->assertOk();
+        $this->assertSame(1, $freshPlatform());
+        $this->assertSame(0, $freshByo());
+        $this->assertSame(2, BusinessVoiceBrowserCredential::count(), 'Both credentials are kept; neither is deleted by switching.');
+    }
+
+    public function test_byo_calling_is_unaffected_by_a_stale_platform_credential(): void
+    {
+        BusinessVoiceBrowserCredential::create([
+            'business_id' => $this->business->id, 'user_id' => $this->customer->user_id, 'agency_prospecting_channel_id' => 0,
+            'telnyx_credential_id' => 'old_platform', 'sip_username' => 'oldplatform', 'expires_at' => now()->addDays(5), 'presence_at' => now(),
+        ]);
+
+        // No BYO session yet: the platform credential must not let the agency call ring a platform SIP user.
+        $this->placeBrowser('req-key-0005')->assertStatus(409)->assertJsonPath('error.code', 'browser_session_required');
+        $this->postJson($this->url('browser-session'))->assertOk();
+        $this->placeBrowser('req-key-0006')->assertStatus(202);
+        $this->assertSame('sip:byocredabc@' . config('messaging.voice.browser.sip_domain'), $this->agentDial()['to']);
+    }
+
     // ------------------------------------------------------------------ tenant isolation
 
     public function test_a_foreign_agencys_signed_event_cannot_touch_this_agencys_call(): void
