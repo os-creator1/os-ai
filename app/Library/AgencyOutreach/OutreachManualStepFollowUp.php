@@ -3,6 +3,7 @@
 namespace App\Library\AgencyOutreach;
 
 use App\Enums\AgencyProspecting\AgencyProspectCampaignStatus;
+use App\Enums\AgencyProspecting\AgencyProspectStage;
 use App\Jobs\Outreach\OutreachFollowUpJob;
 use App\Models\AgencyProspectCampaign;
 use App\Models\AgencyProspectCampaignMember;
@@ -116,12 +117,24 @@ final class OutreachManualStepFollowUp
                 }
 
                 $when = $message->created_at->copy()->addHours((int) $next['delay_hours']);
-                $member->update([
+                $updates = [
                     'sequence_sent_ids' => $sent,
                     'last_outbound_at' => $member->last_outbound_at === null || $member->last_outbound_at->lt($message->created_at)
                         ? $message->created_at : $member->last_outbound_at,
                     'followup_at' => $when,
-                ]);
+                ];
+
+                if (OutreachSequence::stepHasCalendarLink($previous)) {
+                    // For the legacy link follow-up the cancellation boundary is
+                    // booking_link_sent_at, not last_outbound_at. An inbound BEFORE
+                    // this confirmed manual link must not cancel the due nudge.
+                    $updates['booking_link_sent_at'] = $message->created_at;
+                    if ($member->stage->value < AgencyProspectStage::BookingLinkSent->value) {
+                        $updates['stage'] = AgencyProspectStage::BookingLinkSent->value;
+                    }
+                }
+
+                $member->update($updates);
 
                 return $when;
             });

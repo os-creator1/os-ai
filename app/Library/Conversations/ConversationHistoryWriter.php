@@ -342,7 +342,16 @@ final class ConversationHistoryWriter
                 // may it arm that step's timed successor; no provider call or SMS occurs here.
                 $messageId = (int) $message->id;
                 DB::afterCommit(static function () use ($messageId): void {
-                    app(OutreachManualStepFollowUp::class)->reconcile($messageId);
+                    try {
+                        app(OutreachManualStepFollowUp::class)->reconcile($messageId);
+                    } catch (\Throwable $e) {
+                        // The SMS is already accepted. Optional Outreach bookkeeping must
+                        // never turn that successful send into a failed Conversations response.
+                        // Log only safe identifiers, never the recipient or SMS text.
+                        \Illuminate\Support\Facades\Log::warning('outreach.manual_followup_reconcile_failed', [
+                            'message_id' => $messageId, 'exception' => $e::class,
+                        ]);
+                    }
                 });
             }
 

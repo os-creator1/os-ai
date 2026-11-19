@@ -790,6 +790,33 @@ class OutreachSequenceContinuityTest extends TestCase
         $this->assertSame(['a', 't'], $this->member($member)->sequence_sent_ids);
     }
 
+
+    public function test_manually_delivered_booking_link_does_not_cancel_its_timed_nudge_for_an_earlier_inbound(): void
+    {
+        [$workspace, $business, $member] = $this->started('Hello! Quick question.');
+        OutreachScriptManager::save($workspace, ['sequence_steps' => [
+            $this->step('a', 'Alpha text.'),
+            $this->step('link', 'Book here: {{agency.calendar_link}}'),
+            ['id' => 'legacy-followup', 'body' => 'Checking in after the link.', 'advance_on' => 'time', 'delay_hours' => 2, 'enabled' => true],
+        ]]);
+        $this->inbound($business, 'ok'); // earlier inbound precedes the owner's link
+        $this->assertSame(2, $this->member($member)->stage->value);
+
+        $link = $this->handSend($business, 'Book here: https://cal.example.test/snap', 'sent');
+        app(\App\Library\AgencyOutreach\OutreachManualStepFollowUp::class)->reconcile($link->id);
+        $armed = $this->member($member);
+        $this->assertSame(4, $armed->stage->value);
+        $this->assertNotNull($armed->booking_link_sent_at, 'Manual link has the true booking-link time.');
+        $this->assertNotNull($armed->followup_at);
+        $this->assertSame(['a', 'link'], $armed->sequence_sent_ids);
+
+        AgencyProspectCampaignMember::whereKey($member->id)->update(['followup_at' => now()->subMinute()]);
+        app()->call([new \App\Jobs\Outreach\OutreachFollowUpJob($member->id), 'handle']);
+
+        $this->assertSame(['Hello! Quick question.', 'Alpha text.', 'Checking in after the link.'], $this->sentBodies());
+        $this->assertSame(['a', 'link', 'legacy-followup'], $this->member($member)->sequence_sent_ids);
+    }
+
     public function test_a_manual_message_sent_while_the_opener_was_still_paused_does_not_count(): void
     {
         [$workspace, $business, $member] = $this->started('Hello! Quick question.');
