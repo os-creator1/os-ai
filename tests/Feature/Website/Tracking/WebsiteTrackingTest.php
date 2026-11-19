@@ -86,6 +86,27 @@ class WebsiteTrackingTest extends TestCase
         $this->assertSame(['123456789012345'], $other['meta_pixel_ids'], 'other pages only inherit the global setting');
     }
 
+    public function test_blog_article_tracking_inherits_both_global_and_blog_settings(): void
+    {
+        [$customer, $business, $workspace, $website] = $this->photoBoothContentTenant();
+        $article = $this->publishedArticle($business);
+
+        $this->tracking()->save($website, '*', ['meta_pixel_id' => '111111111111']);
+        $this->tracking()->save($website, WebsiteTrackingSettings::BLOG_SCOPE, ['meta_pixel_id' => '222222222222']);
+        $articleScope = WebsiteTrackingSettings::articleScopeKey((string) $article->uid);
+        $this->tracking()->save($website, $articleScope, ['meta_pixel_id' => '333333333333']);
+
+        $blog = $this->config($this->get(self::HOST . '/blog')->assertOk()->getContent());
+        $this->assertSame(['111111111111', '222222222222'], $blog['meta_pixel_ids']);
+
+        $post = $this->config($this->get(self::HOST . '/blog/' . $article->slug)->assertOk()->getContent());
+        $this->assertEqualsCanonicalizing(['111111111111', '222222222222', '333333333333'], $post['meta_pixel_ids']);
+
+        $this->authenticateAsSeoCustomer($customer);
+        $url = route('customer.workspaces.businesses.website.tracking.index', [$workspace->uid, $website->business->uid]);
+        $this->get($url)->assertOk()->assertSee('Article: ' . $article->title);
+    }
+
     public function test_gtm_container_uses_its_own_loader_not_the_google_tag_endpoint(): void
     {
         [, , , $website] = $this->photoBoothContentTenant();
