@@ -51,9 +51,8 @@ final class OutreachManualStepFollowUp
                 ->where('sending_mode', AgencyProspectCampaign::MODE_MANAGED)
                 ->where('status', AgencyProspectCampaignStatus::Active->value)
                 ->select('id'))
-            // A timer that is merely historical (already sent, or cancelled) does not block arming
-            // the next successor; only a currently PENDING one does.
-            ->where(fn ($q) => $q->whereNull('followup_at')->orWhereNotNull('followup_sent_at')->orWhereNotNull('followup_cancelled_at'))
+            // Even a pending earlier timer needs reconciliation when the owner
+            // manually delivers a LATER reply step in the same sequence.
             ->whereNotIn('stage', [6, 99])
             ->orderByDesc('id')
             ->limit(5)
@@ -65,7 +64,6 @@ final class OutreachManualStepFollowUp
                 if ($member === null || $member->isTerminal()
                     || (int) $member->chat_box_id !== (int) $message->box_id
                     || (int) $member->workspace_id !== (int) $business->workspace_id
-                    || self::timerPending($member)
                     || $member->campaign?->status !== AgencyProspectCampaignStatus::Active
                     || ! $member->campaign->isManaged()) {
                     return null;
@@ -116,6 +114,15 @@ final class OutreachManualStepFollowUp
                         (string) $message->message,
                         OutreachScriptRenderer::render(OutreachScriptTokens::canonicalise((string) $previous['body']), $workspace, $prospect)
                     )) {
+                    return null;
+                }
+
+                // A pending timer may belong to the predecessor's EARLIER timed step.
+                // If this manual reply advanced beyond it, replace the deadline with the
+                // new successor's delay; otherwise the old job would send the new step early.
+                // Once the new predecessor is persisted, repeated callbacks cannot move its timer.
+                if (self::timerPending($member)
+                    && in_array($previous['id'], (array) $member->sequence_sent_ids, true)) {
                     return null;
                 }
 

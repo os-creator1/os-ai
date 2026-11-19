@@ -101,6 +101,19 @@ class OutreachFollowUpJob extends Base
                 return 'followup_closed';
             }
 
+            // The delayed job was queued for a timer state that may have been
+            // replaced by a later confirmed manual reply. Recheck the due time
+            // under the SAME member lock as the actual send claim.
+            if ($locked->followup_at === null || $locked->followup_at->isFuture()) {
+                return 'followup_not_due';
+            }
+
+            $currentStep = OutreachSequence::forWorkspace($locked->workspace)
+                ->nextTimeStep(OutreachSequence::forWorkspace($locked->workspace)->sentIdsFor($locked));
+            if (($currentStep['id'] ?? null) !== $step['id']) {
+                return 'followup_step_changed';
+            }
+
             return $this->prospectRepliedSinceLink($locked, $step['id']) ? 'prospect_replied' : null;
         });
 

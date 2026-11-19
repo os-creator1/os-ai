@@ -1008,23 +1008,35 @@ class OutreachSequenceContinuityTest extends TestCase
         $this->assertSame(['a', 't1', 'b', 't2'], $this->member($member)->sequence_sent_ids);
     }
 
-    public function test_a_manual_step_arms_its_successor_after_an_earlier_timer_was_cancelled_but_not_while_one_is_pending(): void
+    public function test_a_manual_step_replaces_an_older_pending_timer_with_its_own_successor_deadline(): void
     {
         [$workspace, $business, $member] = $this->started('Hello! Quick question.');
         $this->twoTimers($workspace);
-        $this->reconcile($this->handSend($business, 'Alpha text.', 'sent'));              // t1 is PENDING
-        $pending = $this->member($member)->followup_at;
-        $this->assertNotNull($pending);
+        $this->reconcile($this->handSend($business, 'Alpha text.', 'sent')); // arms t1 for +2h
+        $oldDue = $this->member($member)->followup_at;
+        $this->assertNotNull($oldDue);
+        $this->assertEqualsWithDelta(now()->addHours(2)->timestamp, $oldDue->timestamp, 120);
 
-        $this->reconcile($this->handSend($business, 'Beta text.', 'sent'));               // a pending timer blocks arming another
-        $this->assertEquals($pending, $this->member($member)->followup_at);
-        $this->assertNull($this->member($member)->followup_cancelled_at);
-
-        AgencyProspectCampaignMember::whereKey($member->id)->update(['followup_cancelled_at' => now()]);   // t1 cancelled
-        $this->reconcile($this->handSend($business, 'Beta text.', 'sent'));
+        $manualB = $this->handSend($business, 'Beta text.', 'sent'); // advances past t1
+        $this->reconcile($manualB);
         $armed = $this->member($member);
-        $this->assertNull($armed->followup_cancelled_at, 'Cancelled state is reset when the new timer is armed.');
+        $this->assertSame(['a', 'b'], $armed->sequence_sent_ids);
+        $this->assertNotNull($armed->followup_at);
         $this->assertEqualsWithDelta(now()->addHours(3)->timestamp, $armed->followup_at->timestamp, 120);
+        $this->assertNull($armed->followup_sent_at);
+        $this->assertNull($armed->followup_cancelled_at);
+
+        $this->reconcile($manualB); // webhook replay cannot extend the new deadline
+        $this->assertEquals($armed->followup_at, $this->member($member)->followup_at);
+
+        $this->travel(2)->hours();
+        app()->call([new \App\Jobs\Outreach\OutreachFollowUpJob($member->id), 'handle']); // old t1 job
+        $this->assertSame(['Hello! Quick question.'], $this->sentBodies(), 'T2 must not send at T1 original deadline.');
+
+        $this->travel(1)->hours();
+        app()->call([new \App\Jobs\Outreach\OutreachFollowUpJob($member->id), 'handle']); // T2 due
+        $this->assertSame(['Hello! Quick question.', 'Nudge two.'], $this->sentBodies());
+        $this->assertSame(['a', 'b', 't2'], $this->member($member)->sequence_sent_ids);
     }
 
     public function test_a_retried_manual_send_is_anchored_to_the_confirmed_attempt_not_the_old_bubble(): void
