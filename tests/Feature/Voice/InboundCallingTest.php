@@ -102,8 +102,8 @@ class InboundCallingTest extends TestCase
 
     private function online(): void
     {
-        $this->postJson(route('customer.workspaces.businesses.calls.browser-session', [$this->workspace->uid, $this->business->uid]))->assertOk();
-        $this->postJson(route('customer.workspaces.businesses.calls.presence', [$this->workspace->uid, $this->business->uid]))->assertOk();
+        $session = $this->postJson(route('customer.workspaces.businesses.calls.browser-session', [$this->workspace->uid, $this->business->uid]))->assertOk();
+        $this->postJson(route('customer.workspaces.businesses.calls.presence', [$this->workspace->uid, $this->business->uid]), ['session_id' => $session->json('data.session_id')])->assertOk();
     }
 
     private function url(string $name, array $extra = []): string

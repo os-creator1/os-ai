@@ -262,7 +262,7 @@ class VoiceCallController extends CustomerBaseController
     }
 
     /** Browser availability heartbeat: this user's open page is signed in and can take an inbound call. */
-    public function presence(string $workspaceUid, string $businessUid, InboundCallingGate $gate): JsonResponse
+    public function presence(Request $request, string $workspaceUid, string $businessUid, InboundCallingGate $gate): JsonResponse
     {
         [, $business] = $this->resolveEntitledBusinessTenancy($workspaceUid, $businessUid, PlatformFeature::Crm->value);
         $this->requireCalling($business);
@@ -271,12 +271,12 @@ class VoiceCallController extends CustomerBaseController
             return $this->error('inbound_unavailable', 'Inbound calling is not available.', 503);
         }
 
-        // Presence belongs to the credential the browser is ACTUALLY signed into: the one carrying the active-session marker
-        // (starting a session sets it here and clears it on the user's other credentials, so there is never a timestamp tie).
-        // It counts only while it is still the account this Business routes to (platform-managed, or the agency's selected
-        // channel on its current WebRTC connection); anything else asks the browser to start a fresh session.
-        $active = BusinessVoiceBrowserCredential::query()->where('business_id', $business->id)->where('user_id', (int) Auth::id())
-            ->where('expires_at', '>', now())->orderByRaw('session_started_at IS NULL')->orderByDesc('session_started_at')->orderByDesc('id')->first();
+        // Presence belongs to the credential THIS browser proved it is signed into: the heartbeat carries the opaque session id
+        // issued when the session was created (bound to that credential, this user and this Business), so one tab can never
+        // refresh another tab's credential. It counts only while that credential is still the account this Business routes to
+        // (platform-managed, or the agency's selected channel on its current WebRTC connection); a missing, forged, rotated or
+        // no-longer-current session asks the browser to start a fresh one.
+        $active = \App\Library\Voice\BrowserSessionToken::resolve($request->input('session_id'), $business, (int) Auth::id());
         $byoChannel = \App\Library\Voice\Byo\AgencyByoVoice::selectedChannel($business);
         $matches = $active !== null && (
             $byoChannel === null

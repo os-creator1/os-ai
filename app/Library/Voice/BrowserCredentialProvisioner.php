@@ -21,7 +21,7 @@ final class BrowserCredentialProvisioner
     private const API_BASE = 'https://api.telnyx.com/v2';
     private const TIMEOUT_SECONDS = 20;
 
-    /** @return array{login_token: string, expires_in: int} */
+    /** @return array{login_token: string, expires_in: int, session_id: string} */
     public function loginSession(Business $business, int $userId, ?VoiceTransport $byo = null): array
     {
         $credential = $this->ensureCredential($business, $userId, $byo);
@@ -37,18 +37,19 @@ final class BrowserCredentialProvisioner
             throw new BrowserCallsUnavailableException('token_unavailable', 'Could not start a calling session.');
         }
 
-        // The browser is now signed into THIS credential. Mark it as the active session, and withdraw any presence that
-        // this user's other credentials (e.g. a platform one from before a switch to the agency's account) still carry, so
-        // inbound routing can never treat the browser as available on an account it is no longer signed into.
+        // The browser is now signed into THIS credential. Its session id (bound to the credential) is what every later
+        // presence heartbeat must present, so presence can only ever be refreshed for the account that browser really uses.
+        // Presence still carried by the user's other credentials (e.g. a platform one from before a switch to the agency's
+        // account) is withdrawn now, so inbound routing never sees the user as available on an account they left.
         $credential = BusinessVoiceBrowserCredential::query()->where('business_id', $business->id)->where('user_id', $userId)
             ->where('agency_prospecting_channel_id', (int) $byo?->channelId)->first();
-        if ($credential !== null) {
-            $credential->forceFill(['session_started_at' => now()])->save();
-            BusinessVoiceBrowserCredential::query()->where('business_id', $business->id)->where('user_id', $userId)
-                ->whereKeyNot($credential->id)->update(['presence_at' => null, 'session_started_at' => null]);
+        if ($credential === null) {
+            throw new BrowserCallsUnavailableException('credential_unavailable', 'Could not start a calling session.');
         }
+        BusinessVoiceBrowserCredential::query()->where('business_id', $business->id)->where('user_id', $userId)
+            ->whereKeyNot($credential->id)->update(['presence_at' => null]);
 
-        return ['login_token' => $token, 'expires_in' => 3600];
+        return ['login_token' => $token, 'expires_in' => 3600, 'session_id' => BrowserSessionToken::issue($credential)];
     }
 
     /** The SIP URI the server dials to ring this user's browser. Null until a session has been provisioned. */

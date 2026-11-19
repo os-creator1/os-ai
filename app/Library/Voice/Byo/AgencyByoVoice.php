@@ -163,6 +163,27 @@ final class AgencyByoVoice
     }
 
     /**
+     * Non-secret keyed digests of the transport a call is placed on, stored with the call so it can never silently move to
+     * settings changed afterwards: `account` = which Telnyx account (channel + sending server + API key), enough to decide
+     * whether commands on already-created legs may still be sent; `config` = account + Call Control connection + caller
+     * number, which must still match before a NEW leg (the contact) is dialled. The key itself is only an HMAC input.
+     *
+     * @return array{account: string, config: string}
+     */
+    public static function pin(AgencyProspectingChannel $channel): array
+    {
+        $channel->loadMissing('sendingServer');
+        $server = $channel->sendingServer;
+        $account = [(int) $channel->id, (int) $channel->sending_server_id, $server !== null ? (string) $server->getRawOriginal('api_key') : ''];
+        $key = (string) config('app.key');
+
+        return [
+            'account' => hash_hmac('sha256', json_encode(['acct', $account]), $key),
+            'config' => hash_hmac('sha256', json_encode(['cfg', $account, trim((string) $channel->voice_connection_id), preg_replace('/\D/', '', (string) $channel->voice_number)]), $key),
+        ];
+    }
+
+    /**
      * A keyed digest of exactly what a verification checks: the account (API key and its sending server), the two
      * connection ids and the number. Compared before and after the Telnyx calls so a result can only approve the
      * configuration it was actually obtained for. Never stored or logged.

@@ -40,6 +40,8 @@ function boot() {
   const incomingQueue = []; // each GET /incoming pops one scripted responder
   const clients = [];
   const requests = []; // every fetch the script made: [method, url]
+  const bodies = [];   // [url, parsed JSON body] for requests that carried one
+  let sessionSeq = 0;
   const state = { mic: null, presence: [], session: null }; // test hooks: replaces getUserMedia; scripted /presence answers
   const timers = []; // every timer the page set: { f, ms, kind, done, cleared } so tests can fire them deterministically
 
@@ -62,7 +64,8 @@ function boot() {
     navigator: { mediaDevices: { getUserMedia: () => (state.mic ? state.mic() : Promise.resolve({ getTracks: () => [] })) } },
     fetch: (url, options) => {
       requests.push([(options && options.method) || 'GET', url]);
-      if (url === '/session') { return state.session ? state.session() : respond({ data: { login_token: 'a.b.c' } }); }
+      if (options && options.body) { bodies.push([url, JSON.parse(options.body)]); }
+      if (url === '/session') { return state.session ? state.session() : respond({ data: { login_token: 'a.b.c', session_id: 'sess-' + (++sessionSeq) } }); }
       if (url === '/presence') { return state.presence.length ? state.presence.shift()() : respond({ data: { available: true } }); }
       if (url === '/incoming') { return (incomingQueue.shift() || (() => respond({ data: [] })))(); }
       return respond({});
@@ -89,7 +92,7 @@ function boot() {
 
   const click = (role) => root.querySelector('[data-role="' + role + '"]').click();
   const live = (kind, minMs) => timers.filter((t) => t.kind === kind && !t.cleared && !t.done && t.ms >= (minMs || 0));
-  return { root, clients, incomingQueue, sdkCall, nameOf, respond, requests, state, click, timers, live };
+  return { root, clients, incomingQueue, sdkCall, nameOf, respond, requests, bodies, state, click, timers, live };
 }
 
 test('an early caller hangup during identification frees the slot, and a stale answer never reopens the call', async () => {
@@ -361,4 +364,20 @@ test('an outbound Call never reuses a known-stale shared client', async () => {
   assert.equal(posts(h, '/session'), 3, 'the call asked the server for its own fresh session on the current account');
   assert.equal(h.clients.length, 2);
   assert.notEqual(h.clients[1], stale, 'the call did not run on the stale client');
+});
+
+test('every heartbeat carries this tab\'s own session id, and a replacement session uses its new id', async () => {
+  const h = boot();
+  await settle();
+  const ids = () => h.bodies.filter((b) => b[0] === '/presence').map((b) => b[1].session_id);
+  assert.deepEqual(ids(), ['sess-1'], 'the first heartbeat proves the first session');
+
+  h.state.presence.push(stale409(h));
+  await heartbeatNow(h);
+  await settle();
+  assert.equal(h.clients.length, 2);
+  assert.deepEqual(ids(), ['sess-1', 'sess-1', 'sess-2'], 'the stale session was refused, then the new session proved itself with its own id');
+
+  await heartbeatNow(h);
+  assert.equal(ids()[ids().length - 1], 'sess-2', 'later heartbeats keep using the current session id');
 });

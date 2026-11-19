@@ -32,6 +32,10 @@ return new class extends Migration
         Schema::table('business_voice_calls', function (Blueprint $table): void {
             // The agency channel a call was placed through (null = platform-managed). Its number is the channel's voice number.
             $table->unsignedBigInteger('agency_prospecting_channel_id')->nullable()->index('bvc_agency_channel_index');
+            // Non-secret keyed digests of the transport (account / account+connection+number) VERIFIED at placement, so a
+            // call can never silently move to settings changed afterwards. No key or secret is stored.
+            $table->char('transport_account_hash', 64)->nullable();
+            $table->char('transport_config_hash', 64)->nullable();
         });
 
         // BYO calls have no managed number row (their number is the channel's voice number).
@@ -45,31 +49,53 @@ return new class extends Migration
             // The WebRTC credential connection an agency credential was minted on (NULL for platform-managed rows): a
             // credential is reusable only while the channel still points at that exact connection.
             $table->string('webrtc_connection_id', 64)->nullable();
-            // When this credential last started a softphone session. The browser is signed into the most recently started
-            // one only, so presence (inbound availability) may only ever be advertised for that credential.
-            $table->timestamp('session_started_at')->nullable();
             $table->dropUnique('bvbc_business_user_unique');
             $table->unique(['business_id', 'user_id', 'agency_prospecting_channel_id'], 'bvbc_business_user_channel_unique');
         });
     }
 
+    /**
+     * Rollback policy (deterministic, idempotent, documented).
+     *
+     * An agency (BYO) browser credential is only a CACHE of identifiers (Telnyx credential id + SIP username, no secret):
+     * the pre-feature schema has no way to say which account it belongs to, and once the channel column is gone it would be
+     * indistinguishable from a platform credential - so it must not survive the rollback. They are therefore deleted first
+     * (the user's next softphone session simply provisions a fresh one; the Telnyx-side credential expires on its own).
+     * Platform credentials (channel 0) are never touched, which also guarantees the legacy UNIQUE (business_id, user_id)
+     * can be restored. Every step is guarded, so a rollback interrupted by a DDL failure can be re-run to completion.
+     * Call history rows keep their data; `business_messaging_number_id` stays nullable (BYO calls have no managed number).
+     */
     public function down(): void
     {
-        Schema::table('business_voice_browser_credentials', function (Blueprint $table): void {
-            $table->dropUnique('bvbc_business_user_channel_unique');
-            $table->dropColumn(['agency_prospecting_channel_id', 'webrtc_connection_id', 'session_started_at']);
-            $table->unique(['business_id', 'user_id'], 'bvbc_business_user_unique');
-        });
+        if (Schema::hasColumn('business_voice_browser_credentials', 'agency_prospecting_channel_id')) {
+            DB::table('business_voice_browser_credentials')->where('agency_prospecting_channel_id', '!=', 0)->delete();
+        }
+
+        if (Schema::hasColumn('business_voice_browser_credentials', 'agency_prospecting_channel_id')) {
+            Schema::table('business_voice_browser_credentials', function (Blueprint $table): void {
+                $table->dropUnique('bvbc_business_user_channel_unique');
+                $table->dropColumn(['agency_prospecting_channel_id', 'webrtc_connection_id']);
+            });
+        }
+        if (! Schema::hasIndex('business_voice_browser_credentials', 'bvbc_business_user_unique')) {
+            Schema::table('business_voice_browser_credentials', function (Blueprint $table): void {
+                $table->unique(['business_id', 'user_id'], 'bvbc_business_user_unique');
+            });
+        }
 
         // business_messaging_number_id stays nullable on rollback: BYO rows (if any) have none, and restoring NOT NULL would fail.
-        Schema::table('business_voice_calls', function (Blueprint $table): void {
-            $table->dropIndex('bvc_agency_channel_index');
-            $table->dropColumn('agency_prospecting_channel_id');
-        });
+        if (Schema::hasColumn('business_voice_calls', 'agency_prospecting_channel_id')) {
+            Schema::table('business_voice_calls', function (Blueprint $table): void {
+                $table->dropIndex('bvc_agency_channel_index');
+                $table->dropColumn(['agency_prospecting_channel_id', 'transport_account_hash', 'transport_config_hash']);
+            });
+        }
 
-        Schema::table('agency_prospecting_channels', function (Blueprint $table): void {
-            $table->dropUnique('apc_voice_number_key_unique');
-            $table->dropColumn(['voice_enabled', 'voice_connection_id', 'voice_webrtc_connection_id', 'voice_number', 'voice_number_key', 'voice_connection_verified_at', 'voice_webrtc_verified_at', 'voice_number_verified_at', 'voice_webhook_verified_at', 'voice_last_error_code']);
-        });
+        if (Schema::hasColumn('agency_prospecting_channels', 'voice_enabled')) {
+            Schema::table('agency_prospecting_channels', function (Blueprint $table): void {
+                $table->dropUnique('apc_voice_number_key_unique');
+                $table->dropColumn(['voice_enabled', 'voice_connection_id', 'voice_webrtc_connection_id', 'voice_number', 'voice_number_key', 'voice_connection_verified_at', 'voice_webrtc_verified_at', 'voice_number_verified_at', 'voice_webhook_verified_at', 'voice_last_error_code']);
+            });
+        }
     }
 };

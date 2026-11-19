@@ -213,7 +213,8 @@ final class BrowserCallOrchestrator
 
         $token = base64_decode($clientStateB64, true);
         $contact = $call->contact_id !== null ? Contacts::query()->find($call->contact_id) : null;
-        $transport = VoiceTransport::forCall($call);
+        // The contact leg is a NEW leg: it may only be dialled through exactly the transport verified at placement.
+        $transport = VoiceTransport::forCallDial($call);
         $number = $call->business_messaging_number_id !== null ? BusinessMessagingNumber::query()->find($call->business_messaging_number_id) : null;
         $from = $transport?->isByo() ? $transport->fromNumber : $number?->phone_number;
         // A contact's number, or (unlinked conversation call) the exact number recorded at placement. The to_hash check below
@@ -226,7 +227,8 @@ final class BrowserCallOrchestrator
         if ($token === false || hash('sha256', $token) !== $call->client_state_hash
             || $destination === null || $transport === null || $from === null
             || BusinessVoiceCall::hashDestination($destination) !== $call->to_hash) {
-            $this->failCall($call, 'contact_not_dialable');
+            // Settings changed after placement (or the channel is gone): fail closed, never dial through unverified details.
+            $this->failCall($call, $transport === null && $call->agency_prospecting_channel_id !== null ? 'transport_changed' : 'contact_not_dialable');
 
             return;
         }

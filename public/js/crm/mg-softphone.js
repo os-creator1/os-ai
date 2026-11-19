@@ -56,6 +56,7 @@
     var direction = 'outbound';
     var sharedClient = null;      // the page's one signed-in client (inbound enabled only)
     var sharedReady = false;
+    var sharedSessionId = null;   // the opaque id of THIS tab's session: every heartbeat proves which account this browser uses
     var pendingSdk = null;        // an SDK call that is ringing and has not been matched to a server call yet
     var presenceTimer = null;
     var reconnectTimer = null;
@@ -666,6 +667,7 @@
         var rtc = null;
         api('POST', cfg.sessionUrl).then(function (r) {
             if (!r.ok || !r.json || !r.json.data) { throw new Error('session'); }
+            sharedSessionId = r.json.data.session_id || null;
             rtc = new window.TelnyxWebRTC.TelnyxRTC({ login_token: r.json.data.login_token });
             rtc.remoteElement = 'mg-remote-audio';
             rtc.on('telnyx.notification', onNotification);
@@ -698,6 +700,7 @@
         try { if (sharedClient) { sharedClient.disconnect(); } } catch (e) {}
         sharedClient = null;
         sharedReady = false;
+        sharedSessionId = null;
         if (presenceTimer) { clearInterval(presenceTimer); presenceTimer = null; }
         if (renewTimer) { clearTimeout(renewTimer); renewTimer = null; }
     }
@@ -729,7 +732,7 @@
 
     function heartbeat() {
         if (!sharedReady) { return; }
-        api('POST', inboundCfg.presenceUrl).then(function (r) {
+        api('POST', inboundCfg.presenceUrl, { session_id: sharedSessionId }).then(function (r) {
             if (r.status === 409 && r.json && r.json.error && r.json.error.code === 'browser_session_required') { onSessionStale(); return; }
             if (r.ok) { staleStreak = 0; }
             if (r.status === 503 || r.status === 403 || r.status === 404) { teardownShared(); } // no longer available: stop registering

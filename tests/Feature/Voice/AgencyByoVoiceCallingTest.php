@@ -254,51 +254,155 @@ class AgencyByoVoiceCallingTest extends TestCase
         $this->assertSame(self::BYO_CONN, $this->agentDial()['connection_id']);
     }
 
-    public function test_switching_between_platform_inbound_and_byo_sessions_never_advertises_the_wrong_account(): void
+    public function test_two_tabs_on_different_transports_never_refresh_each_others_presence(): void
     {
         config(['messaging.voice.inbound.enabled' => true]);
         // Laravel's unnamed throttle:N,M keys on the user alone, so every throttled voice route shares one counter. The
         // production limits stay as they are; the test just clears the counter between its steps (it is not a rate-limit test).
-        $presence = function () {
+        $beat = function (?string $id) {
             \Illuminate\Support\Facades\Cache::flush();
 
-            return $this->postJson($this->url('presence'));
+            return $this->postJson($this->url('presence'), $id === null ? [] : ['session_id' => $id]);
         };
-        $session = function () {
+        $start = function (): string {
             \Illuminate\Support\Facades\Cache::flush();
 
-            return $this->postJson($this->url('browser-session'))->assertOk();
+            return $this->postJson($this->url('browser-session'))->assertOk()->json('data.session_id');
         };
         $freshPlatform = fn () => BusinessVoiceBrowserCredential::query()->where('agency_prospecting_channel_id', 0)->whereNotNull('presence_at')->count();
         $freshByo = fn () => BusinessVoiceBrowserCredential::query()->where('agency_prospecting_channel_id', $this->channel->id)->whereNotNull('presence_at')->count();
 
-        // 1. Platform-managed (voice off): the browser signs into the platform credential and is available for inbound.
+        // Tab 1 signs into the platform account (voice off) and is available for inbound.
         $this->channel->forceFill(['voice_enabled' => false])->save();
-        $session();
-        $presence()->assertOk();
+        $tab1 = $start();
+        $beat($tab1)->assertOk();
         $this->assertSame(1, $freshPlatform());
 
-        // 2. The agency's account is selected: the browser signs into the agency credential. The platform credential's
-        //    presence is withdrawn at once, and the heartbeat now belongs to the agency credential only.
+        // The agency's account is selected; tab 2 signs into it. The platform credential's presence is withdrawn at once.
         $this->channel->forceFill(['voice_enabled' => true])->save();
-        $session();
-        $this->assertSame(0, $freshPlatform(), 'A platform credential must not stay "online" while the browser is on the agency account.');
-        $presence()->assertOk();
-        $this->assertSame(0, $freshPlatform());
+        $tab2 = $start();
+        $this->assertSame(0, $freshPlatform(), 'A platform credential must not stay "online" while another tab is on the agency account.');
+        $beat($tab2)->assertOk();
         $this->assertSame(1, $freshByo());
 
-        // 3. Voice is turned off again while the page still holds the agency session: that heartbeat must NOT refresh the
-        //    platform credential (the browser is not signed into it); the browser is told to start a new session.
-        $this->channel->forceFill(['voice_enabled' => false])->save();
-        $presence()->assertStatus(409)->assertJsonPath('error.code', 'browser_session_required');
+        // Tab 1 is still on the platform account: it is told to reconnect and refreshes NOTHING (not its own, not tab 2's).
+        $beat($tab1)->assertStatus(409)->assertJsonPath('error.code', 'browser_session_required');
         $this->assertSame(0, $freshPlatform());
 
-        // 4. A fresh session signs the browser into the platform credential again; the agency one is withdrawn.
-        $session();
-        $presence()->assertOk();
+        // Voice is turned off again: tab 2 (agency account) is now the stale one; tab 1 is legitimately current again.
+        $this->channel->forceFill(['voice_enabled' => false])->save();
+        $beat($tab2)->assertStatus(409)->assertJsonPath('error.code', 'browser_session_required');
+        $beat($tab1)->assertOk();
+        $this->assertSame(1, $freshPlatform());
+
+        // Tab 2 reconnects on the platform account: the agency credential's presence is withdrawn, both credentials kept.
+        $tab2b = $start();
+        $beat($tab2b)->assertOk();
         $this->assertSame(1, $freshPlatform());
         $this->assertSame(0, $freshByo());
         $this->assertSame(2, BusinessVoiceBrowserCredential::count(), 'Both credentials are kept; neither is deleted by switching.');
+
+        // A heartbeat that does not prove a session is refused, whatever else is true.
+        $beat(null)->assertStatus(409);
+        $beat('')->assertStatus(409);
+        $beat('forged.token')->assertStatus(409);
+        $beat(substr($tab1, 0, -2) . 'zz')->assertStatus(409);
+    }
+
+    public function test_a_session_id_works_only_for_its_own_user_business_and_credential(): void
+    {
+        $id = $this->postJson($this->url('browser-session'))->assertOk()->json('data.session_id');
+        $credential = BusinessVoiceBrowserCredential::firstOrFail();
+
+        $this->assertSame($credential->id, \App\Library\Voice\BrowserSessionToken::resolve($id, $this->business, (int) $this->customer->user_id)?->id);
+        $this->assertNull(\App\Library\Voice\BrowserSessionToken::resolve($id, $this->business, (int) $this->customer->user_id + 1), 'another user');
+
+        ['business' => $otherBusiness] = $this->createIndependentWorkspaceBusiness();
+        $this->assertNull(\App\Library\Voice\BrowserSessionToken::resolve($id, $otherBusiness, (int) $this->customer->user_id), 'another Business');
+
+        // A rotated / deleted credential no longer resolves.
+        $credential->delete();
+        $this->assertNull(\App\Library\Voice\BrowserSessionToken::resolve($id, $this->business, (int) $this->customer->user_id));
+    }
+
+    // ------------------------------------------------------------------ in-flight calls keep the transport they were placed on
+
+    private function placeAndRingBrowser(): array
+    {
+        $this->postJson($this->url('browser-session'))->assertOk();
+        $this->placeBrowser()->assertStatus(202);
+        $call = BusinessVoiceCall::firstOrFail();
+        $this->assertSame(64, strlen((string) $call->transport_config_hash));
+        $this->assertSame(64, strlen((string) $call->transport_account_hash));
+
+        return [$call, $this->agentDial()['client_state']];
+    }
+
+    private function contactDials(): array
+    {
+        return $this->sent(fn (Request $r) => $r->method() === 'POST' && str_ends_with($r->url(), '/calls') && str_starts_with((string) $r['to'], '+'));
+    }
+
+    public function test_a_call_whose_voice_connection_changes_while_ringing_never_dials_the_contact_but_is_cleaned_up_safely(): void
+    {
+        [$call, $state] = $this->placeAndRingBrowser();
+
+        $this->channel->forceFill(['voice_connection_id' => 'changed_cc_not_verified'])->save();
+        $this->byoWebhook($this->channel, 'ev-c1', 'call.answered', 'agent-1', $state)->assertOk();
+
+        $this->assertSame([], $this->contactDials(), 'the contact was not dialled through the unverified connection');
+        $fresh = $call->fresh();
+        $this->assertSame('failed', $fresh->status);
+        $this->assertSame('transport_changed', $fresh->failure_code);
+
+        // The browser leg that already exists is still hung up, on the same account.
+        $hangups = $this->sent(fn (Request $r) => str_ends_with($r->url(), '/calls/agent-1/actions/hangup'));
+        $this->assertCount(1, $hangups);
+        $this->assertSame('Bearer ' . self::AGENCY_KEY, $hangups[0]->header('Authorization')[0]);
+        $this->assertNoPlatformCredentialUsed();
+    }
+
+    public function test_a_call_whose_caller_number_changes_while_ringing_never_dials_the_contact(): void
+    {
+        [$call, $state] = $this->placeAndRingBrowser();
+
+        $this->channel->forceFill(['voice_number' => '+14155550177'])->save();
+        $this->byoWebhook($this->channel, 'ev-n1', 'call.answered', 'agent-1', $state)->assertOk();
+
+        $this->assertSame([], $this->contactDials());
+        $this->assertSame('transport_changed', $call->fresh()->failure_code);
+    }
+
+    public function test_a_call_whose_account_changes_while_ringing_sends_no_command_with_the_new_key(): void
+    {
+        [$call, $state] = $this->placeAndRingBrowser();
+        $before = count(Http::recorded());
+
+        \App\Models\SendingServer::query()->whereKey($this->channel->sending_server_id)
+            ->update(['api_key' => \App\Library\Security\SealedSecret::seal('a-different-account-key')]);
+        $this->byoWebhook($this->channel, 'ev-a1', 'call.answered', 'agent-1', $state)->assertOk();
+
+        $this->assertCount($before, Http::recorded(), 'no dial and no hangup was sent with the replacement account\'s key');
+        $this->assertSame('transport_changed', $call->fresh()->failure_code);
+        $this->assertSame([], $this->sent(fn (Request $r) => str_contains(json_encode($r->header('Authorization')), 'a-different-account-key')));
+    }
+
+    public function test_an_unchanged_configuration_still_dials_bridges_and_hangs_up_and_a_connection_change_after_dialling_does_not_block_cleanup(): void
+    {
+        [$call, $state] = $this->placeAndRingBrowser();
+        $this->byoWebhook($this->channel, 'ev-u1', 'call.answered', 'agent-1', $state)->assertOk();
+        $this->assertCount(1, $this->contactDials());
+        $this->byoWebhook($this->channel, 'ev-u2', 'call.answered', 'contact-2', $state)->assertOk();
+        $this->assertCount(1, $this->sent(fn (Request $r) => str_ends_with($r->url(), '/calls/agent-1/actions/bridge')));
+
+        // Settings change mid-call: the existing legs can still be hung up from the CRM (same account).
+        $this->channel->forceFill(['voice_connection_id' => 'changed_after_dial'])->save();
+        $this->postJson($this->url('hangup', [$call->uid]))->assertOk()->assertJsonPath('data.status', 'ended');
+        $hangups = $this->sent(fn (Request $r) => str_ends_with($r->url(), '/actions/hangup'));
+        $this->assertNotEmpty($hangups);
+        foreach ($hangups as $request) {
+            $this->assertSame('Bearer ' . self::AGENCY_KEY, $request->header('Authorization')[0]);
+        }
     }
 
     public function test_byo_calling_is_unaffected_by_a_stale_platform_credential(): void

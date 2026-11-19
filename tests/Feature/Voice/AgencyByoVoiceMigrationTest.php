@@ -35,7 +35,7 @@ class AgencyByoVoiceMigrationTest extends TestCase
 
             // Restore the schema first (a failure between down() and up() leaves the voice columns missing).
             if (! Schema::hasColumn('business_voice_calls', 'agency_prospecting_channel_id')
-                || ! Schema::hasColumn('business_voice_browser_credentials', 'session_started_at')) {
+                || ! Schema::hasColumn('business_voice_browser_credentials', 'webrtc_connection_id')) {
                 try {
                     $this->migration()->down();
                 } catch (\Throwable) {
@@ -102,7 +102,8 @@ class AgencyByoVoiceMigrationTest extends TestCase
         $this->assertSame(['cred-a', 'cred-b'], $creds->pluck('telnyx_credential_id')->all());
         $this->assertSame([0, 0], $creds->pluck('agency_prospecting_channel_id')->map(fn ($v) => (int) $v)->all());
         $this->assertSame([null, null], $creds->pluck('webrtc_connection_id')->all());
-        $this->assertSame([null, null], $creds->pluck('session_started_at')->all());
+        $this->assertSame([null, null], $calls->pluck('transport_config_hash')->all());
+        $this->assertSame([null, null], $calls->pluck('transport_account_hash')->all());
 
         $channel = DB::table('agency_prospecting_channels')->where('sender_number', '14155550001')->first();
         $this->assertSame(0, (int) $channel->voice_enabled);
@@ -156,5 +157,50 @@ class AgencyByoVoiceMigrationTest extends TestCase
         $m->up();
         $this->assertSame(1, DB::table('business_voice_calls')->where('business_id', self::BUSINESS)->count());
         $this->assertSame('cred-z', DB::table('business_voice_browser_credentials')->where('business_id', self::BUSINESS)->value('telnyx_credential_id'));
+    }
+
+    public function test_rollback_with_platform_and_agency_credentials_is_deterministic_idempotent_and_reapplies(): void
+    {
+        $m = $this->migration();
+        $cred = fn (int $user, int $channel, string $id) => $this->legacyCredential($user, $id) + ['agency_prospecting_channel_id' => $channel];
+
+        // A user who used BOTH accounts (the case that used to make the legacy unique index impossible to restore), a user
+        // with only an agency credential, and an unrelated platform-only user.
+        DB::statement('SET FOREIGN_KEY_CHECKS=0');
+        DB::table('business_voice_browser_credentials')->insert([
+            $cred(1, 0, 'plat-u1'), $cred(1, 5, 'byo-u1'), $cred(2, 6, 'byo-only-u2'), $cred(3, 0, 'plat-u3'),
+        ]);
+        DB::table('business_voice_calls')->insert(['business_id' => self::BUSINESS, 'business_messaging_number_id' => null, 'agency_prospecting_channel_id' => 5,
+            'to_hash' => str_repeat('c', 64), 'status' => 'ended', 'kind' => 'customer', 'uid' => (string) Str::uuid(),
+            'transport_account_hash' => str_repeat('a', 64), 'transport_config_hash' => str_repeat('b', 64), 'created_at' => now(), 'updated_at' => now()]);
+        DB::statement('SET FOREIGN_KEY_CHECKS=1');
+
+        $m->down(); // must not fail on the duplicate (business, user) identity
+
+        // Platform credentials survive untouched; agency credentials (indistinguishable from platform ones once the channel
+        // column is gone) are removed - they are only a cache of Telnyx identifiers and are re-provisioned on the next session.
+        $left = DB::table('business_voice_browser_credentials')->where('business_id', self::BUSINESS)->orderBy('id')->pluck('telnyx_credential_id')->all();
+        $this->assertSame(['plat-u1', 'plat-u3'], $left);
+        // Call history is kept (the row just loses its agency attribution).
+        $this->assertSame(1, DB::table('business_voice_calls')->where('business_id', self::BUSINESS)->count());
+        // The legacy unique (business_id, user_id) is back.
+        $duplicate = false;
+        try {
+            DB::table('business_voice_browser_credentials')->insert($this->legacyCredential(1, 'dup'));
+        } catch (\Illuminate\Database\UniqueConstraintViolationException) {
+            $duplicate = true;
+        }
+        $this->assertTrue($duplicate, 'the legacy unique index was restored');
+
+        // A re-run (e.g. after an interrupted rollback) completes without error and changes nothing.
+        $m->down();
+        $this->assertSame(['plat-u1', 'plat-u3'], DB::table('business_voice_browser_credentials')->where('business_id', self::BUSINESS)->orderBy('id')->pluck('telnyx_credential_id')->all());
+
+        // Re-applying works, keeps the platform rows as channel 0, and a user can have an agency credential again.
+        $m->up();
+        $rows = DB::table('business_voice_browser_credentials')->where('business_id', self::BUSINESS)->orderBy('id')->get();
+        $this->assertSame([0, 0], $rows->pluck('agency_prospecting_channel_id')->map(fn ($v) => (int) $v)->all());
+        DB::table('business_voice_browser_credentials')->insert($cred(1, 5, 'byo-u1-again'));
+        $this->assertSame(3, DB::table('business_voice_browser_credentials')->where('business_id', self::BUSINESS)->count());
     }
 }
