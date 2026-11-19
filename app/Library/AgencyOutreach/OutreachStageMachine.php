@@ -51,7 +51,11 @@ final class OutreachStageMachine
             return new OutreachDecision(OutreachDecision::REJECT, $current, AgencyProspectStage::StoppedOptOut->value, reason: 'rejected');
         }
 
-        if ($reply->stop === OutreachStopClassifier::REJECTED_SOFT && $current >= AgencyProspectStage::Qualification->value) {
+        // A soft "no" ends the conversation once message 1 has been delivered -- including a
+        // message 1 recognised as sent by content (the opener), which leaves the stage at 1.
+        $firstDelivered = $sequence !== null && $sent !== [];
+
+        if ($reply->stop === OutreachStopClassifier::REJECTED_SOFT && ($current >= AgencyProspectStage::Qualification->value || $firstDelivered)) {
             return new OutreachDecision(OutreachDecision::REJECT, $current, AgencyProspectStage::StoppedOptOut->value, reason: 'rejected');
         }
 
@@ -81,23 +85,26 @@ final class OutreachStageMachine
     {
         $booking = AgencyProspectStage::BookingLinkSent->value;
         $step = $sequence->nextReplyStep($sent);
+        $link = $sequence->linkStep($sent);
+        // A link sent by hand has no step-tagged outbound ledger row, so its text may
+        // advance $sent without changing the persisted stage. Respect proven delivery
+        // rather than silently treating a scheduling reply as sequence_complete.
+        $linkAlreadyDelivered = $link !== null && in_array($link['id'], $sent, true);
 
-        if ($current === $booking) {
-            if ($reply->schedulingReply && ! $reply->linkRepeatUsed) {
-                $link = $sequence->linkStep($sent);
-
-                if ($link !== null) {
-                    return new OutreachDecision(OutreachDecision::RESEND_LINK, $booking, $booking, null, $answer, stepId: $link['id']);
-                }
+        if ($current === $booking || ($current < $booking && $linkAlreadyDelivered)) {
+            if ($reply->schedulingReply && ! $reply->linkRepeatUsed && $link !== null) {
+                // A successful resend also reconciles the stale stage under the pipeline's
+                // compare-and-set; the repeat remains limited to once per member.
+                return new OutreachDecision(OutreachDecision::RESEND_LINK, $current, $booking, null, $answer, stepId: $link['id']);
             }
 
             if ($step !== null) {
-                return new OutreachDecision(OutreachDecision::SEND_STAGE, $booking, $booking, null, $answer, stepId: $step['id']);
+                return new OutreachDecision(OutreachDecision::SEND_STAGE, $current, $booking, null, $answer, stepId: $step['id']);
             }
 
             return $answer
-                ? new OutreachDecision(OutreachDecision::ANSWER_ONLY, $booking, $booking, null, true)
-                : new OutreachDecision(OutreachDecision::NONE, $booking, $booking, reason: 'no_scripted_reply');
+                ? new OutreachDecision(OutreachDecision::ANSWER_ONLY, $current, $current, null, true)
+                : new OutreachDecision(OutreachDecision::NONE, $current, $current, reason: 'no_scripted_reply');
         }
 
         if (! in_array($current, [AgencyProspectStage::Introduction->value, AgencyProspectStage::Qualification->value, AgencyProspectStage::CallInvitation->value], true)) {

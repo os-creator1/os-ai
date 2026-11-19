@@ -295,11 +295,21 @@ final class OutreachSendPipeline
             }
         }
 
-        if ($stepId !== null) {
+        // A campaign opener that IS the first scripted step carries no step id of its own, but
+        // it has just delivered that step: record it and arm whatever timed step follows,
+        // exactly as a scripted send of that step would.
+        $openerDeliveredStep = $stepId === null
+            && $row->purpose === AgencyProspectMessage::PURPOSE_INITIAL
+            && $sentBefore !== [];
+
+        if ($stepId !== null || $openerDeliveredStep) {
             // Progress is the set of step ids delivered: editing the sequence later can
             // neither repeat a step nor skip or reorder one for this prospect.
-            $sentNow = array_values(array_unique([...$sentBefore, $stepId]));
+            $sentNow = array_values(array_unique($stepId === null ? $sentBefore : [...$sentBefore, $stepId]));
             $updates['sequence_sent_ids'] = $sentNow;
+            // Which send each unattributed (opener / hand-sent) step rests on: stored so a later
+            // reword, disable or rebuild of the step can never hand that evidence to another step.
+            $updates['sequence_evidence'] = $sequence->evidenceFor($member) ?: null;
 
             // The very next thing due may be a timed step: one timer at a time, and a
             // legacy follow-up that was already sent or cancelled is never re-armed.

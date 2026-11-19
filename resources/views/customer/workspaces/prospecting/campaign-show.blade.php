@@ -75,6 +75,41 @@
                 </x-card>
             @endif
 
+            @if($campaign->isManaged() && $diagnostics !== null)
+                <x-card title="After a prospect replies" :padded="true" class="mt-2" data-role="reply-diagnostics">
+                    @foreach($diagnostics['warnings'] as $warning)
+                        <x-alert variant="warning" data-role="reply-warning">{{ $warning }}</x-alert>
+                    @endforeach
+                    @if($diagnostics['first_reply'])
+                        <p class="mb-1" data-role="first-reply">
+                            <strong>First message sent after a reply: {{ $diagnostics['first_reply']['label'] }}</strong>
+                            <span class="d-block text-caption">{{ $diagnostics['first_reply']['preview'] }}</span>
+                        </p>
+                    @endif
+                    @if(! empty($diagnostics['next_by_member']))
+                        <p class="mb-50"><strong>Next automated message per prospect</strong></p>
+                        <ul class="list-unstyled mb-1" data-role="next-by-member">
+                            @foreach($diagnostics['next_by_member'] as $row)
+                                <li class="mb-50">{{ $row['name'] }}: <strong>{{ $row['next'] }}</strong>
+                                    @if($row['preview'])<span class="d-block text-caption">{{ \Illuminate\Support\Str::limit($row['preview'], 90) }}</span>@endif
+                                </li>
+                            @endforeach
+                        </ul>
+                    @endif
+                    @if($diagnostics['silent_replies']->isNotEmpty())
+                        <p class="mb-50"><strong>Replies that did not get a text back</strong></p>
+                        <ul class="list-unstyled mb-0" data-role="silent-replies">
+                            @foreach($diagnostics['silent_replies'] as $reply)
+                                <li class="mb-50">
+                                    “{{ \Illuminate\Support\Str::limit($reply->body, 60) }}”
+                                    <span class="d-block text-caption" data-reason="{{ $reply->failure_reason }}">{{ \App\Library\AgencyOutreach\OutreachCampaignDiagnostics::reasonLabel($reply->failure_reason) }}</span>
+                                </li>
+                            @endforeach
+                        </ul>
+                    @endif
+                </x-card>
+            @endif
+
             @if($campaign->status->value === 'draft')
                 @if($campaign->isManaged())
                     <x-card title="First text &amp; start" :padded="true" class="mt-2">

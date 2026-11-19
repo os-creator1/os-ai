@@ -14,6 +14,7 @@ use App\Library\AgencyOutreach\OutreachSequence;
 use App\Library\AgencyOutreach\OutreachSendPipeline;
 use App\Library\AgencyOutreach\OutreachSendPlan;
 use App\Library\AgencyOutreach\OutreachStageMachine;
+use App\Library\AgencyOutreach\OutreachStepTone;
 use App\Library\AgencyOutreach\OutreachStopService;
 use App\Models\AgencyProspectCampaignMember;
 use App\Models\AgencyProspectMessage;
@@ -119,6 +120,19 @@ class OutreachRespondJob extends Base
             ->orderByDesc('id')
             ->value('body');
 
+        // A plain "no" must not be answered with "Great!" or a booking pitch: hold it for the owner.
+        if ($decision->action === OutreachDecision::SEND_STAGE
+            && $decision->stepId !== null
+            && OutreachStepTone::isBareNegative((string) $inbound->body)) {
+            $stepBody = (string) ($sequence->find($decision->stepId)['body'] ?? '');
+
+            if (OutreachStepTone::assumesYes($stepBody) || OutreachStepTone::isBookingPitch($stepBody)) {
+                $ledger->markHandled($inbound->id, $classification->intent, 'negative_reply_held');
+
+                return;
+            }
+        }
+
         $composed = $composer->compose(
             $eligible->workspace,
             $eligible->prospect,
@@ -126,6 +140,7 @@ class OutreachRespondJob extends Base
             $classification->intent,
             (int) $inbound->id,
             $lastOutbound === null ? null : (string) $lastOutbound,
+            $sequence->deliveredByContent($member),
         );
 
         if (! $composed->hasText()) {

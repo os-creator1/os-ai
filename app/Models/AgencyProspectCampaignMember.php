@@ -32,6 +32,7 @@ class AgencyProspectCampaignMember extends Model
         'ai_paused_by_user_id',
         'sequence_sent_ids',
         'source_contact_id',
+        'sequence_evidence',
     ];
 
     protected $casts = [
@@ -46,6 +47,7 @@ class AgencyProspectCampaignMember extends Model
         'soft_negative_count' => 'integer',
         'ai_paused_at' => 'datetime',
         'sequence_sent_ids' => 'array',
+        'sequence_evidence' => 'array',
     ];
 
     public function workspace(): BelongsTo

@@ -3,6 +3,7 @@
 namespace App\Library\Conversations;
 
 use App\Library\Automation\Workflow\Runtime\AutomationSendContext;
+use App\Library\AgencyOutreach\OutreachManualStepFollowUp;
 use App\Library\Automation\Workflow\Triggers\MessageReceivedTriggerSource;
 use App\Library\Messaging\BusinessMessagingIdentityResolver;
 use App\Library\Messaging\ManagedMessageDispatcher;
@@ -262,7 +263,7 @@ final class ConversationHistoryWriter
         $stepRunId = $this->sendContext->currentStepRunId();
 
         try {
-            return DB::transaction(function () use ($business, $number, $contactNumber, $body, $mediaUrls, $smsType, $operationId, $stepRunId, $source, $sendUid, $conversationBoxId): ?ChatBoxMessage {
+            $message = DB::transaction(function () use ($business, $number, $contactNumber, $body, $mediaUrls, $smsType, $operationId, $stepRunId, $source, $sendUid, $conversationBoxId): ?ChatBoxMessage {
                 $conversation = $this->resolveConversationForWrite($business, $number, $contactNumber, $conversationBoxId);
 
                 if ($conversation === null) {
@@ -335,6 +336,26 @@ final class ConversationHistoryWriter
                     'retry_count' => $sendUid !== null ? 1 : null,
                 ]);
             });
+
+            if ($source === self::SOURCE_CONVERSATIONS && $message !== null) {
+                // A confirmed manual send can satisfy Outreach's next reply step. Only after commit
+                // may it arm that step's timed successor; no provider call or SMS occurs here.
+                $messageId = (int) $message->id;
+                DB::afterCommit(static function () use ($messageId): void {
+                    try {
+                        app(OutreachManualStepFollowUp::class)->reconcile($messageId);
+                    } catch (\Throwable $e) {
+                        // The SMS is already accepted. Optional Outreach bookkeeping must
+                        // never turn that successful send into a failed Conversations response.
+                        // Log only safe identifiers, never the recipient or SMS text.
+                        \Illuminate\Support\Facades\Log::warning('outreach.manual_followup_reconcile_failed', [
+                            'message_id' => $messageId, 'exception' => $e::class,
+                        ]);
+                    }
+                });
+            }
+
+            return $message;
         } catch (UniqueConstraintViolationException) {
             // A concurrent copy of the same send recorded it first — found,
             // as always, by the operation id THIS accepted result itself
