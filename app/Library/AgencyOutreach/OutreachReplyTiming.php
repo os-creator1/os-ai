@@ -48,9 +48,20 @@ final class OutreachReplyTiming
 
     private const HESITATION = '/\b(not sure|unsure|maybe|perhaps|hesitant|think about it|too expensive|too much|expensive|busy|not now|not right now|already have|already use|hmm+|i don\'?t know|dont know|skeptical|not looking|no thanks|no thank you|nope|nah)\b/i';
 
+    /**
+     * Pacing needs a queue that can DEFER a job. On the `sync` driver a delayed dispatch runs
+     * inline and nothing would be left to answer when the moment arrives, so replies are
+     * immediate there rather than silently never sent.
+     */
     public static function enabled(): bool
     {
-        return (bool) config('outreach.reply_delay_enabled', true);
+        if (! (bool) config('outreach.reply_delay_enabled', true)) {
+            return false;
+        }
+
+        $connection = (string) config('queue.default');
+
+        return config("queue.connections.{$connection}.driver") !== 'sync';
     }
 
     /** The reply category for one inbound message (deterministic). */

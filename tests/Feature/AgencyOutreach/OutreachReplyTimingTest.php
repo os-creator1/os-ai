@@ -32,6 +32,7 @@ class OutreachReplyTimingTest extends TestCase
         parent::setUp();
         $this->bootOutreach();
         config(['outreach.reply_delay_enabled' => true]);   // phpunit.xml turns it off for the immediate-reply suites
+        config(['queue.default' => 'database']);             // a queue that can defer jobs (phpunit uses sync)
     }
 
     /** @return array{0: Workspace, 1: Business, 2: AgencyProspectCampaignMember, 3: AgencyProspect, 4: AgencyProspectCampaign} */
@@ -299,5 +300,17 @@ class OutreachReplyTimingTest extends TestCase
         }
 
         $this->assertSame(OutreachReplyTiming::DEFAULTS, OutreachReplyTiming::windows($workspace));
+    }
+
+    public function test_a_synchronous_queue_cannot_defer_so_replies_are_immediate_not_lost(): void
+    {
+        config(['queue.default' => 'sync']);                                             // the checked-in .env.example setting
+        [, $business, $member] = $this->scenario();
+
+        $this->inbound($business, 'sounds good');                                        // the job runs inline
+
+        $this->assertNull($this->lastInbound()->reply_due_at, 'No delay is chosen where it could never be honoured.');
+        $this->assertCount(1, $this->sentBodies(), 'The reply is sent, not silently dropped.');
+        $this->assertFalse(OutreachReplyTiming::enabled());
     }
 }
