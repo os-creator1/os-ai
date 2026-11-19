@@ -658,3 +658,19 @@ body.wd h1, body.wd h2, body.wd h3, body.wd h4 { font-family: var(--wd-font-head
 .wd-pal-footer .wd-footer .wd-footer-heading { color: var(--wd-footer-accent); }
 .wd-pal-footer .wd-footer a:hover { color: var(--wd-footer-accent); }
 .wd-pal-footer .wd-footer a.wd-btn-primary, .wd-pal-footer .wd-footer a.wd-btn-primary:hover { color: var(--wd-accent-ink); }
+
+/* ---- Visual-quality pass (generated sites; shared by every niche) -------------------------------------------------------------
+   1. A hero with no photo (typographic) is not a full-viewport block of empty gradient: it sizes to its own content.
+   2. A text section's heading sits on the same left edge as its body column (it used to be centred over a left-aligned column).
+   3. Two text sections in a row read as one continuous article, not two bands separated by 12rem of white.
+   4. A linked service card shows that it is a link (the hit area and hover underline already existed).
+   5. Blog article headings and card titles are sentence case as blog.css intends; `body.wd h2` out-specified it. */
+.wd-hero-fullbleed.wd-hero-typographic:not(.wd-hero-inner-page) { min-height: min(52vh, 440px); }
+.wd .website-text .wd-section-title { max-width: 46em; margin-left: auto; margin-right: auto; text-align: left; }
+.wd-band-text + .wd-band-text > .wd-container { padding-top: 0; }
+.wd-services:not(.wd-services-event-tiles) .wd-card-linked h3::after { content: " \2192"; color: var(--wd-a); font-weight: 700; }
+.wd .blog-prose h2, .wd .blog-prose h3, .wd .blog-card-title { text-transform: none; letter-spacing: normal; }
+/* Two call-to-action bands in a row (related pages, then the closing inquiry) stay two clear steps: a divider, and the second band
+   starts closer to the first instead of repeating the full band padding. */
+.wd-band-cta + .wd-band-cta { border-top: 1px solid var(--wd-t-line, rgba(0, 0, 0, 0.14)); }
+.wd-band-cta + .wd-band-cta > .wd-container { padding-top: clamp(1.75rem, 4vw, 3rem); }
