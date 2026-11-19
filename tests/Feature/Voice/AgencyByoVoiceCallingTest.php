@@ -254,6 +254,35 @@ class AgencyByoVoiceCallingTest extends TestCase
         $this->assertSame(self::BYO_CONN, $this->agentDial()['connection_id']);
     }
 
+
+    public function test_transport_reverified_between_resolution_and_lock_cannot_change_the_dialled_account_or_pin(): void
+    {
+        $this->postJson($this->url('browser-session'))->assertOk();
+        $changed = false;
+        $channelId = (int) $this->channel->id;
+
+        // Simulate an administrator replacing and re-verifying the account's voice settings
+        // after resolveFor() and before the lock. The credential lookup is in that window.
+        \Illuminate\Support\Facades\DB::listen(function (\Illuminate\Database\Events\QueryExecuted $query) use (&$changed, $channelId): void {
+            if ($changed || ! str_contains($query->sql, 'business_voice_browser_credentials')) {
+                return;
+            }
+            $changed = true;
+            \Illuminate\Support\Facades\DB::table('agency_prospecting_channels')->where('id', $channelId)->update([
+                'voice_connection_id' => 'new_verified_connection',
+                'voice_connection_verified_at' => now(),
+                'voice_number' => '+14155550199',
+                'voice_number_key' => '14155550199',
+                'voice_number_verified_at' => now(),
+            ]);
+        });
+
+        $this->placeBrowser('req-race-transport')->assertStatus(409)->assertJsonPath('error.code', 'byo_voice_unavailable');
+        $this->assertTrue($changed, 'the transport changed in the intended window');
+        $this->assertSame(0, BusinessVoiceCall::count());
+        $this->assertSame([], $this->sent(fn (Request $r) => str_ends_with($r->url(), '/calls')));
+    }
+
     public function test_two_tabs_on_different_transports_never_refresh_each_others_presence(): void
     {
         config(['messaging.voice.inbound.enabled' => true]);

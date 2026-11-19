@@ -89,14 +89,12 @@ final class CustomerCallPlacer
         }
 
         $selected = $fromToken !== null && $fromToken !== '';
-        $prePin = null;
         if ($byo !== null) {
             // The agency's one voice number: the only choice, and only by its own token (never another tenant's number).
             $byoChannel = AgencyByoVoice::selectedChannel($business);
             if ($selected && ($byoChannel === null || ! hash_equals(AgencyByoVoice::selectorToken($business, $byoChannel), (string) $fromToken))) {
                 throw new CustomerCallRefusedException('number_not_available', 'That calling number is not available for this business.', 422);
             }
-            $prePin = $byoChannel !== null ? AgencyByoVoice::pin($byoChannel)['config'] : null;
             $number = null;
         } else {
             $number = $selected
@@ -108,7 +106,7 @@ final class CustomerCallPlacer
         $window = now()->subSeconds((int) $cfg['ring_timeout_secs'] + (int) $cfg['max_duration_secs'] + 60);
 
         $pin = null;
-        [$call, $replay] = DB::transaction(function () use ($destination, $business, $contact, $userId, $idempotencyKey, $number, $toHash, $token, $window, $cfg, $connectionId, $channel, $selected, $byo, $prePin, &$pin): array {
+        [$call, $replay] = DB::transaction(function () use ($destination, $business, $contact, $userId, $idempotencyKey, $number, $toHash, $token, $window, $cfg, $connectionId, $channel, $selected, $byo, $apiKey, $webhookUrl, &$pin): array {
             // Serialise every placement for this number (or this agency channel): the checks below and the insert are one atomic step.
             if ($byo !== null) {
                 $lockedChannel = AgencyProspectingChannel::query()->with('sendingServer')->whereKey($byo->channelId)->lockForUpdate()->first();
@@ -117,12 +115,20 @@ final class CustomerCallPlacer
                 if ($ready === null || ! $ready['ok'] || (int) $lockedChannel->workspace_id !== (int) $business->workspace_id) {
                     throw new CustomerCallRefusedException('byo_voice_unavailable', (string) ($ready['message'] ?? 'Your Telnyx voice setup is unavailable.'), 409);
                 }
-                // Pin the transport exactly as verified NOW (on the locked row), for every later leg of this call.
-                $pin = AgencyByoVoice::pin($lockedChannel);
-                // The agent leg is dialled with the settings read BEFORE this lock: if they changed in between, start over.
-                if ($prePin === null || ! hash_equals($prePin, $pin['config'])) {
+                // Compare the LOCKED channel's transport to the SAME snapshot resolved for the agent leg.
+                // Looking up the channel again before locking can produce a new configuration while $byo still
+                // holds the old account/connection/number, allowing a call with a mismatched stored pin.
+                $lockedTransport = AgencyByoVoice::transport($lockedChannel);
+                if ($lockedTransport === null || $lockedTransport->channelId !== $byo->channelId
+                    || ! hash_equals($apiKey, $lockedTransport->apiKey)
+                    || $lockedTransport->connectionId !== $connectionId
+                    || $lockedTransport->webrtcConnectionId !== $byo->webrtcConnectionId
+                    || $lockedTransport->fromNumber !== $byo->fromNumber
+                    || $lockedTransport->webhookUrl !== $webhookUrl) {
                     throw new CustomerCallRefusedException('byo_voice_unavailable', 'Your Telnyx voice settings changed while the call was starting. Try again.', 409);
                 }
+                // Both legs now share the exact verified transport we checked under this lock.
+                $pin = AgencyByoVoice::pin($lockedChannel);
             } else {
                 $locked = BusinessMessagingNumber::query()->whereKey($number->id)->lockForUpdate()->first();
                 // Re-validate on the LOCKED row: a renewal may have suspended the number after it was first read.

@@ -150,6 +150,55 @@ class AgencyVoiceSetupTest extends TestCase
         $this->assertNull($foreign->fresh()->voice_number_key);
     }
 
+
+    public function test_unverified_number_cannot_preempt_its_real_owner_and_conflicting_verification_is_rejected(): void
+    {
+        $other = $this->outreachAgency('Beta');
+        $foreign = $this->byoChannel($other['workspace']);
+
+        // Saving an arbitrary known phone number must not reserve it before Telnyx proves ownership.
+        $this->authenticateAs($other['customer']);
+        $this->put($this->route('save', $foreign, $other['workspace']->uid), [
+            'voice_connection_id' => 'cc_1', 'voice_webrtc_connection_id' => 'wr_1', 'voice_number' => '+14155550142',
+        ])->assertRedirect()->assertSessionHasNoErrors();
+        $this->assertNull($foreign->fresh()->voice_number_key);
+
+        $this->authenticateAs($this->agency['customer']);
+        $this->save()->assertRedirect()->assertSessionHasNoErrors();
+        $this->fakeTelnyxVoice();
+        $this->post($this->route('verify'))->assertSessionHas('flash_success');
+        $this->assertSame('14155550142', $this->channel->fresh()->voice_number_key);
+
+        // Even if a provider response later claims success for an overlapping configuration, only
+        // one verified owner can hold the unique key; the loser retains no verified claim.
+        $this->authenticateAs($other['customer']);
+        $this->fakeTelnyxVoice();
+        $this->post($this->route('verify', $foreign, $other['workspace']->uid))
+            ->assertSessionHas('flash_error', fn ($message) => str_contains($message, 'already verified'));
+        $this->assertNull($foreign->fresh()->voice_number_key);
+        $this->assertNull($foreign->fresh()->voice_number_verified_at);
+        $this->assertSame('14155550142', $this->channel->fresh()->voice_number_key);
+    }
+
+    public function test_changing_a_verified_number_releases_its_previous_ownership_key(): void
+    {
+        $this->save();
+        $this->fakeTelnyxVoice();
+        $this->post($this->route('verify'))->assertSessionHas('flash_success');
+        $this->assertSame('14155550142', $this->channel->fresh()->voice_number_key);
+
+        $this->save(['voice_number' => '+14155550143'])->assertRedirect()->assertSessionHasNoErrors();
+        $this->assertNull($this->channel->fresh()->voice_number_key);
+        $this->assertNull($this->channel->fresh()->voice_number_verified_at);
+
+        $other = $this->outreachAgency('Beta');
+        $foreign = $this->byoChannel($other['workspace']);
+        $this->authenticateAs($other['customer']);
+        $this->put($this->route('save', $foreign, $other['workspace']->uid), [
+            'voice_connection_id' => 'cc_1', 'voice_webrtc_connection_id' => 'wr_1', 'voice_number' => '+14155550142',
+        ])->assertRedirect()->assertSessionHasNoErrors();
+    }
+
     public function test_another_agencys_channel_is_not_reachable_and_nothing_is_called(): void
     {
         $other = $this->outreachAgency('Gamma');

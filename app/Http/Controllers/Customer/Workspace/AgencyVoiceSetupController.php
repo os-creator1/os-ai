@@ -120,25 +120,31 @@ class AgencyVoiceSetupController extends CustomerBaseController
 
         $problems = array_filter([$result['voice_connection'], $result['webrtc_connection'], $result['number']]);
 
-        $applied = DB::transaction(function () use ($channel, $snapshot, $result, $problems): bool {
-            $locked = AgencyProspectingChannel::query()->with('sendingServer')->whereKey($channel->id)->lockForUpdate()->first();
-            if ($locked === null || $locked->status === AgencyProspectingChannel::STATUS_DISCONNECTED
-                || ! hash_equals($snapshot, AgencyByoVoice::fingerprint($locked))) {
-                return false; // settings or key changed while Telnyx was being asked: fail closed, approve nothing
-            }
-
-            $now = now();
-            $locked->forceFill([
-                'voice_connection_verified_at' => $result['voice_connection'] === null ? $now : null,
-                'voice_webrtc_verified_at' => $result['webrtc_connection'] === null ? $now : null,
-                'voice_number_verified_at' => $result['number'] === null ? $now : null,
-                'voice_last_error_code' => null,
-                // A step that no longer verifies takes voice offline rather than leaving a stale "ready".
-                'voice_enabled' => $problems === [] ? $locked->voice_enabled : false,
-            ])->save();
-
-            return true;
-        });
+        try {
+            $applied = DB::transaction(function () use ($channel, $snapshot, $result, $problems): bool {
+                $locked = AgencyProspectingChannel::query()->with('sendingServer')->whereKey($channel->id)->lockForUpdate()->first();
+                if ($locked === null || $locked->status === AgencyProspectingChannel::STATUS_DISCONNECTED
+                    || ! hash_equals($snapshot, AgencyByoVoice::fingerprint($locked))) {
+                    return false; // settings or key changed while Telnyx was being asked: fail closed, approve nothing
+                }
+    
+                $now = now();
+                $locked->forceFill([
+                    'voice_connection_verified_at' => $result['voice_connection'] === null ? $now : null,
+                    'voice_webrtc_verified_at' => $result['webrtc_connection'] === null ? $now : null,
+                    'voice_number_verified_at' => $result['number'] === null ? $now : null,
+                    'voice_last_error_code' => null,
+                    // A step that no longer verifies takes voice offline rather than leaving a stale "ready".
+                    'voice_enabled' => $problems === [] ? $locked->voice_enabled : false,
+                ])->save();
+    
+                return true;
+            });
+        } catch (\Illuminate\Database\UniqueConstraintViolationException) {
+            // Two agencies may verify the same saved number concurrently. The DB unique key is the
+            // final arbiter: the losing verification must not steal ownership or mark itself verified.
+            return $this->back($workspaceUid, $channel)->with('flash_error', 'This voice number is already verified for another account.');
+        }
 
         if (! $applied) {
             return $this->back($workspaceUid, $channel)->with('flash_error', 'Your voice settings or Telnyx key changed while they were being checked, so the result was discarded. Verify again.');
