@@ -10,6 +10,7 @@ use App\Library\Messaging\E164Normalizer;
 use App\Library\Voice\Byo\AgencyByoVoice;
 use App\Library\Voice\Byo\AgencyVoiceVerifier;
 use App\Models\AgencyProspectingChannel;
+use App\Models\BusinessVoiceBrowserCredential;
 use App\Models\SendingServer;
 use App\Repositories\Contracts\WorkspaceMembershipRepository;
 use App\Repositories\Contracts\WorkspaceRepository;
@@ -74,7 +75,14 @@ class AgencyVoiceSetupController extends CustomerBaseController
         }
 
         try {
-            $channel->forceFill($attributes)->save();
+            DB::transaction(function () use ($channel, $attributes, $webrtcChanged): void {
+                $channel->forceFill($attributes)->save();
+                if ($webrtcChanged) {
+                    // Credentials minted on the old connection must never be reused. Scoped to THIS channel only
+                    // (never channel 0 = platform, never another agency's).
+                    BusinessVoiceBrowserCredential::query()->where('agency_prospecting_channel_id', (int) $channel->id)->delete();
+                }
+            });
         } catch (\Illuminate\Database\UniqueConstraintViolationException) {
             return $this->back($workspaceUid, $channel)->withErrors(['voice_number' => 'This number is already connected to another account.']);
         }
@@ -94,6 +102,10 @@ class AgencyVoiceSetupController extends CustomerBaseController
             return $this->back($workspaceUid, $channel)->with('flash_error', 'Save the Voice connection, WebRTC connection and number first.');
         }
 
+        // Bind this verification to the exact account + settings being checked. The Telnyx calls below run OUTSIDE any
+        // transaction (no lock is held across HTTP); the snapshot is re-read under a row lock before anything is written.
+        $snapshot = AgencyByoVoice::fingerprint($channel);
+
         $result = $this->verifier->verify(
             $credentials['api_key'],
             (string) $channel->voice_connection_id,
@@ -106,16 +118,31 @@ class AgencyVoiceSetupController extends CustomerBaseController
             return $this->back($workspaceUid, $channel)->with('flash_error', $result['fatal']);
         }
 
-        $now = now();
         $problems = array_filter([$result['voice_connection'], $result['webrtc_connection'], $result['number']]);
-        $channel->forceFill([
-            'voice_connection_verified_at' => $result['voice_connection'] === null ? $now : null,
-            'voice_webrtc_verified_at' => $result['webrtc_connection'] === null ? $now : null,
-            'voice_number_verified_at' => $result['number'] === null ? $now : null,
-            'voice_last_error_code' => null,
-            // A step that no longer verifies takes voice offline rather than leaving a stale "ready".
-            'voice_enabled' => $problems === [] ? $channel->voice_enabled : false,
-        ])->save();
+
+        $applied = DB::transaction(function () use ($channel, $snapshot, $result, $problems): bool {
+            $locked = AgencyProspectingChannel::query()->with('sendingServer')->whereKey($channel->id)->lockForUpdate()->first();
+            if ($locked === null || $locked->status === AgencyProspectingChannel::STATUS_DISCONNECTED
+                || ! hash_equals($snapshot, AgencyByoVoice::fingerprint($locked))) {
+                return false; // settings or key changed while Telnyx was being asked: fail closed, approve nothing
+            }
+
+            $now = now();
+            $locked->forceFill([
+                'voice_connection_verified_at' => $result['voice_connection'] === null ? $now : null,
+                'voice_webrtc_verified_at' => $result['webrtc_connection'] === null ? $now : null,
+                'voice_number_verified_at' => $result['number'] === null ? $now : null,
+                'voice_last_error_code' => null,
+                // A step that no longer verifies takes voice offline rather than leaving a stale "ready".
+                'voice_enabled' => $problems === [] ? $locked->voice_enabled : false,
+            ])->save();
+
+            return true;
+        });
+
+        if (! $applied) {
+            return $this->back($workspaceUid, $channel)->with('flash_error', 'Your voice settings or Telnyx key changed while they were being checked, so the result was discarded. Verify again.');
+        }
 
         return $problems === []
             ? $this->back($workspaceUid, $channel)->with('flash_success', 'Telnyx confirmed your voice setup. You can now turn voice on.')

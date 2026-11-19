@@ -162,6 +162,26 @@ final class AgencyByoVoice
         return substr(hash_hmac('sha256', 'callfrom-byo:' . $business->id . ':' . $channel->id, (string) config('app.key')), 0, 32);
     }
 
+    /**
+     * A keyed digest of exactly what a verification checks: the account (API key and its sending server), the two
+     * connection ids and the number. Compared before and after the Telnyx calls so a result can only approve the
+     * configuration it was actually obtained for. Never stored or logged.
+     */
+    public static function fingerprint(AgencyProspectingChannel $channel): string
+    {
+        $channel->loadMissing('sendingServer');
+        $server = $channel->sendingServer;
+
+        return hash_hmac('sha256', json_encode([
+            (int) $channel->id,
+            (int) $channel->sending_server_id,
+            $server !== null ? (string) $server->getRawOriginal('api_key') : '',
+            trim((string) $channel->voice_connection_id),
+            trim((string) $channel->voice_webrtc_connection_id),
+            preg_replace('/\D/', '', (string) $channel->voice_number),
+        ]), (string) config('app.key'));
+    }
+
     /** @return array{ok: bool, code: string, message: string} */
     private static function no(string $code, string $message): array
     {

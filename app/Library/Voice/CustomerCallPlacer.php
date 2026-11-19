@@ -67,7 +67,7 @@ final class CustomerCallPlacer
             } catch (BrowserCallsUnavailableException) {
                 throw new CustomerCallRefusedException('calling_unavailable', 'Calling is not available right now.', 503);
             }
-            $agentSipUri = $this->browserCredentials->sipUriFor($business, $userId, $byo?->channelId);
+            $agentSipUri = $this->browserCredentials->sipUriFor($business, $userId, $byo?->channelId, $byo?->webrtcConnectionId);
             if ($agentSipUri === null) {
                 throw new CustomerCallRefusedException('browser_session_required', 'Start a calling session first.', 409);
             }

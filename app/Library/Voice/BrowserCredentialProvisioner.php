@@ -41,11 +41,13 @@ final class BrowserCredentialProvisioner
     }
 
     /** The SIP URI the server dials to ring this user's browser. Null until a session has been provisioned. */
-    public function sipUriFor(Business $business, int $userId, ?int $channelId = null): ?string
+    public function sipUriFor(Business $business, int $userId, ?int $channelId = null, ?string $webrtcConnectionId = null): ?string
     {
         $credential = BusinessVoiceBrowserCredential::query()
             ->where('business_id', $business->id)->where('user_id', $userId)
             ->where('agency_prospecting_channel_id', (int) $channelId)
+            // An agency credential only counts while minted on the channel's CURRENT WebRTC connection.
+            ->when($channelId !== null, fn ($q) => $q->where('webrtc_connection_id', (string) $webrtcConnectionId))
             ->where('expires_at', '>', now())->first();
 
         return $credential === null ? null : 'sip:' . $credential->sip_username . '@' . (string) config('messaging.voice.browser.sip_domain');
@@ -72,7 +74,8 @@ final class BrowserCredentialProvisioner
         $channelId = (int) $byo?->channelId;
         $existing = BusinessVoiceBrowserCredential::query()->where('business_id', $business->id)->where('user_id', $userId)
             ->where('agency_prospecting_channel_id', $channelId)->first();
-        if ($existing !== null && $existing->expires_at->gt(now()->addDay())) {
+        $sameConnection = $byo === null || $existing?->webrtc_connection_id === $byo->webrtcConnectionId;
+        if ($existing !== null && $sameConnection && $existing->expires_at->gt(now()->addDay())) {
             return $existing;
         }
         $existing?->delete();
@@ -103,6 +106,7 @@ final class BrowserCredentialProvisioner
             'business_id' => $business->id,
             'user_id' => $userId,
             'agency_prospecting_channel_id' => $channelId,
+            'webrtc_connection_id' => $byo?->webrtcConnectionId,
             'telnyx_credential_id' => $id,
             'sip_username' => $sipUsername,
             'expires_at' => $expiresAt,

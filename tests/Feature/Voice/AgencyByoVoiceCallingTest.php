@@ -224,6 +224,32 @@ class AgencyByoVoiceCallingTest extends TestCase
         $this->assertCount(1, $this->sent(fn (Request $r) => str_ends_with($r->url(), '/calls') && str_starts_with((string) $r['to'], '+')));
     }
 
+    public function test_switching_the_webrtc_connection_never_reuses_a_credential_from_the_old_one(): void
+    {
+        $this->postJson($this->url('browser-session'))->assertOk();
+        $old = BusinessVoiceBrowserCredential::firstOrFail();
+        $this->assertSame(self::BYO_WEBRTC, $old->webrtc_connection_id);
+
+        // Connection A -> B, bypassing the setup screen's own purge: the binding alone must protect the session.
+        $this->channel->forceFill(['voice_webrtc_connection_id' => 'byo_webrtc_conn_B'])->save();
+
+        // The stale credential is not accepted for dialling the browser...
+        $this->placeBrowser('req-key-0003')->assertStatus(409)->assertJsonPath('error.code', 'browser_session_required');
+        $this->assertSame([], $this->sent(fn (Request $r) => str_ends_with($r->url(), '/calls')));
+
+        // ...and a new session mints a fresh credential on B (the old Telnyx credential is not reused).
+        $this->postJson($this->url('browser-session'))->assertOk();
+        $creds = $this->sent(fn (Request $r) => str_ends_with($r->url(), '/telephony_credentials'));
+        $this->assertCount(2, $creds);
+        $this->assertSame('byo_webrtc_conn_B', $creds[1]['connection_id']);
+        $row = BusinessVoiceBrowserCredential::firstOrFail();
+        $this->assertSame('byo_webrtc_conn_B', $row->webrtc_connection_id);
+        $this->assertSame(1, BusinessVoiceBrowserCredential::count());
+
+        $this->placeBrowser('req-key-0004')->assertStatus(202);
+        $this->assertSame(self::BYO_CONN, $this->agentDial()['connection_id']);
+    }
+
     // ------------------------------------------------------------------ tenant isolation
 
     public function test_a_foreign_agencys_signed_event_cannot_touch_this_agencys_call(): void

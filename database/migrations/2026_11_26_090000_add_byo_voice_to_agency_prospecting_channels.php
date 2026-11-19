@@ -42,6 +42,9 @@ return new class extends Migration
         Schema::table('business_voice_browser_credentials', function (Blueprint $table): void {
             // 0 = platform-managed credential (not NULL, so the unique key below still holds for managed rows).
             $table->unsignedBigInteger('agency_prospecting_channel_id')->default(0);
+            // The WebRTC credential connection an agency credential was minted on (NULL for platform-managed rows): a
+            // credential is reusable only while the channel still points at that exact connection.
+            $table->string('webrtc_connection_id', 64)->nullable();
             $table->dropUnique('bvbc_business_user_unique');
             $table->unique(['business_id', 'user_id', 'agency_prospecting_channel_id'], 'bvbc_business_user_channel_unique');
         });
@@ -51,7 +54,7 @@ return new class extends Migration
     {
         Schema::table('business_voice_browser_credentials', function (Blueprint $table): void {
             $table->dropUnique('bvbc_business_user_channel_unique');
-            $table->dropColumn('agency_prospecting_channel_id');
+            $table->dropColumn(['agency_prospecting_channel_id', 'webrtc_connection_id']);
             $table->unique(['business_id', 'user_id'], 'bvbc_business_user_unique');
         });
 

@@ -168,4 +168,75 @@ class AgencyVoiceSetupTest extends TestCase
             ->assertOk()->assertSee('Voice calling')->assertSee('Missing or not verified')
             ->assertDontSee('agency-voice-key');
     }
+
+    public function test_changing_the_webrtc_connection_purges_only_this_channels_credentials(): void
+    {
+        $this->save();
+        $business = $this->agency['business'];
+        $make = fn (int $channelId, int $userId, ?string $conn) => \App\Models\BusinessVoiceBrowserCredential::create([
+            'business_id' => $business->id, 'user_id' => $userId, 'agency_prospecting_channel_id' => $channelId,
+            'webrtc_connection_id' => $conn, 'telnyx_credential_id' => 'c' . $userId . $channelId, 'sip_username' => 'u' . $userId . $channelId, 'expires_at' => now()->addDays(5),
+        ]);
+        $other = $this->byoChannel($this->agency['workspace']);
+        $make((int) $this->channel->id, 1, 'wr_1');
+        $make(0, 2, null);                       // platform-managed credential
+        $make((int) $other->id, 3, 'other_wr');  // a different channel's credential
+
+        $this->save(['voice_webrtc_connection_id' => 'wr_2'])->assertRedirect();
+
+        $this->assertSame(0, \App\Models\BusinessVoiceBrowserCredential::where('agency_prospecting_channel_id', $this->channel->id)->count());
+        $this->assertSame(1, \App\Models\BusinessVoiceBrowserCredential::where('agency_prospecting_channel_id', 0)->count());
+        $this->assertSame(1, \App\Models\BusinessVoiceBrowserCredential::where('agency_prospecting_channel_id', $other->id)->count());
+    }
+
+    public function test_a_voice_setting_changed_while_telnyx_is_being_asked_discards_the_result(): void
+    {
+        $this->save();
+        $channelId = (int) $this->channel->id;
+        Http::fake([
+            'api.telnyx.com/v2/call_control_applications/*' => function () use ($channelId) {
+                // The agency edits its WebRTC connection while verification is in flight.
+                AgencyProspectingChannel::query()->whereKey($channelId)->update(['voice_webrtc_connection_id' => 'wr_changed']);
+
+                return Http::response(['data' => ['id' => 'cc_1', 'active' => true]], 200);
+            },
+            'api.telnyx.com/v2/credential_connections/*' => Http::response(['data' => ['id' => 'wr_1', 'active' => true]], 200),
+            'api.telnyx.com/v2/phone_numbers*' => Http::response(['data' => [['phone_number' => '+14155550142', 'status' => 'active', 'connection_id' => 'cc_1']]], 200),
+        ]);
+
+        $this->post($this->route('verify'))->assertSessionHas('flash_error', fn ($m) => str_contains($m, 'changed while they were being checked'));
+
+        $channel = $this->channel->fresh();
+        $this->assertNull($channel->voice_connection_verified_at);
+        $this->assertNull($channel->voice_webrtc_verified_at);
+        $this->assertNull($channel->voice_number_verified_at);
+        $this->assertFalse($channel->voice_enabled);
+    }
+
+    public function test_an_api_key_changed_while_telnyx_is_being_asked_discards_the_result(): void
+    {
+        $this->save();
+        $serverId = (int) $this->channel->sending_server_id;
+        Http::fake([
+            'api.telnyx.com/v2/call_control_applications/*' => function () use ($serverId) {
+                \App\Models\SendingServer::query()->whereKey($serverId)->update(['api_key' => \App\Library\Security\SealedSecret::seal('a-different-account-key')]);
+
+                return Http::response(['data' => ['id' => 'cc_1', 'active' => true]], 200);
+            },
+            'api.telnyx.com/v2/credential_connections/*' => Http::response(['data' => ['id' => 'wr_1', 'active' => true]], 200),
+            'api.telnyx.com/v2/phone_numbers*' => Http::response(['data' => [['phone_number' => '+14155550142', 'status' => 'active', 'connection_id' => 'cc_1']]], 200),
+        ]);
+
+        $this->post($this->route('verify'))->assertSessionHas('flash_error');
+        $this->assertNull($this->channel->fresh()->voice_connection_verified_at);
+        $this->assertNull($this->channel->fresh()->voice_number_verified_at);
+    }
+
+    public function test_an_unchanged_configuration_is_still_approved(): void
+    {
+        $this->save();
+        $this->fakeTelnyxVoice();
+        $this->post($this->route('verify'))->assertSessionHas('flash_success');
+        $this->assertNotNull($this->channel->fresh()->voice_number_verified_at);
+    }
 }

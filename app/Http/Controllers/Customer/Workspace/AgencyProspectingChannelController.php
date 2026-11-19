@@ -418,6 +418,8 @@ class AgencyProspectingChannelController extends CustomerBaseController
                     'voice_number_verified_at' => null,
                     'voice_webhook_verified_at' => null,
                 ];
+                // Credentials minted in the previous account are useless (and must not be reused) on this one.
+                \App\Models\BusinessVoiceBrowserCredential::query()->where('agency_prospecting_channel_id', (int) $channel->id)->delete();
             }
 
             if ($reconnecting && $verifiedNow) {
