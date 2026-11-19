@@ -13,7 +13,6 @@ use App\Library\Forms\FormDeploymentResolver;
 use App\Library\Forms\FormOperationToken;
 use App\Library\Forms\FormSessionStore;
 use App\Library\Forms\FormSubmissionService;
-use App\Library\Website\Forms\WebsiteFormFrameAncestors;
 use App\Models\FormSubmission;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -148,7 +147,6 @@ class PublicFormController extends Controller
             'announce' => $announce ? [
                 'submission_uid' => (string) $submission->uid,
                 'deployment_uid' => (string) $context->deployment->uid,
-                'origins' => array_values(array_unique(array_merge([$request->getSchemeAndHttpHost()], app(WebsiteFormFrameAncestors::class)->originsFor((string) $context->deployment->uid)))),
             ] : null,
         ]);
     }

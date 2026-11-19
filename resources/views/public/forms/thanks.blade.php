@@ -18,13 +18,15 @@
     </div>
 </main>
 @if (! empty($announce))
+    {{-- Where it may be announced: this app's own origin plus the exact origins allowed to frame the form (never a wildcard). --}}
+    @php($announceOrigins = array_values(array_unique(array_merge([request()->getSchemeAndHttpHost()], (array) request()->attributes->get('form_frame_origins', [])))))
     {{-- A stored submission, announced once to each allowed embedding origin (a message to any other origin is dropped by the
          browser). The payload is two random ids: no contact details, answers or consent. The parent decides what to do. --}}
     <script>
         (function () {
             if (window.parent === window) { return; }
             var message = {type: 'motiongrove:lead_submitted', version: 1, deployment_uid: @json($announce['deployment_uid']), submission_uid: @json($announce['submission_uid'])};
-            @json($announce['origins']).forEach(function (origin) { window.parent.postMessage(message, origin); });
+            @json($announceOrigins).forEach(function (origin) { window.parent.postMessage(message, origin); });
         }());
     </script>
 @endif

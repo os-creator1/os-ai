@@ -26,9 +26,13 @@ class FrameFormForAuthorizedWebsite
 
     public function handle(Request $request, Closure $next): Response
     {
-        $response = $next($request);
-
         $uid = (string) $request->route('deploymentUid');
+
+        // The same exact origins the response will allow to frame the form: the thank-you page announces a stored
+        // submission to those origins only (public.forms.thanks), never to a wildcard.
+        $request->attributes->set('form_frame_origins', $this->ancestors->originsFor($uid));
+
+        $response = $next($request);
         $policy = $this->ancestors->policyFor($uid);
 
         $this->applyFrameAncestors($response, $policy);
