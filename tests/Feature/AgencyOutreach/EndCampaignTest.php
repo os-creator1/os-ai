@@ -128,6 +128,71 @@ class EndCampaignTest extends TestCase
         $this->assertNotSame($a['member']->id, $selected->id);
     }
 
+    public function test_end_refuses_to_release_a_contact_while_an_outbound_is_in_flight(): void
+    {
+        $a = $this->outreachAgency('Alpha');
+        $this->authenticateAs($a['customer']);
+        $campaign = $a['campaign'];
+        $campaign->update(['status' => 'active']);
+
+        $pending = AgencyProspectMessage::create([
+            'workspace_id' => $a['workspace']->id,
+            'campaign_member_id' => $a['member']->id,
+            'direction' => AgencyProspectMessage::DIRECTION_OUTBOUND,
+            'status' => AgencyProspectMessage::STATUS_PENDING,
+            'operation_key' => 'outreach:reply:pending-test',
+            'body' => 'In flight',
+        ]);
+        $url = $this->outreachRoute('campaigns.end', $a['workspace'], [$campaign->uid]);
+
+        $this->post($url)->assertSessionHas('flash_error', 'One or more messages are still sending. End the campaign after these sends finish.');
+        $this->assertSame('active', $campaign->fresh()->status->value);
+
+        // Only after the send settles can the conversation safely be released.
+        $pending->update(['status' => AgencyProspectMessage::STATUS_SENT]);
+        $this->post($url)->assertSessionHas('flash_success');
+        $this->assertSame('ended', $campaign->fresh()->status->value);
+        $this->assertNotNull($pending->fresh());
+    }
+
+    public function test_opt_out_phrase_after_ending_still_stops_the_prospect(): void
+    {
+        Queue::fake();
+        $a = $this->outreachAgency('Alpha');
+        $a['campaign']->update(['status' => 'ended']);
+
+        $to = \App\Library\Automation\Workflow\Triggers\MessageReceivedTriggerSource::normalizePhone(
+            (string) $a['prospect']->phone,
+        );
+        $conversation = \App\Models\ChatBox::create([
+            'user_id' => $a['business']->customer_id,
+            'business_id' => $a['business']->id,
+            'from' => '14155550199',
+            'to' => $to,
+        ]);
+        \App\Models\ChatBoxMessage::create([
+            'box_id' => $conversation->id,
+            'direction' => \App\Models\Reports::DIRECTION_INCOMING,
+            'message' => 'Please remove my number from your list',
+            'sms_type' => 'sms',
+        ]);
+
+        $this->assertNotNull(app(\App\Library\AgencyOutreach\OutreachConversationLinker::class)
+            ->latestInbound($a['business'], $a['prospect']));
+
+        app(HandleOutreachInboundMessage::class)->handle(
+            new \App\Events\Conversation\InboundMessageReceived(
+                (int) $a['business']->id, '+'.$a['prospect']->phone, 'operation:99988',
+            ),
+        );
+
+        $this->assertSame('stopped', $a['prospect']->fresh()->status->value);
+        $this->assertSame('opt_out', $a['prospect']->fresh()->stop_reason);
+        $this->assertSame(1, \App\Models\Blacklists::where('business_id', $a['business']->id)
+            ->where('number', $a['prospect']->phone)->count());
+        Queue::assertNotPushed(\App\Jobs\Outreach\OutreachRespondJob::class);
+    }
+
     public function test_another_workspace_cannot_end_this_campaign(): void
     {
         $a = $this->outreachAgency('Alpha');
