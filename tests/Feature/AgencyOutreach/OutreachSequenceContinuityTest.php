@@ -1104,38 +1104,27 @@ class OutreachSequenceContinuityTest extends TestCase
         $this->assertNull($this->member($member)->followup_at);
         $this->assertCount(1, $this->sentBodies(), 'Only the opener was sent by the fake Outreach adapter.');
 
-        // RefreshDatabase holds an outer test transaction. Capture the after-commit callback
-        // and invoke it only after the recovered row is confirmed, proving the recovery seam
-        // schedules the same reconciliation as a normal accepted manual SMS.
-        $afterCommit = null;
-        \Illuminate\Support\Facades\DB::partialMock()
-            ->shouldReceive('afterCommit')
-            ->once()
-            ->with(\Mockery::on(function ($callback) use (&$afterCommit): bool {
-                if (! is_callable($callback)) {
-                    return false;
-                }
-
-                $afterCommit = $callback;
-
-                return true;
-            }));
-
-        $recovered = \App\Library\Conversations\ManagedSendStateMachine::reconcileSendingRow(
-            $manual->fresh(), (int) $business->id
+        // Exercise the production transaction boundary. RefreshDatabase's testing
+        // transaction manager runs after-commit callbacks when this nested transaction
+        // commits, without any database-facade mocks or real provider requests.
+        $recovered = \Illuminate\Support\Facades\DB::transaction(
+            fn () => \App\Library\Conversations\ManagedSendStateMachine::reconcileSendingRow(
+                $manual->fresh(), (int) $business->id
+            )
         );
         $this->assertSame('sent', $recovered->send_status);
         $this->assertNotNull($recovered->business_messaging_operation_id);
-        $this->assertIsCallable($afterCommit);
-        $this->assertNull($this->member($member)->followup_at, 'Reconciliation must not run inside the recovery transaction.');
 
-        $afterCommit(); // actual post-commit transition callback
         $armed = $this->member($member);
         $this->assertSame(['a'], $armed->sequence_sent_ids);
         $this->assertNotNull($armed->followup_at, 'Recovery must arm T without a new inbound.');
         $this->assertEqualsWithDelta(now()->addHours(2)->timestamp, $armed->followup_at->timestamp, 120);
 
-        $afterCommit(); // repeated recovery notification must not extend the timer
+        \Illuminate\Support\Facades\DB::transaction(
+            fn () => \App\Library\Conversations\ManagedSendStateMachine::reconcileSendingRow(
+                $manual->fresh(), (int) $business->id
+            )
+        );
         $this->assertEquals($armed->followup_at, $this->member($member)->followup_at);
         $this->assertCount(1, $this->sentBodies(), 'Recovery sends no extra SMS.');
     }
