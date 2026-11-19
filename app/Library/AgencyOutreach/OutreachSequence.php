@@ -365,6 +365,7 @@ final class OutreachSequence
         // is the first outstanding step and appears before any current recorded
         // successor. Deleting A after already delivering B must never allow that
         // old A to satisfy the later A in A -> B -> A.
+        $transferred = []; // replacements assigned during this pass, not pre-existing progress boundaries
         foreach ($stored as $oldId => $key) {
             $oldId = (string) $oldId;
             if (! isset($recorded[$oldId]) || ! is_string($key) || $key === '') {
@@ -376,9 +377,15 @@ final class OutreachSequence
 
             if ($current === null) {
                 foreach ($steps as $step) {
+                    if (isset($transferred[$step['id']])) {
+                        // Multiple IDs rebuilt together: skip replacements already
+                        // assigned earlier in THIS pass, then consider the next one.
+                        continue;
+                    }
+
                     if (isset($delivered[$step['id']])) {
-                        // A known delivered step is a progress boundary: an older
-                        // removed step cannot be reassigned after it.
+                        // An existing recorded step is a real progress boundary:
+                        // a deleted earlier step cannot claim any later repetition.
                         break;
                     }
 
@@ -410,6 +417,7 @@ final class OutreachSequence
                 $delivered[$newId] = true;
                 $explicit[$newId] = true;
                 $evidence[$newId] = $key;
+                $transferred[$newId] = true;
 
                 continue; // ownership transferred: do not persist two owners
             }

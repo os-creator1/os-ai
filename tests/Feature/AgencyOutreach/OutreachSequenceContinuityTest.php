@@ -942,6 +942,46 @@ class OutreachSequenceContinuityTest extends TestCase
         $this->assertSame('L' . $original->id, $this->member($member)->sequence_evidence['x1'] ?? null);
     }
 
+
+    public function test_rebuilding_multiple_attributed_step_ids_preserves_both_opener_and_manual_deliveries(): void
+    {
+        [$workspace, $business, $member] = $this->started('Hello! Quick question.', sendOpener: false);
+        OutreachScriptManager::save($workspace, ['sequence_steps' => [
+            $this->step('a', 'Alpha text.'),
+            $this->step('b', 'Beta text.'),
+            ['id' => 'timer', 'body' => 'Timed reminder.', 'advance_on' => 'time', 'delay_hours' => 3, 'enabled' => true],
+            $this->step('c', 'Gamma text.'),
+        ]]);
+        AgencyProspectCampaign::whereKey($member->campaign_id)->update(['opening_message' => 'Alpha text.']);
+        OutreachInitialSendJob::dispatchSync($member->id);
+        $opener = AgencyProspectMessage::query()->where('operation_key', 'outreach:opener:' . $member->id)->firstOrFail();
+
+        $manual = $this->handSend($business, 'Beta text.', 'sent');
+        $this->reconcile($manual);
+        $recorded = $this->member($member);
+        $this->assertSame(['a', 'b'], $recorded->sequence_sent_ids);
+        $this->assertSame('L' . $opener->id, $recorded->sequence_evidence['a'] ?? null);
+        $this->assertSame('C' . $manual->id, $recorded->sequence_evidence['b'] ?? null);
+        $this->assertNotNull($recorded->followup_at);
+
+        OutreachScriptManager::save($workspace, ['sequence_steps' => [
+            $this->step('new-a', 'Alpha text.'),
+            $this->step('new-b', 'Beta text.'),
+            ['id' => 'new-timer', 'body' => 'Timed reminder.', 'advance_on' => 'time', 'delay_hours' => 3, 'enabled' => true],
+            $this->step('new-c', 'Gamma text.'),
+        ]]);
+        $sequence = OutreachSequence::forWorkspace($workspace);
+        $reconciled = $sequence->attribution($member->fresh());
+        $this->assertContains('new-a', $reconciled['ids']);
+        $this->assertContains('new-b', $reconciled['ids']);
+        $this->assertSame('L' . $opener->id, $reconciled['evidence']['new-a'] ?? null);
+        $this->assertSame('C' . $manual->id, $reconciled['evidence']['new-b'] ?? null);
+        $this->assertSame('new-c', $this->nextStepId($workspace, $member), 'Neither already-delivered reply step may repeat.');
+
+        $this->inbound($business, 'ok');
+        $this->assertSame(['Alpha text.', 'Gamma text.'], $this->sentBodies(), 'The next outbound is C, not repeated B.');
+    }
+
     public function test_evidence_is_scoped_to_its_own_campaign_member(): void
     {
         [$workspace, $business, $old, $prospect, $oldCampaign] = $this->started('Unrelated opener.');
