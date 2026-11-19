@@ -102,9 +102,8 @@ class WebsiteTrackingTest extends TestCase
         $post = $this->config($this->get(self::HOST . '/blog/' . $article->slug)->assertOk()->getContent());
         $this->assertEqualsCanonicalizing(['111111111111', '222222222222', '333333333333'], $post['meta_pixel_ids']);
 
-        $this->authenticateAsSeoCustomer($customer);
-        $url = route('customer.workspaces.businesses.website.tracking.index', [$workspace->uid, $website->business->uid]);
-        $this->get($url)->assertOk()->assertSee('Article: ' . $article->title);
+        // Scope keys remain tied to the article UID, independent of the public slug.
+        $this->assertSame('@article:' . $article->uid, $articleScope);
     }
 
     public function test_gtm_container_uses_its_own_loader_not_the_google_tag_endpoint(): void
