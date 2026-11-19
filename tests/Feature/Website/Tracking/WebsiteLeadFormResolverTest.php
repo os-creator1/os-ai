@@ -48,6 +48,11 @@ class WebsiteLeadFormResolverTest extends TestCase
         $this->authenticateAs($owner);
     }
 
+    private function blueprintId(): int
+    {
+        return (int) (\App\Models\NicheBlueprint::query()->value('id') ?? \App\Models\NicheBlueprint::create(['key' => 'test_niche', 'display_name' => 'Test niche', 'broad_industry' => 'photo_booth_service'])->id);
+    }
+
     /** A form recorded as installed by a blueprint component for $business (drafts unless $live). */
     private function installed(string $componentKey, string $name, bool $live = true, ?Business $business = null, ?Business $formOwner = null): Form
     {
@@ -56,7 +61,7 @@ class WebsiteLeadFormResolverTest extends TestCase
         $form = $this->makeForm($formOwner, ['name' => $name], $live);
 
         (new BusinessBlueprintComponentInstallation())->forceFill([
-            'business_id' => $business->id, 'blueprint_id' => 1, 'component_key' => $componentKey, 'component_type' => 'form',
+            'business_id' => $business->id, 'blueprint_id' => $this->blueprintId(), 'component_key' => $componentKey, 'component_type' => 'form',
             'installed_from_version' => 1, 'state' => 'installed', 'required_feature_key' => 'forms', 'installed_record_id' => $form->id,
         ])->save();
 
