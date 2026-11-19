@@ -293,14 +293,14 @@ final class OutreachSequence
         $delivered = $recorded;
         $explicit = [];   // steps proven by their own ledger row (or an orphaned one): they own that evidence
         $orphans = [];
-        $pool = [];   // unattributed evidence: normalised text => copies
+        $pool = [];   // unattributed evidence, in send order: one normalised text per delivered SMS
 
         // 1. Explicit attribution by a still-valid step id; the evidence is consumed here.
         foreach ($ledger as $row) {
             $id = $row->sequence_step_id === null ? null : (string) $row->sequence_step_id;
 
             if ($id === null) {
-                $pool[$norm((string) $row->body)] = ($pool[$norm((string) $row->body)] ?? 0) + 1;
+                $pool[] = $norm((string) $row->body);
             } elseif ($this->find($id) !== null) {
                 $delivered[$id] = true;
                 $explicit[$id] = true;
@@ -315,8 +315,7 @@ final class OutreachSequence
         $ledgerKeys = $ledger->pluck('operation_key')->filter()->map(fn ($k) => (string) $k)->all();
 
         foreach ($this->conversationBodies($workspace, $prospect, $first->created_at, $ledgerKeys) as $body) {
-            $body = $norm($body);
-            $pool[$body] = ($pool[$body] ?? 0) + 1;
+            $pool[] = $norm($body);
         }
 
         // 2. Orphans: exact text first, then "approved answer + step text"; one step per row.
@@ -340,18 +339,38 @@ final class OutreachSequence
             }
         }
 
-        // 3. Unattributed copies, one per step. A step already recorded as delivered (earlier derived
-        // from this same kind of evidence) still CONSUMES its copy, so it cannot be spent again on
-        // a later step with identical wording.
+        // 3. Unattributed sends (the opener, a person's confirmed messages), one per step.
+        //
+        // A step ALREADY RECORDED as delivered from such evidence keeps it: it takes the send
+        // with its own wording, or -- when the Agency has since reworded that step -- the earliest
+        // remaining one (the opener comes first), so the old text can never be spent again on a
+        // later step with the same wording. Only then do the remaining steps claim sends by text.
+        $take = function (string $t, bool $fallback) use (&$pool): bool {
+            $at = array_search($t, $pool, true);
+
+            if ($at === false && $fallback && $pool !== []) {
+                $at = array_key_first($pool);
+            }
+
+            if ($at === false) {
+                return false;
+            }
+
+            unset($pool[$at]);
+
+            return true;
+        };
+
+        foreach ($steps as $step) {
+            if (isset($recorded[$step['id']]) && ! isset($explicit[$step['id']])) {
+                $take($text[$step['id']], true);
+            }
+        }
+
         foreach ($steps as $step) {
             $t = $text[$step['id']];
 
-            if ($t === '' || isset($explicit[$step['id']])) {
-                continue;
-            }
-
-            if (($pool[$t] ?? 0) > 0 && (isset($delivered[$step['id']]) || ! isset($recorded[$step['id']]))) {
-                $pool[$t]--;
+            if ($t !== '' && ! isset($delivered[$step['id']]) && $take($t, false)) {
                 $delivered[$step['id']] = true;
             }
         }

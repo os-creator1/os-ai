@@ -660,4 +660,23 @@ class OutreachSequenceContinuityTest extends TestCase
 
         $this->assertSame('a1', $this->nextStepId($workspace, $member));
     }
+
+    public function test_an_opener_derived_step_keeps_its_evidence_after_its_text_is_edited(): void
+    {
+        [$workspace, $business, $member] = $this->started('Alpha text.');          // the opener IS a1
+        $this->aba($workspace);
+        $this->inbound($business, 'ok');                                            // b -> "Beta text."
+        $this->assertSame(['Alpha text.', 'Beta text.'], $this->sentBodies());
+        $this->assertSame('a3', $this->nextStepId($workspace, $member));
+
+        $this->aba($workspace, ['a1', 'b', 'a3'], 'Alpha text, reworded.');         // a1 edited, id kept
+
+        $this->assertSame('a3', $this->nextStepId($workspace, $member), 'The opener\'s old text is not reused for a3.');
+        $this->assertNotContains('a3', OutreachSequence::forWorkspace($workspace)->deliveredByContent($member->fresh()));
+
+        $this->inbound($business, 'ok');
+        $this->inbound($business, 'ok');
+
+        $this->assertSame(['Alpha text.', 'Beta text.', 'Alpha text.'], $this->sentBodies(), 'The final A is sent exactly once; nothing after it.');
+    }
 }
