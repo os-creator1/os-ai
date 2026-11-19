@@ -373,6 +373,7 @@ final class OutreachSequence
         // successor. Deleting A after already delivering B must never allow that
         // old A to satisfy the later A in A -> B -> A.
         $transferred = []; // replacements assigned during this pass, not pre-existing progress boundaries
+        $recordedOrder = array_keys($recorded); // actual delivery order, including removed IDs
         foreach ($stored as $oldId => $key) {
             $oldId = (string) $oldId;
             if (! isset($recorded[$oldId]) || ! is_string($key) || $key === '') {
@@ -383,21 +384,52 @@ final class OutreachSequence
             $replacement = null;
 
             if ($current === null) {
+                // A surviving delivered step can be BEFORE or AFTER this removed id.
+                // Earlier neighbours are lower bounds, not reasons to stop: rebuilding
+                // only B while A survives must transfer B to its new ID. A later
+                // surviving B is an upper bound, so deleting an earlier A cannot
+                // transfer its SMS to a later repeated A.
+                $oldPosition = array_search($oldId, $recordedOrder, true);
+                $lower = -1;
+                $upper = count($this->steps);
+
+                foreach ($recordedOrder as $position => $sentId) {
+                    if ($oldPosition === false || ! isset($stepIndex[$sentId])) {
+                        continue;
+                    }
+
+                    if ($position < $oldPosition) {
+                        $lower = max($lower, $stepIndex[$sentId]);
+                    } elseif ($position > $oldPosition) {
+                        $upper = min($upper, $stepIndex[$sentId]);
+                    }
+                }
+
                 foreach ($steps as $step) {
+                    $at = $stepIndex[$step['id']];
+
+                    if ($at <= $lower) {
+                        continue;
+                    }
+
+                    if ($at >= $upper) {
+                        break;
+                    }
+
                     if (isset($transferred[$step['id']])) {
-                        // Multiple IDs rebuilt together: skip replacements already
-                        // assigned earlier in THIS pass, then consider the next one.
+                        // Several IDs rebuilt at once: skip the replacement already
+                        // assigned earlier in this pass.
                         continue;
                     }
 
                     if (isset($delivered[$step['id']])) {
-                        // An existing recorded step is a real progress boundary:
-                        // a deleted earlier step cannot claim any later repetition.
+                        // An existing delivered step within this window is an upper
+                        // boundary; never spend old evidence after it.
                         break;
                     }
 
                     $replacement = $step;
-                    break; // only the first as-yet-undelivered reply step qualifies
+                    break;
                 }
             }
 

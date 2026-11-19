@@ -982,6 +982,46 @@ class OutreachSequenceContinuityTest extends TestCase
         $this->assertSame(['Alpha text.', 'Gamma text.'], $this->sentBodies(), 'The next outbound is C, not repeated B.');
     }
 
+
+    public function test_partial_id_rebuild_preserves_manual_step_after_a_surviving_delivered_predecessor(): void
+    {
+        [$workspace, $business, $member] = $this->started('Hello! Quick question.', sendOpener: false);
+        OutreachScriptManager::save($workspace, ['sequence_steps' => [
+            $this->step('a', 'Alpha text.'),
+            $this->step('b', 'Beta text.'),
+            ['id' => 't', 'body' => 'Nudge after 2h.', 'advance_on' => 'time', 'delay_hours' => 2, 'enabled' => true],
+            $this->step('c', 'Gamma text.'),
+        ]]);
+        AgencyProspectCampaign::whereKey($member->campaign_id)->update(['opening_message' => 'Alpha text.']);
+        OutreachInitialSendJob::dispatchSync($member->id);
+        $manual = $this->handSend($business, 'Beta text.', 'sent');
+        $this->reconcile($manual);
+
+        $before = $this->member($member);
+        $this->assertSame(['a', 'b'], $before->sequence_sent_ids);
+        $this->assertSame('C' . $manual->id, $before->sequence_evidence['b'] ?? null);
+        $this->assertNotNull($before->followup_at);
+
+        // Only B is rebuilt; A survives with its original ID and must act as
+        // a lower bound, not an upper bound that blocks B's reconciliation.
+        OutreachScriptManager::save($workspace, ['sequence_steps' => [
+            $this->step('a', 'Alpha text.'),
+            $this->step('new-b', 'Beta text.'),
+            ['id' => 't', 'body' => 'Nudge after 2h.', 'advance_on' => 'time', 'delay_hours' => 2, 'enabled' => true],
+            $this->step('c', 'Gamma text.'),
+        ]]);
+
+        $seq = OutreachSequence::forWorkspace($workspace);
+        $attribution = $seq->attribution($member->fresh());
+        $this->assertContains('new-b', $attribution['ids']);
+        $this->assertSame('C' . $manual->id, $attribution['evidence']['new-b'] ?? null);
+        $this->assertSame('t', $seq->nextTimeStep($seq->sentIdsFor($member->fresh()))['id'] ?? null);
+        $this->assertSame('c', $this->nextStepId($workspace, $member));
+
+        $this->inbound($business, 'ok');
+        $this->assertSame(['Alpha text.', 'Gamma text.'], $this->sentBodies(), 'Outreach must not repeat B.');
+    }
+
     public function test_evidence_is_scoped_to_its_own_campaign_member(): void
     {
         [$workspace, $business, $old, $prospect, $oldCampaign] = $this->started('Unrelated opener.');
