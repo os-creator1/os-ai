@@ -325,7 +325,7 @@ class SeoContentQualityTest extends TestCase
                 : "We bring our photo booths to {$area} for weddings, birthdays and corporate events.";
             $unique = hash('sha256', $entry['page_key']);
 
-            return ['page_key' => $entry['page_key'], 'title' => "Photo booth rental in {$area}", 'seo_title' => "Booths in {$area} {$unique}", 'meta_description' => "Meta {$area} " . substr($unique, 0, 12), 'sections' => [
+            return ['page_key' => $entry['page_key'], 'title' => "Photo booth rental in {$area}", 'seo_title' => "Booths in {$area} " . substr($unique, 0, 12), 'meta_description' => "Meta {$area} " . substr($unique, 0, 12), 'sections' => [
                 ['type' => 'hero', 'data' => ['heading' => "Photo Booth Rental in {$area}", 'subheading' => null, 'primary_cta' => ['label' => 'Check availability', 'url' => $contact], 'secondary_cta' => null]],
                 $this->copySection($entry, "Venues and setup in {$area}", $body . ' Ref ' . $unique),
                 $this->copySection($entry, "Booking in {$area}", 'Tell us the date and venue. Ref ' . substr($unique, 10)),
