@@ -45,7 +45,7 @@ final class BrowserCredentialProvisioner
         if ($credential !== null) {
             $credential->forceFill(['session_started_at' => now()])->save();
             BusinessVoiceBrowserCredential::query()->where('business_id', $business->id)->where('user_id', $userId)
-                ->whereKeyNot($credential->id)->update(['presence_at' => null]);
+                ->whereKeyNot($credential->id)->update(['presence_at' => null, 'session_started_at' => null]);
         }
 
         return ['login_token' => $token, 'expires_in' => 3600];

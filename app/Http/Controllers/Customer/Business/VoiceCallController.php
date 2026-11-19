@@ -271,11 +271,12 @@ class VoiceCallController extends CustomerBaseController
             return $this->error('inbound_unavailable', 'Inbound calling is not available.', 503);
         }
 
-        // Presence belongs to the credential the browser is ACTUALLY signed into: the user's most recently started session.
+        // Presence belongs to the credential the browser is ACTUALLY signed into: the one carrying the active-session marker
+        // (starting a session sets it here and clears it on the user's other credentials, so there is never a timestamp tie).
         // It counts only while it is still the account this Business routes to (platform-managed, or the agency's selected
         // channel on its current WebRTC connection); anything else asks the browser to start a fresh session.
         $active = BusinessVoiceBrowserCredential::query()->where('business_id', $business->id)->where('user_id', (int) Auth::id())
-            ->where('expires_at', '>', now())->orderByRaw('COALESCE(session_started_at, created_at) desc')->orderByDesc('id')->first();
+            ->where('expires_at', '>', now())->orderByRaw('session_started_at IS NULL')->orderByDesc('session_started_at')->orderByDesc('id')->first();
         $byoChannel = \App\Library\Voice\Byo\AgencyByoVoice::selectedChannel($business);
         $matches = $active !== null && (
             $byoChannel === null
