@@ -890,6 +890,58 @@ class OutreachSequenceContinuityTest extends TestCase
         $this->assertSame(['Alpha text.', 'Beta text.', 'Alpha text.'], $this->sentBodies(), 'The final A is sent only once.');
     }
 
+
+    public function test_rebuilt_ids_reconcile_the_already_delivered_opener_before_first_inbound(): void
+    {
+        [$workspace, $business, $member] = $this->started('Hello! Quick question.', sendOpener: false);
+        $this->aba($workspace);
+        AgencyProspectCampaign::whereKey($member->campaign_id)->update(['opening_message' => 'Alpha text.']);
+        OutreachInitialSendJob::dispatchSync($member->id);
+        $opener = AgencyProspectMessage::query()->where('operation_key', 'outreach:opener:' . $member->id)->firstOrFail();
+
+        $this->assertSame(['a1'], $this->member($member)->sequence_sent_ids);
+        $this->assertSame('L' . $opener->id, $this->member($member)->sequence_evidence['a1'] ?? null);
+
+        OutreachScriptManager::save($workspace, ['sequence_steps' => [
+            $this->step('x1', 'Alpha text.'),
+            $this->step('y', 'Beta text.'),
+            $this->step('z', 'Gamma text.'),
+        ]]);
+
+        $sequence = OutreachSequence::forWorkspace($workspace);
+        $this->assertSame('y', $this->nextStepId($workspace, $member), 'The rebuilt x1 inherits the opener proof exactly once.');
+        $this->assertSame('L' . $opener->id, $sequence->evidenceFor($member->fresh())['x1'] ?? null);
+
+        $this->inbound($business, 'ok');
+        $this->inbound($business, 'ok');
+        $this->assertSame(['Alpha text.', 'Beta text.', 'Gamma text.'], $this->sentBodies());
+        $this->assertSame('L' . $opener->id, $this->member($member)->sequence_evidence['x1'] ?? null);
+    }
+
+    public function test_reworded_replacement_step_keeps_attribution_to_the_original_orphan_ledger_row(): void
+    {
+        [$workspace, $business, $member] = $this->started('An unrelated opener.');
+        $this->aba($workspace);
+        $this->inbound($business, 'ok'); // a1 is a real scripted SMS with its own ledger ID
+        $original = AgencyProspectMessage::query()->where('campaign_member_id', $member->id)->where('sequence_step_id', 'a1')->firstOrFail();
+
+        $this->aba($workspace, ['x1', 'y', 'x3']);
+        $this->inbound($business, 'ok'); // y is sent, x1 is reconciled from orphaned a1
+
+        $persisted = $this->member($member);
+        $this->assertSame('L' . $original->id, $persisted->sequence_evidence['x1'] ?? null);
+        $this->assertSame('x3', $this->nextStepId($workspace, $member));
+
+        $this->aba($workspace, ['x1', 'y', 'x3'], 'Alpha text, revised.');
+        $this->assertSame('x3', $this->nextStepId($workspace, $member), 'The orphan A is reserved for x1 after the text edit.');
+        $this->assertNotContains('x3', OutreachSequence::forWorkspace($workspace)->deliveredByContent($member->fresh()));
+
+        $this->inbound($business, 'ok');
+        $this->inbound($business, 'ok');
+        $this->assertSame(['An unrelated opener.', 'Alpha text.', 'Beta text.', 'Alpha text.'], $this->sentBodies());
+        $this->assertSame('L' . $original->id, $this->member($member)->sequence_evidence['x1'] ?? null);
+    }
+
     public function test_evidence_is_scoped_to_its_own_campaign_member(): void
     {
         [$workspace, $business, $old, $prospect, $oldCampaign] = $this->started('Unrelated opener.');

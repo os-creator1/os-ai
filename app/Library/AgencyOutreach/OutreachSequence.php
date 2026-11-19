@@ -324,7 +324,7 @@ final class OutreachSequence
                 $delivered[$id] = true;
                 $explicit[$id] = true;
             } else {
-                $orphans[] = $norm((string) $row->body);
+                $orphans[] = ['t' => $norm((string) $row->body), 'k' => 'L' . $row->id];
             }
         }
 
@@ -337,19 +337,105 @@ final class OutreachSequence
             $pool[] = ['t' => $norm($message['body']), 'k' => 'C' . $message['id']];
         }
 
-        // 2. Orphans: exact text first, then "approved answer + step text"; one step per row.
-        foreach (['exact', 'tail'] as $mode) {
-            foreach ($orphans as $i => $body) {
-                foreach ($steps as $step) {
-                    $t = $text[$step['id']];
-
-                    if ($t === '' || isset($explicit[$step['id']])) {
+        // Evidence keys are unique within this campaign member. Reserve a known key
+        // from either confirmed manual/opener history or a step-tagged orphan; these
+        // are two mutually exclusive sources for the SAME proof of delivery.
+        $reserveKey = function (string $key) use (&$pool, &$orphans): ?string {
+            foreach ([$pool, $orphans] as $source => $units) {
+                foreach ($units as $i => $unit) {
+                    if ($unit['k'] !== $key) {
                         continue;
                     }
 
-                    if ($mode === 'exact' ? $body === $t : str_ends_with($body, ' ' . $t)) {
+                    if ($source === 0) {
+                        unset($pool[$i]);
+                    } else {
+                        unset($orphans[$i]);
+                    }
+
+                    return $unit['t'];
+                }
+            }
+
+            return null;
+        };
+
+        // 2. Durable evidence belongs to its original step even after a reword.
+        // When a step ID was rebuilt, transfer proof to a replacement ONLY if it
+        // is the first outstanding step and appears before any current recorded
+        // successor. Deleting A after already delivering B must never allow that
+        // old A to satisfy the later A in A -> B -> A.
+        foreach ($stored as $oldId => $key) {
+            $oldId = (string) $oldId;
+            if (! isset($recorded[$oldId]) || ! is_string($key) || $key === '') {
+                continue;
+            }
+
+            $current = $this->find($oldId);
+            $replacement = null;
+
+            if ($current === null) {
+                foreach ($steps as $step) {
+                    if (isset($delivered[$step['id']])) {
+                        // A known delivered step is a progress boundary: an older
+                        // removed step cannot be reassigned after it.
+                        break;
+                    }
+
+                    $replacement = $step;
+                    break; // only the first as-yet-undelivered reply step qualifies
+                }
+            }
+
+            // Inspect evidence without consuming it until the exact replacement
+            // is proven. The text may be the orphaned ledger row or the opener.
+            $sourceText = null;
+            if ($replacement !== null) {
+                foreach ([$pool, $orphans] as $units) {
+                    foreach ($units as $unit) {
+                        if ($unit['k'] === $key) {
+                            $sourceText = $unit['t'];
+                            break 2;
+                        }
+                    }
+                }
+            }
+
+            $newId = $replacement['id'] ?? null;
+            $newText = $newId === null ? '' : $text[$newId];
+
+            if ($newText !== '' && $sourceText !== null
+                && ($sourceText === $newText || str_ends_with($sourceText, ' ' . $newText))) {
+                $reserveKey($key);
+                $delivered[$newId] = true;
+                $explicit[$newId] = true;
+                $evidence[$newId] = $key;
+
+                continue; // ownership transferred: do not persist two owners
+            }
+
+            $reserveKey($key);
+            $evidence[$oldId] = $key;
+            if ($current !== null) {
+                $explicit[$oldId] = true;
+            }
+        }
+
+        // 3. Orphaned step-tagged ledger sends: exact text first, then FAQ-prefix
+        // tail, each row allocated to one step and persisted as durable evidence.
+        foreach (['exact', 'tail'] as $mode) {
+            foreach ($orphans as $i => $unit) {
+                foreach ($steps as $step) {
+                    $t = $text[$step['id']];
+
+                    if ($t === '' || isset($explicit[$step['id']]) || isset($delivered[$step['id']])) {
+                        continue;
+                    }
+
+                    if ($mode === 'exact' ? $unit['t'] === $t : str_ends_with($unit['t'], ' ' . $t)) {
                         $delivered[$step['id']] = true;
                         $explicit[$step['id']] = true;
+                        $evidence[$step['id']] = $unit['k'];
                         unset($orphans[$i]);
 
                         break;
@@ -358,7 +444,7 @@ final class OutreachSequence
             }
         }
 
-        // 3. Unattributed sends (the opener, a person's confirmed messages), one per step.
+        // 4. Unattributed sends (the opener, a person's confirmed messages), one per step.
         //
         // A step ALREADY RECORDED as delivered keeps the evidence it was recorded with
         // (member.sequence_evidence, one evidence key to one step), whatever its wording is now
@@ -397,23 +483,12 @@ final class OutreachSequence
             return null;
         };
 
-        // Deleted steps still own the evidence recorded for them. Their ids are absent
-        // from $allReplySteps, so reserve their exact sends before any currently enabled
-        // step can infer another delivery from the same SMS (A -> B -> A). Keep the
-        // mapping in the next persisted snapshot so later inbounds cannot reassign it.
-        foreach ($stored as $id => $key) {
-            $id = (string) $id;
-            if (! isset($recorded[$id]) || $this->find($id) !== null || ! is_string($key) || $key === '') {
-                continue;
-            }
-
-            $take('', $key, false);
-            $evidence[$id] = $key;
-        }
-
+        // Older members have no sequence_evidence. Their already-recorded steps
+        // use the legacy one-copy reservation, while owners with a durable key
+        // were handled above (including orphaned ledger rows and deleted IDs).
         foreach ($allReplySteps as $step) {
             if (isset($recorded[$step['id']]) && ! isset($explicit[$step['id']])) {
-                $key = $take($text[$step['id']], isset($stored[$step['id']]) ? (string) $stored[$step['id']] : null, true);
+                $key = $take($text[$step['id']], null, true);
 
                 if ($key !== null) {
                     $evidence[$step['id']] = $key;
