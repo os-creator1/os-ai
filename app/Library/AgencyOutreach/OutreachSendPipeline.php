@@ -130,15 +130,32 @@ final class OutreachSendPipeline
     public function resume(int $messageId): ?OutreachPipelineResult
     {
         $claim = DB::transaction(function () use ($messageId) {
-            $row = AgencyProspectMessage::query()->where('id', $messageId)->lockForUpdate()->first();
-
-            if ($row === null
-                || $row->direction !== AgencyProspectMessage::DIRECTION_OUTBOUND
-                || $row->status !== AgencyProspectMessage::STATUS_PAUSED) {
+            // Follow the same lock order as the original claim, settlement
+            // and End campaign: member first, then outbound ledger row.
+            // This initial lookup is just for locating the member; the
+            // PAUSED state is rechecked under the row lock below.
+            $locator = AgencyProspectMessage::query()->whereKey($messageId)->first(['id', 'campaign_member_id']);
+            if ($locator === null) {
                 return 'not_paused';
             }
 
-            $member = AgencyProspectCampaignMember::query()->where('id', $row->campaign_member_id)->lockForUpdate()->first();
+            $member = AgencyProspectCampaignMember::query()
+                ->whereKey($locator->campaign_member_id)
+                ->lockForUpdate()
+                ->first();
+            if ($member === null) {
+                return 'member_missing';
+            }
+
+            $row = AgencyProspectMessage::query()->whereKey($messageId)->lockForUpdate()->first();
+
+            if ($row === null
+                || $row->direction !== AgencyProspectMessage::DIRECTION_OUTBOUND
+                || $row->status !== AgencyProspectMessage::STATUS_PAUSED
+                || (int) $row->campaign_member_id !== (int) $member->id) {
+                return 'not_paused';
+            }
+
             $eligible = $this->eligibility->check($member, true);
 
             if (! $eligible->ok()) {
@@ -194,6 +211,14 @@ final class OutreachSendPipeline
         $followUpAt = null;
 
         DB::transaction(function () use ($row, $result, &$followUpAt): void {
+            // Match claim/End's lock order (member, then message).
+            // A provider call has already finished, so settlement must not
+            // deadlock against End and leave a delivered SMS stuck PENDING.
+            AgencyProspectCampaignMember::query()
+                ->whereKey($row->campaign_member_id)
+                ->lockForUpdate()
+                ->first(['id']);
+
             if ($result->isSent()) {
                 $attributes = ['status' => AgencyProspectMessage::STATUS_SENT, 'failure_reason' => null, 'sent_at' => now()];
 
