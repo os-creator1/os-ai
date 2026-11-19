@@ -11,6 +11,7 @@ use App\Library\AgencyOutreach\OutreachClassification;
 use App\Library\AgencyOutreach\OutreachConversationLinker;
 use App\Library\AgencyOutreach\OutreachInboundLedger;
 use App\Library\AgencyOutreach\OutreachStageMachine;
+use App\Library\AgencyOutreach\OutreachStopClassifier;
 use App\Library\AgencyOutreach\OutreachStopService;
 use App\Library\AgencyProspecting\AgencyProspectPhoneNormalizer;
 use App\Models\AgencyProspect;
