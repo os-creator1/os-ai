@@ -1175,6 +1175,36 @@ class OutreachSequenceContinuityTest extends TestCase
         $this->assertSame(['a1', 'b', 'a3'], $this->member($member)->sequence_sent_ids);
     }
 
+
+    public function test_manual_step_sent_while_campaign_is_paused_preserves_its_timer_until_resume(): void
+    {
+        [$workspace, $business, $member] = $this->started('Unrelated opener.');
+        OutreachScriptManager::save($workspace, ['sequence_steps' => [
+            $this->step('a', 'Alpha text.'),
+            ['id' => 't', 'body' => 'Nudge after 2h.', 'advance_on' => 'time', 'delay_hours' => 2, 'enabled' => true],
+        ]]);
+        AgencyProspectCampaign::query()->whereKey($member->campaign_id)
+            ->update(['status' => \App\Enums\AgencyProspecting\AgencyProspectCampaignStatus::Paused->value]);
+
+        $manual = $this->handSend($business, 'Alpha text.', 'sent');
+        $this->reconcile($manual);
+        $paused = $this->member($member);
+        $this->assertSame(['a'], $paused->sequence_sent_ids);
+        $this->assertSame('C' . $manual->id, $paused->sequence_evidence['a'] ?? null);
+        $this->assertNotNull($paused->followup_at, 'The manually delivered step arms T even while Outreach is paused.');
+
+        AgencyProspectCampaignMember::query()->whereKey($member->id)->update(['followup_at' => now()->subMinute()]);
+        app()->call([new \App\Jobs\Outreach\OutreachFollowUpJob($member->id), 'handle']);
+        $this->assertSame(['Unrelated opener.'], $this->sentBodies(), 'No SMS is sent while paused.');
+        $this->assertNull($this->member($member)->followup_cancelled_at, 'Pause holds the pending timer instead of cancelling it.');
+
+        AgencyProspectCampaign::query()->whereKey($member->campaign_id)
+            ->update(['status' => \App\Enums\AgencyProspecting\AgencyProspectCampaignStatus::Active->value]);
+        app()->call([new \App\Jobs\Outreach\OutreachFollowUpJob($member->id), 'handle']);
+        $this->assertSame(['Unrelated opener.', 'Nudge after 2h.'], $this->sentBodies());
+        $this->assertSame(['a', 't'], $this->member($member)->sequence_sent_ids);
+    }
+
     public function test_recovered_successful_manual_retry_arms_timed_successor_after_commit(): void
     {
         [$workspace, $business, $member] = $this->started('Hello! Quick question.');

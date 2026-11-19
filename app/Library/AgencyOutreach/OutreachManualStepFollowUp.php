@@ -49,7 +49,7 @@ final class OutreachManualStepFollowUp
             ->where('workspace_id', (int) $business->workspace_id)
             ->whereIn('campaign_id', AgencyProspectCampaign::query()
                 ->where('sending_mode', AgencyProspectCampaign::MODE_MANAGED)
-                ->where('status', AgencyProspectCampaignStatus::Active->value)
+                ->whereIn('status', [AgencyProspectCampaignStatus::Active->value, AgencyProspectCampaignStatus::Paused->value])
                 ->select('id'))
             // Even a pending earlier timer needs reconciliation when the owner
             // manually delivers a LATER reply step in the same sequence.
@@ -64,7 +64,7 @@ final class OutreachManualStepFollowUp
                 if ($member === null || $member->isTerminal()
                     || (int) $member->chat_box_id !== (int) $message->box_id
                     || (int) $member->workspace_id !== (int) $business->workspace_id
-                    || $member->campaign?->status !== AgencyProspectCampaignStatus::Active
+                    || ! in_array($member->campaign?->status, [AgencyProspectCampaignStatus::Active, AgencyProspectCampaignStatus::Paused], true)
                     || ! $member->campaign->isManaged()) {
                     return null;
                 }
