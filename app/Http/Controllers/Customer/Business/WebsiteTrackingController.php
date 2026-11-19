@@ -94,7 +94,13 @@ class WebsiteTrackingController extends CustomerBaseController
             $scopes[WebsiteTrackingSettings::scopeKeyForPage((bool) $page->is_home, $page->slug)] = (string) $page->title;
         }
 
-        $scopes[WebsiteTrackingSettings::BLOG_SCOPE] = 'Blog (index and articles)';
+        $scopes[WebsiteTrackingSettings::BLOG_SCOPE] = 'Blog (all articles)';
+
+        // Published article UIDs are stable even when SEO slugs change. Blog-wide tracking
+        // is inherited by each article; owners may add an article-specific conversion label.
+        foreach (\App\Models\WebsiteArticle::query()->published()->where('website_id', $website->id)->orderBy('id')->get(['uid', 'title']) as $article) {
+            $scopes[WebsiteTrackingSettings::articleScopeKey((string) $article->uid)] = 'Article: ' . $article->title;
+        }
 
         return array_filter($scopes, fn ($label, $key) => $key !== '', ARRAY_FILTER_USE_BOTH);
     }
