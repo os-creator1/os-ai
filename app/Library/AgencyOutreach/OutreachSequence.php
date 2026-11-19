@@ -330,34 +330,6 @@ final class OutreachSequence
         return $norm($a) !== '' && $norm($a) === $norm($b);
     }
 
-    /**
-     * Every text this campaign has put in front of the prospect: the ledger's sent rows and
-     * the conversation's outgoing messages since the opener (a person's included).
-     *
-     * @return array<int, string>
-     */
-    public function outboundBodiesFor(AgencyProspectCampaignMember $member): array
-    {
-        $ledger = AgencyProspectMessage::query()
-            ->where('campaign_member_id', $member->id)
-            ->where('direction', AgencyProspectMessage::DIRECTION_OUTBOUND)
-            ->where('status', AgencyProspectMessage::STATUS_SENT)
-            ->orderBy('id')
-            ->get(['body', 'created_at']);
-
-        if ($ledger->isEmpty()) {
-            return [];
-        }
-
-        $prospect = AgencyProspect::query()->where('id', $member->prospect_id)->where('workspace_id', $member->workspace_id)->first();
-        $workspace = $prospect === null ? null : Workspace::query()->find($member->workspace_id);
-
-        return array_merge(
-            $ledger->pluck('body')->map(fn ($b) => (string) $b)->all(),
-            $workspace === null ? [] : $this->conversationBodies($workspace, $prospect, $ledger->first()->created_at),
-        );
-    }
-
     /** @return array<int, string> */
     private function conversationBodies(Workspace $workspace, AgencyProspect $prospect, mixed $since): array
     {
@@ -368,11 +340,20 @@ final class OutreachSequence
             return [];
         }
 
+        // Only a message whose delivery is CONFIRMED proves the prospect received it:
+        //  - send_status `sent` / `delivered`;
+        //  - a legacy row with no status at all, and no managed-send operation that could still
+        //    be pending (rows from before send states existed; nothing is invented for them).
+        // `sending`, `ambiguous`, `failed`, `delivery_failed` and any unknown state do not count;
+        // when one is later confirmed it starts to count on the next read.
         return ChatBoxMessage::query()
             ->where('box_id', $box->id)
             ->where('direction', Reports::DIRECTION_OUTGOING)
             ->where('created_at', '>=', $since)
-            ->where(fn ($q) => $q->whereNull('send_status')->orWhereNotIn('send_status', ['failed', 'delivery_failed']))
+            ->where(function ($q): void {
+                $q->whereIn('send_status', ['sent', 'delivered'])
+                    ->orWhere(fn ($legacy) => $legacy->whereNull('send_status')->whereNull('business_messaging_operation_id'));
+            })
             ->pluck('message')->map(fn ($m) => (string) $m)->all();
     }
 

@@ -13,7 +13,10 @@ use App\Models\AgencyProspectCampaignMember;
 use App\Models\AgencyProspectMessage;
 use App\Models\Blacklists;
 use App\Models\Business;
+use App\Models\ChatBox;
 use App\Models\ChatBoxMessage;
+use App\Library\AgencyOutreach\OutreachSequence;
+use App\Library\Conversations\ConversationHistoryWriter;
 use App\Models\Workspace;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\Feature\AgencyOutreach\Concerns\BuildsOutreachFixtures;
@@ -376,5 +379,132 @@ class OutreachSequenceContinuityTest extends TestCase
         $this->inbound($business, 'sure');
 
         $this->assertCount(1, $this->sentBodies());
+    }
+
+    // ---- repeated wording (A -> B -> A) -----------------------------------------------------------------
+
+    public function test_a_sequence_that_repeats_a_wording_sends_each_step_exactly_once(): void
+    {
+        [$workspace, $business, $member] = $this->started('Hello! Quick question.');
+        OutreachScriptManager::save($workspace, ['sequence_steps' => [$this->step('a1', 'Alpha text.'), $this->step('b', 'Beta text.'), $this->step('a3', 'Alpha text.')]]);
+
+        foreach (range(1, 5) as $i) {
+            $this->inbound($business, 'ok');
+        }
+
+        $this->assertSame(['Hello! Quick question.', 'Alpha text.', 'Beta text.', 'Alpha text.'], $this->sentBodies(), 'Each step once; nothing after the sequence ends.');
+        $this->assertSame(['a1', 'b', 'a3'], $this->member($member)->sequence_sent_ids);
+    }
+
+    public function test_when_the_opener_is_the_first_A_the_second_A_still_sends_and_a_single_copy_never_satisfies_two_steps(): void
+    {
+        [$workspace, $business, $member] = $this->started('Alpha text.');
+        OutreachScriptManager::save($workspace, ['sequence_steps' => [$this->step('a1', 'Alpha text.'), $this->step('b', 'Beta text.'), $this->step('a3', 'Alpha text.')]]);
+
+        $this->assertSame(['a1'], OutreachSequence::forWorkspace($workspace)->deliveredByContent($member), 'One copy satisfies one step only.');
+
+        $this->inbound($business, 'ok');
+        $this->inbound($business, 'ok');
+        $this->inbound($business, 'ok');
+
+        $this->assertSame(['Alpha text.', 'Beta text.', 'Alpha text.'], $this->sentBodies());
+    }
+
+    public function test_a_faq_answer_in_front_of_a_repeated_wording_step_is_safe(): void
+    {
+        [$workspace, $business] = $this->started('Hello! Quick question.');
+        OutreachScriptManager::save($workspace, ['sequence_steps' => [$this->step('a1', 'Alpha text.'), $this->step('b', 'Beta text.'), $this->step('a3', 'Alpha text.')]]);
+
+        $this->inbound($business, 'ok');
+        $this->inbound($business, 'ok');
+        $this->inbound($business, 'how much is it?');
+        $this->inbound($business, 'how much is it?');
+
+        $this->assertSame('Our commission is 9% of booked events. Alpha text.', $this->sentBodies()[3]);
+        $this->assertSame('Our commission is 9% of booked events.', $this->sentBodies()[4], 'The sequence is complete: the answer goes out ALONE, no step is repeated.');
+        $this->assertCount(5, $this->sentBodies());
+    }
+
+    // ---- manual sends: only a confirmed delivery counts -----------------------------------------------------
+
+    private function handSend(Business $business, string $text, ?string $status, ?int $operationId = null): ChatBoxMessage
+    {
+        $box = ChatBox::query()->where('business_id', $business->id)->where('to', '12025551000')->orderByDesc('id')->firstOrFail();
+
+        return ChatBoxMessage::create([
+            'box_id' => $box->id, 'message' => $text, 'sms_type' => 'plain', 'direction' => 'outgoing', 'send_by' => 'from',
+            'source' => ConversationHistoryWriter::SOURCE_CONVERSATIONS, 'send_status' => $status, 'business_messaging_operation_id' => $operationId,
+        ]);
+    }
+
+    public function test_a_manual_message_counts_only_once_its_delivery_is_confirmed(): void
+    {
+        [$workspace, $business, $member] = $this->started('Hello! Quick question.');
+        $message1 = 'Hi, Snap Booth Co here. We book photo booths for local venues and you only pay at 9% when we deliver. Open to hearing more?';
+        $delivered = fn () => OutreachSequence::forWorkspace($workspace)->deliveredByContent($member->fresh());
+
+        $manual = $this->handSend($business, $message1, 'sending');
+        $this->assertNotContains('legacy-1', $delivered(), 'sending: not proven.');
+
+        $manual->update(['send_status' => 'ambiguous']);
+        $this->assertNotContains('legacy-1', $delivered(), 'ambiguous: not proven.');
+
+        $manual->update(['send_status' => 'failed']);
+        $this->assertNotContains('legacy-1', $delivered(), 'failed: never counts.');
+
+        $manual->update(['send_status' => 'delivery_failed']);
+        $this->assertNotContains('legacy-1', $delivered());
+
+        $manual->update(['send_status' => 'something_new']);
+        $this->assertNotContains('legacy-1', $delivered(), 'unknown states are unresolved.');
+
+        $manual->update(['send_status' => 'sent']);
+        $this->assertContains('legacy-1', $delivered(), 'confirmed: counts from then on.');
+
+        $manual->update(['send_status' => 'delivered']);
+        $this->assertContains('legacy-1', $delivered());
+    }
+
+    public function test_a_legacy_manual_message_without_any_status_counts_but_one_with_a_pending_operation_does_not(): void
+    {
+        [$workspace, $business, $member] = $this->started('Hello! Quick question.');
+        $message1 = 'Hi, Snap Booth Co here. We book photo booths for local venues and you only pay at 9% when we deliver. Open to hearing more?';
+        $delivered = fn () => OutreachSequence::forWorkspace($workspace)->deliveredByContent($member->fresh());
+
+        $pending = $this->handSend($business, $message1, null, 987654);
+        $this->assertNotContains('legacy-1', $delivered(), 'No status but a managed-send operation: still unresolved.');
+
+        $pending->delete();
+        $this->handSend($business, $message1, null);
+        $this->assertContains('legacy-1', $delivered(), 'Legacy row with no status and no operation: carried as before.');
+    }
+
+    public function test_a_failed_manual_send_does_not_cause_the_next_outreach_step_to_be_skipped(): void
+    {
+        [, $business, $member] = $this->started('Hello! Quick question.');
+        $message1 = 'Hi, Snap Booth Co here. We book photo booths for local venues and you only pay at 9% when we deliver. Open to hearing more?';
+        $this->inbound($business, 'who is this?', deliver: false);
+        $this->handSend($business, $message1, 'failed');
+        // the owner's failed attempt happened BEFORE this newer inbound, so automatic replies are not suppressed
+        $this->inbound($business, 'hello?');
+
+        $this->assertStringStartsWith('Hi, Snap Booth Co here.', end($this->fakeAdapter->sentRequests)->body, 'Message 1 is still sent by Outreach.');
+        $this->assertSame(['legacy-1'], $this->member($member)->sequence_sent_ids);
+    }
+
+    public function test_an_unconfirmed_manual_send_that_later_confirms_is_then_not_repeated(): void
+    {
+        [, $business, $member] = $this->started('Hello! Quick question.');
+        $message1 = 'Hi, Snap Booth Co here. We book photo booths for local venues and you only pay at 9% when we deliver. Open to hearing more?';
+        $this->inbound($business, 'who is this?', deliver: false);
+        $manual = $this->handSend($business, $message1, 'ambiguous');
+        $manual->update(['send_status' => 'sent']);
+        $before = count($this->sentBodies());
+
+        $this->inbound($business, 'hello?');
+
+        foreach (array_slice($this->sentBodies(), $before) as $body) {
+            $this->assertStringNotContainsString('photo booths for local venues', $body);
+        }
     }
 }

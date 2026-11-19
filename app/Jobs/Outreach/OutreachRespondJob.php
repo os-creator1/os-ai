@@ -140,7 +140,7 @@ class OutreachRespondJob extends Base
             $classification->intent,
             (int) $inbound->id,
             $lastOutbound === null ? null : (string) $lastOutbound,
-            $sequence->outboundBodiesFor($member),
+            $sequence->deliveredByContent($member),
         );
 
         if (! $composed->hasText()) {

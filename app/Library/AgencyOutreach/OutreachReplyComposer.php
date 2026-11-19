@@ -58,7 +58,7 @@ final class OutreachReplyComposer
 
     /**
      * @param  string|null  $lastOutboundBody  the last text sent to this prospect, for the duplicate guard
-     * @param  array<int, string>  $recentOutbound  everything sent in this campaign (ledger + conversation), for the step guard
+     * @param  array<int, string>  $deliveredStepIds  steps this prospect already has (OutreachSequence::deliveredByContent), for the step guard
      */
     public function compose(
         Workspace $workspace,
@@ -67,7 +67,7 @@ final class OutreachReplyComposer
         string $intent,
         int $inboundMessageId,
         ?string $lastOutboundBody = null,
-        array $recentOutbound = [],
+        array $deliveredStepIds = [],
     ): OutreachComposedReply {
         $script = OutreachScript::forWorkspace($workspace);
 
@@ -127,14 +127,14 @@ final class OutreachReplyComposer
             return OutreachComposedReply::nothing($intent, 'duplicate_of_last_outbound');
         }
 
-        // Backstop: the scripted message itself must not go out twice, however the answer in
-        // front of it makes the whole text differ (a person may have sent it by hand).
-        if ($decision->action !== OutreachDecision::RESEND_LINK && $stageText !== null) {
-            foreach ($recentOutbound as $sent) {
-                if (self::same($stageText, (string) $sent)) {
-                    return OutreachComposedReply::nothing($intent, 'step_already_delivered');
-                }
-            }
+        // Backstop: THIS step must not go out twice, however the answer in front of it makes the
+        // text differ (a person may have sent it by hand). It asks the same one-delivery-per-step
+        // question selection does, so a repeated wording later in the sequence (A, B, A) is a
+        // different step and still sends, while a copy already delivered never satisfies two steps.
+        if ($decision->action !== OutreachDecision::RESEND_LINK
+            && $decision->stepId !== null
+            && in_array($decision->stepId, $deliveredStepIds, true)) {
+            return OutreachComposedReply::nothing($intent, 'step_already_delivered');
         }
 
         return new OutreachComposedReply($text, $source, $intent);
