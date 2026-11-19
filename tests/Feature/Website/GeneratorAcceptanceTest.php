@@ -237,6 +237,32 @@ class GeneratorAcceptanceTest extends TestCase
         }
     }
 
+    public function test_every_service_and_event_page_closes_with_an_inquiry_call_to_action_and_the_visual_rules_are_in_the_stylesheet(): void
+    {
+        $pages = $this->site();
+
+        foreach ($pages as $path => $html) {
+            if (str_starts_with($path, '/service-') || str_ends_with($path, '-photo-booth-rental')) {
+                $this->assertStringContainsString('Ready to book?', $html, "{$path} ends with a way to inquire, not only links to other pages");
+                $this->assertMatchesRegularExpression('#Ready to book\?.*?href="[^"]*/photo-booth-contact"#s', $html, "{$path}: the closing call to action leads to the contact page");
+            }
+        }
+
+        // Visual-quality rules (Slice 5) that cannot be seen from PHP: kept from silently disappearing.
+        $css = file_get_contents(public_path('css/website-design.css'));
+        foreach ([
+            '.wd-hero-fullbleed.wd-hero-typographic:not(.wd-hero-inner-page)',
+            '.wd .website-text .wd-section-title',
+            '.wd-band-text + .wd-band-text > .wd-container',
+            '.wd-services:not(.wd-services-event-tiles) .wd-card-linked h3::after',
+            '.wd .blog-prose h2',
+            '.wd-band-cta + .wd-band-cta',
+        ] as $rule) {
+            $this->assertStringContainsString($rule, $css);
+        }
+        $this->assertStringContainsString('overflow-wrap: break-word', file_get_contents(public_path('css/website-public.css')));
+    }
+
     public function test_seo_canonicals_sitemap_robots_and_structured_data_hold_for_the_whole_site(): void
     {
         $pages = $this->site();
@@ -373,6 +399,12 @@ class GeneratorAcceptanceTest extends TestCase
         $this->assertStringContainsString('<link rel="canonical" href="https://' . self::DOMAIN . '/blog/' . $article->slug . '">', $post);
         $this->assertStringContainsString('BlogPosting', $post);
         $this->assertStringContainsString('https://' . self::DOMAIN . '/blog/' . $article->slug, $this->get($this->url('/sitemap.xml'))->getContent());
+
+        if ($dir = getenv('ACCEPTANCE_REPORT_DIR')) {
+            @mkdir($dir . '/blog', 0777, true);
+            file_put_contents($dir . '/blog.html', $index);
+            file_put_contents($dir . '/blog/' . $article->slug . '.html', $post);
+        }
     }
 
     /** @param array<string, string> $pages */

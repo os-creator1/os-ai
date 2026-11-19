@@ -162,6 +162,50 @@ final class MediaBindingService
     }
 
     /**
+     * A service or event page ends with a way to inquire, not only with links to other pages: when its last words are "also available"
+     * and the page has no call to action to the contact page, a closing one is added (the niche's own contact wording). A page whose
+     * author already linked to the contact page in a call to action is left alone.
+     *
+     * @param  array<int, array<string, mixed>>  $pages
+     * @return array<int, array<string, mixed>>
+     */
+    private function closeBookablePagesWithInquiry(array $pages): array
+    {
+        $contact = collect($pages)->firstWhere('page_type', 'contact');
+        $contactSlug = is_array($contact) ? (string) ($contact['slug'] ?? '') : '';
+
+        if ($contactSlug === '') {
+            return $pages;
+        }
+
+        foreach ($pages as $index => $page) {
+            if (! in_array($page['page_type'] ?? null, ['service_detail', 'event_detail'], true)) {
+                continue;
+            }
+
+            $sections = (array) ($page['sections'] ?? []);
+            $hasInquiryCta = collect($sections)->contains(fn ($section) => ($section['type'] ?? null) === 'cta'
+                && collect($section['data']['buttons'] ?? [])->contains(fn ($button) => ltrim((string) ($button['url'] ?? ''), '/') === $contactSlug));
+
+            if ($hasInquiryCta) {
+                continue;
+            }
+
+            $closing = ['type' => 'cta', 'data' => [
+                'heading' => 'Ready to book?',
+                'body' => 'Tell us your date and details and we will confirm availability.',
+                'buttons' => [['label' => \App\Library\Website\WebsiteNicheVocabulary::contactCtaLabel($contactSlug, true), 'url' => '/' . $contactSlug]],
+            ]];
+
+            $at = count($sections) > 0 && (end($sections)['type'] ?? null) === 'contact_details' ? count($sections) - 1 : count($sections);
+            array_splice($sections, $at, 0, [$closing]);
+            $pages[$index]['sections'] = $sections;
+        }
+
+        return $pages;
+    }
+
+    /**
      * The planned dedicated service pages, in plan order: what a service card or a place page may link to.
      *
      * @param  array<int, array<string, mixed>>  $pages
@@ -402,6 +446,7 @@ final class MediaBindingService
         $pages = $this->linkAreaPages($pages);
         $pages = $this->linkServicePages($pages);
         $pages = $this->linkServiceCards($pages);
+        $pages = $this->closeBookablePagesWithInquiry($pages);
         $pages = $this->bindAreaHub($website, $pages);
         $pages = $this->catalogReferences->stampPackagePages($pages, (int) $website->business_id);
         $pages = $this->mirrorServiceImages($website, $pages);
