@@ -2,6 +2,7 @@
 
 namespace App\Listeners\Outreach;
 
+use App\Enums\AgencyProspecting\AgencyProspectCampaignStatus;
 use App\Enums\AgencyProspecting\AgencyProspectStage;
 use App\Events\Conversation\InboundMessageReceived;
 use App\Jobs\Outreach\OutreachRespondJob;
@@ -10,6 +11,7 @@ use App\Library\AgencyOutreach\OutreachClassification;
 use App\Library\AgencyOutreach\OutreachConversationLinker;
 use App\Library\AgencyOutreach\OutreachInboundLedger;
 use App\Library\AgencyOutreach\OutreachStageMachine;
+use App\Library\AgencyOutreach\OutreachStopClassifier;
 use App\Library\AgencyOutreach\OutreachStopService;
 use App\Library\AgencyProspecting\AgencyProspectPhoneNormalizer;
 use App\Models\AgencyProspect;
@@ -89,6 +91,27 @@ class HandleOutreachInboundMessage implements ShouldQueue
         $member = $this->liveManagedMember($prospect);
 
         if ($member === null) {
+            // Ended campaigns no longer claim normal replies, but an inbound
+            // withdrawal of consent still applies to that same prospect.
+            // The central carrier STOP filter handles only whole-message
+            // keywords; Outreach also recognizes clear phrases such as
+            // "please stop texting me" and "remove my number".
+            $last = $this->linker->latestInbound($agencyBusiness, $prospect);
+            if ($last !== null && OutreachStopClassifier::classify((string) $last->message) === OutreachStopClassifier::OPT_OUT) {
+                $endedMember = AgencyProspectCampaignMember::query()
+                    ->where('prospect_id', $prospect->id)
+                    ->where('workspace_id', $prospect->workspace_id)
+                    ->whereHas('campaign', fn ($query) => $query
+                        ->where('sending_mode', AgencyProspectCampaign::MODE_MANAGED)
+                        ->where('status', AgencyProspectCampaignStatus::Ended->value))
+                    ->orderByDesc('id')
+                    ->first();
+
+                if ($endedMember !== null) {
+                    $this->stops->apply($endedMember, true);
+                }
+            }
+
             return;
         }
 
@@ -135,6 +158,9 @@ class HandleOutreachInboundMessage implements ShouldQueue
             ->whereIn('campaign_id', AgencyProspectCampaign::query()
                 ->where('workspace_id', $prospect->workspace_id)
                 ->where('sending_mode', AgencyProspectCampaign::MODE_MANAGED)
+                // An ended campaign retains history but must never capture
+                // future inbound replies for a newly started campaign.
+                ->whereIn('status', [AgencyProspectCampaignStatus::Active->value, AgencyProspectCampaignStatus::Paused->value])
                 ->select('id'))
             ->orderByDesc('id')
             ->first();

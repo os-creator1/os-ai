@@ -23,25 +23,36 @@
 
                 @if($campaign->status->value !== 'draft')
                     @if($campaign->isManaged())
-                        <form method="post" action="{{ route('customer.workspaces.prospecting.campaigns.status', [$workspaceUid, $campaign->uid]) }}">
-                            @csrf
-                            @if($campaign->status->value === 'active')
-                                <input type="hidden" name="status" value="paused">
-                                <x-button type="submit" variant="outline" size="sm">Pause campaign</x-button>
-                            @else
-                                <input type="hidden" name="status" value="active">
-                                <x-button type="submit" variant="primary" size="sm">Resume campaign</x-button>
-                            @endif
-                        </form>
+                        @if(in_array($campaign->status->value, ['active', 'paused'], true))
+                            <form method="post" action="{{ route('customer.workspaces.prospecting.campaigns.status', [$workspaceUid, $campaign->uid]) }}" class="mb-1">
+                                @csrf
+                                @if($campaign->status->value === 'active')
+                                    <input type="hidden" name="status" value="paused">
+                                    <x-button type="submit" variant="outline" size="sm">Pause campaign</x-button>
+                                @else
+                                    <input type="hidden" name="status" value="active">
+                                    <x-button type="submit" variant="primary" size="sm">Resume campaign</x-button>
+                                @endif
+                            </form>
+                            <form method="post"
+                                  action="{{ route('customer.workspaces.prospecting.campaigns.end', [$workspaceUid, $campaign->uid]) }}"
+                                  onsubmit="return confirm('Permanently end this campaign? No more automatic messages will be sent, and its recipients can be used in another campaign. Message history is preserved. This cannot be undone.');">
+                                @csrf
+                                <x-button type="submit" variant="outline" size="sm">End campaign</x-button>
+                                <p class="text-caption mt-50 mb-0">Stops this campaign and releases its contacts for new campaigns. Keeps SMS history.</p>
+                            </form>
+                        @else
+                            <p class="text-caption mb-0">This campaign has ended permanently. No more messages will be sent from it. Its contacts are available for a new campaign; SMS history is preserved.</p>
+                        @endif
                     @else
-                    <form method="post" action="{{ route('customer.workspaces.prospecting.campaigns.status', [$workspaceUid, $campaign->uid]) }}" class="d-flex gap-2">
-                        @csrf
-                        <select name="status" class="form-select" style="max-width: 200px;">
-                            <option value="active" @selected($campaign->status->value === 'active')>Active</option>
-                            <option value="paused" @selected($campaign->status->value === 'paused')>Paused</option>
-                        </select>
-                        <x-button type="submit" variant="primary" size="sm">Update status</x-button>
-                    </form>
+                        <form method="post" action="{{ route('customer.workspaces.prospecting.campaigns.status', [$workspaceUid, $campaign->uid]) }}" class="d-flex gap-2">
+                            @csrf
+                            <select name="status" class="form-select" style="max-width: 200px;">
+                                <option value="active" @selected($campaign->status->value === 'active')>Active</option>
+                                <option value="paused" @selected($campaign->status->value === 'paused')>Paused</option>
+                            </select>
+                            <x-button type="submit" variant="primary" size="sm">Update status</x-button>
+                        </form>
                     @endif
                 @endif
             </x-card>

@@ -7,6 +7,9 @@ on:
       - 'app/Library/AgencyOutreach/OutreachContactGroupBridge.php'
       - 'app/Library/AgencyOutreach/OutreachEligibility.php'
       - 'app/Library/AgencyOutreach/OutreachCampaignService.php'
+      - 'app/Listeners/Outreach/HandleOutreachInboundMessage.php'
+      - 'app/Enums/AgencyProspecting/AgencyProspectCampaignStatus.php'
+      - 'routes/customer.php'
       - 'app/Http/Controllers/Customer/Workspace/AgencyOutreachController.php'
       - 'app/Http/Controllers/Customer/Workspace/AgencyProspectingController.php'
       - 'app/Models/AgencyProspectCampaign.php'
@@ -15,6 +18,7 @@ on:
       - 'resources/views/customer/workspaces/prospecting/campaign-show.blade.php'
       - 'database/migrations/2026_11_24_090000_add_contact_group_source_to_agency_prospecting.php'
       - 'tests/Feature/AgencyOutreach/CampaignContactGroupTest.php'
+      - 'tests/Feature/AgencyOutreach/EndCampaignTest.php'
       - '.github/workflows/outreach-contact-groups-tests.yml'
 
 permissions:
@@ -68,4 +72,4 @@ jobs:
       - name: Install dependencies
         run: composer install --no-interaction --prefer-dist --no-progress
       - name: Test campaign contact-group snapshots and sender eligibility
-        run: php artisan test tests/Feature/AgencyOutreach/CampaignContactGroupTest.php tests/Feature/AgencyOutreach/OutreachSafetyTest.php --stop-on-failure
+        run: php artisan test tests/Feature/AgencyOutreach/CampaignContactGroupTest.php tests/Feature/AgencyOutreach/EndCampaignTest.php tests/Feature/AgencyOutreach/OutreachSafetyTest.php --stop-on-failure

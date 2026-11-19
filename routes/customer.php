@@ -2502,6 +2502,7 @@
             Route::post('/campaigns', 'Workspace\AgencyProspectingController@storeCampaign')->name('campaigns.store');
             Route::get('/campaigns/{campaign}', 'Workspace\AgencyProspectingController@showCampaign')->name('campaigns.show');
             Route::post('/campaigns/{campaign}/status', 'Workspace\AgencyProspectingController@updateCampaignStatus')->name('campaigns.status');
+            Route::post('/campaigns/{campaign}/end', 'Workspace\AgencyProspectingController@endCampaign')->name('campaigns.end');
             Route::post('/campaigns/{campaign}/members', 'Workspace\AgencyProspectingController@enrollProspect')->name('campaigns.members.store');
 
             Route::get('/settings', 'Workspace\AgencyProspectingController@settings')->name('settings.show');
