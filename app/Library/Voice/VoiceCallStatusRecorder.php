@@ -40,16 +40,16 @@ final class VoiceCallStatusRecorder
      * @param array<string, mixed> $payload     the event's `payload` object
      * @param string|null          $occurredAt  the event envelope's `occurred_at` (when the event happened)
      */
-    public function apply(string $eventId, string $eventType, string $callControlId, array $payload, ?string $occurredAt = null): string
+    public function apply(string $eventId, string $eventType, string $callControlId, array $payload, ?string $occurredAt = null, int $channelId = 0): string
     {
         $target = self::EVENT_STATUS[$eventType] ?? null;
         if ($target === null || $callControlId === '') {
             return self::IGNORED;
         }
 
-        return DB::transaction(function () use ($eventId, $eventType, $callControlId, $payload, $occurredAt, $target): string {
-            $call = BusinessVoiceCall::query()->where('telnyx_call_control_id', $callControlId)->lockForUpdate()->first()
-                ?? $this->adoptByClientState($callControlId, $payload);
+        return DB::transaction(function () use ($eventId, $eventType, $callControlId, $payload, $occurredAt, $target, $channelId): string {
+            $call = BusinessVoiceCall::query()->forChannel($channelId)->where('telnyx_call_control_id', $callControlId)->lockForUpdate()->first()
+                ?? $this->adoptByClientState($callControlId, $payload, $channelId);
             if ($call === null) {
                 return self::IGNORED;
             }
@@ -122,7 +122,7 @@ final class VoiceCallStatusRecorder
      *
      * @param array<string, mixed> $payload
      */
-    private function adoptByClientState(string $callControlId, array $payload): ?BusinessVoiceCall
+    private function adoptByClientState(string $callControlId, array $payload, int $channelId): ?BusinessVoiceCall
     {
         $state = $payload['client_state'] ?? null;
         $token = is_string($state) ? base64_decode($state, true) : false;
@@ -130,7 +130,7 @@ final class VoiceCallStatusRecorder
             return null;
         }
 
-        $call = BusinessVoiceCall::query()
+        $call = BusinessVoiceCall::query()->forChannel($channelId)
             ->where('client_state_hash', hash('sha256', $token))
             ->whereNull('telnyx_call_control_id')
             ->lockForUpdate()

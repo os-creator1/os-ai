@@ -100,11 +100,11 @@ class VoiceCallController extends CustomerBaseController
         [, $business] = $this->resolveEntitledBusinessTenancy($workspaceUid, $businessUid, PlatformFeature::Crm->value);
         $this->requireCalling($business);
 
-        return response()->json(['data' => $placer->eligibleNumbers($business)->map(fn ($number) => [
-            'id' => $placer->selectorToken($business, $number),
-            'number' => $this->formatNumber('+' . ltrim((string) $number->phone_number, '+')),
-            'primary' => (bool) $number->is_primary,
-        ])->values()->all()])->header('Cache-Control', 'no-store');
+        return response()->json(['data' => array_map(fn (array $choice): array => [
+            'id' => $choice['id'],
+            'number' => $this->formatNumber($choice['phone']),
+            'primary' => $choice['primary'],
+        ], $placer->callingChoices($business))])->header('Cache-Control', 'no-store');
     }
 
     /**
@@ -121,7 +121,10 @@ class VoiceCallController extends CustomerBaseController
             if (! (bool) config('messaging.voice.customer_calls.enabled')) {
                 throw new BrowserCallsUnavailableException('browser_calling_unavailable', 'Browser calling is not available right now.');
             }
-            $session = $provisioner->loginSession($business, (int) Auth::id());
+            // The agency's own Telnyx account when it selected one (an unusable one is an actionable refusal, never a fallback).
+            $session = $provisioner->loginSession($business, (int) Auth::id(), \App\Library\Voice\Byo\AgencyByoVoice::resolveFor($business));
+        } catch (CustomerCallRefusedException $e) {
+            return $this->error($e->reason, $e->getMessage(), $e->httpStatus);
         } catch (BrowserCallsUnavailableException $e) {
             return $this->error($e->reason, $e->getMessage(), 503);
         } catch (\Throwable) {
@@ -259,7 +262,7 @@ class VoiceCallController extends CustomerBaseController
     }
 
     /** Browser availability heartbeat: this user's open page is signed in and can take an inbound call. */
-    public function presence(string $workspaceUid, string $businessUid, InboundCallingGate $gate): JsonResponse
+    public function presence(Request $request, string $workspaceUid, string $businessUid, InboundCallingGate $gate): JsonResponse
     {
         [, $business] = $this->resolveEntitledBusinessTenancy($workspaceUid, $businessUid, PlatformFeature::Crm->value);
         $this->requireCalling($business);
@@ -268,12 +271,28 @@ class VoiceCallController extends CustomerBaseController
             return $this->error('inbound_unavailable', 'Inbound calling is not available.', 503);
         }
 
-        $updated = BusinessVoiceBrowserCredential::query()->where('business_id', $business->id)->where('user_id', (int) Auth::id())
-            ->where('expires_at', '>', now())->update(['presence_at' => now()]);
+        // Presence belongs to the credential THIS browser proved it is signed into: the heartbeat carries the opaque session id
+        // issued when the session was created (bound to that credential, this user and this Business), so one tab can never
+        // refresh another tab's credential. It counts only while that credential is still the account this Business routes to
+        // (platform-managed, or the agency's selected channel on its current WebRTC connection); a missing, forged, rotated or
+        // no-longer-current session asks the browser to start a fresh one.
+        $active = \App\Library\Voice\BrowserSessionToken::resolve($request->input('session_id'), $business, (int) Auth::id());
+        $byoChannel = \App\Library\Voice\Byo\AgencyByoVoice::selectedChannel($business);
+        $matches = $active !== null && (
+            $byoChannel === null
+                ? (int) $active->agency_prospecting_channel_id === 0
+                : ((int) $active->agency_prospecting_channel_id === (int) $byoChannel->id
+                    && $active->webrtc_connection_id === trim((string) $byoChannel->voice_webrtc_connection_id))
+        );
+        if (! $matches) {
+            return $this->error('browser_session_required', 'Start a calling session first.', 409);
+        }
 
-        return $updated === 0
-            ? $this->error('browser_session_required', 'Start a calling session first.', 409)
-            : response()->json(['data' => ['available' => true]])->header('Cache-Control', 'no-store');
+        // Success is "this session is current", never the affected-row count: a second heartbeat within the same second writes
+        // an identical timestamp, which MySQL reports as 0 changed rows, and must not be mistaken for a stale session.
+        BusinessVoiceBrowserCredential::query()->whereKey($active->id)->update(['presence_at' => now()]);
+
+        return response()->json(['data' => ['available' => true]])->header('Cache-Control', 'no-store');
     }
 
     /** Inbound calls currently ringing THIS user's browser, with caller identification (called when the SDK reports a ring). */
@@ -378,6 +397,12 @@ class VoiceCallController extends CustomerBaseController
 
     private function fromNumber(BusinessVoiceCall $call): ?string
     {
+        if ($call->agency_prospecting_channel_id !== null) {
+            $number = \App\Models\AgencyProspectingChannel::query()->whereKey($call->agency_prospecting_channel_id)->value('voice_number');
+
+            return $number !== null ? $this->formatNumber('+' . ltrim((string) $number, '+')) : null;
+        }
+
         if ($call->business_messaging_number_id === null) {
             return null;
         }

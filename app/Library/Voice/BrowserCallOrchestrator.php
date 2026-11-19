@@ -44,9 +44,11 @@ final class BrowserCallOrchestrator
 
     /**
      * @param  array<string, mixed>  $payload
+     * @param  int  $channelId  0 = a platform-webhook event; otherwise the agency channel whose signed webhook delivered it. An
+     *                          event only ever reaches a call placed through that same transport.
      * @return string|null applied|duplicate|ignored, or null when the event is not about a browser call
      */
-    public function apply(string $eventId, string $eventType, string $callControlId, array $payload, ?string $occurredAt = null): ?string
+    public function apply(string $eventId, string $eventType, string $callControlId, array $payload, ?string $occurredAt = null, int $channelId = 0): ?string
     {
         if ($callControlId === '' || ! in_array($eventType, ['call.initiated', 'call.answered', 'call.hangup'], true)) {
             return null;
@@ -54,8 +56,8 @@ final class BrowserCallOrchestrator
 
         $after = null;
 
-        $result = DB::transaction(function () use ($eventId, $eventType, $callControlId, $payload, $occurredAt, &$after): ?string {
-            $located = $this->locate($callControlId, $payload);
+        $result = DB::transaction(function () use ($eventId, $eventType, $callControlId, $payload, $occurredAt, $channelId, &$after): ?string {
+            $located = $this->locate($callControlId, $payload, $channelId);
             if ($located === null) {
                 return null;
             }
@@ -98,7 +100,7 @@ final class BrowserCallOrchestrator
     {
         foreach ([$call->telnyx_call_control_id, $call->agent_call_control_id] as $legId) {
             if ($legId !== null && $legId !== '') {
-                $this->command((string) $legId, 'hangup');
+                $this->command((string) $legId, 'hangup', [], $call);
             }
         }
 
@@ -144,7 +146,7 @@ final class BrowserCallOrchestrator
                     $call->hangup_cause = $this->cause($payload);
                 }
 
-                return $contactLeg !== null ? fn () => $this->command((string) $contactLeg, 'hangup') : null;
+                return $contactLeg !== null ? fn () => $this->command((string) $contactLeg, 'hangup', [], $call) : null;
             }
 
             return null;
@@ -167,7 +169,7 @@ final class BrowserCallOrchestrator
                     $call->duration_seconds = $call->ended_at !== null ? (int) max(0, $at->diffInSeconds($call->ended_at, false)) : null;
                 }
 
-                return $leg !== '' ? fn () => $this->command($leg, 'hangup') : null;
+                return $leg !== '' ? fn () => $this->command($leg, 'hangup', [], $call) : null;
             }
 
             return null;
@@ -195,7 +197,7 @@ final class BrowserCallOrchestrator
             $agentLeg = $call->agent_call_control_id;
             $this->close($call, $at, $this->cause($payload));
 
-            return $agentLeg !== null ? fn () => $this->command((string) $agentLeg, 'hangup') : null;
+            return $agentLeg !== null ? fn () => $this->command((string) $agentLeg, 'hangup', [], $call) : null;
         }
 
         return null;
@@ -211,7 +213,10 @@ final class BrowserCallOrchestrator
 
         $token = base64_decode($clientStateB64, true);
         $contact = $call->contact_id !== null ? Contacts::query()->find($call->contact_id) : null;
-        $number = BusinessMessagingNumber::query()->find($call->business_messaging_number_id);
+        // The contact leg is a NEW leg: it may only be dialled through exactly the transport verified at placement.
+        $transport = VoiceTransport::forCallDial($call);
+        $number = $call->business_messaging_number_id !== null ? BusinessMessagingNumber::query()->find($call->business_messaging_number_id) : null;
+        $from = $transport?->isByo() ? $transport->fromNumber : $number?->phone_number;
         // A contact's number, or (unlinked conversation call) the exact number recorded at placement. The to_hash check below
         // proves it is still the one the call was authorized for.
         $destination = $contact !== null
@@ -220,42 +225,42 @@ final class BrowserCallOrchestrator
 
         // The token proves the event is for THIS call; the stored hash proves the destination was not changed since.
         if ($token === false || hash('sha256', $token) !== $call->client_state_hash
-            || $destination === null || $number === null
+            || $destination === null || $transport === null || $from === null
             || BusinessVoiceCall::hashDestination($destination) !== $call->to_hash) {
-            $this->failCall($call, 'contact_not_dialable');
+            // Settings changed after placement (or the channel is gone): fail closed, never dial through unverified details.
+            $this->failCall($call, $transport === null && $call->agency_prospecting_channel_id !== null ? 'transport_changed' : 'contact_not_dialable');
 
             return;
         }
 
-        $webhookUrl = (string) (config('messaging.voice.webhook_url') ?: route('webhooks.telnyx_voice'));
         $cfg = (array) config('messaging.voice.customer_calls');
 
         $result = $this->dialer->dial(
-            $call, trim((string) config('services.telnyx.api_key')), trim((string) config('messaging.voice.connection_id')),
-            $number->phone_number, $destination, $webhookUrl, $token,
+            $call, $transport->apiKey, $transport->connectionId,
+            $from, $destination, $transport->webhookUrl, $token,
             ringTimeoutSecs: (int) $cfg['ring_timeout_secs'],
             timeLimitSecs: max(1, min((int) $cfg['max_duration_secs'], 3600)),
         );
 
         // The call may have ended (browser dropped) while the dial was in flight: drop whichever legs now exist.
         if (in_array($result->status, [BusinessVoiceCall::STATUS_FAILED, BusinessVoiceCall::STATUS_ENDED], true)) {
-            $this->command((string) $call->agent_call_control_id, 'hangup');
+            $this->command((string) $call->agent_call_control_id, 'hangup', [], $call);
             if ($result->telnyx_call_control_id !== null) {
-                $this->command((string) $result->telnyx_call_control_id, 'hangup');
+                $this->command((string) $result->telnyx_call_control_id, 'hangup', [], $call);
             }
         }
     }
 
     private function bridge(int $callId, string $agentLeg, string $contactLeg): void
     {
-        if ($this->command($agentLeg, 'bridge', ['call_control_id' => $contactLeg])) {
+        $call = BusinessVoiceCall::query()->find($callId);
+        if ($this->command($agentLeg, 'bridge', ['call_control_id' => $contactLeg], $call)) {
             return;
         }
 
         // Two legs that cannot be joined are worse than no call: drop both and say why.
-        $this->command($agentLeg, 'hangup');
-        $this->command($contactLeg, 'hangup');
-        $call = BusinessVoiceCall::query()->find($callId);
+        $this->command($agentLeg, 'hangup', [], $call);
+        $this->command($contactLeg, 'hangup', [], $call);
         if ($call !== null) {
             $this->failCall($call, 'bridge_failed', true);
         }
@@ -272,7 +277,7 @@ final class BrowserCallOrchestrator
             ->update(['status' => BusinessVoiceCall::STATUS_FAILED, 'failure_code' => $code, 'ended_at' => now()]);
 
         if ($call->agent_call_control_id !== null) {
-            $this->command((string) $call->agent_call_control_id, 'hangup');
+            $this->command((string) $call->agent_call_control_id, 'hangup', [], $call);
         }
     }
 
@@ -286,14 +291,17 @@ final class BrowserCallOrchestrator
     }
 
     /** @param array<string, mixed> $body */
-    private function command(string $callControlId, string $action, array $body = []): bool
+    private function command(string $callControlId, string $action, array $body, ?BusinessVoiceCall $call): bool
     {
-        if ($callControlId === '') {
+        // The command runs on the call's OWN transport (platform key, or that agency's key); a call whose agency account is
+        // gone gets no command at all rather than one sent with someone else's credentials.
+        $transport = $call !== null ? VoiceTransport::forCall($call) : null;
+        if ($callControlId === '' || $transport === null || $transport->apiKey === '') {
             return false;
         }
 
         try {
-            $response = Http::withToken(trim((string) config('services.telnyx.api_key')))->timeout(20)->acceptJson()->asJson()
+            $response = Http::withToken($transport->apiKey)->timeout(20)->acceptJson()->asJson()
                 ->post(self::API_BASE . '/calls/' . rawurlencode($callControlId) . '/actions/' . $action, $body === [] ? new \stdClass() : $body);
         } catch (\Throwable) {
             Log::warning('Telnyx call action did not complete', ['action' => $action]);
@@ -313,9 +321,9 @@ final class BrowserCallOrchestrator
      * @param  array<string, mixed>  $payload
      * @return array{0: BusinessVoiceCall, 1: string}|null the browser-channel row and which leg this event is about
      */
-    private function locate(string $callControlId, array $payload): ?array
+    private function locate(string $callControlId, array $payload, int $channelId): ?array
     {
-        $call = BusinessVoiceCall::query()->where('channel', 'browser')
+        $call = BusinessVoiceCall::query()->forChannel($channelId)->where('channel', 'browser')
             ->where(fn ($q) => $q->where('agent_call_control_id', $callControlId)->orWhere('telnyx_call_control_id', $callControlId))
             ->lockForUpdate()->first();
 
@@ -330,7 +338,7 @@ final class BrowserCallOrchestrator
             return null;
         }
 
-        $call = BusinessVoiceCall::query()->where('channel', 'browser')->where('client_state_hash', hash('sha256', $token))->lockForUpdate()->first();
+        $call = BusinessVoiceCall::query()->forChannel($channelId)->where('channel', 'browser')->where('client_state_hash', hash('sha256', $token))->lockForUpdate()->first();
         if ($call === null) {
             return null;
         }

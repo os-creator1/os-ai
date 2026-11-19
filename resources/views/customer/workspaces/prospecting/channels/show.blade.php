@@ -68,6 +68,80 @@
             </x-card>
         </div>
 
+        @if($channel->provider === \App\Models\SendingServer::TYPE_TELNYX && $channel->status === 'disconnected' && $channel->voice_enabled)
+        <div class="col-12 mb-2">
+            <x-card title="Voice calling (your own Telnyx account)" :padded="true">
+                <p class="text-caption">This Telnyx account was disconnected, so CRM calls are blocked rather than switched to MotionGrove-paid voice. Reconnect the account, or turn voice off to release this choice.</p>
+                <form method="post" action="{{ route('customer.workspaces.prospecting.channels.voice.disable', [$workspaceUid, $channel->uid]) }}">
+                    @csrf
+                    <x-button type="submit" variant="outline" size="sm">Turn voice off</x-button>
+                </form>
+            </x-card>
+        </div>
+        @endif
+
+        @if($channel->provider === \App\Models\SendingServer::TYPE_TELNYX && $channel->status !== 'disconnected')
+        <div class="col-12 mb-2">
+            <x-card title="Voice calling (your own Telnyx account)" :padded="true">
+                <p class="text-caption">Calls placed from your CRM with the Call button use your Telnyx account and number, and Telnyx bills the usage to you. MotionGrove does not change anything in your Telnyx account. This covers outbound browser calls only; incoming calls are not forwarded from your own number yet.</p>
+
+                <dl class="row mb-1">
+                    @foreach(\App\Library\Voice\Byo\AgencyByoVoice::STEPS as $stepKey => $stepLabel)
+                        <dt class="col-sm-4">{{ $stepLabel }}</dt>
+                        <dd class="col-sm-8">{!! in_array($stepKey, $voiceMissing, true) ? '<span class="text-danger">Missing or not verified</span>' : 'Verified' !!}</dd>
+                    @endforeach
+                    <dt class="col-sm-4">Signed voice webhook</dt>
+                    <dd class="col-sm-8">{{ $channel->voice_webhook_verified_at ? 'Received a correctly signed event' : 'Waiting for the first signed event (placed with your first call)' }}</dd>
+                    <dt class="col-sm-4">Voice status</dt>
+                    <dd class="col-sm-8">{{ $channel->voice_enabled ? 'On' : 'Off' }}</dd>
+                </dl>
+
+                <form method="post" action="{{ route('customer.workspaces.prospecting.channels.voice.save', [$workspaceUid, $channel->uid]) }}" class="mb-1">
+                    @csrf
+                    @method('PUT')
+                    <div class="row">
+                        <div class="col-md-4 mb-1">
+                            <label class="form-label" for="voice_connection_id">Voice (Call Control) connection ID</label>
+                            <input type="text" autocomplete="off" id="voice_connection_id" name="voice_connection_id" value="{{ old('voice_connection_id', $channel->voice_connection_id) }}" class="form-control @error('voice_connection_id') is-invalid @enderror">
+                            @error('voice_connection_id')<div class="invalid-feedback">{{ $message }}</div>@enderror
+                        </div>
+                        <div class="col-md-4 mb-1">
+                            <label class="form-label" for="voice_webrtc_connection_id">WebRTC credential connection ID</label>
+                            <input type="text" autocomplete="off" id="voice_webrtc_connection_id" name="voice_webrtc_connection_id" value="{{ old('voice_webrtc_connection_id', $channel->voice_webrtc_connection_id) }}" class="form-control @error('voice_webrtc_connection_id') is-invalid @enderror">
+                            @error('voice_webrtc_connection_id')<div class="invalid-feedback">{{ $message }}</div>@enderror
+                        </div>
+                        <div class="col-md-4 mb-1">
+                            <label class="form-label" for="voice_number">Voice number</label>
+                            <input type="text" autocomplete="off" id="voice_number" name="voice_number" placeholder="+14155552671" value="{{ old('voice_number', $channel->voice_number) }}" class="form-control @error('voice_number') is-invalid @enderror">
+                            @error('voice_number')<div class="invalid-feedback">{{ $message }}</div>@enderror
+                        </div>
+                    </div>
+                    <x-button type="submit" variant="outline" size="sm">Save voice details</x-button>
+                </form>
+
+                <div class="text-caption mb-1">Set this as the webhook URL of your Telnyx Call Control application (signed with the webhook public key you saved above): <code>{{ $voiceWebhookUrl }}</code></div>
+
+                <div class="d-flex gap-2 mt-2">
+                    <form method="post" action="{{ route('customer.workspaces.prospecting.channels.voice.verify', [$workspaceUid, $channel->uid]) }}">
+                        @csrf
+                        <x-button type="submit" variant="outline" size="sm">Verify voice setup with Telnyx</x-button>
+                    </form>
+                    @if($channel->voice_enabled)
+                        <form method="post" action="{{ route('customer.workspaces.prospecting.channels.voice.disable', [$workspaceUid, $channel->uid]) }}">
+                            @csrf
+                            <x-button type="submit" variant="outline" size="sm">Turn voice off</x-button>
+                        </form>
+                    @else
+                        <form method="post" action="{{ route('customer.workspaces.prospecting.channels.voice.enable', [$workspaceUid, $channel->uid]) }}">
+                            @csrf
+                            <x-button type="submit" variant="primary" size="sm">Turn voice on</x-button>
+                        </form>
+                    @endif
+                </div>
+            </x-card>
+        </div>
+        @endif
+
         <div class="col-md-6 mb-2">
             <x-card title="Credentials" :padded="true">
                 <form method="post" action="{{ route('customer.workspaces.prospecting.channels.update', [$workspaceUid, $channel->uid]) }}">

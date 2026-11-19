@@ -56,9 +56,13 @@
     var direction = 'outbound';
     var sharedClient = null;      // the page's one signed-in client (inbound enabled only)
     var sharedReady = false;
+    var sharedSessionId = null;   // the opaque id of THIS tab's session: every heartbeat proves which account this browser uses
     var pendingSdk = null;        // an SDK call that is ringing and has not been matched to a server call yet
     var presenceTimer = null;
     var reconnectTimer = null;
+    var renewTimer = null;        // the one pending login-token renewal (never more than one chain)
+    var connecting = false;       // a shared session is being established: no second one may start
+    var staleStreak = 0;          // consecutive "your session no longer matches the account" answers (backoff)
     var inboundBusy = false;      // a ring is being identified / an inbound popup is being handled
     var peerName = cfg.contactLabel || '';
 
@@ -658,10 +662,12 @@
     // ---- the page's one signed-in client + availability heartbeat
 
     function connectShared() {
-        if (!inboundCfg || !window.TelnyxWebRTC || sharedClient) { return; }
+        if (!inboundCfg || !window.TelnyxWebRTC || sharedClient || connecting) { return; }
+        connecting = true;
         var rtc = null;
         api('POST', cfg.sessionUrl).then(function (r) {
             if (!r.ok || !r.json || !r.json.data) { throw new Error('session'); }
+            sharedSessionId = r.json.data.session_id || null;
             rtc = new window.TelnyxWebRTC.TelnyxRTC({ login_token: r.json.data.login_token });
             rtc.remoteElement = 'mg-remote-audio';
             rtc.on('telnyx.notification', onNotification);
@@ -671,12 +677,20 @@
             rtc.connect();
             return ready;
         }).then(function () {
+            connecting = false;
             sharedReady = true;
             heartbeat();
             if (!presenceTimer) { presenceTimer = setInterval(heartbeat, 30000); }
             // Login tokens are short-lived: renew the session well before it lapses (never mid-call).
-            setTimeout(function renew() { if (active || inboundBusy) { setTimeout(renew, 30000); return; } teardownShared(); connectShared(); }, 50 * 60 * 1000);
+            if (renewTimer) { clearTimeout(renewTimer); }
+            renewTimer = setTimeout(function renew() {
+                renewTimer = null;
+                if (active || inboundBusy) { renewTimer = setTimeout(renew, 30000); return; }
+                teardownShared();
+                connectShared();
+            }, 50 * 60 * 1000);
         }).catch(function () {
+            connecting = false;
             if (rtc && sharedClient === rtc) { teardownShared(); }
             scheduleReconnect();
         });
@@ -686,22 +700,41 @@
         try { if (sharedClient) { sharedClient.disconnect(); } } catch (e) {}
         sharedClient = null;
         sharedReady = false;
+        sharedSessionId = null;
         if (presenceTimer) { clearInterval(presenceTimer); presenceTimer = null; }
+        if (renewTimer) { clearTimeout(renewTimer); renewTimer = null; }
     }
 
-    function scheduleReconnect() {
+    // delay: ms before reconnecting (default 20 s). While a call / ring / start is in progress the reconnect waits and
+    // re-checks, so a live call is never interrupted; only one reconnect is ever pending.
+    function scheduleReconnect(delay) {
         if (reconnectTimer) { return; }
+        var wait = delay === undefined ? 20000 : delay;
         reconnectTimer = setTimeout(function () {
             reconnectTimer = null;
-            if (active || inboundBusy || starting) { scheduleReconnect(); return; }
+            if (active || inboundBusy || starting) { scheduleReconnect(delay === undefined ? 20000 : 5000); return; }
             teardownShared();
             connectShared();
-        }, 20000);
+        }, wait);
+    }
+
+    // The server no longer routes this Business to the account this page is signed into (BYO voice turned on/off, or its
+    // WebRTC connection changed). The shared client is known-stale: never reuse it for a call, and replace it with a session
+    // on the CURRENT transport (immediately when idle, otherwise right after the call). Repeats back off.
+    function onSessionStale() {
+        if (!sharedReady) { return; } // already handled by an overlapping heartbeat
+        sharedReady = false;
+        if (presenceTimer) { clearInterval(presenceTimer); presenceTimer = null; }
+        var delay = staleStreak === 0 ? 0 : Math.min(1000 * Math.pow(2, staleStreak), 60000);
+        staleStreak++;
+        scheduleReconnect(delay);
     }
 
     function heartbeat() {
         if (!sharedReady) { return; }
-        api('POST', inboundCfg.presenceUrl).then(function (r) {
+        api('POST', inboundCfg.presenceUrl, { session_id: sharedSessionId }).then(function (r) {
+            if (r.status === 409 && r.json && r.json.error && r.json.error.code === 'browser_session_required') { onSessionStale(); return; }
+            if (r.ok) { staleStreak = 0; }
             if (r.status === 503 || r.status === 403 || r.status === 404) { teardownShared(); } // no longer available: stop registering
         }).catch(function () { /* the next beat retries */ });
     }

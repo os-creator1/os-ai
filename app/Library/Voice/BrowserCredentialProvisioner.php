@@ -21,51 +21,73 @@ final class BrowserCredentialProvisioner
     private const API_BASE = 'https://api.telnyx.com/v2';
     private const TIMEOUT_SECONDS = 20;
 
-    /** @return array{login_token: string, expires_in: int} */
-    public function loginSession(Business $business, int $userId): array
+    /** @return array{login_token: string, expires_in: int, session_id: string} */
+    public function loginSession(Business $business, int $userId, ?VoiceTransport $byo = null): array
     {
-        $credential = $this->ensureCredential($business, $userId);
-        $token = $this->mintToken($credential);
+        $credential = $this->ensureCredential($business, $userId, $byo);
+        $token = $this->mintToken($credential, $byo);
 
         if ($token === null) {
             // The credential may have been deleted or expired on Telnyx: provision a fresh one once.
             $credential->delete();
-            $token = $this->mintToken($this->ensureCredential($business, $userId));
+            $token = $this->mintToken($this->ensureCredential($business, $userId, $byo), $byo);
         }
 
         if ($token === null) {
             throw new BrowserCallsUnavailableException('token_unavailable', 'Could not start a calling session.');
         }
 
-        return ['login_token' => $token, 'expires_in' => 3600];
+        // The browser is now signed into THIS credential. Its session id (bound to the credential) is what every later
+        // presence heartbeat must present, so presence can only ever be refreshed for the account that browser really uses.
+        // Presence still carried by the user's other credentials (e.g. a platform one from before a switch to the agency's
+        // account) is withdrawn now, so inbound routing never sees the user as available on an account they left.
+        $credential = BusinessVoiceBrowserCredential::query()->where('business_id', $business->id)->where('user_id', $userId)
+            ->where('agency_prospecting_channel_id', (int) $byo?->channelId)->first();
+        if ($credential === null) {
+            throw new BrowserCallsUnavailableException('credential_unavailable', 'Could not start a calling session.');
+        }
+        BusinessVoiceBrowserCredential::query()->where('business_id', $business->id)->where('user_id', $userId)
+            ->whereKeyNot($credential->id)->update(['presence_at' => null]);
+
+        return ['login_token' => $token, 'expires_in' => 3600, 'session_id' => BrowserSessionToken::issue($credential)];
     }
 
     /** The SIP URI the server dials to ring this user's browser. Null until a session has been provisioned. */
-    public function sipUriFor(Business $business, int $userId): ?string
+    public function sipUriFor(Business $business, int $userId, ?int $channelId = null, ?string $webrtcConnectionId = null): ?string
     {
         $credential = BusinessVoiceBrowserCredential::query()
             ->where('business_id', $business->id)->where('user_id', $userId)
+            ->where('agency_prospecting_channel_id', (int) $channelId)
+            // An agency credential only counts while minted on the channel's CURRENT WebRTC connection.
+            ->when($channelId !== null, fn ($q) => $q->where('webrtc_connection_id', (string) $webrtcConnectionId))
             ->where('expires_at', '>', now())->first();
 
         return $credential === null ? null : 'sip:' . $credential->sip_username . '@' . (string) config('messaging.voice.browser.sip_domain');
     }
 
-    public static function assertEnabled(): void
+    /** @param VoiceTransport|null $byo the agency's own account, or null for the platform's */
+    public static function assertEnabled(?VoiceTransport $byo = null): void
     {
-        if (! (bool) config('messaging.voice.browser.enabled')
-            || trim((string) config('messaging.voice.browser.credential_connection_id')) === ''
-            || trim((string) config('services.telnyx.api_key')) === ''
-            || config('services.telnyx.mode') !== 'live') {
+        $unavailable = $byo !== null
+            ? $byo->webrtcConnectionId === '' || $byo->apiKey === ''
+            : trim((string) config('messaging.voice.browser.credential_connection_id')) === ''
+                || trim((string) config('services.telnyx.api_key')) === ''
+                || config('services.telnyx.mode') !== 'live';
+
+        if (! (bool) config('messaging.voice.browser.enabled') || $unavailable) {
             throw new BrowserCallsUnavailableException('browser_calling_unavailable', 'Browser calling is not available right now.');
         }
     }
 
-    private function ensureCredential(Business $business, int $userId): BusinessVoiceBrowserCredential
+    private function ensureCredential(Business $business, int $userId, ?VoiceTransport $byo): BusinessVoiceBrowserCredential
     {
-        self::assertEnabled();
+        self::assertEnabled($byo);
 
-        $existing = BusinessVoiceBrowserCredential::query()->where('business_id', $business->id)->where('user_id', $userId)->first();
-        if ($existing !== null && $existing->expires_at->gt(now()->addDay())) {
+        $channelId = (int) $byo?->channelId;
+        $existing = BusinessVoiceBrowserCredential::query()->where('business_id', $business->id)->where('user_id', $userId)
+            ->where('agency_prospecting_channel_id', $channelId)->first();
+        $sameConnection = $byo === null || $existing?->webrtc_connection_id === $byo->webrtcConnectionId;
+        if ($existing !== null && $sameConnection && $existing->expires_at->gt(now()->addDay())) {
             return $existing;
         }
         $existing?->delete();
@@ -73,8 +95,8 @@ final class BrowserCredentialProvisioner
         $ttl = max(2, (int) config('messaging.voice.browser.credential_ttl_days'));
         $expiresAt = now()->addDays($ttl);
 
-        $response = $this->client()->post(self::API_BASE . '/telephony_credentials', [
-            'connection_id' => (string) config('messaging.voice.browser.credential_connection_id'),
+        $response = $this->client($byo)->post(self::API_BASE . '/telephony_credentials', [
+            'connection_id' => $byo?->webrtcConnectionId ?? (string) config('messaging.voice.browser.credential_connection_id'),
             'name' => 'motiongrove-b' . $business->id . '-u' . $userId,
             'tag' => 'motiongrove-browser-calling',
             'expires_at' => $expiresAt->utc()->format('Y-m-d\TH:i:s\Z'),
@@ -95,6 +117,8 @@ final class BrowserCredentialProvisioner
         return BusinessVoiceBrowserCredential::create([
             'business_id' => $business->id,
             'user_id' => $userId,
+            'agency_prospecting_channel_id' => $channelId,
+            'webrtc_connection_id' => $byo?->webrtcConnectionId,
             'telnyx_credential_id' => $id,
             'sip_username' => $sipUsername,
             'expires_at' => $expiresAt,
@@ -102,9 +126,9 @@ final class BrowserCredentialProvisioner
     }
 
     /** A JWT login token for the credential, or null when Telnyx refuses (credential gone/expired). */
-    private function mintToken(BusinessVoiceBrowserCredential $credential): ?string
+    private function mintToken(BusinessVoiceBrowserCredential $credential, ?VoiceTransport $byo): ?string
     {
-        $response = $this->client()->post(self::API_BASE . '/telephony_credentials/' . rawurlencode($credential->telnyx_credential_id) . '/token');
+        $response = $this->client($byo)->post(self::API_BASE . '/telephony_credentials/' . rawurlencode($credential->telnyx_credential_id) . '/token');
         $token = trim((string) $response->body());
 
         // Telnyx answers with the bare JWT; accept a JSON-wrapped one too, and nothing that is not JWT-shaped.
@@ -115,8 +139,8 @@ final class BrowserCredentialProvisioner
         return $response->successful() && preg_match('/^[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+$/', $token) === 1 ? $token : null;
     }
 
-    private function client(): \Illuminate\Http\Client\PendingRequest
+    private function client(?VoiceTransport $byo): \Illuminate\Http\Client\PendingRequest
     {
-        return Http::withToken(trim((string) config('services.telnyx.api_key')))->timeout(self::TIMEOUT_SECONDS)->acceptJson()->asJson();
+        return Http::withToken($byo?->apiKey ?? trim((string) config('services.telnyx.api_key')))->timeout(self::TIMEOUT_SECONDS)->acceptJson()->asJson();
     }
 }

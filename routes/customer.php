@@ -2550,6 +2550,11 @@
                 Route::post('/{channel}/enable', 'Workspace\AgencyProspectingChannelController@enable')->name('enable');
                 Route::post('/{channel}/disable', 'Workspace\AgencyProspectingChannelController@disable')->name('disable');
                 Route::post('/{channel}/disconnect', 'Workspace\AgencyProspectingChannelController@disconnect')->name('disconnect');
+                // Agency-owned Telnyx Voice (outbound browser calling). Explicit actions only; nothing here changes Telnyx.
+                Route::put('/{channel}/voice', 'Workspace\AgencyVoiceSetupController@save')->name('voice.save');
+                Route::post('/{channel}/voice/verify', 'Workspace\AgencyVoiceSetupController@verify')->name('voice.verify');
+                Route::post('/{channel}/voice/enable', 'Workspace\AgencyVoiceSetupController@enable')->name('voice.enable');
+                Route::post('/{channel}/voice/disable', 'Workspace\AgencyVoiceSetupController@disable')->name('voice.disable');
             });
         });
     });
