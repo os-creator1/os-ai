@@ -174,8 +174,19 @@
                 {{-- SEO Content Engine V1: the blog index / article sits where a page's sections would, inside the template's own header, footer and bands. --}}
                 @include('public.website.blog.' . $blog['mode'])
             @endif
-            @foreach ($orderedSections as $section)
+            <?php
+                // The inquiry panel sits BESIDE the page's first copy section on a wide screen (and stacks under it on a phone); a page with no
+                // such section gets it as a compact band of its own. One panel per page, never a second call-to-action band.
+                $panelKey = null;
+                if (collect($orderedSections)->contains(fn ($candidate) => ($candidate['type'] ?? '') === 'inquiry_panel')) {
+                    foreach ($orderedSections as $candidateKey => $candidate) {
+                        if (in_array($candidate['type'] ?? '', ['text', 'image_text'], true)) { $panelKey = $candidateKey; break; }
+                    }
+                }
+            ?>
+            @foreach ($orderedSections as $sectionKey => $section)
                 @php($type = $section['type'] ?? '')
+                @continue($type === 'inquiry_panel' && $panelKey !== null)
                 @php($componentView = 'public.website.components.' . $type)
                 @php($toneKey = ($type === 'services' && collect($section['data']['items'] ?? [])->contains(fn ($item) => ! empty($item['catalog_item_uid']))) ? 'packages' : $type)
                 @if (\Illuminate\Support\Facades\View::exists($componentView))
@@ -183,9 +194,20 @@
                         @if ($type === 'hero')
                             @include($componentView, ['data' => $section['data'] ?? [], 'website' => $website, 'assetsByUid' => $assetsByUid ?? [], 'formsByUid' => $formsByUid ?? [], 'isPreview' => $isPreview ?? false, 'pageUid' => $page->uid ?? null, 'servicePageUrls' => $servicePageUrls, 'placePageUrls' => $placePageUrls, 'heroImageFallback' => $heroImageFallback])
                         @else
-                            <div class="website-container wd-container">
-                                @include($componentView, ['data' => $section['data'] ?? [], 'website' => $website, 'assetsByUid' => $assetsByUid ?? [], 'formsByUid' => $formsByUid ?? [], 'isPreview' => $isPreview ?? false, 'pageUid' => $page->uid ?? null, 'servicePageUrls' => $servicePageUrls, 'placePageUrls' => $placePageUrls])
-                            </div>
+                            @if ($panelKey === $sectionKey)
+                                <div class="website-container wd-container wd-has-panel">
+                                    <div class="wd-panel-main">
+                                        @include($componentView, ['data' => $section['data'] ?? [], 'website' => $website, 'assetsByUid' => $assetsByUid ?? [], 'formsByUid' => $formsByUid ?? [], 'isPreview' => $isPreview ?? false, 'pageUid' => $page->uid ?? null, 'servicePageUrls' => $servicePageUrls, 'placePageUrls' => $placePageUrls])
+                                    </div>
+                                    <div class="wd-panel-aside">
+                                        @include('public.website.components.inquiry_panel', ['data' => collect($orderedSections)->firstWhere('type', 'inquiry_panel')['data'] ?? [], 'website' => $website])
+                                    </div>
+                                </div>
+                            @else
+                                <div class="website-container wd-container">
+                                    @include($componentView, ['data' => $section['data'] ?? [], 'website' => $website, 'assetsByUid' => $assetsByUid ?? [], 'formsByUid' => $formsByUid ?? [], 'isPreview' => $isPreview ?? false, 'pageUid' => $page->uid ?? null, 'servicePageUrls' => $servicePageUrls, 'placePageUrls' => $placePageUrls])
+                                </div>
+                            @endif
                         @endif
                     </div>
                 @endif

@@ -142,6 +142,16 @@ final class WebsiteSectionValidator
                 'show_email' => 'required|boolean',
                 'show_address' => 'required|boolean',
             ],
+            WebsiteSectionType::InquiryPanel => [
+                'heading' => 'required|string|max:120',
+                'body' => 'nullable|string|max:300',
+                'cta' => 'required|array',
+                'cta.label' => 'required|string|max:40',
+                'cta.url' => 'required|string',
+                'show_phone' => 'required|boolean',
+                'facts' => 'nullable|array|max:4',
+                'facts.*' => 'string|max:120',
+            ],
             WebsiteSectionType::Gallery => [
                 'heading' => 'nullable|string|max:120',
                 'items' => 'required|array|min:1|max:24',
@@ -217,6 +227,7 @@ final class WebsiteSectionValidator
     {
         $urlFields = match ($type) {
             WebsiteSectionType::Hero => ['primary_cta.url', 'secondary_cta.url'],
+            WebsiteSectionType::InquiryPanel => ['cta.url'],
             WebsiteSectionType::Cta => ['buttons.*.url'],
             default => [],
         };

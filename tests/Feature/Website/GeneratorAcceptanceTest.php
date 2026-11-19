@@ -61,6 +61,11 @@ class GeneratorAcceptanceTest extends TestCase
 
     private $deployment;
 
+    /** @var array<int, string> confirmed owner facts (the knowledge profile's differentiators) set before the site is generated */
+    private array $differentiators = [];
+
+    private string $templateKey = 'photo_booth_modern';
+
     protected function setUp(): void
     {
         parent::setUp();
@@ -106,9 +111,17 @@ class GeneratorAcceptanceTest extends TestCase
         $manager->activate($this->business, $form);
         $this->deployment = $manager->setDeployment($this->business, $form->fresh(), $location, true, FormDeploymentSource::Website);
 
+        // Evidence runs only: ACCEPTANCE_FACTS="fact one|fact two" confirms those facts before generating.
+        $this->differentiators = $this->differentiators ?: array_values(array_filter(explode('|', (string) getenv('ACCEPTANCE_FACTS'))));
+
+        if ($this->differentiators !== []) {
+            // Owner-CONFIRMED facts only reach the generator (an unverified or stale one is never used).
+            app(\App\Library\Business\BusinessKnowledgeProfileManager::class)->updateFields($this->business, ['differentiators' => $this->differentiators], 'manual_edit', (int) $this->customer->user_id, true);
+        }
+
         $this->website = $this->createWebsite($this->business, ['name' => 'Harbor', 'indexing_released_at' => now()]);
         $this->fakeProvider();
-        $attempt = app(GuidedGenerationCommitService::class)->generateFull($this->business, $this->website, WebsiteTemplate::findActiveOrFail(getenv('ACCEPTANCE_TEMPLATE') ?: 'photo_booth_modern'), $this->customer->user_id, 'idem-accept', null, null, null, null, self::AREAS);
+        $attempt = app(GuidedGenerationCommitService::class)->generateFull($this->business, $this->website, WebsiteTemplate::findActiveOrFail(getenv('ACCEPTANCE_TEMPLATE') ?: $this->templateKey), $this->customer->user_id, 'idem-accept', null, null, null, null, self::AREAS);
         $this->assertSame(WebsiteGuidedGenerationAttempt::STATUS_SUCCEEDED, $attempt->status, (string) $attempt->failure_reason);
 
         app(WebsitePublisher::class)->publish($this->website->fresh(), $this->platformAdminId());
@@ -237,26 +250,76 @@ class GeneratorAcceptanceTest extends TestCase
         }
     }
 
-    public function test_every_service_and_event_page_closes_with_an_inquiry_call_to_action_and_the_visual_rules_are_in_the_stylesheet(): void
+    /** @return array{aside: string, html: string} the one inquiry panel of a page */
+    private function panel(string $html): array
+    {
+        $this->assertSame(1, substr_count($html, 'data-testid="inquiry-panel"'), 'exactly one inquiry panel');
+        preg_match('#<aside\b[^>]*data-testid="inquiry-panel".*?</aside>#s', $html, $m);
+
+        return ['aside' => $m[0] ?? '', 'html' => $html];
+    }
+
+    public function test_every_service_and_event_page_has_one_inquiry_panel_beside_its_copy_and_no_competing_closing_band(): void
     {
         $pages = $this->site();
+        $bookable = array_filter(array_keys($pages), fn ($p) => str_starts_with($p, '/service-') || str_ends_with($p, '-photo-booth-rental'));
+        $this->assertCount(6, $bookable);
 
-        foreach ($pages as $path => $html) {
-            if (str_starts_with($path, '/service-') || str_ends_with($path, '-photo-booth-rental')) {
-                $this->assertStringContainsString('Ready to book', $html, "{$path} ends with a way to inquire, not only links to other pages");
-                $this->assertMatchesRegularExpression('#Ready to book.*?href="[^"]*/photo-booth-contact"#s', $html, "{$path}: the closing call to action leads to the contact page");
-            }
+        foreach ($bookable as $path) {
+            ['aside' => $aside, 'html' => $html] = $this->panel($pages[$path]);
+            $text = trim(preg_replace('/\s+/', ' ', strip_tags($aside)));
+
+            $this->assertStringContainsString('Ask about', $text, "{$path}: service-specific heading");
+            $this->assertMatchesRegularExpression('#<a\b[^>]*href="[^"]*/photo-booth-contact"[^>]*>\s*Request a quote\s*</a>#', $aside, "{$path}: the niche's own call to action leads to the contact page (and its lead form)");
+            $this->assertMatchesRegularExpression('#href="tel:\+?1?6015550142"#', $aside, "{$path}: the verified business phone");
+            $this->assertStringContainsString('(601) 555-0142', $text);
+            $this->assertStringNotContainsString('<li', $aside, "{$path}: no facts were confirmed, so none are shown");
+            $this->assertDoesNotMatchRegularExpression('/\$\s?\d|\bprice|\bfrom\s+\$|\b(available|booked|openings?)\s+(today|tonight|this)|% off|limited time/i', $text, "{$path}: no pricing or availability claim");
+
+            // Beside the first copy section (one grid), and the one inquiry prompt: no second, competing closing band.
+            $this->assertMatchesRegularExpression('#wd-has-panel.*?wd-panel-main.*?wd-panel-aside.*?data-testid="inquiry-panel"#s', $html, "{$path}: laid out beside the copy");
+            $this->assertStringNotContainsString('Ready to book', $html, "{$path}: no duplicate closing inquiry band");
+            $this->assertLessThanOrEqual(2, substr_count($html, 'data-section="cta"'), "{$path}: at most two call-to-action bands");
         }
 
-        // Visual-quality rules (Slice 5) that cannot be seen from PHP: kept from silently disappearing.
+        // Only the pages about something bookable carry one.
+        foreach (['/', '/services', '/photo-booth-about', '/photo-booth-faq', '/photo-booth-contact', '/serving-laurel-ms'] as $other) {
+            $this->assertStringNotContainsString('inquiry-panel', $pages[$other], "{$other} has no inquiry panel");
+        }
+    }
+
+    public function test_confirmed_owner_facts_appear_in_the_panel_and_nothing_else_is_added(): void
+    {
+        $this->differentiators = ['An on-site attendant stays for the whole booking', 'Digital sharing for every guest', 'Custom print designs', 'A fourth fact that is not shown'];
+        $pages = $this->site();
+
+        ['aside' => $aside] = $this->panel($pages['/service-magic-mirror-photo-booth']);
+        preg_match_all('#<li>(.*?)</li>#s', $aside, $m);
+
+        $this->assertSame(['An on-site attendant stays for the whole booking', 'Digital sharing for every guest', 'Custom print designs'], array_map('trim', $m[1]), 'the first three confirmed facts, verbatim');
+        $this->assertStringNotContainsString('A fourth fact', $aside);
+    }
+
+    public function test_the_panel_renders_in_the_editorial_template_and_the_visual_rules_are_in_the_stylesheets(): void
+    {
+        $this->templateKey = 'photo_booth_editorial';
+        $pages = $this->site();
+
+        ['aside' => $aside, 'html' => $html] = $this->panel($pages['/service-magic-mirror-photo-booth']);
+        $this->assertMatchesRegularExpression('#<body class="[^"]*\bwd-editorial\b#', $html, 'the editorial design rendered it');
+        $this->assertStringContainsString('wd-inquiry-panel', $aside);
+        $this->assertMatchesRegularExpression('#href="[^"]*/photo-booth-contact"#', $aside);
+
+        // The rules that cannot be seen from PHP (layout beside the copy on a wide screen, stacked on a phone, no overlay): kept from silently disappearing.
         $css = file_get_contents(public_path('css/website-design.css'));
         foreach ([
+            '.wd-has-panel { display: grid; grid-template-columns: minmax(0, 1fr);',
+            '@media (min-width: 960px)',
+            '.wd-has-panel { grid-template-columns: minmax(0, 1fr) minmax(17rem, 21rem); }',
+            '.wd-panel-aside { position: sticky; top: 6.5rem; }',
+            '.wd-inquiry-panel',
             '.wd-hero-fullbleed.wd-hero-typographic:not(.wd-hero-inner-page)',
-            '.wd .website-text .wd-section-title',
-            '.wd-band-text + .wd-band-text > .wd-container',
-            '.wd-services:not(.wd-services-event-tiles) .wd-card-linked h3::after',
             '.wd .blog-prose h2',
-            '.wd-band-cta + .wd-band-cta',
         ] as $rule) {
             $this->assertStringContainsString($rule, $css);
         }

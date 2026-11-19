@@ -162,6 +162,59 @@ final class MediaBindingService
     }
 
     /**
+     * The inquiry panel of a service or event page: ONE service-specific call to action to the contact page (which carries the installed
+     * Forms-module lead form, or the plain contact block), the business's verified phone, and up to three CONFIRMED owner facts
+     * (the questionnaire's own differentiators — never generated). The wording is the niche's own contact wording. Nothing about
+     * availability or price is stated. A page that already has a panel is left alone.
+     *
+     * @param  array<int, array<string, mixed>>  $pages
+     * @param  ?array<string, mixed>  $contentFacts  SeoContentFacts::build()
+     * @return array<int, array<string, mixed>>
+     */
+    private function stampInquiryPanels(Website $website, array $pages, ?array $contentFacts): array
+    {
+        $contact = collect($pages)->firstWhere('page_type', 'contact');
+        $contactSlug = is_array($contact) ? (string) ($contact['slug'] ?? '') : '';
+
+        if ($contactSlug === '') {
+            return $pages;
+        }
+
+        $facts = array_slice(array_values(array_filter(array_map(
+            fn ($fact) => is_string($fact) ? \Illuminate\Support\Str::limit(trim($fact), 120, '') : null,
+            (array) ($contentFacts['differentiators'] ?? []),
+        ))), 0, 3);
+        $label = \App\Library\Website\WebsiteNicheVocabulary::contactCtaLabel($contactSlug, true);
+        $hasPhone = trim((string) ($website->business?->phone ?? '')) !== '';
+
+        foreach ($pages as $index => $page) {
+            if (! in_array($page['page_type'] ?? null, ['service_detail', 'event_detail'], true)) {
+                continue;
+            }
+
+            $sections = (array) ($page['sections'] ?? []);
+
+            if (collect($sections)->contains(fn ($section) => ($section['type'] ?? null) === 'inquiry_panel')) {
+                continue;
+            }
+
+            $name = trim((string) ($page['entity']['name'] ?? $page['title'] ?? ''));
+
+            // Right after the hero, so the page's first copy section can host it beside the text.
+            array_splice($sections, min(1, count($sections)), 0, [['type' => 'inquiry_panel', 'data' => [
+                'heading' => \Illuminate\Support\Str::limit($name !== '' ? 'Ask about ' . $name : 'Ask us', 120, ''),
+                'body' => null,
+                'cta' => ['label' => $label, 'url' => '/' . $contactSlug],
+                'show_phone' => $hasPhone,
+                'facts' => $facts,
+            ]]]);
+            $pages[$index]['sections'] = $sections;
+        }
+
+        return $pages;
+    }
+
+    /**
      * A service or event page ends with a way to inquire, not only with links to other pages: when its last words are "also available"
      * and the page has no call to action to the contact page, a closing one is added (the niche's own contact wording). A page whose
      * author already linked to the contact page in a call to action is left alone.
@@ -184,6 +237,12 @@ final class MediaBindingService
             }
 
             $sections = (array) ($page['sections'] ?? []);
+
+            // The inquiry panel IS the page's inquiry prompt (beside the copy, with the phone); a second band would only compete with it.
+            if (collect($sections)->contains(fn ($section) => ($section['type'] ?? null) === 'inquiry_panel')) {
+                continue;
+            }
+
             $hasInquiryCta = collect($sections)->contains(fn ($section) => ($section['type'] ?? null) === 'cta'
                 && collect($section['data']['buttons'] ?? [])->contains(fn ($button) => ltrim((string) ($button['url'] ?? ''), '/') === $contactSlug));
 
@@ -438,7 +497,7 @@ final class MediaBindingService
      * @param  ?array<int, array{question: string, answer: string}>  $customerFaq  the owner's own FAQ answers (WebsiteSetupAnswerApplier never writes these anywhere canonical — 'faq' has no canonical model — so the wizard controller reads them straight from QuestionnaireResponse.answers and hands them here)
      * @return array{pages: array, warnings: array<int, string>}
      */
-    public function bind(Website $website, array $pages, ?array $customSection = null, ?array $customerFaq = null): array
+    public function bind(Website $website, array $pages, ?array $customSection = null, ?array $customerFaq = null, ?array $contentFacts = null): array
     {
         $formWarnings = [];
         $pages = $this->bindForms($website, $pages, $formWarnings);
@@ -451,6 +510,7 @@ final class MediaBindingService
         $pages = $this->linkAreaPages($pages);
         $pages = $this->linkServicePages($pages);
         $pages = $this->linkServiceCards($pages);
+        $pages = $this->stampInquiryPanels($website, $pages, $contentFacts);
         $pages = $this->closeBookablePagesWithInquiry($pages);
         $pages = $this->bindAreaHub($website, $pages);
         $pages = $this->catalogReferences->stampPackagePages($pages, (int) $website->business_id);

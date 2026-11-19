@@ -29,6 +29,13 @@ enum WebsiteSectionType: string
     /** Website Builder redesign — built entirely by MediaBindingService from real BusinessBackdropImage rows, never AI-authored (same rule as Gallery/Form). */
     case Backdrops = 'backdrops';
 
+    /**
+     * Slice 6A — the inquiry panel on a service/event page: a service-specific call to action to the contact page (where the Forms-module
+     * lead form lives), the business's verified phone and a few CONFIRMED owner facts. Stamped by MediaBindingService, never AI-authored,
+     * never invented; the phone is frozen at publish like `contact_details`.
+     */
+    case InquiryPanel = 'inquiry_panel';
+
     /** Website Builder redesign — the wizard's single optional editorial/story section. */
     case CustomSection = 'custom_section';
 }

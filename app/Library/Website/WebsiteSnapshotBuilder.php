@@ -85,6 +85,11 @@ final class WebsiteSnapshotBuilder
                     $data = $frozen;
                 }
 
+                if ($type === WebsiteSectionType::InquiryPanel) {
+                    // The verified business phone, frozen at publish like `contact_details` (never a live read on a published page).
+                    $data['resolved'] = ['phone' => ($data['show_phone'] ?? false) ? ($business?->phone ?: null) : null];
+                }
+
                 if ($type === WebsiteSectionType::ContactDetails) {
                     // `show_address` is the owner's display preference,
                     // not a privacy override: an address this business/
