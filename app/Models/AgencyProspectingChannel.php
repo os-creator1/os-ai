@@ -29,6 +29,15 @@ class AgencyProspectingChannel extends Model
         'disconnected_at',
         'last_error_code',
         'sms_capability_confirmed_at',
+        'voice_enabled',
+        'voice_connection_id',
+        'voice_webrtc_connection_id',
+        'voice_number',
+        'voice_connection_verified_at',
+        'voice_webrtc_verified_at',
+        'voice_number_verified_at',
+        'voice_webhook_verified_at',
+        'voice_last_error_code',
     ];
 
     protected $casts = [
@@ -38,6 +47,11 @@ class AgencyProspectingChannel extends Model
         'webhook_verified_at' => 'datetime',
         'disconnected_at' => 'datetime',
         'sms_capability_confirmed_at' => 'datetime',
+        'voice_enabled' => 'boolean',
+        'voice_connection_verified_at' => 'datetime',
+        'voice_webrtc_verified_at' => 'datetime',
+        'voice_number_verified_at' => 'datetime',
+        'voice_webhook_verified_at' => 'datetime',
     ];
 
     protected static function booted(): void
@@ -47,6 +61,13 @@ class AgencyProspectingChannel extends Model
         static::saving(function (self $channel): void {
             $digits = preg_replace('/\\D/', '', (string) $channel->sender_number);
             $channel->sender_key = $channel->status === self::STATUS_DISCONNECTED || $digits === '' ? null : $digits;
+
+            // Same one-live-owner rule for the voice number; a disconnected channel also stops being a voice channel.
+            if ($channel->status === self::STATUS_DISCONNECTED) {
+                $channel->voice_enabled = false;
+            }
+            $voiceDigits = preg_replace('/\D/', '', (string) $channel->voice_number);
+            $channel->voice_number_key = $channel->status === self::STATUS_DISCONNECTED || $voiceDigits === '' ? null : $voiceDigits;
         });
     }
 

@@ -30,6 +30,16 @@ final class ConversationCalling
      */
     public function unavailableReason(Business $business): ?string
     {
+        // A Business on its Agency's own Telnyx account is judged by THAT account's setup, never the platform's Telnyx settings
+        // (and, being selected, never silently by them either): the reason names the exact missing voice step.
+        if (\App\Library\Voice\Byo\AgencyByoVoice::selectedChannel($business) !== null) {
+            return match (true) {
+                ! (bool) config('messaging.voice.customer_calls.enabled') => 'Calling is switched off for this platform (VOICE_CUSTOMER_CALLS_ENABLED).',
+                ! (bool) config('messaging.voice.browser.enabled') => 'Browser calling is switched off for this platform (VOICE_BROWSER_CALLS_ENABLED).',
+                default => \App\Library\Voice\Byo\AgencyByoVoice::unavailableReason($business),
+            };
+        }
+
         return match (true) {
             ! (bool) config('messaging.voice.customer_calls.enabled') => 'Calling is switched off for this platform (VOICE_CUSTOMER_CALLS_ENABLED).',
             ! (bool) config('messaging.voice.browser.enabled') => 'Browser calling is switched off for this platform (VOICE_BROWSER_CALLS_ENABLED).',

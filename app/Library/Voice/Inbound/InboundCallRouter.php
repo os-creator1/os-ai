@@ -222,7 +222,8 @@ final class InboundCallRouter
         $busy = array_merge($busy, $ringing);
 
         $ids = [];
-        $rows = BusinessVoiceBrowserCredential::query()->where('business_id', $business->id)
+        // Inbound routing is platform-managed only: an agency's own-Telnyx (BYO) softphone credential is never rung from here.
+        $rows = BusinessVoiceBrowserCredential::query()->where('business_id', $business->id)->where('agency_prospecting_channel_id', 0)
             ->where('expires_at', '>', now())->where('presence_at', '>', $fresh)->orderByDesc('presence_at')->get();
         foreach ($rows as $row) {
             $user = User::query()->find($row->user_id);

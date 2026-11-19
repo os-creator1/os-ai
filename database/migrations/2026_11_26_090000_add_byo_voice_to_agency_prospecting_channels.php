@@ -1,0 +1,69 @@
+<?php
+
+use Illuminate\Database\Migrations\Migration;
+use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\Schema;
+
+/**
+ * Agency-owned Telnyx voice (outbound browser calling). Additive: a channel with none of these set behaves exactly as
+ * before, and a call/credential row without a channel id is a platform-managed one, unchanged.
+ *
+ * The Voice connection ids are Telnyx identifiers (not secrets); the agency's API key and webhook public key stay in the
+ * existing sealed columns. `voice_number_key` is the digits of the agency's voice number, UNIQUE so two agencies can never
+ * both claim one number. Each `*_verified_at` is written only after Telnyx itself confirmed that fact.
+ */
+return new class extends Migration
+{
+    public function up(): void
+    {
+        Schema::table('agency_prospecting_channels', function (Blueprint $table): void {
+            $table->boolean('voice_enabled')->default(false);
+            $table->string('voice_connection_id', 64)->nullable();
+            $table->string('voice_webrtc_connection_id', 64)->nullable();
+            $table->string('voice_number', 32)->nullable();
+            $table->string('voice_number_key', 32)->nullable()->unique('apc_voice_number_key_unique');
+            $table->timestamp('voice_connection_verified_at')->nullable();
+            $table->timestamp('voice_webrtc_verified_at')->nullable();
+            $table->timestamp('voice_number_verified_at')->nullable();
+            $table->timestamp('voice_webhook_verified_at')->nullable();
+            $table->string('voice_last_error_code', 64)->nullable();
+        });
+
+        Schema::table('business_voice_calls', function (Blueprint $table): void {
+            // The agency channel a call was placed through (null = platform-managed). Its number is the channel's voice number.
+            $table->unsignedBigInteger('agency_prospecting_channel_id')->nullable()->index('bvc_agency_channel_index');
+        });
+
+        // BYO calls have no managed number row (their number is the channel's voice number).
+        Schema::table('business_voice_calls', function (Blueprint $table): void {
+            $table->unsignedBigInteger('business_messaging_number_id')->nullable()->change();
+        });
+
+        Schema::table('business_voice_browser_credentials', function (Blueprint $table): void {
+            // 0 = platform-managed credential (not NULL, so the unique key below still holds for managed rows).
+            $table->unsignedBigInteger('agency_prospecting_channel_id')->default(0);
+            $table->dropUnique('bvbc_business_user_unique');
+            $table->unique(['business_id', 'user_id', 'agency_prospecting_channel_id'], 'bvbc_business_user_channel_unique');
+        });
+    }
+
+    public function down(): void
+    {
+        Schema::table('business_voice_browser_credentials', function (Blueprint $table): void {
+            $table->dropUnique('bvbc_business_user_channel_unique');
+            $table->dropColumn('agency_prospecting_channel_id');
+            $table->unique(['business_id', 'user_id'], 'bvbc_business_user_unique');
+        });
+
+        // business_messaging_number_id stays nullable on rollback: BYO rows (if any) have none, and restoring NOT NULL would fail.
+        Schema::table('business_voice_calls', function (Blueprint $table): void {
+            $table->dropIndex('bvc_agency_channel_index');
+            $table->dropColumn('agency_prospecting_channel_id');
+        });
+
+        Schema::table('agency_prospecting_channels', function (Blueprint $table): void {
+            $table->dropUnique('apc_voice_number_key_unique');
+            $table->dropColumn(['voice_enabled', 'voice_connection_id', 'voice_webrtc_connection_id', 'voice_number', 'voice_number_key', 'voice_connection_verified_at', 'voice_webrtc_verified_at', 'voice_number_verified_at', 'voice_webhook_verified_at', 'voice_last_error_code']);
+        });
+    }
+};

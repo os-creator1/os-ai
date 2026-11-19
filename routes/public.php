@@ -233,6 +233,11 @@
     Route::post('webhooks/telnyx-voice', 'Voice\TelnyxVoiceWebhookController@handle')
         ->middleware('throttle:120,1')
         ->name('webhooks.telnyx_voice');
+    // An agency's OWN Telnyx account's Call Control events: one channel per URL (opaque uid + HMAC token), signed with that
+    // agency's own public key, applied only to that channel's calls. Outbound browser calling only.
+    Route::post('webhooks/voice/{channelUid}/{token}/telnyx', 'Voice\AgencyByoTelnyxVoiceWebhookController@handle')
+        ->middleware('throttle:120,1')
+        ->name('voice.webhooks.agency_telnyx');
     Route::any('inbound/teletopiasms/{gateway?}', 'Customer\DLRController@inboundTeletopiasms')->name('inbound.teletopiasms');
     Route::any('inbound/flowroute/{gateway?}', 'Customer\DLRController@inboundFlowRoute')->name('inbound.flowroute');
     Route::any('dlr/easysendsms', 'Customer\DLRController@dlrEasySendSMS')->name('dlr.easysendsms');

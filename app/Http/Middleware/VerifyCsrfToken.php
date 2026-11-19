@@ -61,6 +61,9 @@
             // Telnyx Call Control voice status events (admin test-call slice). Same model as the porting webhook:
             // Ed25519 signature verified in TelnyxVoiceWebhookController before anything is read or written.
             'webhooks/telnyx-voice',
+            // An agency's own-Telnyx voice events: channel resolved from the opaque uid + HMAC token, then Ed25519-verified
+            // against that agency's own key in AgencyByoTelnyxVoiceWebhookController before anything is applied.
+            'webhooks/voice/*',
         ];
 
         /**

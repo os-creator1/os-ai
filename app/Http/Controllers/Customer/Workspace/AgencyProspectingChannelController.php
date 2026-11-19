@@ -313,6 +313,8 @@ class AgencyProspectingChannelController extends CustomerBaseController
             'providerLabel' => self::ALLOWED_PROVIDERS[$provider]['label'] ?? $provider,
             'fields' => self::ALLOWED_PROVIDERS[$provider]['credential_fields'] ?? [],
             'webhookUrl' => $this->webhookUrl($channel),
+            'voiceWebhookUrl' => $channel->provider === SendingServer::TYPE_TELNYX ? \App\Library\Voice\Byo\AgencyByoVoice::webhookUrl($channel) : null,
+            'voiceMissing' => $channel->provider === SendingServer::TYPE_TELNYX ? \App\Library\Voice\Byo\AgencyByoVoice::missingSteps($channel) : [],
             // The older AI Prospecting agent's own endpoint, unchanged: still valid for a channel
             // that runs those campaigns. Telnyx channels otherwise use the Conversations URL above.
             'legacyWebhookUrl' => $channel->provider === SendingServer::TYPE_TELNYX
@@ -404,6 +406,18 @@ class AgencyProspectingChannelController extends CustomerBaseController
                 $attributes['credentials_verified_at'] = now();
                 $attributes['last_error_code'] = null;
                 $attributes['sms_capability_confirmed_at'] = $smsConfirmed ? now() : null;
+            }
+
+            // A different Telnyx key may be a different account: the saved Voice connections and number were verified
+            // against the old one, so voice goes off and every voice step must be verified again before it can be turned on.
+            if (isset($credentials['api_key'])) {
+                $attributes += [
+                    'voice_enabled' => false,
+                    'voice_connection_verified_at' => null,
+                    'voice_webrtc_verified_at' => null,
+                    'voice_number_verified_at' => null,
+                    'voice_webhook_verified_at' => null,
+                ];
             }
 
             if ($reconnecting && $verifiedNow) {

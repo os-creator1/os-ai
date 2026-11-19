@@ -100,11 +100,11 @@ class VoiceCallController extends CustomerBaseController
         [, $business] = $this->resolveEntitledBusinessTenancy($workspaceUid, $businessUid, PlatformFeature::Crm->value);
         $this->requireCalling($business);
 
-        return response()->json(['data' => $placer->eligibleNumbers($business)->map(fn ($number) => [
-            'id' => $placer->selectorToken($business, $number),
-            'number' => $this->formatNumber('+' . ltrim((string) $number->phone_number, '+')),
-            'primary' => (bool) $number->is_primary,
-        ])->values()->all()])->header('Cache-Control', 'no-store');
+        return response()->json(['data' => array_map(fn (array $choice): array => [
+            'id' => $choice['id'],
+            'number' => $this->formatNumber($choice['phone']),
+            'primary' => $choice['primary'],
+        ], $placer->callingChoices($business))])->header('Cache-Control', 'no-store');
     }
 
     /**
@@ -121,7 +121,10 @@ class VoiceCallController extends CustomerBaseController
             if (! (bool) config('messaging.voice.customer_calls.enabled')) {
                 throw new BrowserCallsUnavailableException('browser_calling_unavailable', 'Browser calling is not available right now.');
             }
-            $session = $provisioner->loginSession($business, (int) Auth::id());
+            // The agency's own Telnyx account when it selected one (an unusable one is an actionable refusal, never a fallback).
+            $session = $provisioner->loginSession($business, (int) Auth::id(), \App\Library\Voice\Byo\AgencyByoVoice::resolveFor($business));
+        } catch (CustomerCallRefusedException $e) {
+            return $this->error($e->reason, $e->getMessage(), $e->httpStatus);
         } catch (BrowserCallsUnavailableException $e) {
             return $this->error($e->reason, $e->getMessage(), 503);
         } catch (\Throwable) {
@@ -378,6 +381,12 @@ class VoiceCallController extends CustomerBaseController
 
     private function fromNumber(BusinessVoiceCall $call): ?string
     {
+        if ($call->agency_prospecting_channel_id !== null) {
+            $number = \App\Models\AgencyProspectingChannel::query()->whereKey($call->agency_prospecting_channel_id)->value('voice_number');
+
+            return $number !== null ? $this->formatNumber('+' . ltrim((string) $number, '+')) : null;
+        }
+
         if ($call->business_messaging_number_id === null) {
             return null;
         }

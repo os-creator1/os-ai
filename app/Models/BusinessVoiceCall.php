@@ -40,6 +40,14 @@ class BusinessVoiceCall extends Model
         return $this->hasMany(BusinessVoiceCallLeg::class, 'business_voice_call_id');
     }
 
+    /** Platform-managed calls (channel 0) or exactly one agency channel's calls: a webhook never reaches across the two. */
+    public function scopeForChannel(\Illuminate\Database\Eloquent\Builder $query, int $channelId): \Illuminate\Database\Eloquent\Builder
+    {
+        return $channelId === 0
+            ? $query->whereNull('agency_prospecting_channel_id')
+            : $query->where('agency_prospecting_channel_id', $channelId);
+    }
+
     public function business(): BelongsTo
     {
         return $this->belongsTo(Business::class);
