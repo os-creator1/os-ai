@@ -104,6 +104,12 @@ class WebsiteTrackingTest extends TestCase
 
         // Scope keys remain tied to the article UID, independent of the public slug.
         $this->assertSame('@article:' . $article->uid, $articleScope);
+
+        // A prior GET on the custom domain can change the route helper's current host.
+        // Force the platform origin for the authenticated Website settings route.
+        $this->authenticateAsSeoCustomer($customer);
+        $path = route('customer.workspaces.businesses.website.tracking.index', [$workspace->uid, $website->business->uid], false);
+        $this->get(rtrim((string) config('app.url'), '/') . $path)->assertOk()->assertSee('Article: ' . $article->title);
     }
 
     public function test_gtm_container_uses_its_own_loader_not_the_google_tag_endpoint(): void
