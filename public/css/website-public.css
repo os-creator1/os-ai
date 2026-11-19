@@ -675,3 +675,6 @@ body.website-button-outline .website-hero-has-image .website-btn-primary:hover {
 .website-breadcrumbs li + li::before { content: "/"; margin-right: 0.35rem; opacity: 0.55; }
 .website-breadcrumbs a { color: inherit; opacity: 0.8; text-decoration: underline; }
 .website-breadcrumbs [aria-current="page"] { opacity: 0.9; font-weight: 600; }
+
+/* Long unbroken text (a URL, an email address, a long word) wraps inside its block instead of widening the page on a phone. */
+.website-main, .wd-main, .website-article, .blog-article-body { overflow-wrap: break-word; }

@@ -52,11 +52,14 @@ final class FormComponentAdapter implements BlueprintComponentAdapter, Blueprint
             fn ($d) => [mb_strtolower((string) $d->label) => (string) $d->uid]
         );
 
-        $fields = array_map(function (array $field) use ($labels): array {
+        $fields = array_map(function (array $field) use ($labels, $business): array {
             $label = $field['custom_field_label'] ?? null;
             unset($field['custom_field_label']);
 
-            if ($label !== null && $labels->has(mb_strtolower($label))) {
+            // A label the Business does not have, OR whose field cannot legally hold this question (another niche pack, or an
+            // earlier version of this one, already created "Event type" as a Dropdown; a multi-select question cannot feed it)
+            // leaves the question unmapped. The form itself must still install: its answers are kept on the submission.
+            if ($label !== null && $labels->has(mb_strtolower($label)) && $this->mappable($business, $field, (string) $labels->get(mb_strtolower($label)))) {
                 $field['custom_field_uid'] = $labels->get(mb_strtolower($label));
             }
 
@@ -80,6 +83,23 @@ final class FormComponentAdapter implements BlueprintComponentAdapter, Blueprint
         ], $owner === null ? null : (int) $owner);
 
         return new InstalledComponentReference('form', (int) $form->id);
+    }
+
+    /** @param array<string, mixed> $field a parsed question; true when the Forms mapping rules accept saving it to the field */
+    private function mappable(Business $business, array $field, string $uid): bool
+    {
+        try {
+            app(\App\Library\CustomFields\FormFieldMapping::class)->assertMappable($business, [
+                'key' => (string) ($field['key'] ?? ''),
+                'label' => (string) ($field['label'] ?? ''),
+                'type' => (string) ($field['type'] ?? ''),
+                'options' => array_values(array_map(fn ($option) => is_array($option) ? (string) ($option['label'] ?? '') : (string) $option, (array) ($field['options'] ?? []))),
+            ], $uid, false);
+
+            return true;
+        } catch (\App\Library\Forms\Exceptions\FormRuleException) {
+            return false;
+        }
     }
 
     public function fingerprint(Business $business, InstalledComponentReference $reference, array $payload): ?string

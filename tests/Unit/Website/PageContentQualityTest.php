@@ -80,6 +80,20 @@ class PageContentQualityTest extends TestCase
 
     // ---------------------------------------------------------------- A / B: the homepage
 
+    public function test_a_headline_alone_is_not_a_services_overview_about_or_faq_page(): void
+    {
+        foreach (['services_overview' => 'services', 'about' => 'text', 'faq' => 'faq'] as $type => $contentType) {
+            $plan = ['page_key' => $type, 'page_type' => $type, 'slug' => $type, 'entity' => null];
+            $hero = ['type' => 'hero', 'data' => ['heading' => 'Heading']];
+
+            $thin = PageContentQuality::problems(['page_key' => $type, 'sections' => [$hero]], $plan, $this->facts(), $this->sitePlan());
+            $this->assertStringContainsString('only a headline', implode(' ', $thin), $type);
+
+            $content = ['type' => $contentType, 'data' => ['heading' => 'Real content', 'body' => 'Something real.', 'items' => [['name' => 'Magic Mirror Photo Booth', 'question' => 'Q', 'answer' => 'A']]]];
+            $this->assertSame([], PageContentQuality::problems(['page_key' => $type, 'sections' => [$hero, $content]], $plan, $this->facts(), $this->sitePlan()), "{$type} with content passes");
+        }
+    }
+
     public function test_a_generic_two_section_homepage_fails_content_quality(): void
     {
         $page = $this->page('home', [
