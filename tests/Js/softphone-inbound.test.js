@@ -239,7 +239,8 @@ test('Cancel while the microphone prompt is pending declines the ringing leg, fr
   // A's microphone prompt finally resolves: it must not claim, answer or otherwise touch B.
   resolveMic({ getTracks: () => [] });
   await tick(); await tick(); await tick();
-  assert.deepEqual(h.requests.slice(before), [], 'no request was made on B\'s behalf');
+  // The shared session's own background presence heartbeat is not a request on B's behalf (it can land in this window).
+  assert.deepEqual(h.requests.slice(before).filter((r) => r[1] !== '/presence'), [], 'no request was made on B\'s behalf');
   assert.equal(callB.hangups, 0);
   assert.equal(h.root.getAttribute('data-state'), 'incoming');
   assert.equal(h.nameOf(), 'Caller B');
