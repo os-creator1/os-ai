@@ -237,35 +237,36 @@ final class OutreachSequence
     }
 
     /**
-     * Reply steps this prospect has received, judged from what was actually sent to them
-     * since THIS campaign's opener went out -- never from the campaign merely being Active:
+     * Which steps this prospect has received, from what was actually sent to them since THIS
+     * campaign's opener -- never from the campaign merely being Active. ONE attribution
+     * algorithm; every sent text is a unit of evidence that satisfies AT MOST ONE step:
      *
-     *  - exact match (after token rendering and whitespace normalisation) against any text
-     *    sent in the campaign: the delivered ledger plus the prospect's conversation (a human
-     *    replying from Conversations is a reliable match when the text IS the step; the
-     *    message itself is never relabelled as a scripted send);
-     *  - a step recorded as sent whose id the Agency has since edited away is recognised by
-     *    its text inside that ledger row, so a script edit cannot reset progress.
+     *  1. Explicit: a delivered ledger row carrying a step id that still exists belongs to
+     *     that step (even if the step's wording was edited since). Its evidence is consumed
+     *     and can never be reused for another step.
+     *  2. Orphaned: a delivered ledger row whose step id the Agency has since edited away is
+     *     reconciled to the first still-undelivered step with the same rendered text (exact
+     *     match, or the step text as the tail of the row after an approved answer that was
+     *     placed in front of it). Each orphaned row is consumed by one step; a row that
+     *     matches nothing is simply dropped, never spread over several steps.
+     *  3. Unattributed: the campaign opener and confirmed messages a person sent (the
+     *     conversation, minus the copies that are the ledger's own sends) satisfy the first
+     *     undelivered steps with identical rendered text, one copy per step.
      *
-     * Nothing is inferred before the campaign's own opener was delivered, and another
-     * campaign's messages (a different member, an earlier time) are never consulted.
+     * Nothing is inferred before the campaign's own opener was delivered, another campaign's
+     * members are never read, and a message is never relabelled as a scripted send.
+     * Deterministic: steps are walked in sequence order.
      *
      * @return array<int, string>
      */
     public function deliveredByContent(AgencyProspectCampaignMember $member): array
     {
-        $steps = array_values(array_filter($this->enabledSteps(), static fn (array $s): bool => $s['advance_on'] === self::REPLY));
-
-        if ($steps === []) {
-            return [];
-        }
-
         $ledger = AgencyProspectMessage::query()
             ->where('campaign_member_id', $member->id)
             ->where('direction', AgencyProspectMessage::DIRECTION_OUTBOUND)
             ->where('status', AgencyProspectMessage::STATUS_SENT)
             ->orderBy('id')
-            ->get(['body', 'sequence_step_id', 'created_at']);
+            ->get(['body', 'sequence_step_id', 'operation_key', 'created_at']);
 
         $first = $ledger->first();
 
@@ -280,46 +281,87 @@ final class OutreachSequence
             return [];
         }
 
-        $normalise = static fn (string $t): string => trim(preg_replace('/\s+/u', ' ', $t) ?? $t);
-        // One sent copy satisfies one step: two steps with identical wording need two sends.
-        // The ledger and the conversation both hold an Outreach send, so each text is counted
-        // once per place and the larger count wins (never summed).
-        $perLedger = array_count_values(array_map($normalise, $ledger->pluck('body')->map(fn ($b) => (string) $b)->all()));
-        $perChat = array_count_values(array_map($normalise, $this->conversationBodies($workspace, $prospect, $first->created_at)));
-        $available = [];
-
-        foreach (array_unique(array_merge(array_keys($perLedger), array_keys($perChat))) as $text) {
-            $available[$text] = max($perLedger[$text] ?? 0, $perChat[$text] ?? 0);
-        }
-        $orphaned = $ledger
-            ->filter(fn ($row) => $row->sequence_step_id !== null && $this->find((string) $row->sequence_step_id) === null)
-            ->pluck('body')->map(fn ($b) => $normalise((string) $b))->all();
-
-        $out = [];
+        $norm = static fn (string $t): string => trim(preg_replace('/\s+/u', ' ', $t) ?? $t);
+        $steps = array_values(array_filter($this->enabledSteps(), static fn (array $s): bool => $s['advance_on'] === self::REPLY));
+        $text = [];
 
         foreach ($steps as $step) {
-            $text = $normalise(OutreachScriptRenderer::render(OutreachScriptTokens::canonicalise((string) $step['body']), $workspace, $prospect));
+            $text[$step['id']] = $norm(OutreachScriptRenderer::render(OutreachScriptTokens::canonicalise((string) $step['body']), $workspace, $prospect));
+        }
 
-            if ($text === '') {
+        $recorded = array_fill_keys($this->recordedSentIds($member), true);
+        $delivered = $recorded;
+        $explicit = [];   // steps proven by their own ledger row (or an orphaned one): they own that evidence
+        $orphans = [];
+        $pool = [];   // unattributed evidence: normalised text => copies
+
+        // 1. Explicit attribution by a still-valid step id; the evidence is consumed here.
+        foreach ($ledger as $row) {
+            $id = $row->sequence_step_id === null ? null : (string) $row->sequence_step_id;
+
+            if ($id === null) {
+                $pool[$norm((string) $row->body)] = ($pool[$norm((string) $row->body)] ?? 0) + 1;
+            } elseif ($this->find($id) !== null) {
+                $delivered[$id] = true;
+                $explicit[$id] = true;
+            } else {
+                $orphans[] = $norm((string) $row->body);
+            }
+        }
+
+        // The conversation also holds every Outreach send. Those are the SAME SMS as a ledger row
+        // (matched by their messaging operation, never by wording) and are excluded, so one SMS
+        // is never counted twice; what remains is what a person confirmed sending.
+        $ledgerKeys = $ledger->pluck('operation_key')->filter()->map(fn ($k) => (string) $k)->all();
+
+        foreach ($this->conversationBodies($workspace, $prospect, $first->created_at, $ledgerKeys) as $body) {
+            $body = $norm($body);
+            $pool[$body] = ($pool[$body] ?? 0) + 1;
+        }
+
+        // 2. Orphans: exact text first, then "approved answer + step text"; one step per row.
+        foreach (['exact', 'tail'] as $mode) {
+            foreach ($orphans as $i => $body) {
+                foreach ($steps as $step) {
+                    $t = $text[$step['id']];
+
+                    if ($t === '' || isset($explicit[$step['id']])) {
+                        continue;
+                    }
+
+                    if ($mode === 'exact' ? $body === $t : str_ends_with($body, ' ' . $t)) {
+                        $delivered[$step['id']] = true;
+                        $explicit[$step['id']] = true;
+                        unset($orphans[$i]);
+
+                        break;
+                    }
+                }
+            }
+        }
+
+        // 3. Unattributed copies, one per step. A step already recorded as delivered (earlier derived
+        // from this same kind of evidence) still CONSUMES its copy, so it cannot be spent again on
+        // a later step with identical wording.
+        foreach ($steps as $step) {
+            $t = $text[$step['id']];
+
+            if ($t === '' || isset($explicit[$step['id']])) {
                 continue;
             }
 
-            $hit = ($available[$text] ?? 0) > 0;
-
-            if ($hit) {
-                $available[$text]--;
-            }
-
-            foreach ($orphaned as $row) {
-                $hit = $hit || str_contains($row, $text);
-            }
-
-            if ($hit) {
-                $out[] = $step['id'];
+            if (($pool[$t] ?? 0) > 0 && (isset($delivered[$step['id']]) || ! isset($recorded[$step['id']]))) {
+                $pool[$t]--;
+                $delivered[$step['id']] = true;
             }
         }
 
-        return $out;
+        // Stable, deterministic order: the sequence's own order, then any id it no longer has.
+        $order = array_flip(array_column($this->steps, 'id'));
+        $ids = array_map('strval', array_keys($delivered));
+        usort($ids, static fn (string $a, string $b): int => ($order[$a] ?? PHP_INT_MAX) <=> ($order[$b] ?? PHP_INT_MAX));
+
+        return $ids;
     }
 
     /** Equality after whitespace normalisation (case and wording are never loosened). */
@@ -331,7 +373,8 @@ final class OutreachSequence
     }
 
     /** @return array<int, string> */
-    private function conversationBodies(Workspace $workspace, AgencyProspect $prospect, mixed $since): array
+    /** @param array<int, string> $ledgerOperationKeys */
+    private function conversationBodies(Workspace $workspace, AgencyProspect $prospect, mixed $since, array $ledgerOperationKeys = []): array
     {
         $business = AgencyOutreachBusinessResolver::forWorkspace($workspace);
         $box = $business === null ? null : app(OutreachConversationLinker::class)->conversationFor($business, $prospect);
@@ -347,14 +390,16 @@ final class OutreachSequence
         // `sending`, `ambiguous`, `failed`, `delivery_failed` and any unknown state do not count;
         // when one is later confirmed it starts to count on the next read.
         return ChatBoxMessage::query()
-            ->where('box_id', $box->id)
-            ->where('direction', Reports::DIRECTION_OUTGOING)
-            ->where('created_at', '>=', $since)
+            ->leftJoin('business_messaging_operations as op', 'op.id', '=', 'chat_box_messages.business_messaging_operation_id')
+            ->where('chat_box_messages.box_id', $box->id)
+            ->where('chat_box_messages.direction', Reports::DIRECTION_OUTGOING)
+            ->where('chat_box_messages.created_at', '>=', $since)
             ->where(function ($q): void {
-                $q->whereIn('send_status', ['sent', 'delivered'])
-                    ->orWhere(fn ($legacy) => $legacy->whereNull('send_status')->whereNull('business_messaging_operation_id'));
+                $q->whereIn('chat_box_messages.send_status', ['sent', 'delivered'])
+                    ->orWhere(fn ($legacy) => $legacy->whereNull('chat_box_messages.send_status')->whereNull('chat_box_messages.business_messaging_operation_id'));
             })
-            ->pluck('message')->map(fn ($m) => (string) $m)->all();
+            ->when($ledgerOperationKeys !== [], fn ($q) => $q->where(fn ($k) => $k->whereNull('op.operation_key')->orWhereNotIn('op.operation_key', $ledgerOperationKeys)))
+            ->pluck('chat_box_messages.message')->map(fn ($m) => (string) $m)->all();
     }
 
     /**

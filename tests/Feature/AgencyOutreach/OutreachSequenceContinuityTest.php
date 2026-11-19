@@ -507,4 +507,157 @@ class OutreachSequenceContinuityTest extends TestCase
             $this->assertStringNotContainsString('photo booths for local venues', $body);
         }
     }
+
+    // ---- one-evidence-one-step attribution -----------------------------------------------------------------
+
+    private function aba(Workspace $workspace, array $ids = ['a1', 'b', 'a3'], string $first = 'Alpha text.'): void
+    {
+        OutreachScriptManager::save($workspace, ['sequence_steps' => [
+            $this->step($ids[0], $first), $this->step($ids[1], 'Beta text.'), $this->step($ids[2], 'Alpha text.'),
+        ]]);
+    }
+
+    private function nextStepId(Workspace $workspace, AgencyProspectCampaignMember $member): ?string
+    {
+        $sequence = OutreachSequence::forWorkspace($workspace);
+
+        return $sequence->nextReplyStep($sequence->sentIdsFor($member->fresh()))['id'] ?? null;
+    }
+
+    public function test_a_b_a_with_the_first_a_sent_and_every_step_id_rebuilt_skips_nothing(): void
+    {
+        [$workspace, $business, $member] = $this->started('Hello! Quick question.');
+        $this->aba($workspace);
+        $this->inbound($business, 'ok');                                   // a1 -> "Alpha text."
+        $this->assertSame('b', $this->nextStepId($workspace, $member));
+
+        $this->aba($workspace, ['x1', 'y', 'x3']);                         // same wording, brand-new ids
+
+        $this->assertSame('y', $this->nextStepId($workspace, $member), 'The one delivered A satisfies ONE step.');
+        $this->assertSame(['x1'], array_values(array_diff(OutreachSequence::forWorkspace($workspace)->deliveredByContent($member->fresh()), ['a1'])));
+
+        $this->inbound($business, 'ok');
+        $this->inbound($business, 'ok');
+        $this->inbound($business, 'ok');
+
+        $this->assertSame(['Hello! Quick question.', 'Alpha text.', 'Beta text.', 'Alpha text.'], $this->sentBodies());
+        $stored = $this->member($member)->sequence_sent_ids;
+        $this->assertEqualsCanonicalizing(['a1', 'x1', 'y', 'x3'], $stored, 'The stale id is kept; the reconciled step and the two new sends are recorded.');
+        $this->assertSame($stored, array_values(array_unique($stored)), 'No duplicates.');
+    }
+
+    public function test_a_b_a_with_the_first_step_text_edited_but_its_id_kept_does_not_reassign_that_delivery(): void
+    {
+        [$workspace, $business, $member] = $this->started('Hello! Quick question.');
+        $this->aba($workspace);
+        $this->inbound($business, 'ok');                                   // a1 delivered as "Alpha text."
+
+        $this->aba($workspace, ['a1', 'b', 'a3'], 'Alpha text, reworded.');  // same id, new wording
+
+        $this->assertSame(['a1'], OutreachSequence::forWorkspace($workspace)->deliveredByContent($member->fresh()));
+        $this->assertSame('b', $this->nextStepId($workspace, $member), 'a3 is NOT marked delivered by the old a1 text.');
+
+        $this->inbound($business, 'ok');
+        $this->inbound($business, 'ok');
+
+        $this->assertSame(['Hello! Quick question.', 'Alpha text.', 'Beta text.', 'Alpha text.'], $this->sentBodies());
+        $this->assertSame(['a1', 'b', 'a3'], $this->member($member)->sequence_sent_ids);
+    }
+
+    public function test_several_identical_steps_with_one_delivered_copy_are_satisfied_once(): void
+    {
+        [$workspace, , $member] = $this->started('Alpha text.');
+        OutreachScriptManager::save($workspace, ['sequence_steps' => [$this->step('s1', 'Alpha text.'), $this->step('s2', 'Alpha text.'), $this->step('s3', 'Alpha text.')]]);
+
+        $this->assertSame(['s1'], OutreachSequence::forWorkspace($workspace)->deliveredByContent($member->fresh()));
+        $this->assertSame('s2', $this->nextStepId($workspace, $member));
+    }
+
+    public function test_two_genuinely_delivered_identical_messages_satisfy_two_distinct_steps(): void
+    {
+        [$workspace, $business, $member] = $this->started('Alpha text.');
+        $this->handSend($business, 'Alpha text.', 'sent');
+        OutreachScriptManager::save($workspace, ['sequence_steps' => [$this->step('s1', 'Alpha text.'), $this->step('s2', 'Alpha text.'), $this->step('s3', 'Alpha text.')]]);
+
+        $this->assertSame(['s1', 's2'], OutreachSequence::forWorkspace($workspace)->deliveredByContent($member->fresh()));
+        $this->assertSame('s3', $this->nextStepId($workspace, $member));
+    }
+
+    public function test_an_orphaned_ledger_send_that_also_sits_in_the_conversation_is_counted_once(): void
+    {
+        [$workspace, $business, $member] = $this->started('Hello! Quick question.');
+        $this->aba($workspace);
+        $this->inbound($business, 'ok');                                   // one SMS: a ledger row AND a chat message
+        $this->assertSame(1, ChatBoxMessage::where('message', 'Alpha text.')->count());
+        $this->assertSame(1, AgencyProspectMessage::where('body', 'Alpha text.')->count());
+        ChatBoxMessage::where('message', 'Alpha text.')->update(['send_status' => 'sent']);   // the chat copy is confirmed too
+
+        $this->aba($workspace, ['x1', 'y', 'x3']);
+
+        $this->assertNotContains('x3', OutreachSequence::forWorkspace($workspace)->deliveredByContent($member->fresh()));
+        $this->assertSame('y', $this->nextStepId($workspace, $member));
+    }
+
+    public function test_manual_message_states_decide_the_exact_next_step(): void
+    {
+        [$workspace, $business, $member] = $this->started('Hello! Quick question.');
+        $message1 = 'Hi, Snap Booth Co here. We book photo booths for local venues and you only pay at 9% when we deliver. Open to hearing more?';
+
+        $manual = $this->handSend($business, $message1, 'ambiguous');
+        $this->assertSame('legacy-1', $this->nextStepId($workspace, $member), 'ambiguous: Message 1 is still next.');
+        $manual->update(['send_status' => 'sending']);
+        $this->assertSame('legacy-1', $this->nextStepId($workspace, $member));
+        $manual->update(['send_status' => 'failed']);
+        $this->assertSame('legacy-1', $this->nextStepId($workspace, $member));
+        $manual->update(['send_status' => 'sent']);
+        $this->assertSame('legacy-2', $this->nextStepId($workspace, $member), 'confirmed: Message 2 is next.');
+    }
+
+    public function test_an_ended_campaigns_history_never_satisfies_a_steps_in_the_new_campaign(): void
+    {
+        [$workspace, $business, $old, $prospect, $oldCampaign] = $this->started('Hello! Quick question.');
+        $this->aba($workspace);
+        $this->inbound($business, 'ok');                                   // old campaign delivered "Alpha text."
+        app(OutreachCampaignService::class)->end($workspace, $oldCampaign);
+        $this->travel(10)->minutes();
+
+        $new = $this->managedCampaign($workspace, ['name' => 'Second', 'opening_message' => 'A new opener.']);
+        $member2 = $this->enroll($workspace, $new, $prospect, 1);
+        OutreachInitialSendJob::dispatchSync($member2->id);
+
+        $this->assertSame([], OutreachSequence::forWorkspace($workspace)->deliveredByContent($member2->fresh()), 'Only the new campaign\'s own sends count.');
+        $this->assertSame('a1', $this->nextStepId($workspace, $member2));
+
+        $before = count($this->sentBodies());
+        $this->inbound($business, 'ok');
+        $this->assertSame('Alpha text.', $this->sentBodies()[$before]);
+        $this->assertSame(['a1'], $this->member($member2)->sequence_sent_ids);
+        $this->assertSame(['a1'], $this->member($old)->sequence_sent_ids, 'The old record is untouched.');
+    }
+
+    public function test_a_faq_prefixed_delivery_survives_a_rebuild_and_progression_continues_one_step_at_a_time(): void
+    {
+        [$workspace, $business, $member] = $this->started('Hello! Quick question.');
+        $this->aba($workspace);
+        $this->inbound($business, 'how much is it?');                      // "Our commission ... Alpha text." as step a1
+        $this->assertSame('Our commission is 9% of booked events. Alpha text.', $this->sentBodies()[1]);
+
+        $this->aba($workspace, ['x1', 'y', 'x3']);
+        $this->assertSame('y', $this->nextStepId($workspace, $member), 'The FAQ-prefixed A is recognised as x1, once.');
+
+        $this->inbound($business, 'ok');
+        $this->inbound($business, 'ok');
+        $this->inbound($business, 'ok');
+
+        $this->assertSame(['Hello! Quick question.', 'Our commission is 9% of booked events. Alpha text.', 'Beta text.', 'Alpha text.'], $this->sentBodies());
+    }
+
+    public function test_a_longer_unrelated_message_does_not_satisfy_a_step_that_merely_appears_inside_it(): void
+    {
+        [$workspace, $business, $member] = $this->started('Hello! Quick question.');
+        $this->handSend($business, 'Totally unrelated. Alpha text. And more words after it.', 'sent');
+        $this->aba($workspace);
+
+        $this->assertSame('a1', $this->nextStepId($workspace, $member));
+    }
 }
