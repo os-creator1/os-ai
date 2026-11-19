@@ -3,7 +3,11 @@
 namespace App\Library\AgencyOutreach;
 
 use App\Enums\AgencyProspecting\AgencyProspectStage;
+use App\Models\AgencyProspect;
 use App\Models\AgencyProspectCampaignMember;
+use App\Models\AgencyProspectMessage;
+use App\Models\ChatBoxMessage;
+use App\Models\Reports;
 use App\Models\Workspace;
 
 /**
@@ -180,11 +184,28 @@ final class OutreachSequence
     }
 
     /**
-     * The step ids this prospect has already received.
+     * The step ids this prospect has already received: the recorded progress, plus every
+     * reply step whose text this prospect has demonstrably been SENT in this campaign
+     * ({@see deliveredByContent}) -- the campaign opener, or a person sending the scripted
+     * text by hand. Derived per member, so it holds for campaigns already running.
      *
      * @return array<int, string>
      */
     public function sentIdsFor(AgencyProspectCampaignMember $member): array
+    {
+        $ids = $this->recordedSentIds($member);
+
+        foreach ($this->deliveredByContent($member) as $id) {
+            if (! in_array($id, $ids, true)) {
+                $ids[] = $id;
+            }
+        }
+
+        return $ids;
+    }
+
+    /** @return array<int, string> */
+    private function recordedSentIds(AgencyProspectCampaignMember $member): array
     {
         $stored = $member->sequence_sent_ids;
 
@@ -213,6 +234,146 @@ final class OutreachSequence
         }
 
         return $ids;
+    }
+
+    /**
+     * Reply steps this prospect has received, judged from what was actually sent to them
+     * since THIS campaign's opener went out -- never from the campaign merely being Active:
+     *
+     *  - exact match (after token rendering and whitespace normalisation) against any text
+     *    sent in the campaign: the delivered ledger plus the prospect's conversation (a human
+     *    replying from Conversations is a reliable match when the text IS the step; the
+     *    message itself is never relabelled as a scripted send);
+     *  - a step recorded as sent whose id the Agency has since edited away is recognised by
+     *    its text inside that ledger row, so a script edit cannot reset progress.
+     *
+     * Nothing is inferred before the campaign's own opener was delivered, and another
+     * campaign's messages (a different member, an earlier time) are never consulted.
+     *
+     * @return array<int, string>
+     */
+    public function deliveredByContent(AgencyProspectCampaignMember $member): array
+    {
+        $steps = array_values(array_filter($this->enabledSteps(), static fn (array $s): bool => $s['advance_on'] === self::REPLY));
+
+        if ($steps === []) {
+            return [];
+        }
+
+        $ledger = AgencyProspectMessage::query()
+            ->where('campaign_member_id', $member->id)
+            ->where('direction', AgencyProspectMessage::DIRECTION_OUTBOUND)
+            ->where('status', AgencyProspectMessage::STATUS_SENT)
+            ->orderBy('id')
+            ->get(['body', 'sequence_step_id', 'created_at']);
+
+        $first = $ledger->first();
+
+        if ($first === null) {
+            return [];
+        }
+
+        $prospect = AgencyProspect::query()->where('id', $member->prospect_id)->where('workspace_id', $member->workspace_id)->first();
+        $workspace = $prospect === null ? null : Workspace::query()->find($member->workspace_id);
+
+        if ($workspace === null) {
+            return [];
+        }
+
+        $normalise = static fn (string $t): string => trim(preg_replace('/\s+/u', ' ', $t) ?? $t);
+        // One sent copy satisfies one step: two steps with identical wording need two sends.
+        // The ledger and the conversation both hold an Outreach send, so each text is counted
+        // once per place and the larger count wins (never summed).
+        $perLedger = array_count_values(array_map($normalise, $ledger->pluck('body')->map(fn ($b) => (string) $b)->all()));
+        $perChat = array_count_values(array_map($normalise, $this->conversationBodies($workspace, $prospect, $first->created_at)));
+        $available = [];
+
+        foreach (array_unique(array_merge(array_keys($perLedger), array_keys($perChat))) as $text) {
+            $available[$text] = max($perLedger[$text] ?? 0, $perChat[$text] ?? 0);
+        }
+        $orphaned = $ledger
+            ->filter(fn ($row) => $row->sequence_step_id !== null && $this->find((string) $row->sequence_step_id) === null)
+            ->pluck('body')->map(fn ($b) => $normalise((string) $b))->all();
+
+        $out = [];
+
+        foreach ($steps as $step) {
+            $text = $normalise(OutreachScriptRenderer::render(OutreachScriptTokens::canonicalise((string) $step['body']), $workspace, $prospect));
+
+            if ($text === '') {
+                continue;
+            }
+
+            $hit = ($available[$text] ?? 0) > 0;
+
+            if ($hit) {
+                $available[$text]--;
+            }
+
+            foreach ($orphaned as $row) {
+                $hit = $hit || str_contains($row, $text);
+            }
+
+            if ($hit) {
+                $out[] = $step['id'];
+            }
+        }
+
+        return $out;
+    }
+
+    /** Equality after whitespace normalisation (case and wording are never loosened). */
+    public static function sameText(string $a, string $b): bool
+    {
+        $norm = static fn (string $t): string => trim(preg_replace('/\s+/u', ' ', $t) ?? $t);
+
+        return $norm($a) !== '' && $norm($a) === $norm($b);
+    }
+
+    /**
+     * Every text this campaign has put in front of the prospect: the ledger's sent rows and
+     * the conversation's outgoing messages since the opener (a person's included).
+     *
+     * @return array<int, string>
+     */
+    public function outboundBodiesFor(AgencyProspectCampaignMember $member): array
+    {
+        $ledger = AgencyProspectMessage::query()
+            ->where('campaign_member_id', $member->id)
+            ->where('direction', AgencyProspectMessage::DIRECTION_OUTBOUND)
+            ->where('status', AgencyProspectMessage::STATUS_SENT)
+            ->orderBy('id')
+            ->get(['body', 'created_at']);
+
+        if ($ledger->isEmpty()) {
+            return [];
+        }
+
+        $prospect = AgencyProspect::query()->where('id', $member->prospect_id)->where('workspace_id', $member->workspace_id)->first();
+        $workspace = $prospect === null ? null : Workspace::query()->find($member->workspace_id);
+
+        return array_merge(
+            $ledger->pluck('body')->map(fn ($b) => (string) $b)->all(),
+            $workspace === null ? [] : $this->conversationBodies($workspace, $prospect, $ledger->first()->created_at),
+        );
+    }
+
+    /** @return array<int, string> */
+    private function conversationBodies(Workspace $workspace, AgencyProspect $prospect, mixed $since): array
+    {
+        $business = AgencyOutreachBusinessResolver::forWorkspace($workspace);
+        $box = $business === null ? null : app(OutreachConversationLinker::class)->conversationFor($business, $prospect);
+
+        if ($box === null) {
+            return [];
+        }
+
+        return ChatBoxMessage::query()
+            ->where('box_id', $box->id)
+            ->where('direction', Reports::DIRECTION_OUTGOING)
+            ->where('created_at', '>=', $since)
+            ->where(fn ($q) => $q->whereNull('send_status')->orWhereNotIn('send_status', ['failed', 'delivery_failed']))
+            ->pluck('message')->map(fn ($m) => (string) $m)->all();
     }
 
     /**

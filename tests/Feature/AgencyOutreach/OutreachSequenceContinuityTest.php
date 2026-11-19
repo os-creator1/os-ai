@@ -1,0 +1,380 @@
+<?php
+
+namespace Tests\Feature\AgencyOutreach;
+
+use App\Jobs\Outreach\OutreachInitialSendJob;
+use App\Jobs\Outreach\OutreachRespondJob;
+use App\Library\AgencyOutreach\OutreachCampaignDiagnostics;
+use App\Library\AgencyOutreach\OutreachCampaignService;
+use App\Library\AgencyOutreach\OutreachScriptManager;
+use App\Models\AgencyProspect;
+use App\Models\AgencyProspectCampaign;
+use App\Models\AgencyProspectCampaignMember;
+use App\Models\AgencyProspectMessage;
+use App\Models\Blacklists;
+use App\Models\Business;
+use App\Models\ChatBoxMessage;
+use App\Models\Workspace;
+use Illuminate\Foundation\Testing\RefreshDatabase;
+use Tests\Feature\AgencyOutreach\Concerns\BuildsOutreachFixtures;
+use Tests\TestCase;
+
+/**
+ * Outreach is one coherent, campaign-specific conversation: the opener, the scripted steps,
+ * approved answers and anything a person sent by hand all agree on what the prospect has
+ * already received. Telnyx is the fake adapter; no SMS is ever sent.
+ */
+class OutreachSequenceContinuityTest extends TestCase
+{
+    use RefreshDatabase;
+    use BuildsOutreachFixtures;
+
+    private const M1 = 'Hi, {{agency_name}} here. We book photo booths for local venues and you only pay at 9% when we deliver. Open to hearing more?';
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+        $this->bootOutreach();
+    }
+
+    /** @return array{0: Workspace, 1: Business, 2: AgencyProspectCampaignMember, 3: AgencyProspect, 4: AgencyProspectCampaign} */
+    private function started(?string $opener = self::M1, bool $sendOpener = true, array $script = [], string $phone = '12025551000'): array
+    {
+        [, $business, $workspace] = $this->agency();
+        $this->saveScript($workspace, $script);
+        $campaign = $this->managedCampaign($workspace, ['opening_message' => $opener]);
+        $prospect = $this->prospect($workspace, $phone);
+        $member = $this->enroll($workspace, $campaign, $prospect, 1);
+
+        if ($sendOpener) {
+            OutreachInitialSendJob::dispatchSync($member->id);
+        }
+
+        return [$workspace, $business, $member, $prospect, $campaign];
+    }
+
+    private function step(string $id, string $body, bool $enabled = true): array
+    {
+        return ['id' => $id, 'body' => $body, 'advance_on' => 'reply', 'enabled' => $enabled];
+    }
+
+    private function inboundRow(): AgencyProspectMessage
+    {
+        return AgencyProspectMessage::where('direction', 'inbound')->orderByDesc('id')->firstOrFail();
+    }
+
+    // ---- opener semantics -------------------------------------------------------------------------
+
+    public function test_first_text_equal_to_message_1_counts_as_delivered_and_replies_progress_once_each(): void
+    {
+        [, $business, $member] = $this->started();
+
+        $this->inbound($business, 'sure');
+        $this->inbound($business, 'yes');
+        $this->inbound($business, 'thanks');   // sequence complete: nothing more
+
+        $bodies = $this->sentBodies();
+        $this->assertCount(3, $bodies, 'Opener, Message 2, Message 3 — no extra message after the sequence ends.');
+        $this->assertSame('Great. Can we do a quick call about it?', $bodies[1]);
+        $this->assertStringContainsString('https://cal.example.test/snap', $bodies[2]);
+        $this->assertSame(['legacy-1', 'legacy-2', 'legacy-3'], $this->member($member)->sequence_sent_ids);
+        $this->assertSame(4, $this->member($member)->stage->value);
+    }
+
+    public function test_first_text_different_from_message_1_runs_the_normal_sequence(): void
+    {
+        [, $business, $member] = $this->started('Hello! Quick question about your venue.');
+
+        $this->inbound($business, 'ok');
+        $this->inbound($business, 'ok');
+
+        $this->assertStringStartsWith('Hi, Snap Booth Co here.', $this->sentBodies()[1]);
+        $this->assertSame('Great. Can we do a quick call about it?', $this->sentBodies()[2]);
+        $this->assertSame(['legacy-1', 'legacy-2'], $this->member($member)->sequence_sent_ids);
+    }
+
+    public function test_an_opener_that_was_never_delivered_does_not_count(): void
+    {
+        [, $business] = $this->started(self::M1, sendOpener: false);
+
+        $this->inbound($business, 'ok');
+
+        $this->assertStringStartsWith('Hi, Snap Booth Co here.', $this->sentBodies()[0]);
+    }
+
+    // ---- production incident: a person sent the scripted text by hand ----------------------------
+
+    public function test_the_production_conversation_does_not_repeat_the_step_it_just_sent(): void
+    {
+        $got = 'Got it. Are you fully booked at the moment, or are you simply not looking to take on additional clients?';
+        [, $business, $member] = $this->started('Hello! Quick question.', script: [
+            'message_1' => $got, 'message_2' => 'Would it make sense to do a short call to see if this could work for you?',
+            'clarify_answer' => 'Happy to go through the specifics with you on a quick call.',
+        ]);
+
+        $this->inbound($business, 'hey, no');                       // 10:03 -> Message 1 (neutral, so it is sent)
+        $this->assertSame($got, $this->sentBodies()[1]);
+
+        $this->inbound($business, 'Would it make sense to do a short call to see if this could work for you?');   // 10:31
+
+        foreach (array_slice($this->sentBodies(), 2) as $body) {
+            $this->assertStringNotContainsString('Are you fully booked', $body, 'The 10:30 message is never repeated at 10:32.');
+        }
+        $this->assertSame(['legacy-1', 'legacy-2'], $this->member($member)->sequence_sent_ids);
+    }
+
+    public function test_the_same_conversation_when_the_10_30_message_was_sent_by_hand(): void
+    {
+        $got = 'Got it. Are you fully booked at the moment, or are you simply not looking to take on additional clients?';
+        [, $business, $member] = $this->started('Hello! Quick question.', script: [
+            'message_1' => $got, 'message_2' => 'Would it make sense to do a short call to see if this could work for you?',
+            'clarify_answer' => 'Happy to go through the specifics with you on a quick call.',
+        ]);
+        $this->inbound($business, 'who is this?', deliver: false);          // recorded in chat, owner takes over
+        $this->ownerRepliesByHand($business, '12025551000', $got);           // owner pastes Message 1 by hand
+        $before = count($this->sentBodies());
+
+        $this->inbound($business, 'Would it make sense to do a short call to see if this could work for you?');
+
+        foreach (array_slice($this->sentBodies(), $before) as $body) {
+            $this->assertStringNotContainsString('Are you fully booked', $body);
+        }
+        $this->assertContains('legacy-1', $this->member($member)->sequence_sent_ids ?? ['legacy-1'], 'Equivalent step is treated as delivered.');
+    }
+
+    public function test_a_step_sent_by_hand_before_a_new_inbound_moves_the_conversation_to_the_next_step_with_an_answer_in_front(): void
+    {
+        [, $business, $member] = $this->started('Hello! Quick question.');
+        $this->ownerRepliesByHand0($business);
+
+        $this->inbound($business, 'how much does it cost?');
+
+        $new = $this->sentBodies()[1] ?? '';
+        $this->assertStringContainsString('Our commission is 9% of booked events.', $new, 'The approved answer goes first.');
+        $this->assertStringContainsString('Great. Can we do a quick call about it?', $new, 'Then the NEXT step, not Message 1 again.');
+        $this->assertStringNotContainsString('photo booths for local venues', $new);
+        $this->assertSame(['legacy-2'], array_values(array_diff($this->member($member)->sequence_sent_ids, ['legacy-1'])));
+    }
+
+    private function ownerRepliesByHand0(Business $business): void
+    {
+        // The prospect has to exist in a conversation first (the opener created it).
+        $this->ownerRepliesByHand($business, '12025551000', 'Hi, Snap Booth Co here. We book photo booths for local venues and you only pay at 9% when we deliver. Open to hearing more?');
+    }
+
+    public function test_a_manual_text_that_is_not_a_step_is_left_alone_and_does_not_advance_the_sequence(): void
+    {
+        [, $business, $member] = $this->started('Hello! Quick question.');
+        $this->ownerRepliesByHand($business, '12025551000', 'Quick note from me personally.');
+
+        $this->inbound($business, 'ok');
+
+        $this->assertStringStartsWith('Hi, Snap Booth Co here.', $this->sentBodies()[1], 'No reliable match: Message 1 still goes out.');
+        $this->assertNull(ChatBoxMessage::where('message', 'Quick note from me personally.')->first()->business_messaging_operation_id ?? null);
+    }
+
+    public function test_the_owner_answering_after_the_latest_reply_suppresses_the_automatic_one_with_a_visible_reason(): void
+    {
+        [$workspace, $business, , , $campaign] = $this->started();
+
+        $key = $this->inbound($business, 'sure', deliver: false);
+        $this->ownerRepliesByHand($business, '12025551000', 'Hi, it is the owner, call me.');
+        $this->deliverInbound($business, '12025551000', $key);
+
+        $this->assertCount(1, $this->sentBodies());
+        $reply = $this->inboundRow();
+        $this->assertSame('manual_reply_sent', $reply->failure_reason);
+        $d = app(OutreachCampaignDiagnostics::class)->forCampaign($workspace, $campaign);
+        $this->assertSame(1, $d['silent_replies']->count());
+        $this->assertSame('You had already replied by hand.', OutreachCampaignDiagnostics::reasonLabel($reply->failure_reason));
+    }
+
+    // ---- script edits mid-campaign -----------------------------------------------------------------
+
+    public function test_replacing_step_ids_with_the_same_text_mid_campaign_does_not_restart_the_sequence(): void
+    {
+        [$workspace, $business, $member] = $this->started('Hello! Quick question.');
+        $this->inbound($business, 'ok');                       // Message 1 delivered under id legacy-1
+        $this->assertSame(['legacy-1'], $this->member($member)->sequence_sent_ids);
+
+        // The owner rebuilds the sequence in the editor: same wording, brand-new step ids.
+        OutreachScriptManager::save($workspace, ['sequence_steps' => [
+            $this->step('sAAA', self::M1), $this->step('sBBB', 'Great. Can we do a quick call about it?'), $this->step('sCCC', 'Book here: {{agency.calendar_link}}'),
+        ]]);
+        $this->inbound($business, 'ok');
+
+        $this->assertSame('Great. Can we do a quick call about it?', $this->sentBodies()[2]);
+        $this->assertCount(3, $this->sentBodies());
+    }
+
+    public function test_editing_a_delivered_step_text_keeps_its_id_and_never_resends_it(): void
+    {
+        [$workspace, $business] = $this->started('Hello! Quick question.');
+        $this->inbound($business, 'ok');
+        $this->saveScript($workspace, ['message_1' => 'A completely different Message 1.']);
+
+        $this->inbound($business, 'ok');
+
+        $this->assertSame('Great. Can we do a quick call about it?', $this->sentBodies()[2]);
+    }
+
+    public function test_a_disabled_step_is_skipped_and_stable_ids_are_recorded(): void
+    {
+        [$workspace, $business, $member] = $this->started('Intro A.');
+        OutreachScriptManager::save($workspace, ['sequence_steps' => [$this->step('a', 'Intro A.'), $this->step('b', 'Skipped B.', false), $this->step('c', 'Next C.')]]);
+
+        $this->inbound($business, 'ok');
+        $this->inbound($business, 'ok');
+
+        $this->assertSame(['Intro A.', 'Next C.'], $this->sentBodies());
+        $this->assertSame(['a', 'c'], $this->member($member)->sequence_sent_ids);
+    }
+
+    // ---- FAQ ------------------------------------------------------------------------------------------
+
+    public function test_a_faq_answer_precedes_the_next_step_and_is_never_followed_by_a_repeat(): void
+    {
+        [, $business, $member] = $this->started();
+
+        $this->inbound($business, 'how much is it?');
+        $this->inbound($business, 'where are you based?');
+
+        $this->assertSame('Our commission is 9% of booked events. Great. Can we do a quick call about it?', $this->sentBodies()[1]);
+        $third = $this->sentBodies()[2];
+        $this->assertStringContainsString('https://cal.example.test/snap', $third);
+        $this->assertStringContainsString('We are based in Austin and serve Texas.', $third);
+        $this->assertCount(3, $this->sentBodies());
+    }
+
+    // ---- reply meaning ---------------------------------------------------------------------------------
+
+    public function test_a_plain_no_is_never_answered_with_great_or_a_booking_pitch_and_the_reason_is_visible(): void
+    {
+        [$workspace, $business, , , $campaign] = $this->started();
+
+        $this->inbound($business, 'hey, no');
+
+        $this->assertCount(1, $this->sentBodies(), 'Message 2 starts with "Great." — held, not sent.');
+        $reply = $this->inboundRow();
+        $this->assertSame('negative_reply_held', $reply->failure_reason);
+        $this->assertStringContainsString('Reword it', OutreachCampaignDiagnostics::reasonLabel('negative_reply_held'));
+    }
+
+    public function test_a_plain_no_gets_a_neutral_next_step_when_the_script_has_one(): void
+    {
+        [, $business] = $this->started(script: ['message_2' => 'Got it. Are you fully booked, or just not looking for more clients?']);
+
+        $this->inbound($business, 'hey, no');
+
+        $this->assertSame('Got it. Are you fully booked, or just not looking for more clients?', $this->sentBodies()[1]);
+    }
+
+    public function test_soft_rejection_hard_rejection_and_stop_send_nothing(): void
+    {
+        [, $b1, $m1, $p1] = $this->started();
+        $this->inbound($b1, 'no thanks');
+        $this->assertCount(1, $this->sentBodies());
+        $this->assertSame(99, $this->member($m1)->stage->value);
+        $this->assertSame('rejected', $p1->fresh()->stop_reason);
+
+        [, $b2, $m2] = $this->started();
+        $this->inbound($b2, 'not interested');
+        $this->assertSame(99, $this->member($m2)->stage->value);
+        $this->assertSame(0, Blacklists::where('business_id', $b2->id)->count());
+
+        [, $b3, $m3, $p3] = $this->started();
+        $this->inbound($b3, 'STOP');
+        $this->assertSame('opt_out', $p3->fresh()->stop_reason);
+        $this->assertSame(1, Blacklists::where('business_id', $b3->id)->count());
+        $this->assertSame(3, count($this->sentBodies()), 'Only the three openers ever went out.');
+    }
+
+    // ---- idempotency --------------------------------------------------------------------------------------
+
+    public function test_redelivered_webhooks_and_job_retries_send_each_message_once(): void
+    {
+        [, $business, $member] = $this->started();
+
+        $key = $this->inbound($business, 'sure');
+        $this->deliverInbound($business, '12025551000', $key);
+        $this->deliverInbound($business, '12025551000', $key);
+        $in = $this->inboundRow();
+        dispatch_sync(new OutreachRespondJob($member->id, $in->id));
+        dispatch_sync(new OutreachRespondJob($member->id, $in->id));
+        OutreachInitialSendJob::dispatchSync($member->id);
+
+        $this->assertCount(2, $this->sentBodies());
+        $this->assertSame(1, AgencyProspectMessage::where('operation_key', 'outreach:reply:' . $in->id)->count());
+        $this->assertSame(1, AgencyProspectMessage::where('operation_key', 'outreach:opener:' . $member->id)->count());
+    }
+
+    // ---- campaigns reusing a contact ------------------------------------------------------------------------
+
+    public function test_a_new_campaign_for_the_same_contact_starts_its_own_sequence_and_history_is_preserved(): void
+    {
+        [$workspace, $business, $old, $prospect, $oldCampaign] = $this->started();
+        $this->inbound($business, 'sure');
+        $this->inbound($business, 'yes');
+        $this->assertSame(['legacy-1', 'legacy-2', 'legacy-3'], $this->member($old)->sequence_sent_ids);
+        $chatBefore = ChatBoxMessage::count();
+        $ledgerBefore = AgencyProspectMessage::count();
+        $sentBefore = count($this->sentBodies());
+
+        $this->assertTrue(app(OutreachCampaignService::class)->end($workspace, $oldCampaign)['ok']);
+
+        $this->travel(10)->minutes();
+        $new = $this->managedCampaign($workspace, ['name' => 'Second', 'opening_message' => 'Fresh start, quick question for you.']);
+        $member2 = $this->enroll($workspace, $new, $prospect, 1);
+        OutreachInitialSendJob::dispatchSync($member2->id);
+        $this->inbound($business, 'ok');
+
+        $this->assertSame($sentBefore + 2, count($this->sentBodies()));
+        $this->assertStringStartsWith('Hi, Snap Booth Co here.', $this->sentBodies()[$sentBefore + 1], 'Message 1 for the new campaign: nothing inherited from the old one.');
+        $this->assertSame(['legacy-1'], $this->member($member2)->sequence_sent_ids);
+        $this->assertSame(['legacy-1', 'legacy-2', 'legacy-3'], $this->member($old)->sequence_sent_ids, 'The old campaign keeps its own record.');
+        $this->assertGreaterThanOrEqual($chatBefore, ChatBoxMessage::count());
+        $this->assertGreaterThanOrEqual($ledgerBefore, AgencyProspectMessage::count());
+        $this->assertSame(1, AgencyProspectMessage::where('operation_key', 'outreach:opener:' . $old->id)->count());
+    }
+
+    public function test_a_second_campaign_whose_first_text_matches_the_old_campaigns_messages_still_sends_its_own_steps(): void
+    {
+        [$workspace, $business, $old, $prospect, $oldCampaign] = $this->started();
+        $this->inbound($business, 'sure');                       // old campaign sent Message 2 ("Great. Can we...")
+        app(OutreachCampaignService::class)->end($workspace, $oldCampaign);
+
+        $this->travel(10)->minutes();
+        $new = $this->managedCampaign($workspace, ['name' => 'Second', 'opening_message' => 'Totally different opener.']);
+        $member2 = $this->enroll($workspace, $new, $prospect, 1);
+        OutreachInitialSendJob::dispatchSync($member2->id);
+        $this->inbound($business, 'ok');
+
+        $this->assertStringStartsWith('Hi, Snap Booth Co here.', end($this->fakeAdapter->sentRequests)->body, 'Old Message 1 text does not count for the new campaign.');
+    }
+
+    // ---- diagnostics ------------------------------------------------------------------------------------------
+
+    public function test_diagnostics_show_the_actual_next_message_per_prospect_and_the_duplicate_opener_warning(): void
+    {
+        [$workspace, $business, , , $campaign] = $this->started();
+        $campaign->update(['status' => 'active']);
+        $this->inbound($business, 'sure');
+
+        $d = app(OutreachCampaignDiagnostics::class)->forCampaign($workspace, $campaign->fresh());
+
+        $this->assertTrue($d['opener_duplicates_first_step']);
+        $this->assertSame('Message 2', $d['first_reply']['label']);
+        $this->assertSame('Message 3', $d['next_by_member'][0]['next'], 'After Message 2 went out, Message 3 is next.');
+        $this->assertNotEmpty(array_filter($d['warnings'], fn ($w) => str_contains($w, 'identical to Message 1')));
+    }
+
+    public function test_nothing_is_sent_to_an_inactive_or_foreign_prospect(): void
+    {
+        [, $business, $member, $prospect] = $this->started();
+        $prospect->update(['status' => 'stopped']);
+
+        $this->inbound($business, 'sure');
+
+        $this->assertCount(1, $this->sentBodies());
+    }
+}

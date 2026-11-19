@@ -371,6 +371,7 @@ class AgencyProspectingController extends CustomerBaseController
                 ->whereNotIn('id', $campaign->members()->pluck('prospect_id'))
                 ->orderBy('company_name')
                 ->get(),
+            'diagnostics' => $campaign->isManaged() ? app(\App\Library\AgencyOutreach\OutreachCampaignDiagnostics::class)->forCampaign($workspace, $campaign) : null,
             'readiness' => $campaign->isManaged() ? app(\App\Library\AgencyOutreach\AgencyOutreachReadiness::class)->forWorkspace($workspace) : null,
             'availableChannels' => \App\Models\AgencyProspectingChannel::where('workspace_id', $workspace->id)
                 ->where('status', \App\Models\AgencyProspectingChannel::STATUS_ACTIVE)
