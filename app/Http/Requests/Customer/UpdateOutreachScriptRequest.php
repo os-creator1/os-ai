@@ -61,6 +61,11 @@ class UpdateOutreachScriptRequest extends FormRequest
             'faq_entries.*.campaign_ids' => ['nullable', 'array'],
             'faq_entries.*.campaign_ids.*' => ['integer'],
             'faq_fallback' => ['nullable', 'in:ai,continue,handoff'],
+
+            // Natural reply pacing (whole minutes; bounded and ordered by OutreachScriptManager).
+            'reply_delay' => ['nullable', 'array'],
+            'reply_delay.*.min' => ['nullable', 'integer', 'min:0', 'max:30'],
+            'reply_delay.*.max' => ['nullable', 'integer', 'min:0', 'max:30'],
         ];
     }
 }

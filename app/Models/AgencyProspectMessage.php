@@ -50,11 +50,14 @@ class AgencyProspectMessage extends Model
         'sequence_step_id',
         'actor_user_id',
         'failure_reason',
+        'reply_due_at',
+        'reply_category',
     ];
 
     protected $casts = [
         'sent_at' => 'datetime',
         'received_at' => 'datetime',
+        'reply_due_at' => 'datetime',
     ];
 
     public function workspace(): BelongsTo

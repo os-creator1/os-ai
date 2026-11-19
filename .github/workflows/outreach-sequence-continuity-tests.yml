@@ -10,6 +10,11 @@ on:
       - 'app/Library/AgencyOutreach/OutreachStepTone.php'
       - 'app/Library/AgencyOutreach/OutreachCampaignDiagnostics.php'
       - 'app/Jobs/Outreach/**'
+      - 'app/Listeners/Outreach/**'
+      - 'app/Library/AgencyOutreach/OutreachReplyTiming.php'
+      - 'app/Library/AgencyOutreach/OutreachScriptManager.php'
+      - 'tests/Feature/AgencyOutreach/OutreachReplyTimingTest.php'
+      - 'phpunit.xml'
       - 'app/Library/AgencyOutreach/OutreachManualStepFollowUp.php'
       - 'app/Library/AgencyOutreach/OutreachSendPipeline.php'
       - 'app/Library/Conversations/ConversationHistoryWriter.php'
@@ -69,4 +74,4 @@ jobs:
       - name: Install dependencies
         run: composer install --no-interaction --prefer-dist --no-progress
       - name: Test campaign contact-group snapshots and sender eligibility
-        run: php artisan test tests/Feature/AgencyOutreach/OutreachSequenceContinuityTest.php tests/Feature/AgencyOutreach/OutreachSequenceV2Test.php tests/Feature/AgencyOutreach/OutreachEngineTest.php tests/Feature/AgencyOutreach/OutreachSafetyTest.php --stop-on-failure
+        run: php artisan test tests/Feature/AgencyOutreach/OutreachReplyTimingTest.php tests/Feature/AgencyOutreach/OutreachSequenceContinuityTest.php tests/Feature/AgencyOutreach/OutreachSequenceV2Test.php tests/Feature/AgencyOutreach/OutreachEngineTest.php tests/Feature/AgencyOutreach/OutreachSafetyTest.php --stop-on-failure

@@ -90,6 +90,16 @@ final class OutreachScriptManager
             }
         }
 
+        if (array_key_exists('reply_delay', $fields)) {
+            [$windows, $delayErrors] = self::replyDelay($fields['reply_delay']);
+
+            if ($windows !== null) {
+                $changes['reply_delay_windows'] = $windows;
+            }
+
+            $errors += $delayErrors;
+        }
+
         if (array_key_exists('sequence_steps', $fields)) {
             [$changes['sequence_steps'], $stepErrors] = self::steps($fields['sequence_steps']);
             $errors += $stepErrors;
@@ -320,5 +330,38 @@ final class OutreachScriptManager
         $text = self::text($value);
 
         return $text === null ? null : OutreachScriptTokens::canonicalise($text);
+    }
+
+    /**
+     * Reply-delay windows posted in whole minutes, stored in seconds for every category.
+     * STOP is not configurable (it is never delayed).
+     *
+     * @return array{0: ?array<string, array{min: int, max: int}>, 1: array<string, string>}
+     */
+    private static function replyDelay(mixed $raw): array
+    {
+        if (! is_array($raw)) {
+            return [null, []];
+        }
+
+        $errors = [];
+        $windows = [];
+        $limit = OutreachReplyTiming::MAX_MINUTES;
+
+        foreach (OutreachReplyTiming::DEFAULTS as $category => [$defaultMin, $defaultMax]) {
+            $row = is_array($raw[$category] ?? null) ? $raw[$category] : [];
+            $min = array_key_exists('min', $row) && $row['min'] !== '' && $row['min'] !== null ? filter_var($row['min'], FILTER_VALIDATE_INT) : intdiv($defaultMin, 60);
+            $max = array_key_exists('max', $row) && $row['max'] !== '' && $row['max'] !== null ? filter_var($row['max'], FILTER_VALIDATE_INT) : intdiv($defaultMax, 60);
+
+            if ($min === false || $max === false || $min < 0 || $max > $limit || $max < $min) {
+                $errors["reply_delay.{$category}.max"] = 'Choose a wait from 0 to ' . $limit . ' minutes, with the longest at least the shortest.';
+
+                continue;
+            }
+
+            $windows[$category] = ['min' => $min * 60, 'max' => $max * 60];
+        }
+
+        return [$errors === [] ? $windows : null, $errors];
     }
 }

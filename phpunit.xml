@@ -37,6 +37,7 @@
         <server name="NOCAPTCHA_IN_LOGIN" value="false"/>
         <server name="NOCAPTCHA_IN_REGISTRATION" value="false"/>
         <server name="QUEUE_CONNECTION" value="sync"/>
+        <server name="OUTREACH_REPLY_DELAY_ENABLED" value="false"/>
         <server name="SESSION_DRIVER" value="array"/>
     </php>
 </phpunit>
