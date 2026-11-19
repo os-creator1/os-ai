@@ -172,6 +172,48 @@ class OutreachCampaignService
     }
 
     /**
+     * Permanently end a managed campaign while keeping its members, messages and
+     * conversation history. Unlike Pause, Ended frees these prospects for a
+     * new campaign. Every queued send independently checks campaign Active
+     * under the member lock, so outstanding jobs fail closed after this.
+     *
+     * End is intentionally irreversible; do not silently resume an ended
+     * campaign or turn it into a Draft (which could resend its opener).
+     *
+     * @return array{ok: bool, error: ?string, message: ?string}
+     */
+    public function end(Workspace $workspace, AgencyProspectCampaign $campaign): array
+    {
+        if (! $campaign->isManaged() || (int) $campaign->workspace_id !== (int) $workspace->id) {
+            return $this->fail('This campaign cannot be ended from Outreach.');
+        }
+
+        return DB::transaction(function () use ($workspace, $campaign) {
+            $locked = AgencyProspectCampaign::query()
+                ->whereKey($campaign->id)
+                ->where('workspace_id', $workspace->id)
+                ->lockForUpdate()
+                ->first();
+
+            if ($locked === null) {
+                return $this->fail('Campaign not found.');
+            }
+
+            if ($locked->status === AgencyProspectCampaignStatus::Ended) {
+                return ['ok' => true, 'error' => null, 'message' => 'Campaign already ended.'];
+            }
+
+            if (! in_array($locked->status, [AgencyProspectCampaignStatus::Active, AgencyProspectCampaignStatus::Paused], true)) {
+                return $this->fail('Only an active or paused campaign can be ended.');
+            }
+
+            $locked->update(['status' => AgencyProspectCampaignStatus::Ended->value]);
+
+            return ['ok' => true, 'error' => null, 'message' => 'Campaign ended. Its contacts can be used in new campaigns; message history is preserved.'];
+        });
+    }
+
+    /**
      * Per-campaign figures for the Campaigns list, in a fixed number of queries.
      *
      * @param  Collection<int, AgencyProspectCampaign>  $campaigns
