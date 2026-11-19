@@ -100,7 +100,7 @@ final class GenerationBatchPlanner
      * @param  array<int, array<string, mixed>>  $plan  the complete AI plan
      * @return array{batches: ?array<int, array<int, array<string, mixed>>>, refusal: ?string}
      */
-    public static function plan(\App\Models\Business $business, array $plan, GuidedWebsiteGenerationClient $client, ?int $limit = null, int $maxPages = \App\Library\Website\WebsitePageStrategy::MAX_PAGES_PER_GENERATION): array
+    public static function plan(\App\Models\Business $business, array $plan, GuidedWebsiteGenerationClient $client, ?int $limit = null, int $maxPages = \App\Library\Website\WebsitePageStrategy::MAX_PAGES_PER_GENERATION, ?array $contentFacts = null): array
     {
         $refusal = self::refusal($plan, $maxPages);
         if ($refusal !== null) {
@@ -108,8 +108,9 @@ final class GenerationBatchPlanner
         }
 
         $facts = $client->canonicalFacts($business);
+        $contentFacts ??= $client->contentFacts($business, $facts);
 
-        return self::fit($plan, fn (array $batch, int $prior) => $client->estimateInputTokens($business, $batch, $plan, $prior, $facts), $limit ?? self::inputTokenLimit());
+        return self::fit($plan, fn (array $batch, int $prior) => $client->estimateInputTokens($business, $batch, $plan, $prior, $facts, $contentFacts), $limit ?? self::inputTokenLimit());
     }
 
     /**

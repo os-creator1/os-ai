@@ -223,6 +223,9 @@ trait CreatesWebsiteFixtures
      */
     protected function mockAiClient(?string $responseJson): \Mockery\MockInterface
     {
+        // These doubles return minimal fixed pages to exercise generation MECHANICS; content-quality rules have their own tests.
+        config(['ai.website_content_quality' => false]);
+
         $mock = \Mockery::mock(WebsiteAiGenerationClient::class);
         // AI-1 Correction 6 — the generator now asks the client whether the
         // last call was refused for budget, so it can say "paused" instead

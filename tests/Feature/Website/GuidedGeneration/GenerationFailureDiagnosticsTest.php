@@ -36,6 +36,8 @@ class GenerationFailureDiagnosticsTest extends TestCase
     {
         parent::setUp();
         $this->seedSmartWizard();
+        // These tests assert failure diagnostics, retries and draft/revision safety with minimal fake pages; copy quality is covered in SeoContentQualityTest.
+        config(['ai.website_content_quality' => false]);
     }
 
     /** @param array<int, ?string> $responses one per provider call, in order */

@@ -343,6 +343,9 @@ final class GuidedGenerationCommitService
     private function generateValidateAndCommit(Business $business, Website $website, WebsiteTemplate $template, array $plan, array $aiPlan, WebsiteGuidedGenerationAttempt $attempt, ?string $fenceToken, ?array $customSection = null, ?array $customerFaq = null, ?array $blueprint = null): WebsiteGuidedGenerationAttempt
     {
         $prohibitedClaims = BusinessKnowledgeProfile::where('business_id', $business->id)->value('prohibited_claims') ?? [];
+        // The confirmed SEO facts pages are written from and checked against, and the owner-facing gaps where a fact is missing.
+        $contentFacts = $this->client->contentFacts($business);
+        $contentGaps = SeoContentFacts::gaps($contentFacts, $plan);
 
         if ($blueprint !== null) {
             // The guided builder: complete default copy from the owner's confirmed facts. No AI call, so no budget
@@ -356,7 +359,7 @@ final class GuidedGenerationCommitService
             // AI provider calls stay OUTSIDE any database transaction
             // (Blocker 5) — the only writes below happen after this
             // returns.
-            [$aiPages, $retryCount, $stopReason] = $this->generateAndValidate($business, $aiPlan, $prohibitedClaims, $attempt->idempotency_key, (int) $website->id, (int) $attempt->id);
+            [$aiPages, $retryCount, $stopReason] = $this->generateAndValidate($business, $aiPlan, $prohibitedClaims, $attempt->idempotency_key, (int) $website->id, (int) $attempt->id, $contentFacts, (bool) config('ai.website_content_quality', true));
         }
 
         if ($fenceToken !== null && ! Website::where('id', $website->id)->where('generation_lease_token', $fenceToken)->exists()) {
@@ -400,7 +403,7 @@ final class GuidedGenerationCommitService
             $bound = $this->mediaBinding->bind($website, $merged, $customSection, $customerFaq);
             $bound['pages'] = $this->groundInventedFacts($bound['pages'], $business, $plan);
 
-            DB::transaction(function () use ($business, $website, $template, $bound, $attempt, $retryCount, $fenceToken) {
+            DB::transaction(function () use ($business, $website, $template, $bound, $attempt, $retryCount, $fenceToken, $contentGaps) {
                 // Blocker 4 — real rebuild semantics: lock the Website
                 // row, then replace the ENTIRE draft page set atomically.
                 // If any createPage() call below throws, the whole
@@ -519,7 +522,7 @@ final class GuidedGenerationCommitService
                 $attempt->update([
                     'status' => WebsiteGuidedGenerationAttempt::STATUS_SUCCEEDED,
                     'retry_count' => $retryCount,
-                    'warnings' => $bound['warnings'],
+                    'warnings' => array_values(array_unique(array_merge($bound['warnings'], $contentGaps))),
                     'completed_at' => now(),
                 ]);
             });
@@ -556,10 +559,10 @@ final class GuidedGenerationCommitService
      * @return array{0: ?array, 1: int, 2: ?string} the validated, assembled pages (null on failure), the corrective retries
      *                                              spent, and a customer-safe reason when the failure was a budget/limit rather than a bad batch
      */
-    private function generateAndValidate(Business $business, array $aiPlan, array $prohibitedClaims, string $idempotencyKey, int $websiteId = 0, ?int $attemptId = null): array
+    private function generateAndValidate(Business $business, array $aiPlan, array $prohibitedClaims, string $idempotencyKey, int $websiteId = 0, ?int $attemptId = null, ?array $contentFacts = null, bool $enforceQuality = true): array
     {
         // Size-aware preflight (no AI call): batches are fitted to the real prompt size, or the plan is refused before any spend.
-        $fit = GenerationBatchPlanner::plan($business, $aiPlan, $this->client);
+        $fit = GenerationBatchPlanner::plan($business, $aiPlan, $this->client, null, WebsitePageStrategy::MAX_PAGES_PER_GENERATION, $contentFacts);
         if ($fit['batches'] === null) {
             GenerationBatchDiagnostics::log($websiteId, $attemptId, 0, GenerationBatchDiagnostics::STAGE_PLAN_OVER_BUDGET, count($aiPlan));
 
@@ -592,7 +595,7 @@ final class GuidedGenerationCommitService
                 // Each request is its own provider call with its own key: the attempt's base key, the batch (multi-batch only,
                 // so a single-batch generation keeps its historical key) and the retry number — never a duplicate of another call.
                 $key = $idempotencyKey . ($multi ? ':b' . ($batchIndex + 1) : '') . ':retry' . $try;
-                $pages = $this->client->generate($business, $batchPlan, null, $key, $multi ? $aiPlan : null, array_values(array_filter(array_column($accepted, 'seo_title'), 'is_string')));
+                $pages = $this->client->generate($business, $batchPlan, null, $key, $multi ? $aiPlan : null, array_values(array_filter(array_column($accepted, 'seo_title'), 'is_string')), $contentFacts);
 
                 if ($pages === null) {
                     // Customer message stays generic; the stage is recorded for the operator only.
@@ -621,11 +624,11 @@ final class GuidedGenerationCommitService
 
                     // Generic aliases ("/contact") become the real path of a planned page of the WHOLE site; unresolvable ones are rejected below.
                     $pages = InternalLinkResolver::correct($pages, $aiPlan);
-                    $this->validator->validate($pages, $batchPlan, $prohibitedClaims, $aiPlan);
+                    $this->validator->validate($pages, $batchPlan, $prohibitedClaims, $aiPlan, $enforceQuality ? $contentFacts : null);
 
                     if ($accepted !== []) {
                         // Cross-batch: duplicate metadata / near-identical area copy against everything accepted so far.
-                        $this->validator->validate(array_merge($accepted, $pages), array_merge($acceptedPlan, $batchPlan), $prohibitedClaims, $aiPlan);
+                        $this->validator->validate(array_merge($accepted, $pages), array_merge($acceptedPlan, $batchPlan), $prohibitedClaims, $aiPlan, $enforceQuality ? $contentFacts : null);
                     }
 
                     $batchPages = $pages;
@@ -652,7 +655,7 @@ final class GuidedGenerationCommitService
             // The assembled website against the COMPLETE original plan: every page present exactly once, and the cross-page
             // checks (duplicate metadata, duplicate/near-identical area pages, broken links) over the whole site.
             try {
-                $this->validator->validate($accepted, $aiPlan, $prohibitedClaims);
+                $this->validator->validate($accepted, $aiPlan, $prohibitedClaims, null, $enforceQuality ? $contentFacts : null);
             } catch (Throwable $e) {
                 GenerationBatchDiagnostics::log($websiteId, $attemptId, 0, GenerationBatchDiagnostics::STAGE_COMPLETE_SITE_INVALID, count($aiPlan), ['returned_pages' => count($accepted)], $e instanceof ValidationException ? array_keys($e->errors()) : [], $e instanceof ValidationException ? null : $e);
 

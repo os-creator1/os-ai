@@ -40,6 +40,8 @@ class BatchedGuidedGenerationTest extends TestCase
     {
         parent::setUp();
         $this->seedSmartWizard();
+        // These tests are about batching mechanics with minimal fake pages; content quality is covered in SeoContentQualityTest.
+        config(['ai.website_content_quality' => false]);
     }
 
     // ------------------------------------------------------------------ fixtures

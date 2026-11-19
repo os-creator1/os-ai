@@ -78,13 +78,14 @@ class GuidedWebsiteGenerationClient
      * @param  ?string  $idempotencyKey  a stable, durable identity for this attempt (GuidedGenerationCommitService's own material-hash idempotency key) — passed straight through onto the AiRequest/ledger entry instead of a meaningless-for-dedup fresh uuid
      * @param  ?array  $sitePlan  the COMPLETE site plan when $plan is only one batch of it (bounded multi-batch generation): its
      *         page paths are the valid internal link targets, so a page may link to one written in another batch. Null = $plan is the whole site.
+     * @param  ?array  $contentFacts  SeoContentFacts::build() — the bounded primary market/service/services/areas the pages must reflect; built here when null
      * @param  array<int, string>  $usedSeoTitles  SEO titles already written for earlier batches, so this batch avoids duplicating them
      * @return ?array<int, array{page_key: string, title: string, seo_title: ?string, meta_description: ?string, sections: array}> null on any refusal/failure/malformed output
      */
-    public function generate(Business $business, array $plan, ?int $actorUserId = null, ?string $idempotencyKey = null, ?array $sitePlan = null, array $usedSeoTitles = []): ?array
+    public function generate(Business $business, array $plan, ?int $actorUserId = null, ?string $idempotencyKey = null, ?array $sitePlan = null, array $usedSeoTitles = [], ?array $contentFacts = null): ?array
     {
         $this->lastDiagnostic = null;
-        $messages = $this->buildMessages($business, $plan, $sitePlan, self::promptSafeTitles($usedSeoTitles));
+        $messages = $this->buildMessages($business, $plan, $sitePlan, self::promptSafeTitles($usedSeoTitles), null, $contentFacts);
 
         $raw = $this->client->complete($messages, $business, $actorUserId, self::MAX_OUTPUT_TOKENS, $idempotencyKey);
         if ($raw === null) {
@@ -143,11 +144,11 @@ class GuidedWebsiteGenerationClient
      *
      * @param  ?array<string, mixed>  $facts  canonicalFacts() when the caller already holds them (avoids repeated queries)
      */
-    public function estimateInputTokens(Business $business, array $batchPlan, array $sitePlan, int $priorPages = 0, ?array $facts = null): int
+    public function estimateInputTokens(Business $business, array $batchPlan, array $sitePlan, int $priorPages = 0, ?array $facts = null, ?array $contentFacts = null): int
     {
         $titles = $priorPages > 0 ? array_fill(0, min($priorPages, self::MAX_USED_TITLES), str_repeat('x', self::MAX_USED_TITLE_JSON - 2)) : [];
 
-        return app(\App\Library\Ai\AiModelRouter::class)->estimateInputTokens($this->buildMessages($business, $batchPlan, $sitePlan, $titles, $facts));
+        return app(\App\Library\Ai\AiModelRouter::class)->estimateInputTokens($this->buildMessages($business, $batchPlan, $sitePlan, $titles, $facts, $contentFacts));
     }
 
     /**
@@ -181,8 +182,20 @@ class GuidedWebsiteGenerationClient
      * @param  array  $plan  WebsitePageStrategy::buildPlan()'s output (one batch of it in multi-batch generation)
      * @return array<int, array{role: string, content: string}>
      */
-    private function buildMessages(Business $business, array $plan, ?array $sitePlan = null, array $usedSeoTitles = [], ?array $facts = null): array
+    /**
+     * The bounded confirmed SEO facts for a Business (primary market, primary service, services, event types, areas, differentiators).
+     *
+     * @param  ?array<string, mixed>  $canonicalFacts
+     * @return array<string, mixed>
+     */
+    public function contentFacts(Business $business, ?array $canonicalFacts = null): array
     {
+        return SeoContentFacts::build($business, app(\App\Library\Website\WebsitePageStrategy::class), $canonicalFacts ?? $this->canonicalFacts($business));
+    }
+
+    private function buildMessages(Business $business, array $plan, ?array $sitePlan = null, array $usedSeoTitles = [], ?array $facts = null, ?array $contentFacts = null): array
+    {
+
         // Link targets always come from the COMPLETE site plan; with no site plan the request is the whole site (unchanged prompt).
         $isBatch = $sitePlan !== null && count($sitePlan) > count($plan);
         $linkPlan = $sitePlan ?? $plan;
@@ -239,7 +252,7 @@ class GuidedWebsiteGenerationClient
         if (collect($plan)->contains(fn ($page) => is_array($page['entity'] ?? null) && isset($page['entity']['area']))) {
             array_splice($instructions, -1, 0, [
                 'A plan entry whose entity has an "area" is a service-area page. Write it only for people in THAT area: name the area in the heading and body, and make every area page read genuinely differently from the others (different structure and wording, never the same copy with the area name swapped).',
-                'On a service-area page use only the given facts (the "area", its "nearby_areas", the "services", "business_home_city"). Never invent landmarks, neighborhoods, distances, travel times, local statistics, customers or reviews.',
+                'On a service-area page use only the given facts (the "area", its "local_facts" (confirmed venues and travel/setup details), its "nearby_areas", the "services", "business_home_city"). Never invent landmarks, neighborhoods, distances, travel times, local statistics, customers or reviews.',
             ]);
         }
 
@@ -253,11 +266,37 @@ class GuidedWebsiteGenerationClient
             ]);
         }
 
+        $facts = $facts ?? $this->canonicalFacts($business);
+        $siteContext = SeoContentFacts::promptContext($contentFacts ?? $this->contentFacts($business, $facts));
+        $pageTypes = collect($plan)->pluck('page_type')->all();
+
+        // Content-quality guidance, added only for the page types this request contains (keeps every other request small).
+        $quality = ['Every heading must say something specific and useful; never use generic headings such as "Our Amazing Services", "An Unforgettable Experience", "Discover the Magic" or "Capture Every Moment", and never repeat a heading on one page.'];
+
+        if (in_array('home', $pageTypes, true)) {
+            $quality[] = 'HOME PAGE: the hero heading (the page H1) must say, in natural language, what the business does and where: the primary_service and primary_market from "site_context" (for example "<primary service> Rental in <city>, <region>"). Put any brand tagline in the hero subheading, never as the H1. After the hero include informative sections: what the business offers and what customers actually receive; a "services" section naming the real services from site_context (never an invented one); real differentiators from confirmed_facts only (never invent any); where it works (areas_served from site_context); and a button to the contact/booking page path. Use a "testimonials" section only when real testimonials are in confirmed_facts.';
+        }
+
+        if (in_array('service_detail', $pageTypes, true) || in_array('event_detail', $pageTypes, true)) {
+            $quality[] = 'SERVICE/EVENT PAGES: the hero heading must name that exact service or event type (its entity "name") with the natural search words someone would use, and the page should connect it to the primary_market from site_context. Include at least two informative sections: what it is and who or which events it suits, and what is included, taken from that page\'s entity description and confirmed_facts only (never invent features, prices, guarantees, awards or past customers). Finish with one button to the contact/booking page path. Write each page so it clearly differs from the others: different structure, different details.';
+        }
+
+        if (collect($plan)->contains(fn ($page) => is_array($page['entity'] ?? null) && isset($page['entity']['area']))) {
+            $quality[] = 'AREA PAGES: use the confirmed "local_facts" of that area: name the venues given and state the travel/setup information given, and nothing else about the place. End with one button to the contact/booking page path.';
+        }
+
+        array_splice($instructions, -1, 0, $quality);
+
         $userPayload = [
             'business_name' => $business->name,
+
             'plan' => $planForPrompt,
-            'confirmed_facts' => $facts ?? $this->canonicalFacts($business),
+            'confirmed_facts' => $facts,
         ];
+
+        if ($siteContext !== []) {
+            $userPayload['site_context'] = $siteContext;
+        }
 
         if ($nicheDefaults !== null) {
             $userPayload['niche_defaults'] = $nicheDefaults;
