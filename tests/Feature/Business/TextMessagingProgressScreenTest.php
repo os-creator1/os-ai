@@ -225,4 +225,27 @@ class TextMessagingProgressScreenTest extends TestCase
             'contact_first_name' => 'Pat', 'contact_last_name' => 'Owner', 'message_volume' => '1,000', 'opt_in_image_url' => 'https://example.com/opt-in.png', 'brand_vertical' => 'ENTERTAINMENT',
         ], $overrides);
     }
+
+    public function test_toll_free_carrier_review_shows_the_four_stage_timeline_summary_and_port_out(): void
+    {
+        $number = (new \App\Models\BusinessMessagingNumber)->forceFill(['phone_number' => '+18446980765', 'monthly_cost_micro' => 1_100_000, 'cost_currency' => 'USD']);
+        $number->id = 7;
+        $registration = (new BusinessMessagingRegistration)->forceFill(['status' => 'pending', 'number_type' => 'toll_free', 'campaign_status_checked_at' => now()->subMinutes(5)]);
+
+        $html = view('customer.settings.text-messaging._tollfree-review', [
+            'registration' => $registration,
+            'phoneNumber' => '+18446980765',
+            'retainedNumbers' => collect([$number]),
+            'portOutRequestsByNumberId' => [],
+            'workspaceUid' => 'w1',
+            'businessUid' => 'b1',
+        ])->render();
+
+        $this->assertStringContainsString('Step 3 of 4', $html);
+        foreach (['Toll-free number', 'Toll-free verification', 'Carrier review', 'Ready to text', 'Purchased · +1 (844) 698-0765', 'Pending review', 'Toll-free', 'USD 1.10', 'Billing', 'Last checked 5 minutes ago', 'Refresh status', 'Port this number out any time.', 'Request to port this number out'] as $text) {
+            $this->assertStringContainsString($text, $html, $text);
+        }
+        $this->assertMatchesRegularExpression('#data-role="can-send"[^>]*>\s*<span class="sr-chip">Not yet#', $html);
+        $this->assertStringContainsString('name="number_id" value="7"', $html);
+    }
 }

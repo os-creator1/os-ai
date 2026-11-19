@@ -311,3 +311,13 @@ html.dark-layout .pc-tech { background: var(--color-surface-secondary); }
 .tm-summary dd .sr-chip { font-weight: 500; }
 @media (max-width: 991.98px) { .tm-grid { grid-template-columns: minmax(0, 1fr); } }
 @media (max-width: 575.98px) { .tm-card__head, .tm-steps, .tm-summary { padding-inline: var(--space-4); } .tm-card__foot { margin-inline: var(--space-4); } }
+
+/* Toll-free carrier review: right column stacks the summary and a compact port-out card. */
+.tm-side { display: grid; gap: var(--space-4); align-content: start; min-width: 0; }
+.tm-summary dd a { font-weight: 500; white-space: nowrap; }
+.tm-port { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); padding: var(--space-3) var(--space-5); }
+.tm-port + .tm-port { border-top: 1px solid var(--color-border); }
+.tm-port__title { margin: 0; font-size: .875rem; font-weight: 600; color: var(--color-text-primary); }
+.tm-port__text p { margin: 2px 0 0; font-size: .75rem; color: var(--color-text-muted); }
+.tm-port .btn { white-space: nowrap; }
+@media (max-width: 575.98px) { .tm-port { padding-inline: var(--space-4); } }
