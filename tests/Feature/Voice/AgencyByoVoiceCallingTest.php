@@ -257,20 +257,31 @@ class AgencyByoVoiceCallingTest extends TestCase
     public function test_switching_between_platform_inbound_and_byo_sessions_never_advertises_the_wrong_account(): void
     {
         config(['messaging.voice.inbound.enabled' => true]);
-        $presence = fn () => $this->postJson($this->url('presence'));
+        // Laravel's unnamed throttle:N,M keys on the user alone, so every throttled voice route shares one counter. The
+        // production limits stay as they are; the test just clears the counter between its steps (it is not a rate-limit test).
+        $presence = function () {
+            \Illuminate\Support\Facades\Cache::flush();
+
+            return $this->postJson($this->url('presence'));
+        };
+        $session = function () {
+            \Illuminate\Support\Facades\Cache::flush();
+
+            return $this->postJson($this->url('browser-session'))->assertOk();
+        };
         $freshPlatform = fn () => BusinessVoiceBrowserCredential::query()->where('agency_prospecting_channel_id', 0)->whereNotNull('presence_at')->count();
         $freshByo = fn () => BusinessVoiceBrowserCredential::query()->where('agency_prospecting_channel_id', $this->channel->id)->whereNotNull('presence_at')->count();
 
         // 1. Platform-managed (voice off): the browser signs into the platform credential and is available for inbound.
         $this->channel->forceFill(['voice_enabled' => false])->save();
-        $this->postJson($this->url('browser-session'))->assertOk();
+        $session();
         $presence()->assertOk();
         $this->assertSame(1, $freshPlatform());
 
         // 2. The agency's account is selected: the browser signs into the agency credential. The platform credential's
         //    presence is withdrawn at once, and the heartbeat now belongs to the agency credential only.
         $this->channel->forceFill(['voice_enabled' => true])->save();
-        $this->postJson($this->url('browser-session'))->assertOk();
+        $session();
         $this->assertSame(0, $freshPlatform(), 'A platform credential must not stay "online" while the browser is on the agency account.');
         $presence()->assertOk();
         $this->assertSame(0, $freshPlatform());
@@ -283,7 +294,7 @@ class AgencyByoVoiceCallingTest extends TestCase
         $this->assertSame(0, $freshPlatform());
 
         // 4. A fresh session signs the browser into the platform credential again; the agency one is withdrawn.
-        $this->postJson($this->url('browser-session'))->assertOk();
+        $session();
         $presence()->assertOk();
         $this->assertSame(1, $freshPlatform());
         $this->assertSame(0, $freshByo());

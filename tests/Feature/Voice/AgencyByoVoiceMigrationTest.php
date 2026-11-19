@@ -66,10 +66,12 @@ class AgencyByoVoiceMigrationTest extends TestCase
             'expires_at' => now()->addDays(5), 'created_at' => now(), 'updated_at' => now()];
     }
 
+    /** @param string|null $voiceKey only for POST-migration rows: the column does not exist in the legacy schema */
     private function channelRow(string $sender, int $ws, ?string $voiceKey = null): array
     {
         return ['uid' => (string) Str::uuid(), 'workspace_id' => $ws, 'sending_server_id' => $ws, 'provider' => 'Telnyx', 'sender_number' => $sender,
-            'sender_key' => $sender, 'status' => 'active', 'voice_number_key' => $voiceKey, 'created_at' => now(), 'updated_at' => now()];
+            'sender_key' => $sender, 'status' => 'active', 'created_at' => now(), 'updated_at' => now()]
+            + ($voiceKey !== null ? ['voice_number_key' => $voiceKey] : []);
     }
 
     public function test_the_migration_applies_cleanly_over_existing_platform_rows_without_changing_them(): void
