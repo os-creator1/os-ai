@@ -2,6 +2,7 @@
 
 namespace App\Listeners\Outreach;
 
+use App\Enums\AgencyProspecting\AgencyProspectCampaignStatus;
 use App\Enums\AgencyProspecting\AgencyProspectStage;
 use App\Events\Conversation\InboundMessageReceived;
 use App\Jobs\Outreach\OutreachRespondJob;
@@ -135,6 +136,9 @@ class HandleOutreachInboundMessage implements ShouldQueue
             ->whereIn('campaign_id', AgencyProspectCampaign::query()
                 ->where('workspace_id', $prospect->workspace_id)
                 ->where('sending_mode', AgencyProspectCampaign::MODE_MANAGED)
+                // An ended campaign retains history but must never capture
+                // future inbound replies for a newly started campaign.
+                ->whereIn('status', [AgencyProspectCampaignStatus::Active->value, AgencyProspectCampaignStatus::Paused->value])
                 ->select('id'))
             ->orderByDesc('id')
             ->first();
