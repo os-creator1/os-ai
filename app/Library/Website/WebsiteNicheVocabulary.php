@@ -83,6 +83,24 @@ final class WebsiteNicheVocabulary
         return null;
     }
 
+    /** 'about' | 'faq' | 'contact' for an address the ORIGINAL generator or a niche vocabulary (not the neutral one) published, else null. */
+    private static function generatorRoleForSlug(string $slug): ?string
+    {
+        $role = array_search($slug, self::DEFAULT_SLUGS, true);
+
+        if ($role !== false) {
+            return $role;
+        }
+
+        foreach (self::NICHES as $key => $niche) {
+            if ($key !== self::NEUTRAL && ($role = array_search($slug, $niche['slugs'], true)) !== false) {
+                return $role;
+            }
+        }
+
+        return null;
+    }
+
     /** Owner-facing label for the site-wide call to action that leads to the contact page. */
     public static function contactCtaLabel(string $slug, bool $hasForm): string
     {
@@ -147,7 +165,9 @@ final class WebsiteNicheVocabulary
                 continue;
             }
 
-            $role = \App\Library\Website\Seo\WebsitePageIntent::roleOf(['role' => $page->page_role, 'slug' => (string) $page->slug, 'is_home' => false]);
+            // A page a generation stamped with its role, else an address only the generator itself has used (never a plain
+            // "/faq" or "/contact" an owner made by hand, which keeps being replaced — with a redirect — as before).
+            $role = in_array($page->page_role, ['about', 'faq', 'contact'], true) ? $page->page_role : self::generatorRoleForSlug((string) $page->slug);
 
             if (in_array($role, ['about', 'faq', 'contact'], true) && ! isset($current[$role])) {
                 $current[$role] = (string) $page->slug;
