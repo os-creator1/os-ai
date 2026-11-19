@@ -93,8 +93,27 @@ final class OutreachManualStepFollowUp
 
                 $sequence = OutreachSequence::forWorkspace($workspace);
                 $sent = $sequence->sentIdsFor($member);
+                $evidence = $sequence->evidenceFor($member);
+
+                // A confirmed manual SMS can satisfy a reply step even when the next
+                // step is another REPLY, not a timer. Persist the exact evidence now,
+                // before later script edits can recycle this SMS for a different step.
+                // Do not change progress for unrelated manual messages.
+                if (! in_array('C' . $message->id, $evidence, true)) {
+                    return null;
+                }
+
+                $progress = [
+                    'sequence_sent_ids' => $sent,
+                    'sequence_evidence' => $evidence,
+                    'last_outbound_at' => $member->last_outbound_at === null || $member->last_outbound_at->lt($sentAt)
+                        ? $sentAt : $member->last_outbound_at,
+                ];
+
                 $next = $sequence->nextTimeStep($sent);
                 if ($next === null) {
+                    $member->update($progress);
+
                     return null;
                 }
 
@@ -114,6 +133,8 @@ final class OutreachManualStepFollowUp
                         (string) $message->message,
                         OutreachScriptRenderer::render(OutreachScriptTokens::canonicalise((string) $previous['body']), $workspace, $prospect)
                     )) {
+                    $member->update($progress);
+
                     return null;
                 }
 
@@ -123,21 +144,21 @@ final class OutreachManualStepFollowUp
                 // Once the new predecessor is persisted, repeated callbacks cannot move its timer.
                 if (self::timerPending($member)
                     && in_array($previous['id'], (array) $member->sequence_sent_ids, true)) {
+                    $member->update($progress);
+
                     return null;
                 }
 
                 // The legacy follow-up that was already sent or cancelled is never re-armed.
                 if ($next['id'] === OutreachSequence::LEGACY_FOLLOWUP
                     && ($member->followup_sent_at !== null || $member->followup_cancelled_at !== null)) {
+                    $member->update($progress);
+
                     return null;
                 }
 
                 $when = $sentAt->copy()->addHours((int) $next['delay_hours']);
-                $updates = [
-                    'sequence_sent_ids' => $sent,
-                    'sequence_evidence' => $sequence->evidenceFor($member) ?: null,
-                    'last_outbound_at' => $member->last_outbound_at === null || $member->last_outbound_at->lt($sentAt)
-                        ? $sentAt : $member->last_outbound_at,
+                $updates = $progress + [
                     // Arm exactly as a scripted send does: a fresh pending timer, historical state cleared.
                     'followup_at' => $when,
                     'followup_sent_at' => null,

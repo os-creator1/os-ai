@@ -1149,6 +1149,32 @@ class OutreachSequenceContinuityTest extends TestCase
         $this->assertNotNull($this->member($member)->followup_at, 'T is scheduled by the canonical Outreach send pipeline.');
     }
 
+
+    public function test_manual_reply_without_timed_successor_persists_evidence_before_a_script_edit(): void
+    {
+        [$workspace, $business, $member] = $this->started('Unrelated opener.');
+        $this->aba($workspace);
+
+        $manual = $this->handSend($business, 'Alpha text.', 'sent');
+        $this->reconcile($manual); // a1 is delivered, but next is reply step b (not a timer)
+
+        $persisted = $this->member($member);
+        $this->assertSame(['a1'], $persisted->sequence_sent_ids);
+        $this->assertSame(['a1' => 'C' . $manual->id], $persisted->sequence_evidence);
+        $this->assertNull($persisted->followup_at);
+
+        $this->aba($workspace, ['a1', 'b', 'a3'], 'Alpha text, reworded.');
+        $this->assertSame('b', $this->nextStepId($workspace, $member));
+        $this->assertNotContains('a3', OutreachSequence::forWorkspace($workspace)->deliveredByContent($member->fresh()));
+
+        $this->inbound($business, 'ok');
+        $this->inbound($business, 'ok');
+        $this->inbound($business, 'ok');
+
+        $this->assertSame(['Unrelated opener.', 'Beta text.', 'Alpha text.'], $this->sentBodies(), 'B then final A each send once; the hand-sent first A is never repeated.');
+        $this->assertSame(['a1', 'b', 'a3'], $this->member($member)->sequence_sent_ids);
+    }
+
     public function test_recovered_successful_manual_retry_arms_timed_successor_after_commit(): void
     {
         [$workspace, $business, $member] = $this->started('Hello! Quick question.');
