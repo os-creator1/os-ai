@@ -151,6 +151,15 @@ final class PageContentQuality
             }
         }
 
+        // The fixed informational pages must say something: a headline alone is not a services overview, an About or an FAQ page.
+        if (in_array($type, ['services_overview', 'about', 'faq'], true) && count($contentSections) < 1) {
+            $problems[] = "Page '{$key}' has only a headline; add its informative content (" . match ($type) {
+                'services_overview' => 'the list of the real services',
+                'about' => 'who the business is, from the confirmed facts',
+                default => 'the questions and answers',
+            } . ').';
+        }
+
         // One clear conversion path, wherever a page is about something a visitor can book.
         $bookable = in_array($type, ['home', 'service_detail', 'event_detail'], true) || isset($entity['area']);
         if ($contactPath !== null && $bookable && ! self::hasContactLink($sections, $contactPath)) {

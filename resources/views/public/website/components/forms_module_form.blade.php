@@ -17,5 +17,9 @@
         {{-- Only the business's website LEAD form reports conversions (the loader ignores every other frame). --}}
         @php($lead = ! ($isPreview ?? false) && (app(\App\Library\Website\Forms\WebsiteLeadFormResolver::class)->resolve($website->business)['uid'] ?? null) === $embed['uid'])
         @include('public.forms._embed', ['embed' => $embed, 'lead' => $lead])
+        {{-- Sizes each form frame to its form (see public/js/website-form-frame.js); the fixed height stays as the no-script fallback. --}}
+        @once
+            <script src="{{ asset('js/website-form-frame.js') }}?v={{ is_file(public_path('js/website-form-frame.js')) ? filemtime(public_path('js/website-form-frame.js')) : 1 }}" defer></script>
+        @endonce
     </div>
 @endif

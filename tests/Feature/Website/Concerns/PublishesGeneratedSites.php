@@ -106,6 +106,18 @@ trait PublishesGeneratedSites
                     $copy('Booking ' . $label, 'Tell us the date and venue to confirm availability. Reference ' . substr($unique, 0, 20)),
                 ];
                 break;
+            case $entry['page_type'] === 'services_overview':
+                $sections = [
+                    $hero('Our services' . $in),
+                    ['type' => 'services', 'data' => ['heading' => 'What we offer', 'items' => array_map(fn ($service) => ['name' => $service['name'], 'description' => 'Book ' . $service['name'] . ' for your event.', 'price_label' => null], $entry['entity']['services'] ?? [])]],
+                ];
+                break;
+            case $entry['page_type'] === 'about':
+                $sections = [$hero('About ' . ($payload['site_context']['business_name'] ?? 'us')), $copy('Who we are', 'We are a local business' . ($city === null ? '' : ' based in ' . $city) . '. ' . $unique)];
+                break;
+            case $entry['page_type'] === 'faq':
+                $sections = [$hero('Frequently asked questions'), ['type' => 'faq', 'data' => ['heading' => 'Before you book', 'items' => [['question' => 'How do I check availability?', 'answer' => 'Send the date and venue through the inquiry form and we will confirm. ' . substr($unique, 0, 12)]]]]];
+                break;
             default:
                 $sections = [$hero($label . ' ' . substr($unique, 0, 8))];
         }

@@ -572,6 +572,9 @@ final class MediaBindingService
             if ($embed !== null) {
                 // The installed niche lead form: only the stable Website-source deployment uid is stored, never a URL or markup.
                 $pages[$index]['sections'][] = ['type' => 'forms_module_form', 'data' => ['heading' => $dog ? 'Request a stay' : 'Check availability', 'forms_module_deployment_uid' => $embed['uid']]];
+                // Beside the form, the business's real phone and email (a visitor who prefers to call, and the confirmed
+                // facts the site's LocalBusiness data may then state): the same shape as the benchmark's inquiry page.
+                $pages[$index]['sections'] = $this->withContactFallback($pages[$index]['sections']);
 
                 continue;
             }

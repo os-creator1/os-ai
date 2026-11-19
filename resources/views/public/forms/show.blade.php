@@ -15,5 +15,6 @@
         'preview' => false,
     ])
 </main>
+@include('public.forms._frame-height')
 </body>
 </html>

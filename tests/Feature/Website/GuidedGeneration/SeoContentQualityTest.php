@@ -141,6 +141,15 @@ class SeoContentQualityTest extends TestCase
                     $text('Booking ' . $name, 'Tell us the date and venue to confirm availability. Reference ' . substr($unique, 0, 20)),
                 ];
                 break;
+            case 'services_overview':
+                $sections = [$hero('Our services' . $where), ['type' => 'services', 'data' => ['heading' => 'What we offer', 'items' => array_map(fn ($service) => ['name' => $service['name'], 'description' => null, 'price_label' => null], $entry['entity']['services'] ?? [])]]];
+                break;
+            case 'about':
+                $sections = [$hero('About us'), $text('Who we are', 'A local business' . $where . '. ' . $unique)];
+                break;
+            case 'faq':
+                $sections = [$hero('Frequently asked questions'), ['type' => 'faq', 'data' => ['heading' => 'Before you book', 'items' => [['question' => 'How do I check availability?', 'answer' => 'Send the date and venue and we will confirm. ' . substr($unique, 0, 12)]]]]];
+                break;
             default:
                 $sections = [$hero($this->labelOf($entry) . ' ' . substr($unique, 0, 8))];
         }
