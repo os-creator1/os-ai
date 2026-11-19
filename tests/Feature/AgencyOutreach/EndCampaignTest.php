@@ -159,6 +159,10 @@ class EndCampaignTest extends TestCase
     {
         Queue::fake();
         $a = $this->outreachAgency('Alpha');
+        // The generic UI fixture generates 1555... digits, which are not a
+        // valid NANP number to libphonenumber. Inbound attribution correctly
+        // rejects them; use a canonical, valid test number for this case.
+        $a['prospect']->update(['phone' => '12025550101']);
         $a['campaign']->update(['status' => 'ended']);
 
         $to = \App\Library\Automation\Workflow\Triggers\MessageReceivedTriggerSource::normalizePhone(
