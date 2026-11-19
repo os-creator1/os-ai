@@ -1205,6 +1205,39 @@ class OutreachSequenceContinuityTest extends TestCase
         $this->assertSame(['a', 't'], $this->member($member)->sequence_sent_ids);
     }
 
+
+    public function test_manual_step_in_newer_sender_conversation_arms_timer_even_if_member_stays_linked_to_old_thread(): void
+    {
+        [$workspace, $business, $member] = $this->started('Unrelated opener.');
+        OutreachScriptManager::save($workspace, ['sequence_steps' => [
+            $this->step('a', 'Alpha text.'),
+            ['id' => 't', 'body' => 'Nudge after 2h.', 'advance_on' => 'time', 'delay_hours' => 2, 'enabled' => true],
+        ]]);
+
+        $old = ChatBox::query()->where('business_id', $business->id)
+            ->where('to', '12025551000')->orderBy('id')->firstOrFail();
+        $new = app(ConversationHistoryWriter::class)
+            ->conversationFor($business, '+14155559876', '12025551000');
+        $this->assertNotNull($new);
+        $new->save();
+        $this->assertNotEquals($old->id, $new->id);
+        $this->assertSame((int) $old->id, (int) $this->member($member)->chat_box_id);
+
+        $manual = ChatBoxMessage::create([
+            'box_id' => $new->id, 'message' => 'Alpha text.', 'sms_type' => 'plain',
+            'direction' => 'outgoing', 'send_by' => 'from',
+            'source' => ConversationHistoryWriter::SOURCE_CONVERSATIONS, 'send_status' => 'sent',
+        ]);
+        $this->assertContains('a', OutreachSequence::forWorkspace($workspace)->deliveredByContent($member->fresh()));
+
+        $this->reconcile($manual);
+        $armed = $this->member($member);
+        $this->assertSame(['a'], $armed->sequence_sent_ids);
+        $this->assertSame('C' . $manual->id, $armed->sequence_evidence['a'] ?? null);
+        $this->assertNotNull($armed->followup_at, 'The new conversation and inference must agree on the same delivered SMS.');
+        $this->assertSame((int) $old->id, (int) $armed->chat_box_id, 'Existing conversation link is intentionally left unchanged.');
+    }
+
     public function test_recovered_successful_manual_retry_arms_timed_successor_after_commit(): void
     {
         [$workspace, $business, $member] = $this->started('Hello! Quick question.');

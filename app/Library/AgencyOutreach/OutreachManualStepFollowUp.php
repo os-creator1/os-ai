@@ -42,10 +42,13 @@ final class OutreachManualStepFollowUp
             return;
         }
 
-        // No contact-number guess and no cross-tenant scan: only members already linked
-        // to THIS Business's actual Conversation may be reconciled.
+        // Infer from the SAME canonical latest Business+prospect conversation as
+        // OutreachSequence::conversationMessages(). A member's stored chat_box_id
+        // may deliberately remain on an older sender-number thread after rotation.
+        // Scope by owning Workspace and the canonical prospect number, then verify
+        // the resolved conversation again under the member lock.
         $ids = AgencyProspectCampaignMember::query()
-            ->where('chat_box_id', $box->id)
+            ->whereHas('prospect', fn ($q) => $q->where('phone', (string) $box->to))
             ->where('workspace_id', (int) $business->workspace_id)
             ->whereIn('campaign_id', AgencyProspectCampaign::query()
                 ->where('sending_mode', AgencyProspectCampaign::MODE_MANAGED)
@@ -62,7 +65,6 @@ final class OutreachManualStepFollowUp
             $due = DB::transaction(function () use ($id, $message, $business): ?\Illuminate\Support\Carbon {
                 $member = AgencyProspectCampaignMember::query()->whereKey($id)->lockForUpdate()->first();
                 if ($member === null || $member->isTerminal()
-                    || (int) $member->chat_box_id !== (int) $message->box_id
                     || (int) $member->workspace_id !== (int) $business->workspace_id
                     || ! in_array($member->campaign?->status, [AgencyProspectCampaignStatus::Active, AgencyProspectCampaignStatus::Paused], true)
                     || ! $member->campaign->isManaged()) {
@@ -87,7 +89,8 @@ final class OutreachManualStepFollowUp
                 $workspace = $member->workspace;
                 $prospect = $member->prospect;
                 if ($workspace === null || $prospect === null
-                    || (int) (AgencyOutreachBusinessResolver::forWorkspace($workspace)?->id ?? 0) !== (int) $business->id) {
+                    || (int) (AgencyOutreachBusinessResolver::forWorkspace($workspace)?->id ?? 0) !== (int) $business->id
+                    || (int) (app(OutreachConversationLinker::class)->conversationFor($business, $prospect)?->id ?? 0) !== (int) $message->box_id) {
                     return null;
                 }
 
