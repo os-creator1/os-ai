@@ -1080,6 +1080,35 @@ class OutreachSequenceContinuityTest extends TestCase
     }
 
 
+
+    public function test_quick_send_and_automation_history_do_not_skip_outreach_reply_or_its_timer(): void
+    {
+        [$workspace, $business, $member] = $this->started('Unrelated opener.');
+        OutreachScriptManager::save($workspace, ['sequence_steps' => [
+            $this->step('a', 'Alpha text.'),
+            ['id' => 't', 'body' => 'Nudge after 2h.', 'advance_on' => 'time', 'delay_hours' => 2, 'enabled' => true],
+        ]]);
+        $box = ChatBox::query()->where('business_id', $business->id)->where('to', '12025551000')->firstOrFail();
+
+        foreach ([ConversationHistoryWriter::SOURCE_QUICK_SEND, 'automation'] as $source) {
+            ChatBoxMessage::create([
+                'box_id' => $box->id, 'message' => 'Alpha text.', 'sms_type' => 'plain',
+                'direction' => 'outgoing', 'send_by' => 'from', 'source' => $source,
+                'send_status' => 'sent',
+            ]);
+        }
+
+        $sequence = OutreachSequence::forWorkspace($workspace);
+        $this->assertNotContains('a', $sequence->deliveredByContent($member->fresh()), 'External sends cannot skip the step without arming its timer.');
+        $this->assertSame('a', $sequence->nextReplyStep($sequence->sentIdsFor($member->fresh()))['id'] ?? null);
+
+        $this->inbound($business, 'ok');
+
+        $this->assertSame(['Unrelated opener.', 'Alpha text.'], $this->sentBodies(), 'Outreach actually sends A once.');
+        $this->assertSame(['a'], $this->member($member)->sequence_sent_ids);
+        $this->assertNotNull($this->member($member)->followup_at, 'T is scheduled by the canonical Outreach send pipeline.');
+    }
+
     public function test_recovered_successful_manual_retry_arms_timed_successor_after_commit(): void
     {
         [$workspace, $business, $member] = $this->started('Hello! Quick question.');

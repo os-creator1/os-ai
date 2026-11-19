@@ -3,6 +3,7 @@
 namespace App\Library\AgencyOutreach;
 
 use App\Enums\AgencyProspecting\AgencyProspectStage;
+use App\Library\Conversations\ConversationHistoryWriter;
 use App\Models\AgencyProspect;
 use App\Models\AgencyProspectCampaignMember;
 use App\Models\AgencyProspectMessage;
@@ -581,6 +582,17 @@ final class OutreachSequence
             ->leftJoin('business_messaging_operations as op', 'op.id', '=', 'chat_box_messages.business_messaging_operation_id')
             ->where('chat_box_messages.box_id', $box->id)
             ->where('chat_box_messages.direction', Reports::DIRECTION_OUTGOING)
+            // Only a person sending from Conversations is eligible to satisfy a
+            // reply step by content. Quick Send/API/automation/campaign history can
+            // be confirmed without any hook that schedules its timed successor.
+            // Preserve truly legacy manual rows with no send-status or operation.
+            ->where(function ($q): void {
+                $q->where('chat_box_messages.source', ConversationHistoryWriter::SOURCE_CONVERSATIONS)
+                    ->orWhere(fn ($legacy) => $legacy
+                        ->whereNull('chat_box_messages.source')
+                        ->whereNull('chat_box_messages.send_status')
+                        ->whereNull('chat_box_messages.business_messaging_operation_id'));
+            })
             // The time a message was CONFIRMED sent (the accepted attempt's operation), never the
             // bubble's creation time: a failed message retried later was delivered at the retry.
             ->whereRaw('COALESCE(op.occurred_at, chat_box_messages.created_at) >= ?', [\Illuminate\Support\Carbon::parse($since)->toDateTimeString()])
