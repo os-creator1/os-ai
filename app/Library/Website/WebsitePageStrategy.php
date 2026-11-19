@@ -652,7 +652,8 @@ final class WebsitePageStrategy
 
         return [
             // A niche with its own vocabulary (Dog Boarding) names its fixed pages and service addresses itself.
-            'plan' => WebsiteNicheVocabulary::apply($plan, $template->niche_key),
+            // The niche's own (or the neutral) addresses for a new site; an established site keeps the addresses it already has.
+            'plan' => WebsiteNicheVocabulary::keepEstablishedAddresses(WebsiteNicheVocabulary::apply($plan, WebsiteNicheVocabulary::nicheFor($business, $template->niche_key)), $website),
             'decisions' => $decisions,
             'areas' => [
                 'saved' => count($areaCandidates),
