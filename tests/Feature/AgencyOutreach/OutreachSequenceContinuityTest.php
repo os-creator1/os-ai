@@ -832,4 +832,146 @@ class OutreachSequenceContinuityTest extends TestCase
         $manual->forceFill(['created_at' => now()->addMinute()])->save();   // after the real send: it counts
         $this->assertContains('legacy-1', OutreachSequence::forWorkspace($workspace)->deliveredByContent($member->fresh()));
     }
+
+    // ---- final correctness gate: durable evidence, successive timers, confirmed-attempt anchor -------------------
+
+    public function test_a_hand_sent_step_keeps_its_own_evidence_when_reworded_even_after_an_unrelated_opener(): void
+    {
+        [$workspace, $business, $member] = $this->started('Unrelated opener.');
+        $manual = $this->handSend($business, 'Alpha text.', 'sent');                     // the owner sends A by hand
+        $this->aba($workspace);
+
+        $this->inbound($business, 'ok');                                                 // Outreach sends b ("Beta text.")
+        $stored = $this->member($member);
+        $this->assertSame(['a1', 'b'], $stored->sequence_sent_ids);
+        $this->assertSame(['a1' => 'C' . $manual->id], $stored->sequence_evidence, 'a1 rests on the hand-sent message, not the opener.');
+
+        $this->aba($workspace, ['a1', 'b', 'a3'], 'Alpha text, reworded.');             // a1 reworded, same id
+
+        $this->assertSame('a3', $this->nextStepId($workspace, $member), 'The manual A is NOT reassigned to a3.');
+        $this->assertNotContains('a3', OutreachSequence::forWorkspace($workspace)->deliveredByContent($member->fresh()));
+
+        $this->inbound($business, 'ok');
+
+        $this->assertSame(['Unrelated opener.', 'Beta text.', 'Alpha text.'], $this->sentBodies(), 'The final A sends exactly once.');
+        $this->assertSame(['a1', 'b', 'a3'], $this->member($member)->sequence_sent_ids);
+        $this->assertSame(['a1' => 'C' . $manual->id], $this->member($member)->sequence_evidence);
+    }
+
+    public function test_evidence_is_scoped_to_its_own_campaign_member(): void
+    {
+        [$workspace, $business, $old, $prospect, $oldCampaign] = $this->started('Unrelated opener.');
+        $this->handSend($business, 'Alpha text.', 'sent');
+        $this->aba($workspace);
+        $this->inbound($business, 'ok');
+        $this->assertNotEmpty($this->member($old)->sequence_evidence);
+        app(OutreachCampaignService::class)->end($workspace, $oldCampaign);
+        $this->travel(10)->minutes();
+
+        $new = $this->managedCampaign($workspace, ['name' => 'Second', 'opening_message' => 'Another opener.']);
+        $member2 = $this->enroll($workspace, $new, $prospect, 1);
+        OutreachInitialSendJob::dispatchSync($member2->id);
+
+        $this->assertNull($member2->fresh()->sequence_evidence);
+        $this->assertSame([], OutreachSequence::forWorkspace($workspace)->deliveredByContent($member2->fresh()), 'The old campaign\'s hand-sent A is not this campaign\'s evidence.');
+    }
+
+    private function twoTimers(Workspace $workspace): void
+    {
+        OutreachScriptManager::save($workspace, ['sequence_steps' => [
+            $this->step('a', 'Alpha text.'),
+            ['id' => 't1', 'body' => 'Nudge one.', 'advance_on' => 'time', 'delay_hours' => 2, 'enabled' => true],
+            $this->step('b', 'Beta text.'),
+            ['id' => 't2', 'body' => 'Nudge two.', 'advance_on' => 'time', 'delay_hours' => 3, 'enabled' => true],
+        ]]);
+    }
+
+    private function reconcile(ChatBoxMessage $message): void
+    {
+        app(\App\Library\AgencyOutreach\OutreachManualStepFollowUp::class)->reconcile($message->id);
+    }
+
+    public function test_a_manual_step_arms_its_successor_after_an_earlier_timer_has_completed(): void
+    {
+        [$workspace, $business, $member] = $this->started('Hello! Quick question.');
+        $this->twoTimers($workspace);
+
+        $a = $this->handSend($business, 'Alpha text.', 'sent');
+        $this->reconcile($a);                                                            // arms t1
+        $this->assertSame('t1', OutreachSequence::forWorkspace($workspace)->nextTimeStep(['a'])['id']);
+        AgencyProspectCampaignMember::whereKey($member->id)->update(['followup_at' => now()->subMinute()]);
+        app()->call([new \App\Jobs\Outreach\OutreachFollowUpJob($member->id), 'handle']);   // t1 sent
+        $done = $this->member($member);
+        $this->assertNotNull($done->followup_sent_at, 'The earlier timer is now historical state.');
+
+        $b = $this->handSend($business, 'Beta text.', 'sent');
+        $this->reconcile($b);                                                            // arms t2 despite the old state
+
+        $armed = $this->member($member);
+        $this->assertSame(['a', 't1', 'b'], $armed->sequence_sent_ids);
+        $this->assertNotNull($armed->followup_at);
+        $this->assertEqualsWithDelta(now()->addHours(3)->timestamp, $armed->followup_at->timestamp, 120);
+        $this->assertNull($armed->followup_sent_at, 'Historical sent/cancelled state is reset for the new timer.');
+        $this->assertNull($armed->followup_cancelled_at);
+
+        $this->reconcile($b);                                                            // idempotent: a pending timer is never re-armed
+        $this->assertEquals($armed->followup_at, $this->member($member)->followup_at);
+
+        AgencyProspectCampaignMember::whereKey($member->id)->update(['followup_at' => now()->subMinute()]);
+        app()->call([new \App\Jobs\Outreach\OutreachFollowUpJob($member->id), 'handle']);
+
+        $this->assertSame(['Hello! Quick question.', 'Nudge one.', 'Nudge two.'], $this->sentBodies());
+        $this->assertSame(['a', 't1', 'b', 't2'], $this->member($member)->sequence_sent_ids);
+    }
+
+    public function test_a_manual_step_arms_its_successor_after_an_earlier_timer_was_cancelled_but_not_while_one_is_pending(): void
+    {
+        [$workspace, $business, $member] = $this->started('Hello! Quick question.');
+        $this->twoTimers($workspace);
+        $this->reconcile($this->handSend($business, 'Alpha text.', 'sent'));              // t1 is PENDING
+        $pending = $this->member($member)->followup_at;
+        $this->assertNotNull($pending);
+
+        $this->reconcile($this->handSend($business, 'Beta text.', 'sent'));               // a pending timer blocks arming another
+        $this->assertEquals($pending, $this->member($member)->followup_at);
+        $this->assertNull($this->member($member)->followup_cancelled_at);
+
+        AgencyProspectCampaignMember::whereKey($member->id)->update(['followup_cancelled_at' => now()]);   // t1 cancelled
+        $this->reconcile($this->handSend($business, 'Beta text.', 'sent'));
+        $armed = $this->member($member);
+        $this->assertNull($armed->followup_cancelled_at, 'Cancelled state is reset when the new timer is armed.');
+        $this->assertEqualsWithDelta(now()->addHours(3)->timestamp, $armed->followup_at->timestamp, 120);
+    }
+
+    public function test_a_retried_manual_send_is_anchored_to_the_confirmed_attempt_not_the_old_bubble(): void
+    {
+        [$workspace, $business, $member] = $this->started('Hello! Quick question.');
+        OutreachScriptManager::save($workspace, ['sequence_steps' => [
+            $this->step('a', 'Alpha text.'),
+            ['id' => 't', 'body' => 'Nudge after 2h.', 'advance_on' => 'time', 'delay_hours' => 2, 'enabled' => true],
+        ]]);
+        // The bubble was created 5 hours ago and FAILED; the retry has just been accepted.
+        $bubble = $this->handSend($business, 'Alpha text.', 'failed');
+        $bubble->forceFill(['created_at' => now()->subHours(5)])->save();
+        AgencyProspectCampaignMember::whereKey($member->id)->update(['last_inbound_at' => now()->subHour()]);   // an inbound arrived between the two
+
+        $this->reconcile($bubble->fresh());                                               // still failed: nothing happens
+        $this->assertNull($this->member($member)->followup_at);
+
+        $operation = \Illuminate\Support\Facades\DB::table('business_messaging_operations')->insertGetId([
+            'business_id' => $business->id, 'transport_mode' => 'managed', 'provider' => 'telnyx', 'direction' => 'outbound',
+            'message_type' => 'sms', 'operation_key' => 'manual:retry:1', 'status' => 'accepted',
+            'occurred_at' => now(), 'created_at' => now(), 'updated_at' => now(),
+        ]);
+        $bubble->update(['send_status' => 'sent', 'business_messaging_operation_id' => $operation]);
+
+        $this->assertContains('a', OutreachSequence::forWorkspace($workspace)->deliveredByContent($member->fresh()), 'The retry, confirmed now, counts although the bubble predates the opener.');
+
+        $this->reconcile($bubble->fresh());
+
+        $armed = $this->member($member);
+        $this->assertNotNull($armed->followup_at, 'The retry is not rejected because of an inbound that arrived before it was actually sent.');
+        $this->assertEqualsWithDelta(now()->addHours(2)->timestamp, $armed->followup_at->timestamp, 120, 'T is due 2h after the SUCCESSFUL attempt, not already overdue.');
+        $this->assertEqualsWithDelta(now()->timestamp, $armed->last_outbound_at->timestamp, 120);
+    }
 }

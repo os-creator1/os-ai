@@ -261,24 +261,38 @@ final class OutreachSequence
      */
     public function deliveredByContent(AgencyProspectCampaignMember $member): array
     {
+        return $this->attribution($member)['ids'];
+    }
+
+    /**
+     * The step ids this prospect has received through unattributed sends AND the evidence each
+     * one rests on, so that ownership can be stored (member.sequence_evidence) and survive later
+     * wording edits, disabling or rebuilding of steps.
+     *
+     * @return array{ids: array<int, string>, evidence: array<string, string>}
+     */
+    public function attribution(AgencyProspectCampaignMember $member): array
+    {
+        $none = ['ids' => [], 'evidence' => []];
+
         $ledger = AgencyProspectMessage::query()
             ->where('campaign_member_id', $member->id)
             ->where('direction', AgencyProspectMessage::DIRECTION_OUTBOUND)
             ->where('status', AgencyProspectMessage::STATUS_SENT)
             ->orderBy('id')
-            ->get(['body', 'sequence_step_id', 'operation_key', 'created_at', 'sent_at']);
+            ->get(['id', 'body', 'sequence_step_id', 'operation_key', 'created_at', 'sent_at']);
 
         $first = $ledger->first();
 
         if ($first === null) {
-            return [];
+            return $none;
         }
 
         $prospect = AgencyProspect::query()->where('id', $member->prospect_id)->where('workspace_id', $member->workspace_id)->first();
         $workspace = $prospect === null ? null : Workspace::query()->find($member->workspace_id);
 
         if ($workspace === null) {
-            return [];
+            return $none;
         }
 
         $norm = static fn (string $t): string => trim(preg_replace('/\s+/u', ' ', $t) ?? $t);
@@ -296,14 +310,16 @@ final class OutreachSequence
         $delivered = $recorded;
         $explicit = [];   // steps proven by their own ledger row (or an orphaned one): they own that evidence
         $orphans = [];
-        $pool = [];   // unattributed evidence, in send order: one normalised text per delivered SMS
+        $pool = [];   // unattributed evidence, in send order: one {t: normalised text, k: evidence key} per delivered SMS
+        $evidence = [];
+        $stored = is_array($member->sequence_evidence) ? $member->sequence_evidence : [];
 
         // 1. Explicit attribution by a still-valid step id; the evidence is consumed here.
         foreach ($ledger as $row) {
             $id = $row->sequence_step_id === null ? null : (string) $row->sequence_step_id;
 
             if ($id === null) {
-                $pool[] = $norm((string) $row->body);
+                $pool[] = ['t' => $norm((string) $row->body), 'k' => 'L' . $row->id];
             } elseif ($this->find($id) !== null) {
                 $delivered[$id] = true;
                 $explicit[$id] = true;
@@ -317,8 +333,8 @@ final class OutreachSequence
         // is never counted twice; what remains is what a person confirmed sending.
         $ledgerKeys = $ledger->pluck('operation_key')->filter()->map(fn ($k) => (string) $k)->all();
 
-        foreach ($this->conversationBodies($workspace, $prospect, $first->sent_at ?? $first->created_at, $ledgerKeys) as $body) {
-            $pool[] = $norm($body);
+        foreach ($this->conversationMessages($workspace, $prospect, $first->sent_at ?? $first->created_at, $ledgerKeys) as $message) {
+            $pool[] = ['t' => $norm($message['body']), 'k' => 'C' . $message['id']];
         }
 
         // 2. Orphans: exact text first, then "approved answer + step text"; one step per row.
@@ -344,39 +360,59 @@ final class OutreachSequence
 
         // 3. Unattributed sends (the opener, a person's confirmed messages), one per step.
         //
-        // A step ALREADY RECORDED as delivered from such evidence keeps it: it takes the send
-        // with its own wording, or -- when the Agency has since reworded that step -- the earliest
-        // remaining one (the opener comes first), so the old text can never be spent again on a
-        // later step with the same wording. Only then do the remaining steps claim sends by text.
-        $take = function (string $t, bool $fallback) use (&$pool): bool {
-            $at = array_search($t, $pool, true);
+        // A step ALREADY RECORDED as delivered keeps the evidence it was recorded with
+        // (member.sequence_evidence, one evidence key to one step), whatever its wording is now
+        // and even if it has been disabled. Only a step recorded before evidence was stored falls
+        // back to a send with its own wording, then the earliest remaining one. The remaining
+        // steps then claim sends by text, and every claim is remembered as evidence.
+        $take = function (string $t, ?string $key, bool $fallback) use (&$pool): ?string {
+            if ($key !== null) {
+                foreach ($pool as $i => $unit) {
+                    if ($unit['k'] === $key) {
+                        unset($pool[$i]);
 
-            if ($at === false && $fallback && $pool !== []) {
-                $at = array_key_first($pool);
+                        return $key;
+                    }
+                }
+
+                return null;   // its own evidence is gone: never take someone else's
             }
 
-            if ($at === false) {
-                return false;
+            foreach ($pool as $i => $unit) {
+                if ($unit['t'] === $t) {
+                    unset($pool[$i]);
+
+                    return $unit['k'];
+                }
             }
 
-            unset($pool[$at]);
+            if ($fallback && $pool !== []) {
+                $i = array_key_first($pool);
+                $k = $pool[$i]['k'];
+                unset($pool[$i]);
 
-            return true;
+                return $k;
+            }
+
+            return null;
         };
 
         foreach ($allReplySteps as $step) {
             if (isset($recorded[$step['id']]) && ! isset($explicit[$step['id']])) {
-                // Even if this step has since been disabled, consume the opener/manual
-                // message previously assigned to it; it must not satisfy a later same-text step.
-                $take($text[$step['id']], true);
+                $key = $take($text[$step['id']], isset($stored[$step['id']]) ? (string) $stored[$step['id']] : null, true);
+
+                if ($key !== null) {
+                    $evidence[$step['id']] = $key;
+                }
             }
         }
 
         foreach ($steps as $step) {
             $t = $text[$step['id']];
 
-            if ($t !== '' && ! isset($delivered[$step['id']]) && $take($t, false)) {
+            if ($t !== '' && ! isset($delivered[$step['id']]) && ($key = $take($t, null, false)) !== null) {
                 $delivered[$step['id']] = true;
+                $evidence[$step['id']] = $key;
             }
         }
 
@@ -385,7 +421,13 @@ final class OutreachSequence
         $ids = array_map('strval', array_keys($delivered));
         usort($ids, static fn (string $a, string $b): int => ($order[$a] ?? PHP_INT_MAX) <=> ($order[$b] ?? PHP_INT_MAX));
 
-        return $ids;
+        return ['ids' => $ids, 'evidence' => $evidence];
+    }
+
+    /** What to persist as member.sequence_evidence: the evidence each unattributed delivery rests on. @return array<string, string> */
+    public function evidenceFor(AgencyProspectCampaignMember $member): array
+    {
+        return $this->attribution($member)['evidence'];
     }
 
     /** Equality after whitespace normalisation (case and wording are never loosened). */
@@ -396,9 +438,8 @@ final class OutreachSequence
         return $norm($a) !== '' && $norm($a) === $norm($b);
     }
 
-    /** @return array<int, string> */
-    /** @param array<int, string> $ledgerOperationKeys */
-    private function conversationBodies(Workspace $workspace, AgencyProspect $prospect, mixed $since, array $ledgerOperationKeys = []): array
+    /** @param array<int, string> $ledgerOperationKeys @return array<int, array{id: int, body: string}> */
+    private function conversationMessages(Workspace $workspace, AgencyProspect $prospect, mixed $since, array $ledgerOperationKeys = []): array
     {
         $business = AgencyOutreachBusinessResolver::forWorkspace($workspace);
         $box = $business === null ? null : app(OutreachConversationLinker::class)->conversationFor($business, $prospect);
@@ -417,13 +458,17 @@ final class OutreachSequence
             ->leftJoin('business_messaging_operations as op', 'op.id', '=', 'chat_box_messages.business_messaging_operation_id')
             ->where('chat_box_messages.box_id', $box->id)
             ->where('chat_box_messages.direction', Reports::DIRECTION_OUTGOING)
-            ->where('chat_box_messages.created_at', '>=', $since)
+            // The time a message was CONFIRMED sent (the accepted attempt's operation), never the
+            // bubble's creation time: a failed message retried later was delivered at the retry.
+            ->whereRaw('COALESCE(op.occurred_at, chat_box_messages.created_at) >= ?', [\Illuminate\Support\Carbon::parse($since)->toDateTimeString()])
             ->where(function ($q): void {
                 $q->whereIn('chat_box_messages.send_status', ['sent', 'delivered'])
                     ->orWhere(fn ($legacy) => $legacy->whereNull('chat_box_messages.send_status')->whereNull('chat_box_messages.business_messaging_operation_id'));
             })
             ->when($ledgerOperationKeys !== [], fn ($q) => $q->where(fn ($k) => $k->whereNull('op.operation_key')->orWhereNotIn('op.operation_key', $ledgerOperationKeys)))
-            ->pluck('chat_box_messages.message')->map(fn ($m) => (string) $m)->all();
+            ->orderBy('chat_box_messages.id')
+            ->get(['chat_box_messages.id', 'chat_box_messages.message'])
+            ->map(fn ($m) => ['id' => (int) $m->id, 'body' => (string) $m->message])->all();
     }
 
     /**

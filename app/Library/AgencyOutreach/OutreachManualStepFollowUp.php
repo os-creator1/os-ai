@@ -51,9 +51,9 @@ final class OutreachManualStepFollowUp
                 ->where('sending_mode', AgencyProspectCampaign::MODE_MANAGED)
                 ->where('status', AgencyProspectCampaignStatus::Active->value)
                 ->select('id'))
-            ->whereNull('followup_at')
-            ->whereNull('followup_sent_at')
-            ->whereNull('followup_cancelled_at')
+            // A timer that is merely historical (already sent, or cancelled) does not block arming
+            // the next successor; only a currently PENDING one does.
+            ->where(fn ($q) => $q->whereNull('followup_at')->orWhereNotNull('followup_sent_at')->orWhereNotNull('followup_cancelled_at'))
             ->whereNotIn('stage', [6, 99])
             ->orderByDesc('id')
             ->limit(5)
@@ -65,12 +65,15 @@ final class OutreachManualStepFollowUp
                 if ($member === null || $member->isTerminal()
                     || (int) $member->chat_box_id !== (int) $message->box_id
                     || (int) $member->workspace_id !== (int) $business->workspace_id
-                    || $member->followup_at !== null || $member->followup_sent_at !== null
-                    || $member->followup_cancelled_at !== null
+                    || self::timerPending($member)
                     || $member->campaign?->status !== AgencyProspectCampaignStatus::Active
                     || ! $member->campaign->isManaged()) {
                     return null;
                 }
+
+                // The moment the SMS was actually CONFIRMED sent (the accepted attempt), not when its
+                // bubble was first created: a failed message retried hours later was sent at the retry.
+                $sentAt = self::confirmedAt($message);
 
                 $opener = AgencyProspectMessage::query()
                     ->where('campaign_member_id', $member->id)
@@ -78,8 +81,8 @@ final class OutreachManualStepFollowUp
                     ->where('status', AgencyProspectMessage::STATUS_SENT)
                     ->orderBy('id')
                     ->first(['sent_at', 'created_at']);
-                if ($opener === null || $message->created_at->lt($opener->sent_at ?? $opener->created_at)
-                    || ($member->last_inbound_at !== null && $member->last_inbound_at->gt($message->created_at))) {
+                if ($opener === null || $sentAt->lt($opener->sent_at ?? $opener->created_at)
+                    || ($member->last_inbound_at !== null && $member->last_inbound_at->gt($sentAt))) {
                     return null;
                 }
 
@@ -116,19 +119,29 @@ final class OutreachManualStepFollowUp
                     return null;
                 }
 
-                $when = $message->created_at->copy()->addHours((int) $next['delay_hours']);
+                // The legacy follow-up that was already sent or cancelled is never re-armed.
+                if ($next['id'] === OutreachSequence::LEGACY_FOLLOWUP
+                    && ($member->followup_sent_at !== null || $member->followup_cancelled_at !== null)) {
+                    return null;
+                }
+
+                $when = $sentAt->copy()->addHours((int) $next['delay_hours']);
                 $updates = [
                     'sequence_sent_ids' => $sent,
-                    'last_outbound_at' => $member->last_outbound_at === null || $member->last_outbound_at->lt($message->created_at)
-                        ? $message->created_at : $member->last_outbound_at,
+                    'sequence_evidence' => $sequence->evidenceFor($member) ?: null,
+                    'last_outbound_at' => $member->last_outbound_at === null || $member->last_outbound_at->lt($sentAt)
+                        ? $sentAt : $member->last_outbound_at,
+                    // Arm exactly as a scripted send does: a fresh pending timer, historical state cleared.
                     'followup_at' => $when,
+                    'followup_sent_at' => null,
+                    'followup_cancelled_at' => null,
                 ];
 
                 if (OutreachSequence::stepHasCalendarLink($previous)) {
                     // For the legacy link follow-up the cancellation boundary is
                     // booking_link_sent_at, not last_outbound_at. An inbound BEFORE
                     // this confirmed manual link must not cancel the due nudge.
-                    $updates['booking_link_sent_at'] = $message->created_at;
+                    $updates['booking_link_sent_at'] = $sentAt;
                     if ($member->stage->value < AgencyProspectStage::BookingLinkSent->value) {
                         $updates['stage'] = AgencyProspectStage::BookingLinkSent->value;
                     }
@@ -143,5 +156,25 @@ final class OutreachManualStepFollowUp
                 OutreachFollowUpJob::dispatch((int) $id)->delay($due);
             }
         }
+    }
+
+    /** A timer is pending only while it is set and neither sent nor cancelled. */
+    private static function timerPending(AgencyProspectCampaignMember $member): bool
+    {
+        return $member->followup_at !== null
+            && $member->followup_sent_at === null
+            && $member->followup_cancelled_at === null;
+    }
+
+    /**
+     * When the message was actually confirmed sent: the accepted attempt's messaging operation
+     * (a retry re-points the SAME bubble at the attempt that succeeded), else the bubble's own time.
+     */
+    private static function confirmedAt(ChatBoxMessage $message): \Illuminate\Support\Carbon
+    {
+        $occurred = $message->business_messaging_operation_id === null ? null : DB::table('business_messaging_operations')
+            ->where('id', (int) $message->business_messaging_operation_id)->value('occurred_at');
+
+        return \Illuminate\Support\Carbon::parse($occurred ?? $message->created_at);
     }
 }

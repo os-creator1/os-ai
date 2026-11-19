@@ -10,6 +10,11 @@ on:
       - 'app/Library/AgencyOutreach/OutreachStepTone.php'
       - 'app/Library/AgencyOutreach/OutreachCampaignDiagnostics.php'
       - 'app/Jobs/Outreach/**'
+      - 'app/Library/AgencyOutreach/OutreachManualStepFollowUp.php'
+      - 'app/Library/AgencyOutreach/OutreachSendPipeline.php'
+      - 'app/Library/Conversations/ConversationHistoryWriter.php'
+      - 'app/Models/AgencyProspectCampaignMember.php'
+      - 'database/migrations/*agency_prospect_campaign_members*'
       - 'tests/Feature/AgencyOutreach/OutreachSequenceContinuityTest.php'
       - '.github/workflows/outreach-sequence-continuity-tests.yml'
 
