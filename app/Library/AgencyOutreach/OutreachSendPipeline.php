@@ -129,16 +129,19 @@ final class OutreachSendPipeline
      */
     public function resume(int $messageId): ?OutreachPipelineResult
     {
-        $claim = DB::transaction(function () use ($messageId) {
-            // Follow the same lock order as the original claim, settlement
-            // and End campaign: member first, then outbound ledger row.
-            // This initial lookup is just for locating the member; the
-            // PAUSED state is rechecked under the row lock below.
-            $locator = AgencyProspectMessage::query()->whereKey($messageId)->first(['id', 'campaign_member_id']);
-            if ($locator === null) {
-                return 'not_paused';
-            }
+        // Locate the member BEFORE the claim transaction. A non-locking read
+        // inside a REPEATABLE READ transaction would freeze the campaign status
+        // before waiting for End's member lock and could resume after End commits.
+        // We only trust the ID: the ledger row is re-read under its lock below.
+        $locator = AgencyProspectMessage::query()->whereKey($messageId)->first(['id', 'campaign_member_id']);
 
+        if ($locator === null) {
+            return null;
+        }
+
+        $claim = DB::transaction(function () use ($messageId, $locator) {
+            // Same lock order as claim, settlement and End: member first,
+            // then ledger. Eligibility runs after the member lock is held.
             $member = AgencyProspectCampaignMember::query()
                 ->whereKey($locator->campaign_member_id)
                 ->lockForUpdate()
