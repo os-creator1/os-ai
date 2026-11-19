@@ -30,6 +30,8 @@ final class WebsiteTrackingSettings
 
     public const BLOG_SCOPE = '@blog';
 
+    public const ARTICLE_SCOPE_PREFIX = '@article:';
+
     public const HOME_SCOPE = 'home';
 
     private const ALLOWED_TAGS = ['script', 'noscript', 'meta', 'link', 'style', 'img'];
@@ -42,6 +44,12 @@ final class WebsiteTrackingSettings
         }
 
         return $isHome ? self::HOME_SCOPE : trim((string) $slug, '/');
+    }
+
+    /** Stable identity: article UID survives slug changes. */
+    public static function articleScopeKey(string $articleUid): string
+    {
+        return self::ARTICLE_SCOPE_PREFIX . $articleUid;
     }
 
     public function find(Website $website, string $scopeKey): ?WebsiteTrackingSetting
@@ -96,9 +104,14 @@ final class WebsiteTrackingSettings
             return null;
         }
 
+        $scopeKeys = [WebsiteTrackingSetting::GLOBAL_SCOPE, $pageScopeKey];
+        if (str_starts_with($pageScopeKey, self::ARTICLE_SCOPE_PREFIX)) {
+            $scopeKeys[] = self::BLOG_SCOPE; // individual posts inherit blog-wide and global settings
+        }
+
         $rows = WebsiteTrackingSetting::query()
             ->where('website_id', $website->id)
-            ->whereIn('scope_key', array_unique([WebsiteTrackingSetting::GLOBAL_SCOPE, $pageScopeKey]))
+            ->whereIn('scope_key', array_unique($scopeKeys))
             ->where('is_enabled', true)
             ->orderByRaw('scope_key = ? desc', [WebsiteTrackingSetting::GLOBAL_SCOPE])
             ->get();
