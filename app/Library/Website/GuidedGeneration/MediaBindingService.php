@@ -110,6 +110,17 @@ final class MediaBindingService
                 continue;
             }
 
+            // A place page leads on to the real service pages (up to three, as linked cards), so a visitor and a crawler
+            // both reach "what do you do here" from "where do you work". Planned pages only; nothing is invented.
+            $serviceItems = array_map(
+                fn (array $service) => ['name' => \Illuminate\Support\Str::limit($service['name'], 120, ''), 'description' => null, 'price_label' => null, 'service_uid' => $service['uid']],
+                array_slice($this->servicePageIndex($pages), 0, 3),
+            );
+            $hasServiceLinks = collect($page['sections'] ?? [])->contains(fn ($section) => ($section['type'] ?? null) === 'services' && collect($section['data']['items'] ?? [])->contains(fn ($item) => ! empty($item['service_uid'])));
+            if ($serviceItems !== [] && ! $hasServiceLinks) {
+                $pages[$index]['sections'][] = ['type' => 'services', 'data' => ['heading' => \Illuminate\Support\Str::limit('Services in ' . $area, 120, ''), 'items' => array_values($serviceItems)]];
+            }
+
             // A page that already closes with a call to action of its own does not get a second,
             // near-identical "Planning an event in X?" band stacked under it.
             $hasOwnCta = collect($page['sections'] ?? [])->contains(fn ($section) => ($section['type'] ?? null) === 'cta');
@@ -144,6 +155,71 @@ final class MediaBindingService
                     'body' => null,
                     'buttons' => $nearby,
                 ]];
+            }
+        }
+
+        return $pages;
+    }
+
+    /**
+     * The planned dedicated service pages, in plan order: what a service card or a place page may link to.
+     *
+     * @param  array<int, array<string, mixed>>  $pages
+     * @return array<int, array{uid: string, name: string, slug: string}>
+     */
+    private function servicePageIndex(array $pages): array
+    {
+        $index = [];
+
+        foreach ($pages as $page) {
+            if (($page['page_type'] ?? null) === 'service_detail' && ! empty($page['slug']) && ! empty($page['entity']['service_uid'])) {
+                $index[] = ['uid' => (string) $page['entity']['service_uid'], 'name' => (string) ($page['entity']['name'] ?? $page['title'] ?? ''), 'slug' => (string) $page['slug']];
+            }
+        }
+
+        return $index;
+    }
+
+    /**
+     * An AI-written service card ("Magic Mirror Photo Booth") that names a service with its own page is stamped with that
+     * service's uid, so it renders as a link to the page (see components/services.blade.php). Matched by the service's own
+     * name only; a card that names no planned service, and every package card, stays plain text.
+     *
+     * @param  array<int, array<string, mixed>>  $pages
+     * @return array<int, array<string, mixed>>
+     */
+    private function linkServiceCards(array $pages): array
+    {
+        $normalize = fn (string $name) => preg_replace('/[^\p{L}\p{N}]+/u', ' ', mb_strtolower(trim($name))) ?? '';
+        $byName = [];
+        foreach ($this->servicePageIndex($pages) as $service) {
+            $byName[trim($normalize($service['name']))] = $service['uid'];
+        }
+
+        if ($byName === []) {
+            return $pages;
+        }
+
+        foreach ($pages as $index => $page) {
+            // A service page's own cards never link back to itself.
+            $own = (string) ($page['entity']['service_uid'] ?? '');
+
+            foreach ((array) ($page['sections'] ?? []) as $sectionIndex => $section) {
+                if (($section['type'] ?? null) !== 'services') {
+                    continue;
+                }
+
+                foreach ((array) ($section['data']['items'] ?? []) as $itemIndex => $item) {
+                    if (! empty($item['service_uid']) || ! empty($item['catalog_item_uid']) || ! empty($item['place'])) {
+                        continue;
+                    }
+
+                    $uid = $byName[trim($normalize((string) ($item['name'] ?? '')))] ?? null;
+
+                    if ($uid !== null && $uid !== $own) {
+                        $pages[$index]['sections'][$sectionIndex]['data']['items'][$itemIndex]['service_uid'] = $uid;
+                    }
+                }
             }
         }
 
@@ -325,6 +401,7 @@ final class MediaBindingService
         // catalog, never trusted from AI output.
         $pages = $this->linkAreaPages($pages);
         $pages = $this->linkServicePages($pages);
+        $pages = $this->linkServiceCards($pages);
         $pages = $this->bindAreaHub($website, $pages);
         $pages = $this->catalogReferences->stampPackagePages($pages, (int) $website->business_id);
         $pages = $this->mirrorServiceImages($website, $pages);

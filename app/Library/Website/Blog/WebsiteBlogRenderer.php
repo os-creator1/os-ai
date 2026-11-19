@@ -237,6 +237,23 @@ class WebsiteBlogRenderer
     }
 
     /**
+     * The LocalBusiness block of the site entity, built exactly as for a regular page (confirmed facts from the published
+     * snapshot, address withheld unless the live privacy gate allows it).
+     *
+     * @param  array<string, mixed>  $snapshot
+     * @param  array<string, array<string, mixed>>  $assetsByUid
+     * @return ?array<string, mixed>
+     */
+    private function localBusiness(Website $website, array $snapshot, WebsiteBlogSurface $surface, array $assetsByUid): ?array
+    {
+        $facts = app(\App\Library\Website\Seo\WebsiteAddressPrivacyGate::class)->redactLocalBusiness($snapshot['website']['localBusiness'] ?? [], $website->business, null);
+        $logoUid = $snapshot['website']['theme']['logo_asset_uid'] ?? null;
+        $logoUrl = $logoUid !== null && isset($assetsByUid[$logoUid]) ? WebsiteHeadMeta::bestUrl($assetsByUid[$logoUid]) : null;
+
+        return app(\App\Library\Website\Seo\WebsiteLocalBusinessStructuredData::class)->build($facts, $surface->homeUrl(), $logoUrl);
+    }
+
+    /**
      * @param  array<string, mixed>  $page  title, seo_title, meta_description, noindex, canonical, indexable, social, jsonLd, articleJsonLd, blog
      */
     private function respond(Website $website, array $snapshot, WebsiteBlogSurface $surface, array $page, string $slug): Response
@@ -262,7 +279,8 @@ class WebsiteBlogRenderer
             'previewBannerText' => 'Preview — this article is not live on your website',
             'allowIndexing' => $surface->mayIndex(),
             'canonicalUrl' => $page['canonical'],
-            'localBusinessJsonLd' => null,
+            // The same one site entity every other page of this website declares (never on a page held out of search).
+            'localBusinessJsonLd' => $page['indexable'] ? $this->localBusiness($website, $snapshot, $surface, $assetsByUid) : null,
             'breadcrumbJsonLd' => $page['jsonLd'],
             'breadcrumbsOverride' => $page['breadcrumbs'],
             'faqJsonLd' => null,
