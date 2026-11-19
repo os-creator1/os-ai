@@ -51,13 +51,28 @@
         var ids = config.google_tag_ids || [];
         if (!ids.length) { return; }
         window.dataLayer = window.dataLayer || [];
+
+        // GTM containers are NOT Google tag measurement IDs. Loading a GTM-… id through
+        // gtag/js silently fails to install the container. Use gtm.js for each GTM id.
+        var containers = ids.filter(function (id) { return /^GTM-/.test(id); });
+        var tags = ids.filter(function (id) { return !/^GTM-/.test(id); });
+
+        containers.forEach(function (id) {
+            window.dataLayer.push({ 'gtm.start': new Date().getTime(), event: 'gtm.js' });
+            var containerScript = document.createElement('script');
+            containerScript.async = true;
+            containerScript.src = 'https://www.googletagmanager.com/gtm.js?id=' + encodeURIComponent(id);
+            document.head.appendChild(containerScript);
+        });
+
+        if (!tags.length) { return; }
         window.gtag = window.gtag || function () { window.dataLayer.push(arguments); };
         var script = document.createElement('script');
         script.async = true;
-        script.src = 'https://www.googletagmanager.com/gtag/js?id=' + encodeURIComponent(ids[0]);
+        script.src = 'https://www.googletagmanager.com/gtag/js?id=' + encodeURIComponent(tags[0]);
         document.head.appendChild(script);
         window.gtag('js', new Date());
-        ids.forEach(function (id) { window.gtag('config', id); });
+        tags.forEach(function (id) { window.gtag('config', id); });
     }
 
     function loadMeta() {
