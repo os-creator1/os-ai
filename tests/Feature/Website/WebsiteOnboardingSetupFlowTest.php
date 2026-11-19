@@ -462,6 +462,8 @@ class WebsiteOnboardingSetupFlowTest extends TestCase
         [, $business, $workspace] = $this->tenant();
         $a = $this->createPackage($business, 'Essential Booth', 69900);
         $b = $this->createPackage($business, 'Premium Booth', 99900);
+        // This test is about package selection and Packages & Products ownership, not copy quality: its fake pages are minimal.
+        config(['ai.website_content_quality' => false]);
         $this->bindDistinctAiClient();
         $this->completeV2Setup($workspace, $business, ['packages' => ['items' => [
             ['uid' => $a->uid, 'include' => '1', 'name' => 'Essential Booth', 'price' => '699.00', 'currency_code' => 'USD'],

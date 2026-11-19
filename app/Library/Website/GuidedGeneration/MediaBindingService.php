@@ -508,6 +508,15 @@ final class MediaBindingService
                 continue;
             }
 
+            // Another niche installed its blueprint but provides no website lead form: never the photo-booth quote form.
+            // Dog Boarding keeps its own stay-request wording below, as before.
+            if (! $dog && $business !== null && app(\App\Library\Website\Forms\WebsiteLeadFormResolver::class)->belongsToOtherNiche($business)) {
+                $pages[$index]['sections'] = $this->withContactFallback($pages[$index]['sections'] ?? []);
+                $warnings[] = 'No website lead form is set up for your business type yet, so your contact page shows your phone and email. Add an inquiry form in Forms and offer it to Website pages.';
+
+                continue;
+            }
+
             // No niche lead form is installed (a business outside the blueprint niches): the long-standing quote form.
             $form = WebsiteStarterDraftService::ensurePhotoBoothQuoteForm($website);
             $pages[$index]['sections'][] = ['type' => 'form', 'data' => ['heading' => $dog ? 'Request a stay' : 'Request a quote', 'form_uid' => $form->uid]];

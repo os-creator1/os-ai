@@ -104,6 +104,18 @@ final class WebsiteLeadFormResolver
     }
 
     /**
+     * True when the business installed a niche blueprint that is not Photo Booth. Such a business must never receive the
+     * photo-booth-worded legacy quote form as a stand-in for a lead form its own niche did not provide.
+     */
+    public function belongsToOtherNiche(Business $business): bool
+    {
+        return BusinessBlueprintComponentInstallation::query()
+            ->where('business_id', $business->id)
+            ->whereIn('blueprint_id', \App\Models\NicheBlueprint::query()->where('key', 'not like', '%photo\\_booth%')->pluck('id'))
+            ->exists();
+    }
+
+    /**
      * This business's installed lead-form components, in LEAD_FORM_KEYS order, each proven to be a Form OF THIS BUSINESS.
      *
      * @return array<string, Form>

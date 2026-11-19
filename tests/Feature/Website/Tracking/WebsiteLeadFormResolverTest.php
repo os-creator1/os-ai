@@ -197,6 +197,25 @@ class WebsiteLeadFormResolverTest extends TestCase
         $this->assertContains('form', array_column($bound['pages'][0]['sections'], 'type'));
     }
 
+    public function test_another_niche_without_a_website_lead_form_never_receives_the_photo_booth_quote_form(): void
+    {
+        $tutoring = \App\Models\NicheBlueprint::create(['key' => 'tutoring_exam_prep', 'display_name' => 'Tutoring', 'broad_industry' => 'education']);
+        $form = $this->makeForm($this->business, ['name' => 'Teacher application'], true);
+        (new BusinessBlueprintComponentInstallation())->forceFill([
+            'business_id' => $this->business->id, 'blueprint_id' => $tutoring->id, 'component_key' => TutoringBlueprint::TEACHER_FORM, 'component_type' => 'form',
+            'installed_from_version' => 1, 'state' => 'installed', 'required_feature_key' => 'forms', 'installed_record_id' => $form->id,
+        ])->save();
+
+        $bound = app(MediaBindingService::class)->bind($this->website->fresh(), [$this->contactPage()]);
+
+        $types = array_column($bound['pages'][0]['sections'], 'type');
+        $this->assertNotContains('form', $types);
+        $this->assertNotContains('forms_module_form', $types, 'a staff-facing teacher application is never the website form');
+        $this->assertContains('contact_details', $types);
+        $this->assertSame(0, WebsiteForm::query()->where('website_id', $this->website->id)->count(), 'no photo booth quote form row is created');
+        $this->assertNotEmpty($bound['warnings']);
+    }
+
     public function test_a_submission_through_the_bound_deployment_is_a_normal_forms_submission_with_a_contact_and_no_booking(): void
     {
         $deployment = $this->offer($this->installed('pb3_form_lead', 'Check Availability'));
