@@ -59,6 +59,15 @@
                     <x-button type="submit" variant="ghost" size="sm">Remove</x-button>
                 </form>
             </div>
+            <details class="mb-3">
+                <summary class="small fw-semibold">Edit settings for {{ $scopes[$scopeKey] ?? $scopeKey }}</summary>
+                <form method="POST" action="{{ route('customer.workspaces.businesses.website.tracking.save', $ids) }}" class="mt-2">
+                    @csrf
+                    <input type="hidden" name="scope" value="{{ $scopeKey }}">
+                    @include('customer.business.website._tracking-fields', ['setting' => $row, 'idSuffix' => 'existing-' . $loop->iteration])
+                    <div class="mt-3"><x-button type="submit" variant="secondary">Save changes</x-button></div>
+                </form>
+            </details>
         @endforeach
 
         <form method="POST" action="{{ route('customer.workspaces.businesses.website.tracking.save', $ids) }}" class="mt-3">
