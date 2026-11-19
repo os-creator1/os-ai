@@ -585,6 +585,18 @@ class AgencyProspectingController extends CustomerBaseController
             ->with('flash_success', 'Campaign started.');
     }
 
+    /** End a managed Outreach campaign and release its recipients without erasing history. */
+    public function endCampaign(string $workspaceUid, AgencyProspectCampaign $campaign): RedirectResponse
+    {
+        $workspace = $this->resolveEntitledWorkspace($workspaceUid);
+        $this->resolveWorkspaceCampaign($workspace, $campaign);
+
+        $result = app(\App\Library\AgencyOutreach\OutreachCampaignService::class)->end($workspace, $campaign);
+
+        return redirect()->route('customer.workspaces.prospecting.campaigns.show', [$workspaceUid, $campaign->uid])
+            ->with($result['ok'] ? 'flash_success' : 'flash_error', $result['ok'] ? $result['message'] : $result['error']);
+    }
+
     /**
      * Runtime pass — pause/resume ONLY. This route can never set Draft,
      * and can never activate a Draft campaign: a DRAFT campaign may only
