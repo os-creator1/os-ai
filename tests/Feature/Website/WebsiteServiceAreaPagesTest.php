@@ -35,6 +35,8 @@ class WebsiteServiceAreaPagesTest extends TestCase
     {
         parent::setUp();
         $this->seedSmartWizard();
+        // These tests assert service-area routing, redirects and persistence with minimal fake pages; copy quality is covered in SeoContentQualityTest.
+        config(['ai.website_content_quality' => false]);
     }
 
     private function services(object $business, int $count = 2): void

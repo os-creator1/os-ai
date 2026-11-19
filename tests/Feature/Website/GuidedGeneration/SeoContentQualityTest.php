@@ -89,6 +89,22 @@ class SeoContentQualityTest extends TestCase
         $this->app->instance(WebsiteAiGenerationClient::class, $mock);
     }
 
+    /** The serialized AI plan entry carries no `title`; derive a label only from fields it does carry. */
+    private function labelOf(array $entry): string
+    {
+        return (string) ($entry['entity']['name'] ?? $entry['entity']['area'] ?? ucfirst(str_replace('_', ' ', $entry['page_type'])));
+    }
+
+    /** A copy section of a type this page's plan entry actually allows ('text' where permitted, else 'image_text' with no image). */
+    private function copySection(array $entry, string $heading, string $body): array
+    {
+        $allowed = $entry['allowed_section_types'] ?? [];
+
+        return in_array('text', $allowed, true)
+            ? ['type' => 'text', 'data' => ['heading' => $heading, 'body' => $body]]
+            : ['type' => 'image_text', 'data' => ['heading' => $heading, 'body' => $body, 'image' => null, 'image_position' => 'left']];
+    }
+
     private function contactPath(array $payload): string
     {
         return collect($payload['site_pages'] ?? [])->firstWhere('page_type', 'contact')['path'] ?? '/photo-booth-contact';
@@ -103,7 +119,7 @@ class SeoContentQualityTest extends TestCase
         $contact = $this->contactPath($payload);
         $key = $entry['page_key'];
         $hero = fn (string $heading, ?string $sub = null) => ['type' => 'hero', 'data' => ['heading' => $heading, 'subheading' => $sub, 'primary_cta' => ['label' => 'Check availability', 'url' => $contact], 'secondary_cta' => null]];
-        $text = fn (string $heading, string $body) => ['type' => 'text', 'data' => ['heading' => $heading, 'body' => $body]];
+        $text = fn (string $heading, string $body) => $this->copySection($entry, $heading, $body);
         $unique = hash('sha256', $key) . hash('sha256', $key . 'b');
         $where = $city === null ? '' : ' in ' . $city . ($region !== null ? ', ' . $region : '');
 
@@ -126,10 +142,10 @@ class SeoContentQualityTest extends TestCase
                 ];
                 break;
             default:
-                $sections = [$hero($entry['title'] . ' ' . substr($unique, 0, 8))];
+                $sections = [$hero($this->labelOf($entry) . ' ' . substr($unique, 0, 8))];
         }
 
-        return ['page_key' => $key, 'title' => $entry['title'] . ' ' . substr($unique, 0, 6), 'seo_title' => 'SEO ' . $entry['title'] . ' ' . substr($unique, 0, 10), 'meta_description' => 'Meta ' . $entry['title'] . ' ' . substr($unique, 0, 10), 'sections' => $sections];
+        return ['page_key' => $key, 'title' => $this->labelOf($entry) . ' ' . substr($unique, 0, 6), 'seo_title' => 'SEO ' . $this->labelOf($entry) . ' ' . substr($unique, 0, 10), 'meta_description' => 'Meta ' . $this->labelOf($entry) . ' ' . substr($unique, 0, 10), 'sections' => $sections];
     }
 
     private function generate($customer, $business, $website, $template, string $key = 'idem-q'): WebsiteGuidedGenerationAttempt
@@ -187,7 +203,7 @@ class SeoContentQualityTest extends TestCase
         $home = collect($plan)->firstWhere('page_key', 'home');
         $page = ['page_key' => 'home', 'title' => 'Home', 'seo_title' => 'Photo Booth', 'meta_description' => 'Photo booths', 'sections' => [
             ['type' => 'hero', 'data' => ['heading' => 'Capture Every Moment with Style', 'subheading' => 'Photo booths for your event.']],
-            ['type' => 'text', 'data' => ['heading' => 'Our Amazing Services', 'body' => 'We offer great photo booths.']],
+            $this->copySection($home, 'Our Amazing Services', 'We offer great photo booths.'),
         ]];
 
         $validator = app(GuidedGenerationOutputValidator::class);
@@ -233,9 +249,9 @@ class SeoContentQualityTest extends TestCase
 
         // Structurally valid, but generic: the exact pattern of the thin Kaleb Hill homepage.
         $this->provider(function (array $entry) {
-            return ['page_key' => $entry['page_key'], 'title' => $entry['title'], 'seo_title' => 'SEO ' . $entry['page_key'], 'meta_description' => 'Meta ' . $entry['page_key'], 'sections' => [
+            return ['page_key' => $entry['page_key'], 'title' => $this->labelOf($entry), 'seo_title' => 'SEO ' . $entry['page_key'], 'meta_description' => 'Meta ' . $entry['page_key'], 'sections' => [
                 ['type' => 'hero', 'data' => ['heading' => 'Capture Every Moment with Style', 'subheading' => null]],
-                ['type' => 'text', 'data' => ['heading' => 'Our Amazing Services', 'body' => 'An unforgettable experience.']],
+                $this->copySection($entry, 'Our Amazing Services', 'An unforgettable experience.'),
             ]];
         });
 
@@ -311,8 +327,8 @@ class SeoContentQualityTest extends TestCase
 
             return ['page_key' => $entry['page_key'], 'title' => "Photo booth rental in {$area}", 'seo_title' => "Booths in {$area} {$unique}", 'meta_description' => "Meta {$area} " . substr($unique, 0, 12), 'sections' => [
                 ['type' => 'hero', 'data' => ['heading' => "Photo Booth Rental in {$area}", 'subheading' => null, 'primary_cta' => ['label' => 'Check availability', 'url' => $contact], 'secondary_cta' => null]],
-                ['type' => 'text', 'data' => ['heading' => "Venues and setup in {$area}", 'body' => $body . ' Ref ' . $unique]],
-                ['type' => 'text', 'data' => ['heading' => "Booking in {$area}", 'body' => 'Tell us the date and venue. Ref ' . substr($unique, 10)]],
+                $this->copySection($entry, "Venues and setup in {$area}", $body . ' Ref ' . $unique),
+                $this->copySection($entry, "Booking in {$area}", 'Tell us the date and venue. Ref ' . substr($unique, 10)),
             ]];
         };
         $areaCall = fn (bool $local) => function (array $entry, array $payload) use ($makeArea, $local) {
