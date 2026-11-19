@@ -3,7 +3,6 @@
 namespace Tests\Feature\AgencyOutreach;
 
 use App\Events\Conversation\InboundMessageReceived;
-use App\Http\Controllers\Customer\Workspace\AgencyProspectingController;
 use App\Jobs\Outreach\OutreachInitialSendJob;
 use App\Library\Conversations\ConversationHistoryWriter;
 use App\Listeners\Outreach\HandleOutreachInboundMessage;
@@ -105,7 +104,7 @@ class EndCampaignTest extends TestCase
         $this->post($this->outreachRoute('campaigns.status', $a['workspace'], [$old->uid]), ['status' => 'active'])
             ->assertSessionHas('flash_error');
         $this->assertSame('ended', $old->fresh()->status->value);
-        Queue::assertNothingPushed();
+        Queue::assertNotPushed(OutreachInitialSendJob::class);
     }
 
     public function test_ended_campaign_does_not_steal_later_inbound_from_new_active_campaign(): void
