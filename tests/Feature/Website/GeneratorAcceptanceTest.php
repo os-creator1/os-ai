@@ -108,7 +108,7 @@ class GeneratorAcceptanceTest extends TestCase
 
         $this->website = $this->createWebsite($this->business, ['name' => 'Harbor', 'indexing_released_at' => now()]);
         $this->fakeProvider();
-        $attempt = app(GuidedGenerationCommitService::class)->generateFull($this->business, $this->website, WebsiteTemplate::findActiveOrFail('photo_booth_modern'), $this->customer->user_id, 'idem-accept', null, null, null, null, self::AREAS);
+        $attempt = app(GuidedGenerationCommitService::class)->generateFull($this->business, $this->website, WebsiteTemplate::findActiveOrFail(getenv('ACCEPTANCE_TEMPLATE') ?: 'photo_booth_modern'), $this->customer->user_id, 'idem-accept', null, null, null, null, self::AREAS);
         $this->assertSame(WebsiteGuidedGenerationAttempt::STATUS_SUCCEEDED, $attempt->status, (string) $attempt->failure_reason);
 
         app(WebsitePublisher::class)->publish($this->website->fresh(), $this->platformAdminId());
@@ -243,8 +243,8 @@ class GeneratorAcceptanceTest extends TestCase
 
         foreach ($pages as $path => $html) {
             if (str_starts_with($path, '/service-') || str_ends_with($path, '-photo-booth-rental')) {
-                $this->assertStringContainsString('Ready to book?', $html, "{$path} ends with a way to inquire, not only links to other pages");
-                $this->assertMatchesRegularExpression('#Ready to book\?.*?href="[^"]*/photo-booth-contact"#s', $html, "{$path}: the closing call to action leads to the contact page");
+                $this->assertStringContainsString('Ready to book', $html, "{$path} ends with a way to inquire, not only links to other pages");
+                $this->assertMatchesRegularExpression('#Ready to book.*?href="[^"]*/photo-booth-contact"#s', $html, "{$path}: the closing call to action leads to the contact page");
             }
         }
 

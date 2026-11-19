@@ -187,13 +187,18 @@ final class MediaBindingService
             $hasInquiryCta = collect($sections)->contains(fn ($section) => ($section['type'] ?? null) === 'cta'
                 && collect($section['data']['buttons'] ?? [])->contains(fn ($button) => ltrim((string) ($button['url'] ?? ''), '/') === $contactSlug));
 
-            if ($hasInquiryCta) {
+            // A page never carries more than two call-to-action bands: past that it is noise, not a conversion path.
+            $ctaBands = collect($sections)->where('type', 'cta')->count();
+
+            if ($hasInquiryCta || $ctaBands >= 2) {
                 continue;
             }
 
+            $name = trim((string) ($page['entity']['name'] ?? $page['title'] ?? ''));
             $closing = ['type' => 'cta', 'data' => [
-                'heading' => 'Ready to book?',
-                'body' => 'Tell us your date and details and we will confirm availability.',
+                // Specific to the page (its own service or occasion), so the band is never the same words on every page.
+                'heading' => \Illuminate\Support\Str::limit($name !== '' ? 'Ready to book ' . $name . '?' : 'Ready to book?', 120, ''),
+                'body' => null,
                 'buttons' => [['label' => \App\Library\Website\WebsiteNicheVocabulary::contactCtaLabel($contactSlug, true), 'url' => '/' . $contactSlug]],
             ]];
 
