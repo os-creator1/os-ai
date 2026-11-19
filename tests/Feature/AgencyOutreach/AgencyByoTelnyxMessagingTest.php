@@ -359,6 +359,28 @@ class AgencyByoTelnyxMessagingTest extends TestCase
         $this->assertSame('error', $validation->status);
     }
 
+    public function test_agency_byo_webhook_is_exempt_from_csrf_without_exempting_neighboring_routes(): void
+    {
+        // Laravel disables CSRF middleware in the testing environment, so
+        // exercise the actual exemption matcher. Without this entry Telnyx's
+        // unsigned-by-Laravel-session POST is rejected with HTTP 419 before
+        // its HMAC/Ed25519 checks and no inbound ledger row can be recorded.
+        $csrf = app(\App\Http\Middleware\VerifyCsrfToken::class);
+        $exemption = new \ReflectionMethod(\App\Http\Middleware\VerifyCsrfToken::class, 'inExceptArray');
+
+        $this->assertTrue($exemption->invoke($csrf, \Illuminate\Http\Request::create(
+            '/webhooks/agency-telnyx/channel-uid/hmac-token', 'POST',
+        )));
+
+        foreach ([
+            '/webhooks/agency-telnyx',
+            '/webhooks/agency-telnyx-other/channel-uid/hmac-token',
+            '/customer/workspaces/example',
+        ] as $path) {
+            $this->assertFalse($exemption->invoke($csrf, \Illuminate\Http\Request::create($path, 'POST')), $path);
+        }
+    }
+
     // ------------------------------------------------------------------ inbound
 
     public function test_a_signed_reply_lands_in_the_agencys_own_conversation_once_and_emits_the_domain_event(): void

@@ -28,6 +28,12 @@
             '/payment/*',
             'dlr/*',
             'webhooks/prospecting/*',
+            // The agency-owned Telnyx Messaging Profile calls this signed endpoint
+            // without a Laravel browser session. Authenticate using the existing
+            // channel UID/HMAC token and Ed25519 signature in the controller,
+            // not a CSRF cookie that Telnyx cannot send. Keep this exemption
+            // scoped to the BYO webhook family only.
+            'webhooks/agency-telnyx/*',
             // Implementation Contract 15 §11 — Google/Outlook push
             // notifications carry no Laravel session; authenticity is the
             // URL-embedded HMAC token (ExternalCalendarWebhookToken),
