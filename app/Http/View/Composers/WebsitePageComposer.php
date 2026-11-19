@@ -75,7 +75,7 @@ final class WebsitePageComposer
             // Owner tracking (Website → Tracking): published pages only — never the dashboard, editor or any preview.
             'tracking' => $website === null || $page === null ? null : app(\App\Library\Website\Tracking\WebsiteTrackingSettings::class)->effective(
                 $website,
-                \App\Library\Website\Tracking\WebsiteTrackingSettings::scopeKeyForPage((bool) ($page->is_home ?? $isHome), $page->slug ?? null, ($page->uid ?? null) === 'blog'),
+                $data['blog']['tracking_scope_key'] ?? \App\Library\Website\Tracking\WebsiteTrackingSettings::scopeKeyForPage((bool) ($page->is_home ?? $isHome), $page->slug ?? null, ($page->uid ?? null) === 'blog'),
                 ! $isPreview,
                 (bool) ($data['allowIndexing'] ?? false),
             ),
