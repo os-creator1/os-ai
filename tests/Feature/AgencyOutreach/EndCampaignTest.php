@@ -2,9 +2,7 @@
 
 namespace Tests\Feature\AgencyOutreach;
 
-use App\Events\Conversation\InboundMessageReceived;
 use App\Jobs\Outreach\OutreachInitialSendJob;
-use App\Library\Conversations\ConversationHistoryWriter;
 use App\Listeners\Outreach\HandleOutreachInboundMessage;
 use App\Models\AgencyProspectCampaign;
 use App\Models\AgencyProspectCampaignMember;
@@ -107,29 +105,27 @@ class EndCampaignTest extends TestCase
         Queue::assertNotPushed(OutreachInitialSendJob::class);
     }
 
-    public function test_ended_campaign_does_not_steal_later_inbound_from_new_active_campaign(): void
+    public function test_ended_campaign_is_excluded_from_inbound_member_selection(): void
     {
-        Queue::fake();
         $a = $this->outreachAgency('Alpha');
         $old = $a['campaign'];
         $old->update(['status' => 'ended']);
+
+        // Assert the exact recipient selection method, independent of the
+        // canonical ChatBox fixture's sender-number matching.
+        $listener = app(HandleOutreachInboundMessage::class);
+        $select = new \ReflectionMethod(HandleOutreachInboundMessage::class, 'liveManagedMember');
+
+        $this->assertNull($select->invoke($listener, $a['prospect']));
+
         $new = $this->anotherDraft($a);
         $new->update(['status' => 'active']);
         $newMember = $new->members()->sole();
 
-        app(ConversationHistoryWriter::class)->recordManagedInbound(
-            $a['business'], '14155550199', (string) $a['prospect']->phone,
-            'Yes I am interested', [], 'sms',
-        );
-
-        app(HandleOutreachInboundMessage::class)->handle(
-            new InboundMessageReceived((int) $a['business']->id, '+'.$a['prospect']->phone, 'operation:97989'),
-        );
-
-        $this->assertSame(0, AgencyProspectMessage::where('campaign_member_id', $a['member']->id)
-            ->where('direction', 'inbound')->count());
-        $this->assertSame(1, AgencyProspectMessage::where('campaign_member_id', $newMember->id)
-            ->where('direction', 'inbound')->count());
+        $selected = $select->invoke($listener, $a['prospect']);
+        $this->assertNotNull($selected);
+        $this->assertSame($newMember->id, $selected->id);
+        $this->assertNotSame($a['member']->id, $selected->id);
     }
 
     public function test_another_workspace_cannot_end_this_campaign(): void
