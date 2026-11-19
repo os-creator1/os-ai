@@ -282,10 +282,13 @@ final class OutreachSequence
         }
 
         $norm = static fn (string $t): string => trim(preg_replace('/\s+/u', ' ', $t) ?? $t);
-        $steps = array_values(array_filter($this->enabledSteps(), static fn (array $s): bool => $s['advance_on'] === self::REPLY));
+        // Disabled reply steps cannot be sent again, but a previously delivered one still OWNS
+        // its evidence. Reserve recorded ids from all reply steps before inferring enabled ones.
+        $allReplySteps = array_values(array_filter($this->steps, static fn (array $s): bool => $s['advance_on'] === self::REPLY));
+        $steps = array_values(array_filter($allReplySteps, static fn (array $s): bool => $s['enabled'] && trim($s['body']) !== ''));
         $text = [];
 
-        foreach ($steps as $step) {
+        foreach ($allReplySteps as $step) {
             $text[$step['id']] = $norm(OutreachScriptRenderer::render(OutreachScriptTokens::canonicalise((string) $step['body']), $workspace, $prospect));
         }
 
@@ -361,8 +364,10 @@ final class OutreachSequence
             return true;
         };
 
-        foreach ($steps as $step) {
+        foreach ($allReplySteps as $step) {
             if (isset($recorded[$step['id']]) && ! isset($explicit[$step['id']])) {
+                // Even if this step has since been disabled, consume the opener/manual
+                // message previously assigned to it; it must not satisfy a later same-text step.
                 $take($text[$step['id']], true);
             }
         }

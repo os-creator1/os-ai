@@ -703,6 +703,58 @@ class OutreachSequenceContinuityTest extends TestCase
         $this->assertSame(['a', 't'], $this->member($member)->sequence_sent_ids);
     }
 
+
+    public function test_disabling_a_delivered_opener_step_keeps_its_evidence_from_the_later_identical_step(): void
+    {
+        [$workspace, $business, $member] = $this->started('Alpha text.');
+        $this->aba($workspace);
+        $this->inbound($business, 'ok'); // opener was a1, automatic reply sends b
+        $this->assertSame(['a1', 'b'], $this->member($member)->sequence_sent_ids);
+
+        // The owner disables a1 after it was delivered, leaving a3's identical A enabled.
+        OutreachScriptManager::save($workspace, ['sequence_steps' => [
+            $this->step('a1', 'Alpha text.', false),
+            $this->step('b', 'Beta text.'),
+            $this->step('a3', 'Alpha text.'),
+        ]]);
+
+        $this->assertSame('a3', $this->nextStepId($workspace, $member), 'A disabled a1 must keep its historical opener evidence.');
+        $this->assertNotContains('a3', OutreachSequence::forWorkspace($workspace)->deliveredByContent($member->fresh()));
+
+        $this->inbound($business, 'ok');
+        $this->inbound($business, 'ok');
+        $this->assertSame(['Alpha text.', 'Beta text.', 'Alpha text.'], $this->sentBodies(), 'The last A sends exactly once.');
+        $this->assertSame(['a1', 'b', 'a3'], $this->member($member)->sequence_sent_ids);
+    }
+
+    public function test_manually_delivered_calendar_link_allows_one_scheduling_resend_and_reconciles_stage(): void
+    {
+        [$workspace, $business, $member] = $this->started('Hello! Quick question.');
+        OutreachScriptManager::save($workspace, ['sequence_steps' => [
+            $this->step('a', 'Alpha text.'),
+            $this->step('b', 'Beta text.'),
+            $this->step('link', 'Book here: {{agency.calendar_link}}'),
+        ]]);
+        $this->inbound($business, 'ok');
+        $this->inbound($business, 'ok');
+        $this->assertSame(3, $this->member($member)->stage->value);
+
+        $this->handSend($business, 'Book here: https://cal.example.test/snap', 'sent');
+        $sequence = OutreachSequence::forWorkspace($workspace);
+        $this->assertSame(['a', 'b', 'link'], $sequence->sentIdsFor($member->fresh()));
+        $this->assertSame(3, $this->member($member)->stage->value, 'The manual send does not itself update Outreach stage.');
+
+        $before = count($this->sentBodies());
+        $this->inbound($business, 'tomorrow works');
+        $this->assertCount($before + 1, $this->sentBodies(), 'The scheduling reply is not silently dropped.');
+        $this->assertSame('Book here: https://cal.example.test/snap', $this->sentBodies()[$before]);
+        $this->assertSame(4, $this->member($member)->stage->value, 'A successful resend reconciles the booking stage.');
+        $this->assertSame(1, AgencyProspectMessage::where('campaign_member_id', $member->id)->where('intent', 'link_resend')->count());
+
+        $this->inbound($business, 'tomorrow works');
+        $this->assertCount($before + 1, $this->sentBodies(), 'The link is never resent a second time.');
+    }
+
     public function test_a_manual_message_sent_while_the_opener_was_still_paused_does_not_count(): void
     {
         [$workspace, $business, $member] = $this->started('Hello! Quick question.');
