@@ -284,11 +284,15 @@ class VoiceCallController extends CustomerBaseController
                 : ((int) $active->agency_prospecting_channel_id === (int) $byoChannel->id
                     && $active->webrtc_connection_id === trim((string) $byoChannel->voice_webrtc_connection_id))
         );
-        $updated = $matches ? BusinessVoiceBrowserCredential::query()->whereKey($active->id)->update(['presence_at' => now()]) : 0;
+        if (! $matches) {
+            return $this->error('browser_session_required', 'Start a calling session first.', 409);
+        }
 
-        return $updated === 0
-            ? $this->error('browser_session_required', 'Start a calling session first.', 409)
-            : response()->json(['data' => ['available' => true]])->header('Cache-Control', 'no-store');
+        // Success is "this session is current", never the affected-row count: a second heartbeat within the same second writes
+        // an identical timestamp, which MySQL reports as 0 changed rows, and must not be mistaken for a stale session.
+        BusinessVoiceBrowserCredential::query()->whereKey($active->id)->update(['presence_at' => now()]);
+
+        return response()->json(['data' => ['available' => true]])->header('Cache-Control', 'no-store');
     }
 
     /** Inbound calls currently ringing THIS user's browser, with caller identification (called when the SDK reports a ring). */

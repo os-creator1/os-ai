@@ -309,6 +309,20 @@ class AgencyByoVoiceCallingTest extends TestCase
         $beat(substr($tab1, 0, -2) . 'zz')->assertStatus(409);
     }
 
+    public function test_two_heartbeats_in_the_same_second_are_both_accepted(): void
+    {
+        config(['messaging.voice.inbound.enabled' => true]);
+        $this->channel->forceFill(['voice_enabled' => false])->save();
+        $id = $this->postJson($this->url('browser-session'))->assertOk()->json('data.session_id');
+
+        $this->travelTo(now()->startOfSecond());
+        \Illuminate\Support\Facades\Cache::flush();
+        $this->postJson($this->url('presence'), ['session_id' => $id])->assertOk();
+        \Illuminate\Support\Facades\Cache::flush();
+        $this->postJson($this->url('presence'), ['session_id' => $id])->assertOk(); // identical timestamp: not a stale session
+        $this->travelBack();
+    }
+
     public function test_a_session_id_works_only_for_its_own_user_business_and_credential(): void
     {
         $id = $this->postJson($this->url('browser-session'))->assertOk()->json('data.session_id');
