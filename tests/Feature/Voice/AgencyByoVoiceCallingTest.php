@@ -45,6 +45,7 @@ class AgencyByoVoiceCallingTest extends TestCase
     private $contact;
     private AgencyProspectingChannel $channel;
     private int $legSeq = 0;
+    private int $dialStatus = 200;
 
     protected function setUp(): void
     {
@@ -86,6 +87,9 @@ class AgencyByoVoiceCallingTest extends TestCase
                 return Http::response(['data' => ['result' => 'ok']], 200);
             }
             if (str_ends_with($url, '/calls')) {
+                if ($this->dialStatus !== 200) {
+                    return Http::response(['errors' => [['code' => '10010', 'detail' => 'Bearer ' . self::AGENCY_KEY . ' invalid']]], $this->dialStatus);
+                }
                 $this->legSeq++;
 
                 return Http::response(['data' => ['call_control_id' => (str_starts_with((string) $r['to'], 'sip:') ? 'agent-' : 'contact-') . $this->legSeq]], 200);
@@ -386,7 +390,7 @@ class AgencyByoVoiceCallingTest extends TestCase
     public function test_a_failed_telnyx_dial_shows_a_useful_error_without_leaking_credentials(): void
     {
         $this->postJson($this->url('browser-session'))->assertOk();
-        Http::fake(['api.telnyx.com/v2/calls' => Http::response(['errors' => [['code' => '10010', 'detail' => 'Bearer ' . self::AGENCY_KEY . ' invalid']]], 401)]);
+        $this->dialStatus = 401;
 
         $response = $this->placeBrowser()->assertStatus(502);
         $this->assertSame('failed', $response->json('data.status'));

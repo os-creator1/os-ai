@@ -62,10 +62,9 @@ class AgencyProspectingChannel extends Model
             $digits = preg_replace('/\\D/', '', (string) $channel->sender_number);
             $channel->sender_key = $channel->status === self::STATUS_DISCONNECTED || $digits === '' ? null : $digits;
 
-            // Same one-live-owner rule for the voice number; a disconnected channel also stops being a voice channel.
-            if ($channel->status === self::STATUS_DISCONNECTED) {
-                $channel->voice_enabled = false;
-            }
+            // Same one-live-owner rule for the voice number. voice_enabled is deliberately NOT cleared on disconnect: the
+            // agency chose its own account for calling, so a disconnected one must block calls (never fall back to
+            // platform-paid voice) until the agency reconnects or explicitly turns voice off.
             $voiceDigits = preg_replace('/\D/', '', (string) $channel->voice_number);
             $channel->voice_number_key = $channel->status === self::STATUS_DISCONNECTED || $voiceDigits === '' ? null : $voiceDigits;
         });

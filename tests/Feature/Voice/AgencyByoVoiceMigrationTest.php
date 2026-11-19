@@ -23,7 +23,7 @@ class AgencyByoVoiceMigrationTest extends TestCase
     private function legacyCall(int $id, int $numberId): array
     {
         return ['id' => $id, 'business_id' => 9001, 'business_messaging_number_id' => $numberId, 'to_hash' => str_repeat('a', 64),
-            'status' => 'ended', 'kind' => 'customer', 'channel' => 'browser', 'uid' => '00000000-0000-0000-0000-00000000000' . $id,
+            'status' => 'ended', 'kind' => 'customer', 'channel' => 'browser', 'uid' => sprintf('00000000-0000-0000-0000-%012d', $id),
             'telnyx_call_control_id' => 'cc-' . $id, 'created_at' => now(), 'updated_at' => now()];
     }
 

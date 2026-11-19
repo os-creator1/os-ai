@@ -174,18 +174,19 @@ class AgencyVoiceSetupController extends CustomerBaseController
 
     public function disable(string $workspaceUid, AgencyProspectingChannel $channel): RedirectResponse
     {
-        $channel = $this->channelFor($workspaceUid, $channel);
+        // Allowed on a disconnected channel too: it is how an agency releases a blocked calling selection.
+        $channel = $this->channelFor($workspaceUid, $channel, true);
         $channel->forceFill(['voice_enabled' => false])->save();
 
         return $this->back($workspaceUid, $channel)->with('flash_success', 'Voice is off for this Telnyx account.');
     }
 
-    private function channelFor(string $workspaceUid, AgencyProspectingChannel $channel): AgencyProspectingChannel
+    private function channelFor(string $workspaceUid, AgencyProspectingChannel $channel, bool $allowDisconnected = false): AgencyProspectingChannel
     {
         $workspace = $this->resolveEntitledWorkspace($workspaceUid);
         abort_unless((int) $channel->workspace_id === (int) $workspace->id
             && $channel->provider === SendingServer::TYPE_TELNYX
-            && $channel->status !== AgencyProspectingChannel::STATUS_DISCONNECTED, 404);
+            && ($allowDisconnected || $channel->status !== AgencyProspectingChannel::STATUS_DISCONNECTED), 404);
 
         return $channel->loadMissing('sendingServer');
     }

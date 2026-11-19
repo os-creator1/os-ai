@@ -39,6 +39,8 @@ class AgencyVoiceSetupTest extends TestCase
 
     private function fakeTelnyxVoice(array $o = []): void
     {
+        // A fresh factory each time: with stacked fakes the FIRST matching stub wins, so a re-fake must replace, not add.
+        Http::swap(new \Illuminate\Http\Client\Factory());
         Http::fake([
             'api.telnyx.com/v2/call_control_applications/*' => Http::response(['data' => ['id' => 'cc_1', 'active' => $o['cc_active'] ?? true]], $o['cc_status'] ?? 200),
             'api.telnyx.com/v2/credential_connections/*' => Http::response(['data' => ['id' => 'wr_1', 'active' => true, 'outbound' => ['outbound_voice_profile_id' => $o['ovp'] ?? null]]], $o['wr_status'] ?? 200),
@@ -133,7 +135,6 @@ class AgencyVoiceSetupTest extends TestCase
 
         $second = $this->byoChannel($this->agency['workspace']);
         $this->put($this->route('save', $second), ['voice_connection_id' => 'cc_1', 'voice_webrtc_connection_id' => 'wr_1', 'voice_number' => '+14155550144']);
-        $this->post($this->route('verify', $second));
         $this->fakeTelnyxVoice(['number_row' => [['phone_number' => '+14155550144', 'status' => 'active', 'connection_id' => 'cc_1']]]);
         $this->post($this->route('verify', $second));
         $this->post($this->route('enable', $second));
@@ -230,6 +231,16 @@ class AgencyVoiceSetupTest extends TestCase
         $this->post($this->route('verify'))->assertSessionHas('flash_error');
         $this->assertNull($this->channel->fresh()->voice_connection_verified_at);
         $this->assertNull($this->channel->fresh()->voice_number_verified_at);
+    }
+
+    public function test_a_disconnected_voice_channel_can_be_released_but_never_falls_back(): void
+    {
+        $this->channel->forceFill(['voice_enabled' => true, 'status' => AgencyProspectingChannel::STATUS_DISCONNECTED])->save();
+        $this->assertTrue($this->channel->fresh()->voice_enabled, 'Disconnecting must not silently hand calling back to platform voice.');
+
+        $this->post($this->route('disable'))->assertRedirect();
+        $this->assertFalse($this->channel->fresh()->voice_enabled);
+        $this->post($this->route('enable'))->assertNotFound();
     }
 
     public function test_an_unchanged_configuration_is_still_approved(): void
