@@ -39,11 +39,17 @@ final class WebsiteRelatedArticles
 
         $query = fn () => WebsiteArticle::query()->published()->where('website_id', $website->id)->where('noindex', false);
 
-        // The home page promises the newest guides, so its list is globally newest-first even when an older article explicitly supports home.
-        // Other pages show only the guides that explicitly support that page.
-        $articles = $isHome
-            ? $query()->orderByDesc('published_at')->limit(self::MAX)->get()
-            : $query()->where('supports_page_uid', $uid)->orderByDesc('published_at')->limit(self::MAX)->get();
+        // Other pages show only the guides that explicitly support that page. The home page ranks the eligible guides by relevance: those
+        // that support one of this site's current service/commercial pages (a non-home page in the navigation) come first, the rest follow,
+        // and publication date (newest first) breaks ties inside each group. With no such relationship it is simply newest-first.
+        if ($isHome) {
+            $servicePageUids = collect($navigationPages)->reject(fn ($entry) => ! empty($entry['is_home']))->pluck('uid')->filter()->all();
+            $articles = $query()->orderByDesc('published_at')->orderByDesc('id')->get()
+                ->sortBy(fn (WebsiteArticle $article) => in_array($article->supports_page_uid, $servicePageUids, true) ? 0 : 1)
+                ->take(self::MAX);
+        } else {
+            $articles = $query()->where('supports_page_uid', $uid)->orderByDesc('published_at')->limit(self::MAX)->get();
+        }
 
         return [
             'heading' => $isHome ? 'Latest guides' : 'Helpful guides',
