@@ -93,8 +93,8 @@ html[data-layout="dark-layout"] .og,.dark-layout .og{--og-bg:#17191F;--og-card:#
 .og .menu .pop a:hover,.og .menu .pop button:hover{background:var(--og-soft)}
 .og .menu .pop form{margin:0}
 /* modal (native dialog) + drawer */
-.og dialog.modal{border:0;padding:0;background:transparent;max-width:calc(100% - 32px);width:560px;margin:70px auto auto;color:var(--og-ink)}
-.og dialog.modal::backdrop{background:rgba(31,26,25,.38)}
+.og dialog.og-dialog{border:0;padding:0;background:transparent;max-width:calc(100% - 32px);width:560px;margin:70px auto auto;color:var(--og-ink)}
+.og dialog.og-dialog::backdrop{background:rgba(31,26,25,.38)}
 .og .sheet{border-radius:18px;background:var(--og-card);box-shadow:0 24px 64px rgba(31,26,25,.28);overflow:hidden;color:var(--og-ink)}
 .og .sheet .top{padding:22px 24px 4px}.og .sheet .top h2{font-size:20px;font-weight:800}.og .sheet .top span{font-size:13.5px;color:var(--og-mute)}
 .og .sheet .mid{padding:16px 24px 20px;display:flex;flex-direction:column;gap:14px}
@@ -129,7 +129,7 @@ html[data-layout="dark-layout"] .og,.dark-layout .og{--og-bg:#17191F;--og-card:#
  .og .row.rsp>*{grid-column:auto}
  .og .row.rsp>[data-l]::before{content:attr(data-l) ": ";color:var(--og-mute2);font-size:12px}
  .og .toast{right:16px;left:16px}
- .og dialog.modal{margin-top:24px}
+ .og dialog.og-dialog{margin-top:24px}
  .og .drawer{max-width:none}
 }
 /* header-only wrapper used on Outreach sub-pages that keep their own legacy body (channels, settings) */

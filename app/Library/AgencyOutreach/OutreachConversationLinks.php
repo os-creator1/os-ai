@@ -8,6 +8,7 @@ use App\Models\ChatBox;
 use App\Models\Workspace;
 use App\Library\Workspace\WorkspaceManager;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Pagination\AbstractPaginator;
 
 /**
  * Presentation helpers for the Outreach tabs: where "Open" should go for a campaign member's real
@@ -22,7 +23,11 @@ final class OutreachConversationLinks
      */
     public function forMembers(Workspace $workspace, iterable $members): array
     {
-        $members = collect($members);
+        // A paginator is Arrayable, so collect($paginator) collects its metadata,
+        // not the underlying campaign-member models.
+        $members = $members instanceof AbstractPaginator
+            ? $members->getCollection()
+            : collect($members);
         $business = AgencyOutreachBusinessResolver::forWorkspace($workspace);
 
         $boxUids = $business === null || $members->isEmpty()

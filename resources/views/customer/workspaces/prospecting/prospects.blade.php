@@ -82,7 +82,7 @@
     </section>
 
     {{-- Add prospect: only the phone is shown as the key field; company is required by the existing backend. --}}
-    <dialog class="modal" id="og-add-prospect" aria-labelledby="og-add-title" data-reopen="{{ $errors->any() ? '1' : '0' }}">
+    <dialog class="og-dialog" id="og-add-prospect" aria-labelledby="og-add-title" data-reopen="{{ $errors->any() ? '1' : '0' }}">
         <form method="post" action="{{ route('customer.workspaces.prospecting.prospects.store', $workspaceUid) }}" class="sheet" novalidate>
             @csrf
             <div class="top"><h2 id="og-add-title">Add prospect</h2><span>Phone and company are required.</span></div>
