@@ -202,6 +202,51 @@ class PublicBlogTest extends TestCase
         $this->get(self::HOST . '/blog?page=abc')->assertOk();
     }
 
+    public function test_blog_pages_are_ordered_newest_first_without_overlap_and_have_their_own_canonicals_and_links(): void
+    {
+        [, $business] = $this->photoBoothContentTenant();
+
+        // 11 published, indexable articles, one minute apart: article 11 is the newest.
+        $titles = [];
+        foreach (range(1, 11) as $n) {
+            $titles[$n] = sprintf('Pagination guide %02d', $n);
+            $this->publishedArticle($business, ['title' => $titles[$n], 'primary_topic' => "pagination topic {$n} " . str_repeat('y', $n)]);
+            $this->travel(1)->minutes();
+        }
+        $order = function (string $html) use ($titles): array {
+            $positions = [];
+            foreach ($titles as $n => $title) {
+                $p = strpos($html, '>' . $title . '<');
+                if ($p !== false) {
+                    $positions[$n] = $p;
+                }
+            }
+            asort($positions);
+
+            return array_keys($positions);
+        };
+
+        $first = $this->body(self::HOST . '/blog');
+        $second = $this->body(self::HOST . '/blog?page=2');
+
+        $this->assertSame([11, 10, 9, 8, 7, 6, 5, 4, 3], $order($first), 'page 1: the nine newest, newest first');
+        $this->assertSame([2, 1], $order($second), 'page 2: the remaining two, newest first');
+        $this->assertSame([], array_intersect($order($first), $order($second)), 'no article on both pages');
+
+        // Each page has its own canonical; page 1 is the clean blog address.
+        $this->assertStringContainsString('<link rel="canonical" href="https://' . self::DOMAIN . '/blog">', $first);
+        $this->assertStringNotContainsString('?page=1', $first);
+        $this->assertStringContainsString('<link rel="canonical" href="https://' . self::DOMAIN . '/blog?page=2">', $second);
+        $this->assertSame(1, substr_count($first, 'rel="canonical"'));
+        $this->assertSame(1, substr_count($second, 'rel="canonical"'));
+
+        // Relevant pagination links only.
+        $this->assertStringContainsString('rel="next" href="https://' . self::DOMAIN . '/blog?page=2"', $first);
+        $this->assertStringNotContainsString('rel="prev"', $first);
+        $this->assertStringContainsString('rel="prev" href="https://' . self::DOMAIN . '/blog"', $second);
+        $this->assertStringNotContainsString('rel="next"', $second);
+    }
+
     public function test_an_owner_noindex_article_is_noindex_and_out_of_the_sitemap_and_schema(): void
     {
         [, $business] = $this->photoBoothContentTenant();
