@@ -611,6 +611,10 @@ class GeneratorAcceptanceTest extends TestCase
         }
 
         $this->assertContains('/service-magic-mirror-photo-booth', $this->links($this->body($post)), 'the article links to the service it supports');
+        // And the pages point back into the blog: the supported service page ("Helpful guides") and the home page ("Latest guides").
+        $this->assertStringContainsString('Helpful guides', $this->get($this->url('/service-magic-mirror-photo-booth'))->getContent());
+        $this->assertStringContainsString('Latest guides', $home);
+        $this->assertStringContainsString('<a href="https://' . self::DOMAIN . '/blog/' . $article->slug . '">', $home);
         $this->assertContains('/photo-booth-contact', $this->links($post), 'the article keeps the inquiry journey');
         $this->assertContains('/blog/' . $article->slug, $this->links($index));
         $this->assertStringContainsString('<link rel="canonical" href="https://' . self::DOMAIN . '/blog/' . $article->slug . '">', $post);
@@ -621,6 +625,8 @@ class GeneratorAcceptanceTest extends TestCase
             @mkdir($dir . '/blog', 0777, true);
             file_put_contents($dir . '/blog.html', $index);
             file_put_contents($dir . '/blog/' . $article->slug . '.html', $post);
+            file_put_contents($dir . '/home-with-guides.html', $home);
+            file_put_contents($dir . '/service-with-guides.html', $this->get($this->url('/service-magic-mirror-photo-booth'))->getContent());
         }
     }
 

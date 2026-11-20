@@ -215,14 +215,20 @@
                 @endif
             @endforeach
             @if (! empty($relatedArticles ?? []))
-                {{-- A page the owner's published articles support lists them: descriptive links from the commercial page into the blog. --}}
+                {{-- Published, relevant guides of this site (WebsiteRelatedArticles): descriptive links from the page into the blog, at their current addresses. --}}
                 <div class="wd-band wd-tone-{{ $design->toneFor('text') }} wd-band-related-articles" data-section="related_articles">
                     <div class="website-container wd-container">
                         <section class="website-section website-related-articles" aria-labelledby="related-articles-title" data-testid="related-articles">
-                            <h2 id="related-articles-title" class="wd-section-title">Helpful guides</h2>
-                            <ul>
+                            <h2 id="related-articles-title" class="wd-section-title">{{ $relatedHeading ?? 'Helpful guides' }}</h2>
+                            <ul class="wd-guides">
                                 @foreach ($relatedArticles as $related)
-                                    <li><a href="{{ $related['url'] }}">{{ $related['title'] }}</a></li>
+                                    <li class="wd-guide">
+                                        <h3 class="wd-guide-title"><a href="{{ $related['url'] }}">{{ $related['title'] }}</a></h3>
+                                        @if (! empty($related['excerpt']))
+                                            <p class="wd-guide-excerpt">{{ $related['excerpt'] }}</p>
+                                        @endif
+                                        <a class="wd-guide-more" href="{{ $related['url'] }}" aria-label="Read the guide: {{ $related['title'] }}">Read the guide &rarr;</a>
+                                    </li>
                                 @endforeach
                             </ul>
                         </section>

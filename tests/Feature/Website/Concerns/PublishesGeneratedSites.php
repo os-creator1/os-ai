@@ -94,6 +94,11 @@ trait PublishesGeneratedSites
                     $hero(($context['primary_service'] ?? 'Our services') . $in),
                     ['type' => 'services', 'data' => ['heading' => 'What we offer', 'items' => array_map(fn ($name) => ['name' => $name, 'description' => 'Book ' . $name . ' for your event.', 'price_label' => null], $services)]],
                     $copy('Where we work', trim(implode(' ', (array) ($payload['confirmed_facts']['differentiators'] ?? [])) . ' ') . 'We work with customers ' . ($context['areas_served'] ?? [] ? 'in ' . implode(', ', $context['areas_served']) : 'by arrangement') . '.'),
+                    ['type' => 'faq', 'data' => ['heading' => 'Questions before you book', 'items' => [
+                        ['question' => 'How do I check availability?', 'answer' => 'Send the date and venue through the inquiry form and we will confirm.'],
+                        ['question' => 'How much space does the booth need?', 'answer' => 'Allow a clear area for the booth and one person beside it; ask us about your venue.'],
+                        ['question' => 'How long does setup take?', 'answer' => 'Setup is quick; confirm your load-in window with us.'],
+                    ]]],
                 ];
                 break;
             case isset($entry['entity']['area']):
@@ -121,7 +126,12 @@ trait PublishesGeneratedSites
                 $sections = [$hero('About ' . ($payload['site_context']['business_name'] ?? 'us')), $copy('Who we are', 'We are a local business' . ($city === null ? '' : ' based in ' . $city) . '. ' . $unique)];
                 break;
             case $entry['page_type'] === 'faq':
-                $sections = [$hero('Frequently asked questions'), ['type' => 'faq', 'data' => ['heading' => 'Before you book', 'items' => [['question' => 'How do I check availability?', 'answer' => 'Send the date and venue through the inquiry form and we will confirm. ' . substr($unique, 0, 12)]]]]];
+                $sections = [$hero('Frequently asked questions'), ['type' => 'faq', 'data' => ['heading' => 'Before you book', 'items' => [
+                    ['question' => 'How do I check availability?', 'answer' => 'Send the date and venue through the inquiry form and we will confirm. ' . substr($unique, 0, 12)],
+                    ['question' => 'How much space does the booth need, and can it fit an awkward or narrow entrance at the venue we have chosen?', 'answer' => "Allow a clear area for the booth and one person to stand beside it.\n\nIf the entrance is narrow or the room is crowded, tell us the venue and we will confirm what fits before you book. A venue contact can usually answer this quickly."],
+                    ['question' => 'How long does setup take?', 'answer' => 'Setup is quick; confirm your load-in window with us.'],
+                    ['question' => 'Can guests share their photos?', 'answer' => 'Yes, sharing is part of the booth experience; ask us how it works for your event.'],
+                ]]]];
                 break;
             default:
                 $sections = [$hero($label . ' ' . substr($unique, 0, 8))];

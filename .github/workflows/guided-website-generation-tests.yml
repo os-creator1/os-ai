@@ -89,6 +89,7 @@ jobs:
           tests/Feature/Forms/FormsBoundaryTest.php
           tests/Feature/Website/WebsiteBoundaryTest.php
           tests/Feature/Website/InquiryPanelPhoneSnapshotTest.php
+          tests/Feature/Website/FaqAndGuideLinksTest.php
           tests/Feature/Website/WebsitePageCountCeilingTest.php
           tests/Feature/Website/WebsitePlanExplanationTest.php
           tests/Feature/Website/WebsiteEventPagesPlanTest.php
