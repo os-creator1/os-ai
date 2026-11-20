@@ -66,6 +66,9 @@ class GeneratorAcceptanceTest extends TestCase
 
     private string $templateKey = 'photo_booth_modern';
 
+    /** false = the facts are written to the profile WITHOUT the owner's confirmation (they must never reach the site) */
+    private bool $confirmFacts = true;
+
     protected function setUp(): void
     {
         parent::setUp();
@@ -116,7 +119,7 @@ class GeneratorAcceptanceTest extends TestCase
 
         if ($this->differentiators !== []) {
             // Owner-CONFIRMED facts only reach the generator (an unverified or stale one is never used).
-            app(\App\Library\Business\BusinessKnowledgeProfileManager::class)->updateFields($this->business, ['differentiators' => $this->differentiators], 'manual_edit', (int) $this->customer->user_id, true);
+            app(\App\Library\Business\BusinessKnowledgeProfileManager::class)->updateFields($this->business, ['differentiators' => $this->differentiators], 'manual_edit', (int) $this->customer->user_id, $this->confirmFacts);
         }
 
         $this->website = $this->createWebsite($this->business, ['name' => 'Harbor', 'indexing_released_at' => now()]);
@@ -288,22 +291,171 @@ class GeneratorAcceptanceTest extends TestCase
         }
     }
 
-    public function test_confirmed_owner_facts_appear_in_the_panel_and_nothing_else_is_added(): void
+    /** Six confirmed facts: four short ones fill the strip, two are left for the service pages' panels. */
+    private const FACTS = [
+        'An on-site attendant stays for the whole booking',
+        'Digital sharing for every guest',
+        'Custom print designs',
+        'Unlimited prints for the whole booking',
+        'Setup takes about an hour and we load in early',
+        'Every booking gets a dedicated planner who stays in touch',
+    ];
+
+    /** A named route on the application's own host (not the customer's domain a previous request may have left as the current root). */
+    private function appUrl(string $name, array $parameters = []): string
     {
-        $this->differentiators = ['An on-site attendant stays for the whole booking', 'Digital sharing for every guest', 'Custom print designs', 'A fourth fact that is not shown'];
-        $pages = $this->site();
-
-        ['aside' => $aside] = $this->panel($pages['/service-magic-mirror-photo-booth']);
-        preg_match_all('#<li>(.*?)</li>#s', $aside, $m);
-
-        $this->assertSame(['An on-site attendant stays for the whole booking', 'Digital sharing for every guest', 'Custom print designs'], array_map('trim', $m[1]), 'the first three confirmed facts, verbatim');
-        $this->assertStringNotContainsString('A fourth fact', $aside);
+        return rtrim((string) config('app.url'), '/') . route($name, $parameters, false);
     }
 
-    public function test_the_panel_renders_in_the_editorial_template_and_the_visual_rules_are_in_the_stylesheets(): void
+    /** @return array<int, string> the facts of the trust strip of a rendered home page */
+    private function stripFacts(string $html): array
+    {
+        if (! preg_match('#<section\b[^>]*data-testid="trust-strip".*?</section>#s', $html, $m)) {
+            return [];
+        }
+        preg_match_all('#<li>(.*?)</li>#s', $m[0], $items);
+
+        return array_map(fn ($item) => trim(html_entity_decode(strip_tags($item))), $items[1]);
+    }
+
+    /** @return array<int, string> the facts of a service page's inquiry panel */
+    private function panelFacts(string $html): array
+    {
+        preg_match('#<aside\b[^>]*data-testid="inquiry-panel".*?</aside>#s', $html, $m);
+        preg_match_all('#<li>(.*?)</li>#s', $m[0] ?? '', $items);
+
+        return array_map(fn ($item) => trim(html_entity_decode(strip_tags($item))), $items[1]);
+    }
+
+    public function test_confirmed_facts_form_one_trust_strip_directly_under_the_hero_and_the_panels_show_only_the_rest(): void
+    {
+        $this->differentiators = self::FACTS;
+        $pages = $this->site();
+        $home = $pages['/'];
+
+        $this->assertSame(1, substr_count($home, 'data-testid="trust-strip"'), 'one strip, never a duplicate section');
+        $this->assertSame(array_slice(self::FACTS, 0, 4), $this->stripFacts($home), 'the first four short confirmed facts, verbatim and in the owner\'s order');
+        // Directly below the hero: the band after the hero band is the strip.
+        $this->assertMatchesRegularExpression('#data-section="hero".*?</div>\s*<div class="wd-band [^"]*wd-band-trust_strip" data-section="trust_strip"#s', $home);
+        $this->assertStringContainsString('wd-trust-list', $home);
+
+        // The service pages' panels show what the strip does not: nothing is repeated site-wide.
+        $panel = $this->panelFacts($pages['/service-magic-mirror-photo-booth']);
+        $this->assertSame(array_slice(self::FACTS, 4, 2), $panel);
+        $this->assertSame([], array_intersect($this->stripFacts($home), $panel), 'no fact appears in both');
+        foreach (['/services', '/photo-booth-about', '/photo-booth-contact', '/serving-laurel-ms'] as $other) {
+            $this->assertStringNotContainsString('trust-strip', $pages[$other], "{$other} has no strip");
+        }
+    }
+
+    public function test_no_strip_without_two_suitable_confirmed_facts_and_the_panels_keep_what_exists(): void
+    {
+        $this->differentiators = ['Only one confirmed fact about us'];
+        $pages = $this->site();
+
+        $this->assertSame([], $this->stripFacts($pages['/']), 'one fact is not a strip');
+        $this->assertStringNotContainsString('trust-strip', $pages['/']);
+        $this->assertStringNotContainsString('wd-band-trust_strip', $pages['/'], 'no empty band is left behind');
+        $this->assertSame(['Only one confirmed fact about us'], $this->panelFacts($pages['/service-magic-mirror-photo-booth']));
+    }
+
+    public function test_facts_too_long_for_a_compact_strip_are_never_shortened_they_go_to_the_panels(): void
+    {
+        $long = ['A very long confirmed advantage that runs well past the compact limit of a trust strip item', 'Another long confirmed advantage that also runs well past the compact limit of one strip item'];
+        $this->differentiators = $long;
+        $pages = $this->site();
+
+        $this->assertSame([], $this->stripFacts($pages['/']));
+        $this->assertSame($long, $this->panelFacts($pages['/service-magic-mirror-photo-booth']), 'verbatim, untruncated');
+    }
+
+    public function test_unconfirmed_facts_never_reach_the_strip_or_the_panels(): void
+    {
+        $this->differentiators = self::FACTS;
+        $this->confirmFacts = false;
+        $pages = $this->site();
+
+        $this->assertStringNotContainsString('trust-strip', $pages['/']);
+        $this->assertSame([], $this->panelFacts($pages['/service-magic-mirror-photo-booth']));
+        foreach (self::FACTS as $fact) {
+            $this->assertStringNotContainsString($fact, $pages['/service-magic-mirror-photo-booth']);
+        }
+    }
+
+    public function test_a_site_with_no_confirmed_facts_has_no_strip_and_no_invented_claims(): void
+    {
+        $pages = $this->site();
+
+        foreach ($pages as $path => $html) {
+            $this->assertStringNotContainsString('trust-strip', $html, "{$path}: no strip without facts");
+        }
+        $this->assertDoesNotMatchRegularExpression('/\b(\d+\+? (years|events|weddings|clients)|rated|five[- ]star|award|guarantee)/i', $pages['/'], 'no invented rating, statistic, award or guarantee');
+    }
+
+    public function test_the_strip_is_frozen_at_publish_survives_republishing_and_follows_owner_edits_and_removal(): void
+    {
+        $this->differentiators = self::FACTS;
+        $pages = $this->site();
+        $first = array_slice(self::FACTS, 0, 4);
+        $this->assertSame($first, $this->stripFacts($pages['/']));
+
+        // Changing the business's confirmed facts later never rewrites a published page (nor the draft: the facts live in the page).
+        app(\App\Library\Business\BusinessKnowledgeProfileManager::class)->updateFields($this->business, ['differentiators' => ['Brand new fact one', 'Brand new fact two']], 'manual_edit', (int) $this->customer->user_id, true);
+        $this->assertSame($first, $this->stripFacts($this->get($this->url('/'))->getContent()), 'published page unchanged');
+        $this->travel(5)->seconds();
+        app('cache')->flush();
+        app(WebsitePublisher::class)->publish($this->website->fresh(), $this->platformAdminId());
+        $this->assertSame($first, $this->stripFacts($this->get($this->url('/'))->getContent()), 'republishing the same draft keeps the same strip');
+
+        // The owner edits the strip in the page editor: the draft changes at once, the published page only at the next publish.
+        $workspace = \App\Models\Workspace::query()->findOrFail($this->business->workspace_id);
+        $this->authenticateAsCustomer($this->customer);
+        $home = $this->website->fresh()->pages()->where('is_home', true)->firstOrFail();
+        $sections = collect($home->sections)->map(fn ($section) => ($section['type'] ?? '') === 'trust_strip' ? ['type' => 'trust_strip', 'data' => ['facts' => ['Edited by the owner', 'Second edited fact', null, null]]] : $section)->all();
+        // The dashboard is served from the application's own host (the customer's domain only serves the site).
+        $save = fn (array $sections) => $this->put($this->appUrl('customer.workspaces.businesses.website.pages.update', [$workspace->uid, $this->business->uid, $home->uid]), [
+            'title' => $home->title, 'slug' => '', 'is_home' => '1', 'sections' => json_encode($sections), 'seo_title' => '', 'meta_description' => '', 'noindex' => '',
+        ]);
+        $save($sections)->assertSessionHasNoErrors();
+
+        $this->assertSame($first, $this->stripFacts($this->get($this->url('/'))->getContent()), 'not published yet');
+        $this->travel(5)->seconds();
+        app('cache')->flush();
+        app(WebsitePublisher::class)->publish($this->website->fresh(), $this->platformAdminId());
+        $this->assertSame(['Edited by the owner', 'Second edited fact'], $this->stripFacts($this->get($this->url('/'))->getContent()), 'the edit is published');
+
+        // Removing the section removes the strip (and leaves no empty band) at the next publish.
+        $home = $this->website->fresh()->pages()->where('is_home', true)->firstOrFail();
+        $save(array_values(array_filter($home->sections, fn ($section) => ($section['type'] ?? '') !== 'trust_strip')))->assertSessionHasNoErrors();
+        $this->travel(5)->seconds();
+        app('cache')->flush();
+        app(WebsitePublisher::class)->publish($this->website->fresh(), $this->platformAdminId());
+        $html = $this->get($this->url('/'))->getContent();
+        $this->assertStringNotContainsString('trust-strip', $html);
+        $this->assertStringNotContainsString('wd-band-trust_strip', $html);
+    }
+
+    public function test_the_owner_preview_shows_the_strip_of_the_draft(): void
+    {
+        $this->differentiators = self::FACTS;
+        $this->site();
+        $workspace = \App\Models\Workspace::query()->findOrFail($this->business->workspace_id);
+        $home = $this->website->fresh()->pages()->where('is_home', true)->firstOrFail();
+        $this->authenticateAsCustomer($this->customer);
+
+        $html = $this->get($this->appUrl('customer.workspaces.businesses.website.preview', [$workspace->uid, $this->business->uid, $home->uid]))->assertOk()->getContent();
+
+        $this->assertSame(array_slice(self::FACTS, 0, 4), $this->stripFacts($html));
+    }
+
+    public function test_the_panel_and_the_strip_render_in_the_editorial_template_and_the_visual_rules_are_in_the_stylesheets(): void
     {
         $this->templateKey = 'photo_booth_editorial';
+        $this->differentiators = self::FACTS;
         $pages = $this->site();
+
+        $this->assertSame(array_slice(self::FACTS, 0, 4), $this->stripFacts($pages['/']), 'the editorial design renders the strip too');
+        $this->assertStringContainsString('wd-trust-strip', $pages['/']);
 
         ['aside' => $aside, 'html' => $html] = $this->panel($pages['/service-magic-mirror-photo-booth']);
         $this->assertMatchesRegularExpression('#<body class="[^"]*\bwd-editorial\b#', $html, 'the editorial design rendered it');
@@ -320,6 +472,8 @@ class GeneratorAcceptanceTest extends TestCase
             '.wd-inquiry-panel',
             '.wd-hero-fullbleed.wd-hero-typographic:not(.wd-hero-inner-page)',
             '.wd .blog-prose h2',
+            '.wd-band-trust_strip > .wd-container',
+            '.wd-trust-list { list-style: none;',
         ] as $rule) {
             $this->assertStringContainsString($rule, $css);
         }

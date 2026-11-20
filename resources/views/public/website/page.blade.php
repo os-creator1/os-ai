@@ -187,6 +187,8 @@
             @foreach ($orderedSections as $sectionKey => $section)
                 @php($type = $section['type'] ?? '')
                 @continue($type === 'inquiry_panel' && $panelKey !== null)
+                {{-- A trust strip of fewer than two facts is not shown at all (no empty band). --}}
+                @continue($type === 'trust_strip' && count(array_filter((array) ($section['data']['facts'] ?? []), fn ($fact) => is_string($fact) && trim($fact) !== '')) < 2)
                 @php($componentView = 'public.website.components.' . $type)
                 @php($toneKey = ($type === 'services' && collect($section['data']['items'] ?? [])->contains(fn ($item) => ! empty($item['catalog_item_uid']))) ? 'packages' : $type)
                 @if (\Illuminate\Support\Facades\View::exists($componentView))
