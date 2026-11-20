@@ -138,7 +138,7 @@
                         </div>
                         <div class="dis" aria-disabled="true">
                             <div class="ttl"><span class="rd o" aria-hidden="true"></span><b>Pick a time in the chat</b><span class="pl n">Coming soon</span></div>
-                            <span class="mut">The AI offers times and books it for them.</span>
+                            <span class="mut">The AI offers times and books it for them — coming later.</span>
                         </div>
                     </div>
                 </section>
