@@ -425,4 +425,147 @@ class OutreachImportGroupTest extends TestCase
         $foreign = new \App\Library\AgencyOutreach\Analytics\OutreachAnalytics($b['workspace'], \App\Library\AgencyOutreach\Analytics\AnalyticsFilters::fromRequest(\Illuminate\Http\Request::create('/', 'GET', ['group' => $groupA->uid, 'period' => 'all'])));
         $this->assertSame(0, $foreign->kpis()['imported']);
     }
+
+    // ------------------------------------------------------------------ review round (PR #695)
+
+    private function phonesCsv(array $phones): string
+    {
+        $out = [self::HEAD];
+        foreach ($phones as $i => $phone) {
+            $out[] = "Shop {$i},{$phone},Photo booth,4.5," . (10 + $i) . ',"1 Main St, Dallas, TX 75201",https://www.google.com/maps/place/' . $i . ',,No,Open 9am-5pm';
+        }
+
+        return implode("\n", $out) . "\n";
+    }
+
+    public function test_an_equivalent_phone_format_reuses_the_existing_contact_and_never_bypasses_an_unsubscribe(): void
+    {
+        $a = $this->outreachAgency('Equiv', ['enrolled' => false]);
+        $a['business']->update(['country_code' => 'US']);
+        $this->authenticateAs($a['customer']);
+        $old = ContactGroups::create(['customer_id' => $a['business']->customer_id, 'business_id' => $a['business']->id, 'name' => 'Old list', 'status' => true]);
+        // Stored in NATIONAL form, and the person unsubscribed.
+        $existing = Contacts::create(['customer_id' => $a['business']->customer_id, 'business_id' => $a['business']->id, 'group_id' => $old->id, 'phone' => '2025550142', 'status' => Contacts::STATUS_UNSUBSCRIBE]);
+
+        $this->commit($a, $this->upload($a, $this->phonesCsv(['+12025550142', '+12025550143'])), 'New list')->assertRedirect();
+
+        $this->assertSame(1, Contacts::where('business_id', $a['business']->id)->whereIn('phone', ['2025550142', '12025550142'])->count(), 'no duplicate Contact for the equivalent number');
+        $this->assertSame(Contacts::STATUS_UNSUBSCRIBE, $existing->refresh()->status, 'the unsubscribe stands');
+        $this->assertSame(0, Contacts::where('business_id', $a['business']->id)->where('status', Contacts::STATUS_SUBSCRIBE)->whereIn('phone', ['2025550142', '12025550142'])->count());
+        $this->assertSame((int) $old->id, (int) $existing->group_id);
+        $new = $this->bizGroups($a)->where('name', 'New list')->firstOrFail();
+        $this->assertSame(1, Contacts::where('group_id', $new->id)->count(), 'only the genuinely new number became a Contact');
+        $this->assertTrue(AgencyProspectGroupLink::where('contact_group_id', $new->id)->where('contact_id', $existing->id)->where('contact_in_group', false)->exists());
+
+        // And the campaign never texts the unsubscribed number.
+        $this->getJson($this->outreachRoute('recipient-groups.summary', $a['workspace']) . '?group=' . $new->uid)
+            ->assertOk()->assertJsonPath('group_total', 2)->assertJsonPath('eligible', 1)->assertJsonPath('excluded', 1);
+    }
+
+    public function test_a_campaign_for_an_imported_group_includes_referenced_contacts_with_accurate_counts(): void
+    {
+        $a = $this->outreachAgency('Overlap', ['enrolled' => false]);
+        $this->authenticateAs($a['customer']);
+        $this->commit($a, $this->upload($a, $this->csv(5), 'a.csv'), 'List A');
+        $this->commit($a, $this->upload($a, $this->csv(5, 3000003), 'b.csv'), 'List B');   // partial: 003 + 004 overlap
+        $this->commit($a, $this->upload($a, $this->csv(5), 'c.csv'), 'List C');            // full: all five already belong to List A
+        $groups = fn (string $n) => $this->bizGroups($a)->where('name', $n)->firstOrFail();
+        $summary = fn (string $n) => $this->getJson($this->outreachRoute('recipient-groups.summary', $a['workspace']) . '?group=' . $groups($n)->uid);
+
+        $summary('List A')->assertOk()->assertJsonPath('group_total', 5)->assertJsonPath('eligible', 5);
+        $summary('List B')->assertOk()->assertJsonPath('group_total', 5)->assertJsonPath('eligible', 5)->assertJsonPath('excluded', 0);
+        $this->assertSame(3, Contacts::where('group_id', $groups('List B')->id)->count(), 'only three Contacts live in List B; the other two are referenced');
+        $summary('List C')->assertOk()->assertJsonPath('group_total', 5)->assertJsonPath('eligible', 5);
+        $this->assertSame(0, Contacts::where('group_id', $groups('List C')->id)->count());
+
+        // Existing eligibility still applies to referenced Contacts.
+        Contacts::where('business_id', $a['business']->id)->where('phone', '12133000003')->update(['status' => Contacts::STATUS_UNSUBSCRIBE]);
+        $summary('List B')->assertJsonPath('group_total', 5)->assertJsonPath('eligible', 4)->assertJsonPath('excluded', 1);
+
+        // A campaign built from the fully-overlapping group enrols every reachable prospect once.
+        $this->post($this->outreachRoute('campaigns.managed.store', $a['workspace']), [
+            'name' => 'From C', 'opening_message' => 'Hi', 'group_mode' => 'existing', 'contact_group_uid' => $groups('List C')->uid,
+        ])->assertRedirect();
+        $campaign = \App\Models\AgencyProspectCampaign::where('workspace_id', $a['workspace']->id)->where('name', 'From C')->firstOrFail();
+        $this->assertSame(4, $campaign->members()->count(), 'the unsubscribed referenced Contact is not enrolled; nobody twice');
+    }
+
+    public function test_the_import_needs_the_normal_crm_permissions_and_changes_nothing_without_them(): void
+    {
+        $a = $this->outreachAgency('Perm', ['enrolled' => false]);
+        $this->authenticateAs($a['customer']);
+        $batch = $this->upload($a, $this->csv(3));
+
+        foreach (['create_contact', 'update_contact'] as $denied) {
+            \Illuminate\Support\Facades\Gate::define($denied, fn () => false);
+
+            $this->commit($a, $batch, 'Denied list')->assertSessionHas('flash_error');
+
+            $this->assertSame('analyzed', $batch->refresh()->status, "{$denied}: batch untouched");
+            $this->assertSame(0, AgencyProspect::where('workspace_id', $a['workspace']->id)->count(), "{$denied}: no prospects");
+            $this->assertSame(0, $this->bizGroups($a)->count(), "{$denied}: no group");
+            $this->assertSame(0, Contacts::where('business_id', $a['business']->id)->count(), "{$denied}: no contacts");
+            $this->assertSame(0, CustomFieldDefinition::where('business_id', $a['business']->id)->count(), "{$denied}: no custom field definitions");
+            \Illuminate\Support\Facades\Gate::define($denied, fn () => true);
+        }
+    }
+
+    public function test_a_group_name_taken_during_the_commit_rolls_the_whole_import_back(): void
+    {
+        $a = $this->outreachAgency('Race', ['enrolled' => false]);
+        $this->authenticateAs($a['customer']);
+        $batch = $this->upload($a, $this->csv(4));
+        // The name is free when the page checks it, taken a moment later.
+        ContactGroups::create(['customer_id' => $a['business']->customer_id, 'business_id' => $a['business']->id, 'name' => 'Raced', 'status' => true]);
+
+        $result = app(\App\Library\AgencyOutreach\Import\ProspectImporter::class)->commitWithGroup($a['workspace'], $a['business'], $batch, 'Raced');
+
+        $this->assertTrue($result['name_conflict']);
+        $this->assertSame('analyzed', $batch->refresh()->status, 'the batch is not marked imported');
+        $this->assertSame(0, AgencyProspect::where('workspace_id', $a['workspace']->id)->count(), 'no prospect commits without its group');
+        $this->assertSame(0, AgencyProspectGroupLink::where('workspace_id', $a['workspace']->id)->count());
+        $this->assertSame(0, Contacts::where('business_id', $a['business']->id)->count());
+
+        // Retrying with a free name then succeeds completely.
+        $this->commit($a, $batch, 'Free name')->assertRedirect();
+        $this->assertSame('imported', $batch->refresh()->status);
+        $this->assertSame(4, Contacts::where('group_id', $this->bizGroups($a)->where('name', 'Free name')->value('id'))->count());
+    }
+
+    public function test_select_field_analytics_filter_by_option_id_and_show_labels(): void
+    {
+        $a = $this->outreachAgency('Sel', ['enrolled' => false]);
+        $a['campaign']->update(['status' => 'active']);
+        $this->authenticateAs($a['customer']);
+        $this->commit($a, $this->upload($a, $this->csv(4)), 'List S');
+        $defs = app(CustomFieldDefinitionManager::class);
+        $values = app(CustomFieldValueService::class);
+        $def = $defs->create($a['business'], 'Lead tier', 'select', ['Gold plan', 'Silver plan']);
+        [$gold, $silver] = array_column($def->optionList(), 'id');
+        $this->assertNotSame('Gold plan', $gold, 'the stored value is a stable id, not the label');
+        foreach (['12133000000' => $gold, '12133000001' => $gold, '12133000002' => $silver] as $phone => $option) {
+            $values->set($a['business'], Contacts::where('business_id', $a['business']->id)->where('phone', $phone)->firstOrFail(), $def, $option);
+        }
+        foreach (['12133000000', '12133000001', '12133000002'] as $phone) {
+            $this->contactedWithReply($a, $phone, false);
+        }
+        $an = fn (array $q = []) => new \App\Library\AgencyOutreach\Analytics\OutreachAnalytics($a['workspace'], \App\Library\AgencyOutreach\Analytics\AnalyticsFilters::fromRequest(\Illuminate\Http\Request::create('/', 'GET', $q + ['period' => 'all'])));
+
+        // Filter by the option ID the picker submits.
+        $this->assertSame(2, $an(['cf' => 'lead_tier', 'cfv' => $gold])->kpis()['contacted']);
+        $this->assertSame(1, $an(['cf' => 'lead_tier', 'cfv' => $silver])->kpis()['contacted']);
+
+        // Comparison dimension shows labels, not ids.
+        $dim = collect($an()->segments('cf:lead_tier'))->keyBy('segment');
+        $this->assertSame(2, $dim['Gold plan']['n']);
+        $this->assertSame(1, $dim['Silver plan']['n']);
+        $this->assertArrayNotHasKey($gold, $dim->all());
+
+        // The picker offers labels and submits ids.
+        $field = collect($an()->options()['fields'])->firstWhere('key', 'lead_tier');
+        $this->assertSame([['id' => $gold, 'label' => 'Gold plan'], ['id' => $silver, 'label' => 'Silver plan']], array_values($field['options']));
+        $html = $this->get($this->outreachRoute('analytics.index', $a['workspace']) . '?cf=lead_tier&cfv=' . $gold . '&period=all')->assertOk()->getContent();
+        $this->assertStringContainsString('<option value="' . $gold . '" selected>Gold plan</option>', preg_replace('/\s+/', ' ', $html));
+        $this->assertStringContainsString('data-cfv-select="lead_tier"', $html);
+    }
 }

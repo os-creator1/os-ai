@@ -280,6 +280,12 @@ class AgencyOutreachClientsController extends CustomerBaseController
             return back()->with('flash_error', 'Your Outreach business is not set up, so a contact group cannot be created yet.');
         }
 
+        // The import writes Contacts and Custom Field definitions/values, so it needs the same permissions as the normal CRM endpoints
+        // (create_contact / update_contact), checked BEFORE anything is written.
+        if (! Auth::user()->can('create_contact') || ! Auth::user()->can('update_contact')) {
+            return back()->with('flash_error', 'You do not have permission to create or update contacts, so this import cannot create the contact group.');
+        }
+
         $groupExists = $b->contact_group_id !== null;
         $groupName = $groupExists
             ? (string) $b->group_name
@@ -296,6 +302,10 @@ class AgencyOutreachClientsController extends CustomerBaseController
         }
 
         $r = $this->importer->commitWithGroup($workspace, $business, $b, $groupName, $request->input('campaign_uid'));
+
+        if (! empty($r['name_conflict'])) {
+            return back()->withInput()->withErrors(['group_name' => 'A contact group with this name already exists. Choose a different name. Nothing was imported.']);
+        }
 
         if (! empty($r['prospects']['campaign_closed'])) {
             return redirect()->route('customer.workspaces.prospecting.prospects.import.review', [$workspaceUid, $b->uid])

@@ -230,9 +230,11 @@ final class ProspectGroupMaterializer
             return;
         }
 
-        $phone = ContactPhone::legacyDigits($prospect->phone);
+        $phone = ContactPhone::canonical($prospect->phone, ContactPhone::regionFor($business)) ?: ContactPhone::legacyDigits($prospect->phone);
         $contact = $row->contact_id !== null ? Contacts::query()->where('business_id', $business->id)->find($row->contact_id) : null;
-        $contact ??= Contacts::query()->where('business_id', $business->id)->where('phone', $phone)->orderBy('id')->first();
+        // Equivalent formats (national / canonical / legacy digits) are ONE number: an existing Contact, subscribed or not, is
+        // reused, so an unsubscribed Contact can never be bypassed by a freshly created subscribed duplicate.
+        $contact ??= $this->contactForPhone($business, (string) $prospect->phone);
         $inGroup = true;
 
         if ($contact === null) {
@@ -350,6 +352,14 @@ final class ProspectGroupMaterializer
         return $out;
     }
 
+    /** The Business's existing Contact for this number in ANY equivalent stored form (ContactPhone::candidates with the Business region). */
+    private function contactForPhone(Business $business, string $rawPhone): ?Contacts
+    {
+        $forms = ContactPhone::candidates($rawPhone, ContactPhone::regionFor($business));
+
+        return $forms === [] ? null : Contacts::query()->where('business_id', $business->id)->whereIn('phone', $forms)->orderBy('id')->first();
+    }
+
     private function dryRun(Workspace $workspace, Business $business, AgencyProspectImportBatch $batch, $rows, array &$report): void
     {
         $rows->chunkById(500, function ($chunk) use ($workspace, $business, &$report) {
@@ -369,7 +379,7 @@ final class ProspectGroupMaterializer
                 } elseif (isset($blocked[$p->phone])) {
                     $report['skipped']['blacklisted']++;
                 } else {
-                    $existing = Contacts::query()->where('business_id', $business->id)->where('phone', ContactPhone::legacyDigits($p->phone))->first();
+                    $existing = $this->contactForPhone($business, (string) $p->phone);
                     $existing === null ? $report['created']++ : ($report['referenced']++);
                 }
             }

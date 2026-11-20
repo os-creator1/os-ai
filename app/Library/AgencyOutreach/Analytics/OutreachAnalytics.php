@@ -573,11 +573,40 @@ final class OutreachAnalytics
         $value = match ($def->type) {
             'number', 'currency' => 'CAST(cfv.value_number AS CHAR)',
             'boolean' => "IF(cfv.value_bool = 1, 'Yes', 'No')",
+            // A select stores the option's stable id; the comparison shows the label (an id with no option left shows as stored).
+            'select' => $this->optionLabelCase($def),
             default => 'cfv.value_text',
         };
 
         return $this->segmentRows($value, 's', 'JOIN (SELECT DISTINCT prospect_id, contact_id FROM agency_prospect_group_links WHERE workspace_id = ' . $this->ws . ') glx ON glx.prospect_id = s.id'
-            . ' JOIN custom_field_values cfv ON cfv.contact_id = glx.contact_id AND cfv.definition_id = ' . (int) $def->id . ' AND ' . $value . ' IS NOT NULL');
+            . ' JOIN custom_field_values cfv ON cfv.contact_id = glx.contact_id AND cfv.definition_id = ' . (int) $def->id . ' AND ' . $this->storedColumn($def) . ' IS NOT NULL');
+    }
+
+    /** The column a field type stores its value in (used for the plain presence test, which must not repeat bound labels). */
+    private function storedColumn(CustomFieldDefinition $def): string
+    {
+        return match ($def->type) {
+            'number', 'currency' => 'cfv.value_number',
+            'boolean' => 'cfv.value_bool',
+            default => 'cfv.value_text',
+        };
+    }
+
+    /** SQL mapping a select field's stored option ids to their labels. */
+    private function optionLabelCase(CustomFieldDefinition $def): string
+    {
+        $options = array_filter($def->optionList(), fn ($o) => is_array($o) && isset($o['id'], $o['label']));
+
+        if ($options === []) {
+            return 'cfv.value_text';
+        }
+
+        $when = '';
+        foreach ($options as $o) {
+            $when .= ' WHEN ' . $this->b((string) $o['id']) . ' THEN ' . $this->b((string) $o['label']);
+        }
+
+        return 'CASE cfv.value_text' . $when . ' ELSE cfv.value_text END';
     }
 
     /** @return list<array<string, mixed>> */
@@ -745,7 +774,7 @@ final class OutreachAnalytics
         ];
     }
 
-    /** @return list<array{key: string, label: string, type: string}> active contact custom fields usable as a filter/dimension. */
+    /** @return list<array{key: string, label: string, type: string, options: list<array{id: string, label: string}>}> active contact custom fields usable as a filter/dimension. */
     public function customFieldOptions(): array
     {
         $business = \App\Library\AgencyOutreach\AgencyOutreachBusinessResolver::forWorkspace($this->workspace);
@@ -755,7 +784,9 @@ final class OutreachAnalytics
         }
 
         return CustomFieldDefinition::query()->where('business_id', $business->id)->where('entity', CustomFieldDefinition::ENTITY_CONTACT)
-            ->whereNull('archived_at')->whereIn('type', self::SEGMENT_FIELD_TYPES)->orderBy('position')->limit(60)->get(['key', 'label', 'type'])
-            ->map(fn ($d) => ['key' => $d->key, 'label' => $d->label, 'type' => $d->type])->all();
+            ->whereNull('archived_at')->whereIn('type', self::SEGMENT_FIELD_TYPES)->orderBy('position')->limit(60)->get(['key', 'label', 'type', 'options'])
+            ->map(fn ($d) => ['key' => $d->key, 'label' => $d->label, 'type' => $d->type,
+                // A select's filter value is the option's stable id; the picker shows the label.
+                'options' => $d->type === 'select' ? array_map(fn ($o) => ['id' => (string) $o['id'], 'label' => (string) $o['label']], array_filter($d->optionList(), fn ($o) => is_array($o) && isset($o['id'], $o['label']))) : []])->all();
     }
 }

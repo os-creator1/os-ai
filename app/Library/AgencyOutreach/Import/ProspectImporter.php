@@ -356,18 +356,31 @@ final class ProspectImporter
      */
     public function commitWithGroup(Workspace $workspace, Business $business, AgencyProspectImportBatch $batch, string $groupName, ?string $campaignUid = null): array
     {
-        return DB::transaction(function () use ($workspace, $business, $batch, $groupName, $campaignUid) {
-            $prospects = $this->commitProspects($workspace, $batch, $campaignUid);
+        try {
+            return DB::transaction(function () use ($workspace, $business, $batch, $groupName, $campaignUid) {
+                $prospects = $this->commitProspects($workspace, $batch, $campaignUid);
 
-            if (! empty($prospects['campaign_closed'])) {
-                return ['prospects' => $prospects, 'group' => []];
+                if (! empty($prospects['campaign_closed'])) {
+                    return ['prospects' => $prospects, 'group' => []];
+                }
+
+                $fresh = $batch->fresh();
+                $group = app(ProspectGroupMaterializer::class)->materialize($workspace, $business, $fresh, $fresh->group_name ?? $groupName);
+
+                if (! empty($group['name_conflict'])) {
+                    // The name was taken between review and commit: undo the prospects too, so nothing commits without its group.
+                    throw new \RuntimeException('contact group name conflict');
+                }
+
+                return ['prospects' => $prospects, 'group' => $group];
+            });
+        } catch (\RuntimeException $e) {
+            if ($e->getMessage() !== 'contact group name conflict') {
+                throw $e;
             }
 
-            $fresh = $batch->fresh();
-            $group = app(ProspectGroupMaterializer::class)->materialize($workspace, $business, $fresh, $fresh->group_name ?? $groupName);
-
-            return ['prospects' => $prospects, 'group' => $group];
-        });
+            return ['prospects' => [], 'group' => [], 'name_conflict' => true];
+        }
     }
 
     /**

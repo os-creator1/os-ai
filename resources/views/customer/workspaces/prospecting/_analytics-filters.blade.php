@@ -30,7 +30,31 @@
             <label class="sel"><span>Script version</span><select name="script"><option value="">Any</option>@foreach($options['versions'] as $v)<option value="{{ $v }}" {{ $opt($v, $f->scriptVersion) }}>v{{ $v }}</option>@endforeach</select></label>
             @if(! empty($options['fields']))
                 <label class="sel"><span>Custom field</span><select name="cf" aria-label="Custom field"><option value="">None</option>@foreach($options['fields'] as $cfo)<option value="{{ $cfo['key'] }}" {{ $opt($cfo['key'], $f->cfKey) }}>{{ $cfo['label'] }}</option>@endforeach</select></label>
-                <label class="sel"><span>equals</span><input type="text" name="cfv" value="{{ $f->cfValue }}" aria-label="Custom field value" placeholder="any value" maxlength="120"></label>
+                <label class="sel" data-cfv-wrap><span>equals</span>
+                    {{-- Text fields take a typed value; a select field offers its option LABELS but submits the stable option id. --}}
+                    <input type="text" name="cfv" value="{{ $f->cfValue }}" aria-label="Custom field value" placeholder="any value" maxlength="120" data-cfv-text @if((collect($options['fields'])->firstWhere('key', $f->cfKey)['type'] ?? null) === 'select') hidden disabled @endif>
+                    @foreach($options['fields'] as $cfo)
+                        @if(($cfo['type'] ?? null) === 'select')
+                            <select name="cfv" aria-label="Custom field value" data-cfv-select="{{ $cfo['key'] }}" @if($f->cfKey !== $cfo['key']) hidden disabled @endif>
+                                <option value="">Any value</option>
+                                @foreach($cfo['options'] as $o)<option value="{{ $o['id'] }}" {{ $opt($o['id'], $f->cfValue) }}>{{ $o['label'] }}</option>@endforeach
+                            </select>
+                        @endif
+                    @endforeach
+                </label>
+                <script>
+                    (function () {
+                        var form = document.currentScript.closest('form'); if (!form) { return; }
+                        var cf = form.querySelector('select[name="cf"]'), text = form.querySelector('[data-cfv-text]'), picks = form.querySelectorAll('[data-cfv-select]');
+                        function sync() {
+                            var chosen = null;
+                            picks.forEach(function (p) { var on = p.getAttribute('data-cfv-select') === cf.value; p.hidden = p.disabled = !on; if (on) { chosen = p; } });
+                            text.hidden = text.disabled = !!chosen;
+                        }
+                        cf.addEventListener('change', function () { picks.forEach(function (p) { p.value = ''; }); text.value = ''; sync(); });
+                        sync();
+                    })();
+                </script>
             @endif
             <button type="submit" class="btn pri sm">Apply filters</button>
         </div>

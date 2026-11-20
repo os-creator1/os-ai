@@ -188,6 +188,20 @@ final class OutreachContactGroupBridge
 
     // ------------------------------------------------------------------
 
+    /**
+     * Every Contact of this Business the group stands for: the ones that live in it plus the ones an import linked to it by reference
+     * (a number that already belonged to another group). One query, so a Contact reached both ways is counted and enrolled once.
+     */
+    private function members(ContactGroups $group, Business $business): \Illuminate\Database\Eloquent\Builder
+    {
+        return Contacts::query()
+            ->where('business_id', (int) $business->id)
+            ->where(function ($q) use ($group) {
+                $q->where('group_id', $group->id)
+                    ->orWhereIn('id', \App\Models\AgencyProspectGroupLink::query()->where('contact_group_id', $group->id)->whereNotNull('contact_id')->select('contact_id'));
+            });
+    }
+
     private function run(Workspace $workspace, ContactGroups $group, ?AgencyProspectCampaign $campaign, bool $persist): array
     {
         $business = AgencyOutreachBusinessResolver::forWorkspace($workspace);
@@ -197,7 +211,7 @@ final class OutreachContactGroupBridge
             throw new \DomainException('That contact group does not belong to this Workspace\'s Business.');
         }
 
-        $total = Contacts::query()->where('group_id', $group->id)->where('business_id', (int) $business->id)->count();
+        $total = $this->members($group, $business)->count();
         $report = ['group_total' => $total, 'eligible' => 0, 'excluded' => 0, 'reasons' => [], 'skipped' => [], 'too_large' => $total > self::MAX_CONTACTS];
 
         if ($report['too_large']) {
@@ -209,9 +223,7 @@ final class OutreachContactGroupBridge
         $keepMemberIds = [];
         $fieldTags = $this->fieldIds($group);
 
-        Contacts::query()
-            ->where('group_id', $group->id)
-            ->where('business_id', (int) $business->id)
+        $this->members($group, $business)
             ->orderBy('id')
             ->chunkById(self::CHUNK, function ($contacts) use (&$report, &$seen, &$keepMemberIds, $suppressed, $workspace, $campaign, $persist, $fieldTags, $group) {
                 $details = $this->details($contacts->pluck('id')->all(), $fieldTags);
