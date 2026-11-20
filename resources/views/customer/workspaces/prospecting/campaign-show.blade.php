@@ -80,6 +80,16 @@
                     @foreach($diagnostics['warnings'] as $warning)
                         <x-alert variant="warning" data-role="reply-warning">{{ $warning }}</x-alert>
                     @endforeach
+                    @if(! empty($diagnostics['deferred']))
+                        <div class="mb-1" data-role="deferred-sends">
+                            <x-badge variant="warning">Rate-limited</x-badge>
+                            @foreach($diagnostics['deferred'] as $d)
+                                <span class="d-block text-caption" data-reason="{{ $d['reason'] }}">{{ $d['count'] }} {{ \Illuminate\Support\Str::plural('message', $d['count']) }} waiting. {{ $d['label'] }}
+                                    @if($d['next_at'])Next attempt around {{ \Illuminate\Support\Carbon::parse($d['next_at'])->diffForHumans() }}.@endif
+                                </span>
+                            @endforeach
+                        </div>
+                    @endif
                     @if($diagnostics['first_reply'])
                         <p class="mb-1" data-role="first-reply">
                             <strong>First message sent after a reply: {{ $diagnostics['first_reply']['label'] }}</strong>

@@ -18,6 +18,10 @@ final class OutreachCampaignDiagnostics
     private const MEMBER_LIMIT = 25;
 
     public const REASON_LABELS = [
+        'rate_limited' => 'Waiting for its turn: this sending number sends one text at a time, so it was deferred and will go out shortly.',
+        'opener_daily_cap' => 'The daily limit of new conversations for this sending number was reached. This opener will go out when room frees up; replies to existing conversations are not affected.',
+        'superseded_by_newer_reply' => 'A newer reply replaced this one while it was waiting for its turn.',
+        'superseded_by_newer_inbound' => 'The prospect wrote again before this reply was sent, so only the latest message is answered.',
         'duplicate_of_last_outbound' => 'The next message was identical to the last text sent, so it was not repeated.',
         'step_already_delivered' => 'That scripted message had already been sent to this prospect (possibly by you from Conversations), so it was not repeated.',
         'negative_reply_held' => 'The prospect said no and your next message reads like a yes or a booking pitch, so it was held for you. Reword it in Script & Settings, or reply by hand.',
@@ -53,7 +57,8 @@ final class OutreachCampaignDiagnostics
      *   first_reply: ?array{id: string, label: string, preview: string},
      *   warnings: list<string>,
      *   silent_replies: Collection<int, AgencyProspectMessage>,
-     *   next_by_member: list<array{uid: string, name: string, next: string, preview: string}>
+     *   next_by_member: list<array{uid: string, name: string, next: string, preview: string}>,
+     *   deferred: list<array{reason: string, label: string, count: int, next_at: ?string}>
      * }
      */
     public function forCampaign(Workspace $workspace, AgencyProspectCampaign $campaign): array
@@ -126,7 +131,20 @@ final class OutreachCampaignDiagnostics
             }
         }
 
+        // Sends held back by the shared sending-number budget: not failures, they go out on their own.
+        $deferred = AgencyProspectMessage::query()
+            ->where('workspace_id', $workspace->id)
+            ->where('direction', AgencyProspectMessage::DIRECTION_OUTBOUND)
+            ->where('status', AgencyProspectMessage::STATUS_PAUSED)
+            ->whereIn('failure_reason', [OutreachSendBudget::REASON_RATE, OutreachSendBudget::REASON_OPENER_CAP])
+            ->whereHas('campaignMember', fn ($q) => $q->where('campaign_id', $campaign->id))
+            ->selectRaw('failure_reason, COUNT(*) as n, MIN(deferred_until) as next_at')
+            ->groupBy('failure_reason')->get()
+            ->map(fn ($r) => ['reason' => (string) $r->failure_reason, 'label' => self::reasonLabel((string) $r->failure_reason), 'count' => (int) $r->n, 'next_at' => $r->next_at])
+            ->values()->all();
+
         return [
+            'deferred' => $deferred,
             'opener_duplicates_first_step' => $duplicates,
             'first_reply' => $firstReply,
             'warnings' => $warnings,
