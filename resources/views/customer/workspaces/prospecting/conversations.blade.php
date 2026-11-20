@@ -1,6 +1,7 @@
 @extends('layouts/contentLayoutMaster')
 
 @section('title', 'Outreach conversations')
+@section('page-heading', 'own')
 
 @section('content')
 @php

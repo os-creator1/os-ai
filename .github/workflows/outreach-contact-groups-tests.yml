@@ -29,6 +29,8 @@ on:
       - 'tests/Feature/AgencyOutreach/CampaignContactGroupTest.php'
       - 'tests/Feature/AgencyOutreach/EndCampaignTest.php'
       - 'tests/Feature/AgencyOutreach/OutreachRedesignRenderTest.php'
+      - 'tests/Feature/AgencyOutreach/OutreachSingleHeadingTest.php'
+      - 'resources/views/customer/workspaces/prospecting/**'
       - '.github/workflows/outreach-contact-groups-tests.yml'
 
 permissions:
@@ -82,4 +84,4 @@ jobs:
       - name: Install dependencies
         run: composer install --no-interaction --prefer-dist --no-progress
       - name: Test campaign contact-group snapshots and sender eligibility
-        run: php artisan test tests/Feature/AgencyOutreach/CampaignContactGroupTest.php tests/Feature/AgencyOutreach/EndCampaignTest.php tests/Feature/AgencyOutreach/OutreachSafetyTest.php tests/Feature/AgencyOutreach/UiScriptTest.php tests/Feature/AgencyOutreach/OutreachRedesignRenderTest.php --stop-on-failure
+        run: php artisan test tests/Feature/AgencyOutreach/CampaignContactGroupTest.php tests/Feature/AgencyOutreach/EndCampaignTest.php tests/Feature/AgencyOutreach/OutreachSafetyTest.php tests/Feature/AgencyOutreach/UiScriptTest.php tests/Feature/AgencyOutreach/OutreachRedesignRenderTest.php tests/Feature/AgencyOutreach/OutreachSingleHeadingTest.php --stop-on-failure

@@ -33,6 +33,7 @@ use App\Models\Workspace;
  *   byo_*                              selected agency-owned Telnyx sender is unusable
  *   verification_incomplete            the number's messaging verification is not approved yet
  *   opted_out                          the number is on the Agency Business's Blacklists
+ *   existing_client                    the number is an active Existing Client exclusion (commercial; STOP is separate)
  *   manual_hold                        AI is paused for this member (only when asked)
  */
 final class OutreachEligibility
@@ -90,6 +91,13 @@ final class OutreachEligibility
 
         if (self::blacklisted($business, $prospect)) {
             return OutreachEligibilityResult::refused('opted_out');
+        }
+
+        // Existing Client: a workspace-wide commercial exclusion, read fresh on EVERY automatic send
+        // (opener, reply, follow-up, deferred / resumed send). Not a STOP: it can be lifted by an
+        // authorised owner, and lifting it never lifts a STOP (the checks above still refuse those).
+        if (app(OutreachExistingClients::class)->blocksProspect($prospect)) {
+            return OutreachEligibilityResult::refused(OutreachExistingClients::SKIPPED_REASON);
         }
 
         // A group-sourced member is a frozen recipient snapshot, not frozen

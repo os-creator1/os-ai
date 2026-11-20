@@ -1,6 +1,7 @@
 @extends('layouts/contentLayoutMaster')
 
 @section('title', 'Prospects')
+@section('page-heading', 'own')
 
 @section('content')
 @php
@@ -25,6 +26,8 @@
 <div class="og page">
     @include('customer.workspaces.prospecting._nav', ['prospectingActive' => 'prospects', 'ogInside' => true, 'ogActions' => 'prospects'])
 
+    <div class="filters">@include('customer.workspaces.prospecting._prospect-tabs', ['ptActive' => 'all'])</div>
+
     <section class="card menu-card" aria-label="Prospects">
         <div class="filters" style="padding:14px 16px" data-role="prospect-filters">
             <label class="search"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5"/></svg>
@@ -38,7 +41,7 @@
         </div>
 
         @if($rows === [])
-            <div class="empty" data-role="prospects-empty"><b>No prospects yet</b>Add a prospect to get started{{ ! empty($importUrl) ? ', or import contacts into a group and text the group from a campaign' : '' }}.</div>
+            <div class="empty" data-role="prospects-empty"><b>No prospects yet</b>Add a prospect, or import a CSV to get started.</div>
         @else
             <div data-role="prospects-table">
                 <div class="row h" style="grid-template-columns:{{ $cols }}" role="row"><span>Prospect</span><span>Phone</span><span>Campaign</span><span>Stage</span><span>Last message</span><span></span></div>
@@ -67,6 +70,9 @@
                             <summary class="ib" aria-label="Actions for {{ $prospect->contact_name ?: $prospect->company_name }}"><svg class="ic" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.3"/><circle cx="12" cy="12" r="1.3"/><circle cx="19" cy="12" r="1.3"/></svg></summary>
                             <div class="pop" role="menu">
                                 <a role="menuitem" href="{{ $show }}">Open</a>
+                                @if(! $prospect->client_won_at)
+                                    <form method="post" action="{{ route('customer.workspaces.prospecting.prospects.client-won', [$workspaceUid, $prospect->uid]) }}" onsubmit="return confirm('Mark this business as a client? Outreach will stop texting them in every campaign.')">@csrf<button role="menuitem" type="submit" data-role="mark-client-won">Mark client won</button></form>
+                                @endif
                                 @if($active)
                                     <form method="post" action="{{ route('customer.workspaces.prospecting.prospects.mark-booked', [$workspaceUid, $prospect->uid]) }}">@csrf<button role="menuitem" type="submit">Mark booked</button></form>
                                     <form method="post" action="{{ route('customer.workspaces.prospecting.prospects.stop', [$workspaceUid, $prospect->uid]) }}" onsubmit="return confirm('Stop texting this prospect? They will not be texted again.');">@csrf<button role="menuitem" type="submit">Stop texting</button></form>

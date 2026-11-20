@@ -51,6 +51,7 @@ final class OutreachContactGroupBridge
     public const REASON_STOPPED = 'prospect_stopped';
     public const REASON_BOOKED = 'prospect_booked';
     public const REASON_OTHER_CAMPAIGN = 'open_in_other_campaign';
+    public const REASON_EXISTING_CLIENT = 'existing_client';
 
     private const TERMINAL = [AgencyProspectStage::Booked->value, AgencyProspectStage::StoppedOptOut->value];
 
@@ -63,6 +64,7 @@ final class OutreachContactGroupBridge
         self::REASON_STOPPED => 'Prospect already stopped',
         self::REASON_BOOKED => 'Prospect already booked',
         self::REASON_OTHER_CAMPAIGN => 'Already in an open conversation in another campaign',
+        self::REASON_EXISTING_CLIENT => 'Existing client (do not prospect)',
     ];
 
     public static function reasonLabel(string $reason): string
@@ -241,6 +243,20 @@ final class OutreachContactGroupBridge
 
                     $seen[$phone] = true;
                     $candidates[$phone] = [$contact, $details[$contact->id] ?? []];
+                }
+
+                if ($candidates === []) {
+                    return;
+                }
+
+                // Existing Clients are excluded from every campaign of this Workspace, on every refresh.
+                $clients = app(OutreachExistingClients::class)->lookup((int) $workspace->id, array_map('strval', array_keys($candidates)));
+
+                foreach (array_keys($candidates) as $candidatePhone) {
+                    if (isset($clients[(string) $candidatePhone])) {
+                        $this->skip($report, (string) $candidatePhone, self::REASON_EXISTING_CLIENT);
+                        unset($candidates[$candidatePhone]);
+                    }
                 }
 
                 if ($candidates === []) {

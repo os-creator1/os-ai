@@ -25,6 +25,9 @@ class AgencyProspect extends Model
         'stopped_at',
         'booked_at',
         'stop_reason',
+        'business_type', 'google_rating', 'review_count', 'has_website', 'social_url', 'address', 'city', 'state',
+        'country', 'maps_url', 'latitude', 'longitude', 'opening_hours', 'import_batch_id', 'imported_at',
+        'client_won_at', 'acquisition_campaign_id', 'acquisition_member_id', 'client_won_evidence',
     ];
 
     public const STOP_OPT_OUT = 'opt_out';
@@ -35,6 +38,10 @@ class AgencyProspect extends Model
         'status' => AgencyProspectStatus::class,
         'stopped_at' => 'datetime',
         'booked_at' => 'datetime',
+        'imported_at' => 'datetime',
+        'client_won_at' => 'datetime',
+        'has_website' => 'boolean',
+        'client_won_evidence' => 'array',
     ];
 
     public function workspace(): BelongsTo

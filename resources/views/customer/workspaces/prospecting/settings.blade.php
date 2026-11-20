@@ -1,6 +1,7 @@
 @extends('layouts/contentLayoutMaster')
 
 @section('title', 'Agent Setup')
+@section('page-heading', 'own')
 
 @section('content')
     <div class="row mb-2">
