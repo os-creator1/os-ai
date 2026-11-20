@@ -25,7 +25,7 @@
     @endif
 
     <div class="grid2">
-        <section class="card" style="flex:3 1 640px;min-width:0" aria-label="Campaigns">
+        <section class="card menu-card" style="flex:3 1 640px;min-width:0" aria-label="Campaigns">
             <div class="filters" style="padding:14px 16px">
                 <div class="seg" role="group" aria-label="Filter campaigns" data-role="campaign-filters">
                     <button type="button" class="on" data-filter="all" aria-pressed="true">All {{ $counts['all'] }}</button>

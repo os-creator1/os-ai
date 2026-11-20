@@ -25,7 +25,7 @@
 <div class="og page">
     @include('customer.workspaces.prospecting._nav', ['prospectingActive' => 'prospects', 'ogInside' => true, 'ogActions' => 'prospects'])
 
-    <section class="card" aria-label="Prospects">
+    <section class="card menu-card" aria-label="Prospects">
         <div class="filters" style="padding:14px 16px" data-role="prospect-filters">
             <label class="search"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5"/></svg>
                 <input type="search" id="og-q" placeholder="Search name, company or phone" aria-label="Search prospects" autocomplete="off"></label>

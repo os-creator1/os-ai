@@ -24,6 +24,7 @@ html[data-layout="dark-layout"] .og,.dark-layout .og{--og-bg:#17191F;--og-card:#
 .og .btn.sm{min-height:34px;padding:0 12px;font-size:13px}
 .og .btn[disabled],.og .btn.dis{opacity:.5;cursor:not-allowed}
 .og .card{background:var(--og-card);border:1px solid var(--og-line);border-radius:16px;overflow:hidden}
+.og .card.menu-card{overflow:visible;position:relative;z-index:2}
 .og .pad{padding:18px 20px}
 .og .eyebrow{font-size:12px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:var(--og-mute)}
 .og .mut{font-size:12.5px;color:var(--og-mute)}

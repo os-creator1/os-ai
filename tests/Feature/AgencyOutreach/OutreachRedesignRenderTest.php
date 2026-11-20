@@ -46,6 +46,40 @@ class OutreachRedesignRenderTest extends TestCase
         $this->get($this->outreachRoute('conversations.index', $a['workspace']))->assertOk();
     }
 
+    public function test_italian_country_code_preserves_significant_geographic_leading_zero(): void
+    {
+        $a = $this->outreachAgency('Milano');
+        $this->authenticateAs($a['customer']);
+
+        $this->post($this->outreachRoute('prospects.store', $a['workspace']), [
+            'company_name' => 'Italian business',
+            'phone' => '02 1234 5678',
+            'country_code' => '+39',
+        ])->assertRedirect($this->outreachRoute('prospects.index', $a['workspace']));
+
+        $this->assertDatabaseHas('agency_prospects', [
+            'workspace_id' => $a['workspace']->id,
+            'company_name' => 'Italian business',
+            'phone' => '390212345678',
+        ]);
+    }
+
+    public function test_row_action_menus_can_extend_beyond_last_table_row(): void
+    {
+        $a = $this->outreachAgency('Menus');
+        $this->authenticateAs($a['customer']);
+
+        $prospects = $this->get($this->outreachRoute('prospects.index', $a['workspace']))
+            ->assertOk()->getContent();
+        $campaigns = $this->get($this->outreachRoute('campaigns.index', $a['workspace']))
+            ->assertOk()->getContent();
+
+        $this->assertStringContainsString('class="card menu-card"', $prospects);
+        $this->assertStringContainsString('class="card menu-card"', $campaigns);
+        $css = file_get_contents(public_path('css/outreach/outreach.css'));
+        $this->assertStringContainsString('.og .card.menu-card{overflow:visible', $css);
+    }
+
     public function test_prospect_dialog_is_not_hidden_by_global_bootstrap_modal_css(): void
     {
         $a = $this->outreachAgency('Charlie');

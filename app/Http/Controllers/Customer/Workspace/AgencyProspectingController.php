@@ -198,7 +198,7 @@ class AgencyProspectingController extends CustomerBaseController
         unset($validated['country_code']);
         $typedPhone = trim($validated['phone']);
         if ($countryCode !== null && ! str_starts_with($typedPhone, '+') && ! str_starts_with($typedPhone, '00')) {
-            $typedPhone = $countryCode . ' ' . ltrim($typedPhone, '0 ');
+            $typedPhone = $countryCode . ' ' . $typedPhone;
         }
 
         $canonicalPhone = AgencyProspectPhoneNormalizer::normalize($typedPhone);
