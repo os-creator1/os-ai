@@ -136,6 +136,52 @@ class PublicBlogTest extends TestCase
         $this->assertStringContainsString('href="https://' . self::DOMAIN . '/blog"', $this->body(self::HOST . '/'));
     }
 
+    public function test_without_a_published_article_the_blog_is_404_with_no_nav_entry_and_no_sitemap_blog_urls(): void
+    {
+        [, $business] = $this->photoBoothContentTenant();
+
+        // Nothing at all, then only non-public states: the result is the same.
+        foreach ([0, 1] as $stage) {
+            if ($stage === 1) {
+                $scheduled = $this->draftArticle($business, ['title' => 'Later scheduled topic', 'primary_topic' => 'later scheduled topic']);
+                $this->manager()->schedule((int) $business->customer_id, $business, $scheduled, now()->addDay());
+                $archived = $this->publishedArticle($business, ['title' => 'Archived photo booth guide', 'primary_topic' => 'archived guide']);
+                $this->manager()->archive((int) $business->customer_id, $business, $archived);
+                $this->draftArticle($business, ['title' => 'Secret draft topic', 'primary_topic' => 'secret draft topic']);
+                app('cache')->flush();
+            }
+
+            $this->get(self::HOST . '/blog')->assertNotFound();
+            $this->assertStringNotContainsString('/blog', $this->body(self::HOST . '/'), "stage {$stage}: no Blog navigation entry or link");
+            $sitemap = $this->body(self::HOST . '/sitemap.xml');
+            $this->assertStringContainsString('<urlset', $sitemap);
+            $this->assertStringNotContainsString('/blog', $sitemap, "stage {$stage}: no blog URLs in the sitemap");
+        }
+    }
+
+    public function test_a_published_eligible_article_is_on_the_blog_routes_and_in_the_sitemap(): void
+    {
+        [, $business, , $website] = $this->photoBoothContentTenant();
+        $article = $this->publishedArticle($business, ['title' => 'Planning your photo booth setup', 'primary_topic' => 'planning photo booth setup']);
+        app('cache')->flush();
+        // Build the platform URL before any custom-domain request: the URL generator keeps the last request's host.
+        $platformUrl = route('public.website.blog.show', [$website->public_id, $article->slug]);
+
+        $this->assertStringContainsString('Planning your photo booth setup', $this->body(self::HOST . '/blog'));
+        $this->assertStringContainsString('<h1 class="blog-article-title">Planning your photo booth setup</h1>', $this->body(self::HOST . '/blog/' . $article->slug));
+        $this->get('http://' . self::DOMAIN . '/blog/not-a-real-article')->assertNotFound();
+
+        $sitemap = $this->body(self::HOST . '/sitemap.xml');
+        $this->assertStringContainsString('<loc>https://' . self::DOMAIN . '/blog</loc>', $sitemap);
+        $this->assertStringContainsString('<loc>https://' . self::DOMAIN . '/blog/' . $article->slug . '</loc>', $sitemap);
+        $this->assertStringContainsString('href="https://' . self::DOMAIN . '/blog"', $this->body(self::HOST . '/'), 'Blog navigation entry appears');
+
+        // The platform-path routes serve it too (noindex), and the sitemap never carries a platform or preview address.
+        $this->get($platformUrl)->assertOk()->assertHeader('X-Robots-Tag', 'noindex, follow');
+        $this->assertStringNotContainsString('/sites/', $sitemap);
+        $this->assertStringNotContainsString('preview', $sitemap);
+    }
+
     public function test_the_blog_index_paginates(): void
     {
         [, $business] = $this->photoBoothContentTenant();

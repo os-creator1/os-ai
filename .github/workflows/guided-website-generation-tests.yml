@@ -6,6 +6,7 @@ on:
     paths:
       - 'app/Library/Website/**'
       - 'tests/Feature/Website/**'
+      - 'tests/Feature/Seo/Content/PublicBlogTest.php'
       - '.github/workflows/guided-website-generation-tests.yml'
 
 permissions:
