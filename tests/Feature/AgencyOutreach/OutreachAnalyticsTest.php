@@ -266,8 +266,8 @@ class OutreachAnalyticsTest extends TestCase
     public function test_timing_reports_the_recorded_evidence(): void
     {
         $w = $this->world();
-        $ai = $this->msg($w['m3'], 'outbound', $this->t0->copy()->addHours(2), ['purpose' => 'ai_reply', 'reply_due_at' => $this->t0->copy()->addHours(2)->subMinutes(2)]);
-        \Illuminate\Support\Facades\DB::table('agency_prospect_messages')->where('id', $ai->id)->update(['created_at' => $this->t0->copy()->addHours(2)->subMinutes(5)]);
+        $in = $this->msg($w['m3'], 'inbound', $this->t0->copy()->addHours(2)->subMinutes(5), ['reply_due_at' => $this->t0->copy()->addHours(2)->subMinutes(2)]);
+        $this->msg($w['m3'], 'outbound', $this->t0->copy()->addHours(2), ['purpose' => 'ai_reply', 'operation_key' => 'outreach:reply:' . $in->id]);
 
         $t = $this->analytics($w['a'])->timing();
         $this->assertSame(3600, $t['overall']['p50']);
@@ -402,5 +402,45 @@ class OutreachAnalyticsTest extends TestCase
         $this->assertSame(1, $this->step($steps, 'opener')['booked']);
         $this->assertSame(0, $this->step($steps, 's-b')['booked']);
         $this->assertSame(0, array_sum(array_column($this->analytics($w['a'], ['campaign' => $w['a']['campaign']->uid])->steps(), 'booked')));
+    }
+
+    public function test_reply_pacing_is_read_from_the_triggering_inbound_message(): void
+    {
+        $w = $this->world('Pace');
+        $t = $this->t0;
+
+        // Realistic shape: the due moment is chosen when the inbound arrives and stored ON THE INBOUND;
+        // the AI answer carries operation_key outreach:reply:<inbound id> and is sent a little after it.
+        $in = $this->msg($w['m3'], 'inbound', $t->copy()->addHours(2), ['reply_due_at' => $t->copy()->addHours(2)->addSeconds(120)]);
+        $this->msg($w['m3'], 'outbound', $t->copy()->addHours(2)->addSeconds(150), ['purpose' => 'ai_reply', 'operation_key' => 'outreach:reply:' . $in->id, 'body' => 'paced answer']);
+        // An AI answer whose inbound had no pacing, and one with no key at all, are not "paced".
+        $in2 = $this->msg($w['m3'], 'inbound', $t->copy()->addHours(3));
+        $this->msg($w['m3'], 'outbound', $t->copy()->addHours(3)->addSeconds(5), ['purpose' => 'ai_reply', 'operation_key' => 'outreach:reply:' . $in2->id]);
+        $this->msg($w['m3'], 'outbound', $t->copy()->addHours(4), ['purpose' => 'ai_reply']);
+
+        $ai = $this->analytics($w['a'])->timing()['ai'];
+        $this->assertSame(5, $ai['replies'], 'two scripted AI steps from the fixture + three added here');
+        $this->assertSame(1, $ai['paced']);
+        $this->assertSame(120, $ai['avg_planned_wait'], 'planned wait = due moment − when the inbound arrived');
+        $this->assertSame(30, $ai['avg_send_lag'], 'send lag = confirmed send − due moment');
+    }
+
+    public function test_display_filters_do_not_change_which_step_comes_next(): void
+    {
+        $w = $this->world('Succ');
+        // P1: opener (v1) → s-a (v1) → s-b, booked after s-b. s-b was sent under script v2.
+        AgencyProspectMessage::where('campaign_member_id', $w['m1']->id)->where('sequence_step_id', 's-b')->update(['script_version' => 2]);
+
+        $all = $this->analytics($w['a'])->steps();
+        $this->assertSame(1, $this->step($all, 's-b')['booked']);
+
+        // Filtering to script v1 hides s-b's row but s-b still EXISTS after s-a: s-a advanced, and the booking
+        // is not re-assigned to the last step that happens to remain visible.
+        $v1 = $this->analytics($w['a'], ['script' => '1'])->steps();
+        $this->assertSame(1, $this->step($v1, 's-a')['advanced'], 'advancement uses the complete send timeline');
+        $this->assertSame(0, $this->step($v1, 's-a')['booked']);
+        $this->assertSame(0, $this->step($v1, 'opener')['booked']);
+        $this->assertSame(1, $this->step($v1, 'opener')['advanced']);
+        $this->assertSame(0, array_sum(array_column($v1, 'booked')), 'the booked step is simply not in this view');
     }
 }

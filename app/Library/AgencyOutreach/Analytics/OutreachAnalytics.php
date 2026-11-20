@@ -122,6 +122,36 @@ final class OutreachAnalytics
         return $c;
     }
 
+    /** Every confirmed send of the Workspace, with NO display filter: the complete timeline successors are read from. */
+    private function sentBase(): string
+    {
+        return " m.workspace_id = {$this->ws} AND m.direction = 'outbound' AND m.status = 'sent' AND m.sent_at IS NOT NULL";
+    }
+
+    /**
+     * Display filters (period, sending number, script version) for journey rows `j`. They decide which steps are SHOWN;
+     * they are applied after each step's successor/predecessor has been read from the complete timeline, so a filter can
+     * never make a later step vanish and hand its advancement, booking or win to an earlier one.
+     */
+    private function displayConds(): string
+    {
+        $c = '';
+
+        if ($this->f->channelId !== null) {
+            $c .= ' AND j.channel_id = ' . (int) $this->f->channelId;
+        }
+
+        if ($this->f->scriptVersion !== null) {
+            $c .= ' AND j.script_version = ' . (int) $this->f->scriptVersion;
+        }
+
+        [$from, $to] = $this->f->window();
+        $from !== null && $c .= ' AND j.sent_at >= ' . $this->b($from->toDateTimeString());
+        $to !== null && $c .= ' AND j.sent_at < ' . $this->b($to->toDateTimeString());
+
+        return $c;
+    }
+
     /** Message-level conditions on an outbound row `m`. */
     private function outConds(bool $withWindow): string
     {
@@ -247,7 +277,7 @@ final class OutreachAnalytics
             FROM (SELECT x.member_id, x.step_key, MIN(x.id) AS out_id
                     FROM (SELECT m.campaign_member_id AS member_id, m.id, {$stepKey} AS step_key
                             FROM agency_prospect_messages m JOIN agency_prospect_campaign_members cm ON cm.id = m.campaign_member_id
-                           WHERE cm.workspace_id = {$this->ws}{$camp} AND " . $this->outConds(true) . ") x
+                           WHERE cm.workspace_id = {$this->ws}{$camp} AND " . $this->sentBase() . ") x
                    WHERE x.step_key IS NOT NULL
                 GROUP BY x.member_id, x.step_key) s
             JOIN agency_prospect_messages o ON o.id = s.out_id
@@ -265,7 +295,7 @@ final class OutreachAnalytics
             (j.client_won_at IS NOT NULL AND j.member_id = j.acquisition_member_id AND j.sent_at <= j.client_won_at AND (j.next_sent_at IS NULL OR j.next_sent_at > j.client_won_at)) AS won_here,
             (j.next_out_id IS NOT NULL) AS advanced,
             CASE WHEN j.first_reply_at IS NULL THEN NULL ELSE TIMESTAMPDIFF(SECOND, j.sent_at, j.first_reply_at) END AS latency_sec
-            FROM ({$inner}) j";
+            FROM ({$inner}) j WHERE 1 = 1" . $this->displayConds();
     }
 
     /** Prospect rows with their outcome measured over all time (a journey row's outcome is the prospect's current one). */
@@ -517,12 +547,16 @@ final class OutreachAnalytics
             FROM (" . $this->journeySql() . ') j WHERE j.prev_sent_at IS NOT NULL GROUP BY j.step_key');
 
         $camp = $this->camp('cm');
+        // The pacing evidence lives on the INBOUND the answer responds to (its due moment is chosen when it arrives and
+        // stored there); the AI answer is tied to it by operation_key "outreach:reply:<inbound id>".
         $ai = $this->select("SELECT COUNT(*) AS replies,
-                COALESCE(SUM(m.reply_due_at IS NOT NULL), 0) AS paced,
-                AVG(CASE WHEN m.reply_due_at IS NOT NULL THEN TIMESTAMPDIFF(SECOND, m.created_at, m.reply_due_at) END) AS avg_planned_wait,
-                AVG(CASE WHEN m.reply_due_at IS NOT NULL THEN TIMESTAMPDIFF(SECOND, m.reply_due_at, m.sent_at) END) AS avg_send_lag,
+                COALESCE(SUM(i.reply_due_at IS NOT NULL), 0) AS paced,
+                AVG(CASE WHEN i.reply_due_at IS NOT NULL THEN TIMESTAMPDIFF(SECOND, COALESCE(i.received_at, i.created_at), i.reply_due_at) END) AS avg_planned_wait,
+                AVG(CASE WHEN i.reply_due_at IS NOT NULL THEN TIMESTAMPDIFF(SECOND, i.reply_due_at, m.sent_at) END) AS avg_send_lag,
                 COALESCE(SUM(m.deferred_until IS NOT NULL OR m.failure_reason IN ('rate_limited','opener_daily_cap')), 0) AS deferred
             FROM agency_prospect_messages m JOIN agency_prospect_campaign_members cm ON cm.id = m.campaign_member_id
+            LEFT JOIN agency_prospect_messages i ON i.id = CASE WHEN m.operation_key LIKE 'outreach:reply:%' THEN CAST(SUBSTRING(m.operation_key, 16) AS UNSIGNED) END
+                AND i.campaign_member_id = m.campaign_member_id AND i.direction = 'inbound'
             WHERE cm.workspace_id = {$this->ws}{$camp} AND " . $this->outConds(true) . " AND m.purpose = 'ai_reply'")[0];
 
         $manual = $this->select("SELECT COUNT(*) AS c,
