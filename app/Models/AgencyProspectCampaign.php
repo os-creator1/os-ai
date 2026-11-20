@@ -25,6 +25,7 @@ class AgencyProspectCampaign extends Model
         'contact_group_business_id',
         'recipients_synced_at',
         'recipient_report',
+        'min_send_interval_seconds',
     ];
 
     /** Recipients come from a Business-scoped CRM contact group. NULL = legacy individual enrollment. */

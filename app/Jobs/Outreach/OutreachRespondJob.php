@@ -177,8 +177,9 @@ class OutreachRespondJob extends Base
         ), fn () => $this->hasNewerInbound($member->id, $inbound->id) ? 'superseded_by_newer_inbound' : null);
 
         // 'already_claimed' means a concurrent run owns this reply: it is not a reason for silence.
+        $deferred = in_array($result->send?->reason, [\App\Library\AgencyOutreach\OutreachSendBudget::REASON_RATE, \App\Library\AgencyOutreach\OutreachSendBudget::REASON_OPENER_CAP], true);
         $reason = $result->claimed()
-            ? ($result->send?->isSent() ? null : $result->send?->reason)
+            ? ($result->send?->isSent() || $deferred ? null : $result->send?->reason)
             : ($result->skipReason === 'already_claimed' ? null : $result->skipReason);
 
         $ledger->markHandled($inbound->id, $classification->intent, $reason);

@@ -52,6 +52,26 @@ final class OutreachMessageSender
     }
 
     /**
+     * The number this Business sends from and the transport behind it, for pacing: the agency's own
+     * Telnyx sender when it chose one, else the managed primary number. Null number = not resolvable.
+     *
+     * @return array{number: ?string, transport: string}
+     */
+    public function sendingNumber(Business $business): array
+    {
+        $byo = AgencyByoSender::selectedChannel($business);
+
+        if ($byo !== null) {
+            return ['number' => preg_replace('/\D/', '', (string) $byo->sender_number) ?: null, 'transport' => 'byo_telnyx'];
+        }
+
+        $identity = $this->identities->resolveForBusiness($business);
+        $number = $identity === null ? null : $this->identities->resolvePrimaryNumber($identity)?->phone_number;
+
+        return ['number' => $number === null ? null : (preg_replace('/\D/', '', (string) $number) ?: null), 'transport' => 'managed'];
+    }
+
+    /**
      * @param  string  $toPhone  the prospect's canonical digits-only number
      */
     public function send(Business $business, string $toPhone, string $body, string $operationKey): OutreachSendResult

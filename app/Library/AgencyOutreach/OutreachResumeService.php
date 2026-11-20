@@ -46,7 +46,10 @@ final class OutreachResumeService
                 continue;
             }
 
-            if ($result->send?->status === OutreachSendResult::PAUSED) {
+            // Only a wallet refusal stops the batch (every later send would be refused the same way);
+            // a rate-limited send is simply deferred again and the others carry on.
+            if ($result->send?->status === OutreachSendResult::PAUSED
+                && ! in_array($result->send->reason, [OutreachSendBudget::REASON_RATE, OutreachSendBudget::REASON_OPENER_CAP], true)) {
                 break;
             }
         }

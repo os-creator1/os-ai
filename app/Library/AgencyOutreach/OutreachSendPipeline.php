@@ -40,6 +40,7 @@ final class OutreachSendPipeline
         private readonly OutreachEligibility $eligibility,
         private readonly OutreachMessageSender $sender,
         private readonly OutreachConversationLinker $linker,
+        private readonly OutreachSendBudget $budget,
     ) {
     }
 
@@ -77,12 +78,63 @@ final class OutreachSendPipeline
                 return 'step_already_sent';
             }
 
-            if ($this->inFlight($member->id, null, true)) {
-                return 'send_in_flight';
-            }
-
+            // This job may have spent time composing while a newer inbound
+            // arrived. A stale responder MUST fail its own freshness guard
+            // before it can touch another reply's queued delivery.
             if ($guard !== null && ($reason = $guard($member, $eligible)) !== null) {
                 return $reason;
+            }
+
+            // A newer reply to the same conversation replaces an older one still WAITING for its
+            // send slot: that older text is stale and must neither block nor follow this one.
+            if ($plan->purpose === AgencyProspectMessage::PURPOSE_AI_REPLY) {
+                // A real inbound starts the conversation even if the cold
+                // opener was rate/cap deferred. Close that unsent opener now
+                // rather than blocking the answer with send_in_flight.
+                AgencyProspectMessage::query()
+                    ->where('campaign_member_id', $member->id)
+                    ->where('direction', AgencyProspectMessage::DIRECTION_OUTBOUND)
+                    ->where('purpose', AgencyProspectMessage::PURPOSE_INITIAL)
+                    ->where('status', AgencyProspectMessage::STATUS_PAUSED)
+                    ->whereIn('failure_reason', [OutreachSendBudget::REASON_RATE, OutreachSendBudget::REASON_OPENER_CAP])
+                    ->update(['status' => AgencyProspectMessage::STATUS_FAILED,
+                        'failure_reason' => 'superseded_by_inbound', 'deferred_until' => null]);
+
+                // An inbound cancels a pending timed follow-up. That follow-up
+                // may be PAUSED for rate limits and must not block this reply.
+                if ($member->followup_cancelled_at !== null) {
+                    AgencyProspectMessage::query()
+                        ->where('campaign_member_id', $member->id)
+                        ->where('direction', AgencyProspectMessage::DIRECTION_OUTBOUND)
+                        ->where('purpose', AgencyProspectMessage::PURPOSE_FOLLOWUP)
+                        ->where('status', AgencyProspectMessage::STATUS_PAUSED)
+                        ->update(['status' => AgencyProspectMessage::STATUS_FAILED,
+                            'failure_reason' => 'followup_cancelled', 'deferred_until' => null]);
+                }
+
+                if (preg_match('/^outreach:reply:(\d+)$/', $plan->operationKey, $replyMatch) === 1) {
+                    $currentInboundId = (int) $replyMatch[1];
+                    $waitingReplies = AgencyProspectMessage::query()
+                        ->where('campaign_member_id', $member->id)
+                        ->where('direction', AgencyProspectMessage::DIRECTION_OUTBOUND)
+                        ->where('purpose', AgencyProspectMessage::PURPOSE_AI_REPLY)
+                        ->where('status', AgencyProspectMessage::STATUS_PAUSED)
+                        ->whereIn('failure_reason', [OutreachSendBudget::REASON_RATE, OutreachSendBudget::REASON_OPENER_CAP])
+                        ->get(['id', 'operation_key']);
+
+                    foreach ($waitingReplies as $waiting) {
+                        if (preg_match('/^outreach:reply:(\d+)$/', (string) $waiting->operation_key, $oldMatch) === 1
+                            && (int) $oldMatch[1] < $currentInboundId) {
+                            AgencyProspectMessage::query()->whereKey($waiting->id)
+                                ->update(['status' => AgencyProspectMessage::STATUS_FAILED,
+                                    'failure_reason' => 'superseded_by_newer_reply', 'deferred_until' => null]);
+                        }
+                    }
+                }
+            }
+
+            if ($this->inFlight($member->id, null, true)) {
+                return 'send_in_flight';
             }
 
             if ($plan->suppressAfterManualReply && $this->linker->ownerRepliedAfterLatestInbound($eligible->business, $eligible->prospect)) {
@@ -159,6 +211,50 @@ final class OutreachSendPipeline
                 return 'not_paused';
             }
 
+            if ($row->purpose === AgencyProspectMessage::PURPOSE_INITIAL
+                && in_array($row->failure_reason, [OutreachSendBudget::REASON_RATE, OutreachSendBudget::REASON_OPENER_CAP], true)
+                && $member->last_inbound_at !== null
+                && $member->last_inbound_at->greaterThanOrEqualTo($row->created_at)) {
+                // The reply job may still be waiting for its own due time.
+                // Never deliver the cold opener after a prospect responded.
+                $row->update(['status' => AgencyProspectMessage::STATUS_FAILED,
+                    'failure_reason' => 'superseded_by_inbound', 'deferred_until' => null]);
+
+                return 'superseded_by_inbound';
+            }
+
+            if ($row->purpose === AgencyProspectMessage::PURPOSE_FOLLOWUP) {
+                $since = $row->sequence_step_id === OutreachSequence::LEGACY_FOLLOWUP
+                    ? $member->booking_link_sent_at : $member->last_outbound_at;
+                $replied = $member->last_inbound_at !== null
+                    && ($since === null || $member->last_inbound_at->greaterThan($since));
+                $next = OutreachSequence::forWorkspace($member->workspace)->nextTimeStep(
+                    OutreachSequence::forWorkspace($member->workspace)->sentIdsFor($member)
+                );
+
+                // Unlike new scripted follow-up jobs, a deferred row bypasses
+                // OutreachFollowUpJob. Enforce all of its cancellation/step
+                // guards here under the member lock, before any provider call.
+                if ($member->followup_cancelled_at !== null
+                    || $member->followup_sent_at !== null
+                    || $member->followup_at === null
+                    || $replied
+                    || ($next['id'] ?? null) !== $row->sequence_step_id) {
+                    $row->update(['status' => AgencyProspectMessage::STATUS_FAILED,
+                        'failure_reason' => 'followup_cancelled', 'deferred_until' => null]);
+
+                    // The member may now have a different timed successor
+                    // after the owner manually delivered a later reply step.
+                    // Close this obsolete ledger row without cancelling the
+                    // NEW step's live timer.
+                    if ($next !== null && $next['id'] === $row->sequence_step_id) {
+                        $this->cancelFollowUpIfFollowUp($row);
+                    }
+
+                    return 'followup_cancelled';
+                }
+            }
+
             $eligible = $this->eligibility->check($member, true);
 
             if (! $eligible->ok()) {
@@ -184,11 +280,24 @@ final class OutreachSendPipeline
                 return 'manual_reply_sent';
             }
 
+            // A deferred reply is only worth sending while it still answers the LATEST message.
+            if ($row->purpose === AgencyProspectMessage::PURPOSE_AI_REPLY
+                && preg_match('/^outreach:reply:(\d+)$/', (string) $row->operation_key, $m) === 1
+                && AgencyProspectMessage::query()
+                    ->where('campaign_member_id', $member->id)
+                    ->where('direction', AgencyProspectMessage::DIRECTION_INBOUND)
+                    ->where('id', '>', (int) $m[1])
+                    ->exists()) {
+                $row->update(['status' => AgencyProspectMessage::STATUS_FAILED, 'failure_reason' => 'superseded_by_newer_inbound']);
+
+                return 'superseded_by_newer_inbound';
+            }
+
             if ($this->inFlight($member->id, $row->id, false)) {
                 return 'send_in_flight';
             }
 
-            $row->update(['status' => AgencyProspectMessage::STATUS_PENDING, 'failure_reason' => null]);
+            $row->update(['status' => AgencyProspectMessage::STATUS_PENDING, 'failure_reason' => null, 'deferred_until' => null]);
 
             return ['row' => $row->fresh(), 'business' => $eligible->business, 'prospect' => $eligible->prospect];
         });
@@ -202,11 +311,36 @@ final class OutreachSendPipeline
 
     private function deliver(AgencyProspectMessage $row, Business $business, AgencyProspect $prospect): OutreachPipelineResult
     {
+        // The shared budget of this sending number. Over budget = the row stays claimed (same operation
+        // key, nothing recorded as delivered) and is retried by a delayed job; nothing sleeps.
+        if (OutreachSendBudget::enabled()) {
+            $slot = $this->budget->reserve($business, $row);
+
+            if (! $slot['granted']) {
+                return $this->defer($row, (string) $slot['reason'], $slot['retryAt']);
+            }
+        }
+
         $result = $this->sender->send($business, (string) $prospect->phone, (string) $row->body, (string) $row->operation_key);
 
         $row = $this->settle($row, $result);
 
         return new OutreachPipelineResult(null, $result, $row);
+    }
+
+    private function defer(AgencyProspectMessage $row, string $reason, \Illuminate\Support\Carbon $retryAt): OutreachPipelineResult
+    {
+        $at = $this->budget->jitter($retryAt, $row);
+
+        DB::transaction(function () use ($row, $reason, $at): void {
+            // Match claim/settle's lock order (member, then message).
+            AgencyProspectCampaignMember::query()->whereKey($row->campaign_member_id)->lockForUpdate()->first(['id']);
+            $row->update(['status' => AgencyProspectMessage::STATUS_PAUSED, 'failure_reason' => $reason, 'deferred_until' => $at]);
+        });
+
+        \App\Jobs\Outreach\OutreachDeferredSendJob::dispatch((int) $row->id)->delay($at);
+
+        return new OutreachPipelineResult(null, OutreachSendResult::paused($reason), $row->fresh());
     }
 
     private function settle(AgencyProspectMessage $row, OutreachSendResult $result): AgencyProspectMessage

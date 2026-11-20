@@ -59,6 +59,12 @@ final class OutreachReplyTiming
             return false;
         }
 
+        return self::queueCanDefer();
+    }
+
+    /** True when the default queue can hold a delayed job (anything but the inline `sync` driver). */
+    public static function queueCanDefer(): bool
+    {
         $connection = (string) config('queue.default');
 
         return config("queue.connections.{$connection}.driver") !== 'sync';

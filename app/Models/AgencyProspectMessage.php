@@ -52,12 +52,15 @@ class AgencyProspectMessage extends Model
         'failure_reason',
         'reply_due_at',
         'reply_category',
+        'deferred_until',
+        'outreach_send_slot_id',
     ];
 
     protected $casts = [
         'sent_at' => 'datetime',
         'received_at' => 'datetime',
         'reply_due_at' => 'datetime',
+        'deferred_until' => 'datetime',
     ];
 
     public function workspace(): BelongsTo
