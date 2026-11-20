@@ -146,6 +146,10 @@ class AgencyProspectingController extends CustomerBaseController
             'readiness' => app(\App\Library\AgencyOutreach\AgencyOutreachReadiness::class)->forWorkspace($workspace),
             'metrics' => app(\App\Library\AgencyOutreach\OutreachMetrics::class)->forWorkspace($workspace),
             'pausedForFunds' => app(\App\Library\AgencyOutreach\OutreachCampaignService::class)->hasPausedForFunds($workspace),
+            // Redesigned Overview — presentation data only.
+            'needsYou' => app(\App\Library\AgencyOutreach\OutreachConversationLinks::class)->needsYou($workspace),
+            'messaged' => $initialMessagesSent,
+            'ogNewCampaignUrl' => route('customer.workspaces.prospecting.campaigns.index', $workspaceUid),
         ]);
     }
 
@@ -153,9 +157,13 @@ class AgencyProspectingController extends CustomerBaseController
     {
         $workspace = $this->resolveEntitledWorkspace($workspaceUid);
 
+        $groupBusiness = app(\App\Library\AgencyOutreach\OutreachContactGroupBridge::class)->businessFor($workspace, auth()->user());
+
         return view('customer.workspaces.prospecting.prospects', [
             'workspaceUid' => $workspaceUid,
             'rows' => app(\App\Library\AgencyOutreach\OutreachProspectListReader::class)->rows($workspace),
+            // Bulk import lives in Contacts (contact groups); Outreach campaigns text those groups.
+            'importUrl' => $groupBusiness === null ? null : route('customer.workspaces.businesses.contacts.index', [$workspaceUid, $groupBusiness->uid]),
         ]);
     }
 
@@ -181,9 +189,19 @@ class AgencyProspectingController extends CustomerBaseController
             'website' => ['nullable', 'string', 'max:2048'],
             'source' => ['nullable', 'string', 'max:255'],
             'location' => ['nullable', 'string', 'max:255'],
+            'country_code' => ['nullable', 'string', 'regex:/^\+\d{1,3}$/'],
         ]);
 
-        $canonicalPhone = AgencyProspectPhoneNormalizer::normalize($validated['phone']);
+        // The Add-prospect dialog has a separate country-code picker. The chosen code is explicit input
+        // (never guessed), applied only when the typed number has no "+" of its own.
+        $countryCode = $validated['country_code'] ?? null;
+        unset($validated['country_code']);
+        $typedPhone = trim($validated['phone']);
+        if ($countryCode !== null && ! str_starts_with($typedPhone, '+') && ! str_starts_with($typedPhone, '00')) {
+            $typedPhone = $countryCode . ' ' . ltrim($typedPhone, '0 ');
+        }
+
+        $canonicalPhone = AgencyProspectPhoneNormalizer::normalize($typedPhone);
 
         if ($canonicalPhone === null) {
             return redirect()->back()->withInput()

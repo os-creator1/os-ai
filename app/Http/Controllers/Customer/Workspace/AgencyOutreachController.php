@@ -104,20 +104,7 @@ class AgencyOutreachController extends CustomerBaseController
 
         $members = $query->orderByDesc('last_inbound_at')->orderByDesc('id')->paginate(self::PAGE_SIZE)->withQueryString();
 
-        $boxUids = $business === null || $members->isEmpty()
-            ? collect()
-            : ChatBox::query()->where('business_id', $business->id)->whereIn('id', $members->pluck('chat_box_id'))->pluck('uid', 'id');
-
-        $canOpen = $business !== null && app(WorkspaceManager::class)->userCanAccessBusiness((int) Auth::id(), $business);
-
-        $links = [];
-
-        foreach ($members as $member) {
-            $uid = $boxUids->get($member->chat_box_id);
-            $links[$member->id] = $canOpen && $uid !== null
-                ? route('customer.workspaces.businesses.conversations.index', [$workspace->uid, $business->uid]) . '?open=' . urlencode((string) $uid)
-                : null;
-        }
+        $links = app(\App\Library\AgencyOutreach\OutreachConversationLinks::class)->forMembers($workspace, $members);
 
         return view('customer.workspaces.prospecting.conversations', [
             'workspaceUid' => $workspaceUid,
