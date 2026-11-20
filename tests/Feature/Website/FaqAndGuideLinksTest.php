@@ -58,6 +58,9 @@ class FaqAndGuideLinksTest extends TestCase
     public function test_the_home_page_shows_the_newest_published_guides_as_cards_at_their_current_addresses(): void
     {
         [, $business] = $this->photoBoothContentTenant();
+        // An older article that explicitly supports home must not jump ahead of newer posts in the "Latest guides" row.
+        $homeSupported = $this->guide($business, 'Older home guide', 'older home guide', ['supports_page_uid' => self::PAGE_HOME]);
+        $this->travel(2)->minutes();
         $titles = ['Wedding reception timeline planning', 'Corporate event booth branding ideas', 'Birthday party booth setup tips', 'Graduation party photo ideas'];
         $topics = ['wedding reception timeline planning', 'corporate event booth branding', 'birthday party booth setup', 'graduation party photo ideas'];
         $articles = [];
@@ -75,6 +78,7 @@ class FaqAndGuideLinksTest extends TestCase
             $this->assertStringContainsString("A short summary of {$titles[$newest]}.", $home, 'a short excerpt');
         }
         $this->assertStringNotContainsString($articles[0]->slug, $home, 'at most three, newest first');
+        $this->assertStringNotContainsString($homeSupported->slug, $home, 'an older home-supporting article does not displace newer guides');
         $this->assertSame(3, substr_count($home, '>Read the guide &rarr;</a>'), 'one read link per card');
     }
 

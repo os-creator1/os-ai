@@ -39,13 +39,11 @@ final class WebsiteRelatedArticles
 
         $query = fn () => WebsiteArticle::query()->published()->where('website_id', $website->id)->where('noindex', false);
 
-        $supporting = $query()->where('supports_page_uid', $uid)->orderByDesc('published_at')->limit(self::MAX)->get();
-        $articles = $supporting;
-
-        if ($isHome) {
-            $latest = $query()->whereNotIn('id', $supporting->pluck('id')->all())->orderByDesc('published_at')->limit(self::MAX - $supporting->count())->get();
-            $articles = $supporting->concat($latest);
-        }
+        // The home page promises the newest guides, so its list is globally newest-first even when an older article explicitly supports home.
+        // Other pages show only the guides that explicitly support that page.
+        $articles = $isHome
+            ? $query()->orderByDesc('published_at')->limit(self::MAX)->get()
+            : $query()->where('supports_page_uid', $uid)->orderByDesc('published_at')->limit(self::MAX)->get();
 
         return [
             'heading' => $isHome ? 'Latest guides' : 'Helpful guides',
