@@ -253,4 +253,56 @@ CSV;
         $this->upload($a, "name,phone\n")->assertSessionHasErrors('file');
         $this->assertSame(0, AgencyProspectImportBatch::where('workspace_id', $a['workspace']->id)->count());
     }
+
+    public function test_abbreviated_review_counts_keep_their_multiplier_or_are_rejected(): void
+    {
+        foreach (['86' => 86, '(86)' => 86, '1,234' => 1234, '1.2k' => 1200, '2K' => 2000, '1.25k' => 1250, '3.5M' => 3500000, ' 12 ' => 12] as $raw => $expected) {
+            $this->assertSame($expected, ProspectRowNormalizer::parseReviewCount((string) $raw), "parse {$raw}");
+        }
+
+        foreach (['abc', '1.234', '12 reviews', '-5', '1k2', '1.2.3k', '1kk', '1e3', '9999999999k', ''] as $bad) {
+            $this->assertNull(ProspectRowNormalizer::parseReviewCount($bad), "reject {$bad}");
+        }
+
+        $map = ['n' => 'business_name', 'p' => 'phone', 'rv' => 'review_count'];
+        $ok = ProspectRowNormalizer::normalize(['n' => 'X', 'p' => '+1 303 555 0177', 'rv' => '1.2k'], $map, null);
+        $this->assertSame(1200, $ok['values']['review_count']);
+        $this->assertNotContains('invalid_review_count', $ok['issues']);
+
+        $bad = ProspectRowNormalizer::normalize(['n' => 'X', 'p' => '+1 303 555 0177', 'rv' => '1.234'], $map, null);
+        $this->assertNull($bad['values']['review_count']);
+        $this->assertContains('invalid_review_count', $bad['issues'], 'an unsupported format is reported, never silently reduced to digits');
+    }
+
+    public function test_import_cannot_enroll_into_a_campaign_that_became_active_concurrently(): void
+    {
+        $a = $this->outreachAgency('Race', ['enrolled' => false]);
+        $this->authenticateAs($a['customer']);
+        $this->upload($a, "name,phone\nRace Co,+1 303 555 0188\nRace Two,+1 303 555 0189\n");
+        $batch = $this->batch($a);
+        $campaign = $a['campaign'];
+        $this->assertSame('draft', $campaign->refresh()->status->value);
+
+        // The campaign is a draft when the request starts (so the cheap pre-check passes) and is started by
+        // another request before the import's transaction takes its locks.
+        // retrieval #1 is the controller loading the batch, #2 is the transaction locking it: flip between them.
+        $retrievals = 0;
+        AgencyProspectImportBatch::retrieved(function () use (&$retrievals, $campaign) {
+            if (++$retrievals === 2) {
+                \Illuminate\Support\Facades\DB::table('agency_prospect_campaigns')->where('id', $campaign->id)->update(['status' => 'active']);
+            }
+        });
+
+        $this->post($this->outreachRoute('prospects.import.commit', $a['workspace'], [$batch->uid]), ['campaign_uid' => $campaign->uid])
+            ->assertRedirect($this->outreachRoute('prospects.import.review', $a['workspace'], [$batch->uid]));
+        $this->assertStringContainsString('already started', (string) session('flash_error'));
+
+        $this->assertSame(0, \App\Models\AgencyProspectCampaignMember::where('campaign_id', $campaign->id)->count(), 'nobody enrolled into the running campaign');
+        $this->assertSame(0, AgencyProspect::where('workspace_id', $a['workspace']->id)->where('phone', '13035550188')->count(), 'nothing imported at all');
+        $this->assertSame('analyzed', $batch->refresh()->status, 'the batch stays re-runnable');
+
+        // Importing to the prospect list only still works afterwards.
+        $this->post($this->outreachRoute('prospects.import.commit', $a['workspace'], [$batch->uid]))->assertRedirect();
+        $this->assertSame(1, AgencyProspect::where('workspace_id', $a['workspace']->id)->where('phone', '13035550188')->count());
+    }
 }

@@ -93,9 +93,10 @@ final class ProspectRowNormalizer
 
         $v['review_count'] = null;
         if (($raw['review_count'] ?? '') !== '') {
-            $n = preg_replace('/[^\d]/', '', $raw['review_count']) ?? '';
-            if ($n !== '' && preg_match('/^[\(\d,.\s)kK]+$/', $raw['review_count']) && ! str_contains($raw['review_count'], '-')) {
-                $v['review_count'] = (int) $n;
+            $count = self::parseReviewCount($raw['review_count']);
+
+            if ($count !== null) {
+                $v['review_count'] = $count;
             } else {
                 $issues[] = self::ISSUE_BAD_REVIEWS;
             }
@@ -170,6 +171,36 @@ final class ProspectRowNormalizer
         }
 
         return ['values' => $v, 'issues' => array_values(array_unique($issues)), 'phone' => $phone];
+    }
+
+    /**
+     * "86", "(86)", "1,234", "1.2k", "2K", "3.5M" → integers. Anything else (a decimal without a suffix such as
+     * "1.234", multiple suffixes, words, ranges, negatives) is rejected as null, never guessed and never reduced to
+     * its digits: the multiplier is applied or the value is refused.
+     */
+    public static function parseReviewCount(string $raw): ?int
+    {
+        $v = trim(str_replace(["\u{00A0}", ' '], '', $raw));
+
+        if (preg_match('/^\((.*)\)$/', $v, $m) === 1) {
+            $v = $m[1];
+        }
+
+        if (preg_match('/^(\d{1,3}(?:,\d{3})+|\d+)(\.\d+)?([kKmM])?$/', $v, $m) !== 1) {
+            return null;
+        }
+
+        $suffix = strtolower($m[3] ?? '');
+        $decimal = $m[2] ?? '';
+
+        if ($suffix === '' && $decimal !== '') {
+            return null;
+        }
+
+        $number = (float) (str_replace(',', '', $m[1]) . $decimal);
+        $value = $number * match ($suffix) { 'k' => 1_000, 'm' => 1_000_000, default => 1 };
+
+        return $value <= 100_000_000 ? (int) round($value) : null;
     }
 
     public static function isSocial(string $url): bool

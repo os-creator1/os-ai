@@ -248,6 +248,11 @@ class AgencyOutreachClientsController extends CustomerBaseController
 
         $r = $this->importer->commitProspects($workspace, $b, $request->input('campaign_uid'));
 
+        if (! empty($r['campaign_closed'])) {
+            return redirect()->route('customer.workspaces.prospecting.prospects.import.review', [$workspaceUid, $b->uid])
+                ->with('flash_error', 'That campaign has already started, so prospects cannot be added to it. Nothing was imported; choose another destination.');
+        }
+
         return redirect()->route('customer.workspaces.prospecting.prospects.index', $workspaceUid)
             ->with('flash_success', $r['already']
                 ? 'That file was already imported.'

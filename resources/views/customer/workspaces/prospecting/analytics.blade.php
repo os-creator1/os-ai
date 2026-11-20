@@ -14,7 +14,7 @@
     $formatPhone = fn ($d) => '+' . $d;
 @endphp
 <div class="og page">
-    @include('customer.workspaces.prospecting._nav', ['prospectingActive' => 'analytics', 'ogInside' => true, 'ogActions' => 'analytics', 'exportUrl' => route('customer.workspaces.prospecting.analytics.export', $workspaceUid) . '?' . http_build_query($filters->toQuery())])
+    @include('customer.workspaces.prospecting._nav', ['prospectingActive' => 'analytics', 'ogInside' => true, 'ogActions' => 'analytics', 'exportUrl' => route('customer.workspaces.prospecting.analytics.export', $workspaceUid) . '?' . http_build_query($filters->toQuery(['reached' => $tab === 'explorer' ? ($reached ?? null) : null]))])
 
     <div class="seg" role="tablist" aria-label="Analytics sections" data-role="analytics-subtabs" style="align-self:flex-start">
         @foreach($tabs as $key => $label)

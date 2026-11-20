@@ -195,7 +195,7 @@ final class ProspectImporter
      * Existing prospects keep their notes, conversations, status and Client-won state: only blank enrichment
      * fields are filled in.
      *
-     * @return array{created: int, updated: int, enrolled: int, skipped: int, already: bool}
+     * @return array{created: int, updated: int, enrolled: int, skipped: int, already: bool, campaign_closed?: bool}
      */
     public function commitProspects(Workspace $workspace, AgencyProspectImportBatch $batch, ?string $campaignUid = null): array
     {
@@ -218,6 +218,21 @@ final class ProspectImporter
                 $result['already'] = true;
 
                 return;
+            }
+
+            // Lock the destination campaign and re-check it is STILL a draft inside this transaction. Starting a
+            // campaign locks the same row, so whichever request gets it first wins: an import can never enroll
+            // prospects into a campaign that went active (and already dispatched its openers) a moment ago.
+            // Nothing has been written yet, so refusing here leaves the batch untouched and re-runnable.
+            if ($campaign !== null) {
+                $lockedCampaign = AgencyProspectCampaign::query()
+                    ->where('id', $campaign->id)->where('workspace_id', $workspace->id)->lockForUpdate()->first();
+
+                if ($lockedCampaign === null || $lockedCampaign->status !== AgencyProspectCampaignStatus::Draft) {
+                    $result['campaign_closed'] = true;
+
+                    return;
+                }
             }
 
             $clients = app(OutreachExistingClients::class);

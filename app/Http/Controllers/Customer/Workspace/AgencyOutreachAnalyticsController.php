@@ -111,7 +111,7 @@ class AgencyOutreachAnalyticsController extends CustomerBaseController
         $workspace = $this->resolveEntitledWorkspace($workspaceUid);
         $filters = AnalyticsFilters::fromRequest($request);
         $analytics = new OutreachAnalytics($workspace, $filters);
-        $reached = $request->query('reached');
+        $reached = in_array($request->query('reached'), ['contacted', 'replied', 'interested', 'rejected', 'opted_out', 'booked', 'won', 'eligible'], true) ? $request->query('reached') : null;
 
         return response()->streamDownload(function () use ($analytics, $reached) {
             $out = fopen('php://output', 'w');

@@ -318,4 +318,68 @@ class OutreachAnalyticsTest extends TestCase
         $this->get($this->outreachRoute('analytics.index', $a['workspace']))->assertNotFound();
         $this->get($this->outreachRoute('analytics.step', $b['workspace'], ['s-a']))->assertNotFound();
     }
+
+    public function test_one_client_won_is_a_single_step_win_in_the_acquisition_campaign_only(): void
+    {
+        $w = $this->world('Win');
+        $ws = $w['a']['workspace'];
+        $t = $this->t0;
+
+        // P1 (booked) is also reached by a second campaign with its own opener + step.
+        $second = AgencyProspectCampaign::create(['workspace_id' => $ws->id, 'name' => 'Second', 'status' => 'active', 'sending_mode' => 'managed', 'opening_message' => 'Hi']);
+        $m1b = AgencyProspectCampaignMember::create(['workspace_id' => $ws->id, 'campaign_id' => $second->id, 'prospect_id' => $w['m1']->prospect_id, 'enrolled_at' => $t]);
+        $this->msg($m1b, 'outbound', $t->copy()->addHours(1), ['purpose' => 'initial', 'body' => 'second opener']);
+        $this->msg($m1b, 'outbound', $t->copy()->addHours(2), ['purpose' => 'ai_reply', 'sequence_step_id' => 's-b', 'body' => 'second step b']);
+
+        // Won after both conversations, credited (as the app records it) to the FIRST campaign's member.
+        AgencyProspect::whereKey($w['m1']->prospect_id)->update([
+            'client_won_at' => $t->copy()->addHours(6), 'acquisition_member_id' => $w['m1']->id, 'acquisition_campaign_id' => $w['m1']->campaign_id,
+        ]);
+
+        $steps = $this->analytics($w['a'])->steps();
+        $totalWon = array_sum(array_column($steps, 'won'));
+        $this->assertSame(1, $totalWon, 'one client won = exactly one step-level win across every campaign');
+        $this->assertSame(1, $this->step($steps, 's-b')['won'], 'credited to the step sent before the win in the acquisition conversation');
+        $this->assertSame(0, $this->step($steps, 'opener')['won']);
+        $this->assertSame(1, $this->analytics($w['a'])->kpis()['won'], 'workspace-wide count is still one');
+
+        // Only the acquisition campaign sees the win.
+        $second2 = $this->analytics($w['a'], ['campaign' => $second->uid])->steps();
+        $this->assertSame(0, array_sum(array_column($second2, 'won')));
+
+        // A win with no recorded acquisition member is never guessed onto a step.
+        AgencyProspect::whereKey($w['m1']->prospect_id)->update(['acquisition_member_id' => null]);
+        $this->assertSame(0, array_sum(array_column($this->analytics($w['a'])->steps(), 'won')));
+    }
+
+    public function test_explorer_export_keeps_the_active_kpi_filter(): void
+    {
+        $w = $this->world('Exp');
+        $a = $w['a'];
+        $this->authenticateAs($a['customer']);
+        $base = $this->outreachRoute('analytics.index', $a['workspace']);
+        $export = $this->outreachRoute('analytics.export', $a['workspace']);
+
+        foreach (['booked' => ['Snap Happy'], 'rejected' => ['Mile High']] as $reached => $only) {
+            $html = $this->get($base . '?tab=explorer&reached=' . $reached)->assertOk()->getContent();
+            $this->assertMatchesRegularExpression('/analytics\/export\?[^"]*reached=' . $reached . '/', html_entity_decode($html), 'export link carries reached=' . $reached);
+
+            $csv = $this->get($export . '?period=all&reached=' . $reached)->streamedContent();
+            foreach (['Snap Happy', 'Glow Booth', 'Mile High', 'Flash Frame'] as $name) {
+                in_array($name, $only, true) ? $this->assertStringContainsString($name, $csv) : $this->assertStringNotContainsString($name, $csv, "{$name} must not be in the {$reached} export");
+            }
+        }
+
+        // Replied: P1, P2 and P3 all replied; the never-contacted P4 is excluded.
+        $csv = $this->get($export . '?period=all&reached=replied')->streamedContent();
+        $this->assertStringContainsString('Snap Happy', $csv);
+        $this->assertStringContainsString('Mile High', $csv);
+        $this->assertStringNotContainsString('Flash Frame', $csv);
+
+        // Unfiltered export has everyone; the Performance tab's export link has no reached param.
+        $this->assertStringContainsString('Flash Frame', $this->get($export . '?period=all')->streamedContent());
+        preg_match('/data-role="export-csv" href="([^"]+)"/', $this->get($base)->getContent(), $m);
+        $this->assertNotEmpty($m, 'header export link present');
+        $this->assertStringNotContainsString('reached=', html_entity_decode($m[1]), 'no stray reached filter on the Performance tab export');
+    }
 }
