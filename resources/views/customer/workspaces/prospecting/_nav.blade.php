@@ -12,13 +12,14 @@
         'prospects' => ['Prospects', route('customer.workspaces.prospecting.prospects.index', $workspaceUid)],
         'conversations' => ['Conversations', route('customer.workspaces.prospecting.conversations.index', $workspaceUid)],
         'campaigns' => ['Campaigns', route('customer.workspaces.prospecting.campaigns.index', $workspaceUid)],
+        'analytics' => ['Analytics', route('customer.workspaces.prospecting.analytics.index', $workspaceUid)],
         'script' => ['Script', route('customer.workspaces.prospecting.script.show', $workspaceUid)],
         'phone-messaging' => ['Phone & texting', route('customer.workspaces.prospecting.phone-messaging', $workspaceUid)],
     ];
 @endphp
 
 @once
-    <link rel="stylesheet" href="{{ asset('css/outreach/outreach.css') }}?v=1">
+    <link rel="stylesheet" href="{{ asset('css/outreach/outreach.css') }}?v=3">
 @endonce
 
 @unless($ogInside)<div class="og hd">@endunless

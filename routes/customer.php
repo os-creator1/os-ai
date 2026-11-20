@@ -2533,6 +2533,9 @@
 
             // Agency Outreach V1 — Conversations, Script & Settings, managed campaigns.
             // View-As never reaches these: every customer.workspaces.* route is Denied there.
+            Route::get('/analytics', 'Workspace\AgencyOutreachAnalyticsController@dashboard')->name('analytics.index');
+            Route::get('/analytics/export', 'Workspace\AgencyOutreachAnalyticsController@export')->name('analytics.export');
+            Route::get('/analytics/steps/{step}', 'Workspace\AgencyOutreachAnalyticsController@step')->where('step', '[A-Za-z0-9_.:-]+')->name('analytics.step');
             Route::get('/conversations', 'Workspace\AgencyOutreachController@conversations')->name('conversations.index');
             Route::post('/conversations/{member}/pause-ai', 'Workspace\AgencyOutreachController@pauseAi')->name('conversations.pause');
             Route::post('/conversations/{member}/resume-ai', 'Workspace\AgencyOutreachController@resumeAi')->name('conversations.resume');

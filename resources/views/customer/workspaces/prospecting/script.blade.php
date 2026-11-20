@@ -446,6 +446,12 @@
 
             renderSteps();
             renderFaq();
+            // Analytics → "Edit this message": open the editor at that step (live script only; history is never edited).
+            try {
+                var wanted = new URLSearchParams(window.location.search).get('step');
+                var target = wanted ? stepsEl.querySelector('[data-step-card="' + (window.CSS && CSS.escape ? CSS.escape(wanted) : wanted) + '"]') : null;
+                if (target) { target.scrollIntoView({block: 'center'}); var ta = target.querySelector('textarea'); if (ta) { ta.focus(); } }
+            } catch (e) {}
         })();
     </script>
 @endsection
