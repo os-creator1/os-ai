@@ -382,4 +382,25 @@ class OutreachAnalyticsTest extends TestCase
         $this->assertNotEmpty($m, 'header export link present');
         $this->assertStringNotContainsString('reached=', html_entity_decode($m[1]), 'no stray reached filter on the Performance tab export');
     }
+
+    public function test_one_booked_call_is_a_single_step_level_booking_across_campaigns(): void
+    {
+        $w = $this->world('Book');
+        $ws = $w['a']['workspace'];
+        $t = $this->t0;
+
+        // P1 is booked at T0+5h. A second campaign also messaged P1 (opener at T0+4h, still the latest step
+        // send before the booking in THAT conversation). Timestamps alone would credit both conversations.
+        $second = AgencyProspectCampaign::create(['workspace_id' => $ws->id, 'name' => 'Second', 'status' => 'active', 'sending_mode' => 'managed', 'opening_message' => 'Hi']);
+        $m1b = AgencyProspectCampaignMember::create(['workspace_id' => $ws->id, 'campaign_id' => $second->id, 'prospect_id' => $w['m1']->prospect_id, 'enrolled_at' => $t]);
+        $this->msg($m1b, 'outbound', $t->copy()->addHours(4), ['purpose' => 'initial', 'body' => 'second opener']);
+
+        $steps = $this->analytics($w['a'])->steps();
+        $this->assertSame(1, array_sum(array_column($steps, 'booked')), 'one booked call = exactly one step-level booking');
+        $this->assertSame(1, $this->analytics($w['a'])->kpis()['booked']);
+        // Credited to the conversation whose step send immediately preceded the booking (the second campaign's opener).
+        $this->assertSame(1, $this->step($steps, 'opener')['booked']);
+        $this->assertSame(0, $this->step($steps, 's-b')['booked']);
+        $this->assertSame(0, array_sum(array_column($this->analytics($w['a'], ['campaign' => $w['a']['campaign']->uid])->steps(), 'booked')));
+    }
 }

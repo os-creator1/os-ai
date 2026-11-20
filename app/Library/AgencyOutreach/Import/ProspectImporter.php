@@ -280,19 +280,37 @@ final class ProspectImporter
                             'contact_name' => $v['contact_name'] ?? null,
                         ], fn ($x) => $x !== null);
 
+                        $createdNow = false;
+
                         if ($prospect === null) {
-                            $prospect = AgencyProspect::create($enrich + [
-                                'workspace_id' => $workspace->id,
-                                'company_name' => $v['business_name'] ?? $phone,
-                                'phone' => $phone,
-                                'status' => AgencyProspectStatus::Active->value,
-                                'source' => $v['source'] ?? $batch->filename,
-                                'location' => trim(implode(', ', array_filter([$v['city'] ?? null, $v['state'] ?? null]))) ?: null,
-                                'import_batch_id' => $batch->id,
-                                'imported_at' => now(),
-                            ]);
-                            $result['created']++;
-                        } else {
+                            try {
+                                $prospect = AgencyProspect::create($enrich + [
+                                    'workspace_id' => $workspace->id,
+                                    'company_name' => $v['business_name'] ?? $phone,
+                                    'phone' => $phone,
+                                    'status' => AgencyProspectStatus::Active->value,
+                                    'source' => $v['source'] ?? $batch->filename,
+                                    'location' => trim(implode(', ', array_filter([$v['city'] ?? null, $v['state'] ?? null]))) ?: null,
+                                    'import_batch_id' => $batch->id,
+                                    'imported_at' => now(),
+                                ]);
+                                $createdNow = true;
+                                $result['created']++;
+                            } catch (\Illuminate\Database\UniqueConstraintViolationException) {
+                                // A concurrent import / manual add created this canonical phone a moment ago: reuse that
+                                // prospect (never a second row, never a 500) and treat it like any existing prospect.
+                                $prospect = AgencyProspect::query()->where('workspace_id', $workspace->id)->where('phone', $phone)->first();
+
+                                if ($prospect === null || $prospect->status === AgencyProspectStatus::Stopped) {
+                                    $row->update(['outcome' => $prospect === null ? self::OUT_INVALID : self::OUT_STOPPED]);
+                                    $result['skipped']++;
+
+                                    continue;
+                                }
+                            }
+                        }
+
+                        if (! $createdNow) {
                             // Never overwrite: only fill what is still blank. Status, notes, history stay.
                             $fill = [];
 

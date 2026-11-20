@@ -167,6 +167,10 @@ final class OutreachAnalytics
             p.import_batch_id, p.status, p.stop_reason, p.client_won_at, p.acquisition_member_id, p.booked_at, p.created_at,
             {$firstSent} AS first_sent,
             (SELECT MAX(cm.stage) FROM agency_prospect_campaign_members cm WHERE cm.prospect_id = p.id AND cm.workspace_id = {$this->ws}{$camp}) AS max_stage,
+            (SELECT mb.campaign_member_id FROM agency_prospect_messages mb JOIN agency_prospect_campaign_members cmb ON cmb.id = mb.campaign_member_id
+                WHERE cmb.prospect_id = p.id AND cmb.workspace_id = {$this->ws} AND mb.workspace_id = {$this->ws} AND mb.direction = 'outbound' AND mb.status = 'sent' AND mb.sent_at IS NOT NULL
+                  AND (mb.sequence_step_id IS NOT NULL OR mb.purpose = 'initial') AND p.booked_at IS NOT NULL AND mb.sent_at <= p.booked_at
+                ORDER BY mb.sent_at DESC, mb.id DESC LIMIT 1) AS booked_member_id,
             EXISTS (SELECT 1 FROM agency_prospect_messages i JOIN agency_prospect_campaign_members cm ON cm.id = i.campaign_member_id WHERE cm.prospect_id = p.id AND cm.workspace_id = {$this->ws}{$camp} AND i.workspace_id = {$this->ws} AND i.direction = 'inbound' AND i.received_at IS NOT NULL) AS has_reply,
             EXISTS (SELECT 1 FROM agency_prospect_exclusions e WHERE e.workspace_id = {$this->ws} AND e.active_phone = p.phone) AS is_excluded
             FROM agency_prospects p WHERE" . $this->prospectConds();
@@ -234,7 +238,7 @@ final class OutreachAnalytics
                     ORDER BY o3.sent_at DESC, o3.id DESC LIMIT 1)";
 
         $inner = "SELECT s.member_id, s.step_key, s.out_id, cm.campaign_id, cm.prospect_id, o.sent_at, o.script_version, o.channel_id, o.body,
-                pr.outcome, pr.booked_at, pr.client_won_at, pr.acquisition_member_id, pr.uid AS prospect_uid, pr.company_name, pr.business_type, pr.google_rating, pr.review_count, pr.has_website, pr.city, pr.state,
+                pr.outcome, pr.booked_at, pr.client_won_at, pr.acquisition_member_id, pr.booked_member_id, pr.uid AS prospect_uid, pr.company_name, pr.business_type, pr.google_rating, pr.review_count, pr.has_website, pr.city, pr.state,
                 r.first_reply_at, r.first_reply_id,
                 {$lastIn} AS last_in_out_id,
                 LEAD(s.out_id) OVER (PARTITION BY s.member_id ORDER BY s.out_id) AS next_out_id,
@@ -257,7 +261,7 @@ final class OutreachAnalytics
                  WHEN j.outcome = 'rejected' AND j.out_id = j.last_in_out_id THEN 'rejected'
                  WHEN j.outcome IN ('interested','booked','won') THEN 'interested'
                  ELSE 'other' END AS step_outcome,
-            (j.outcome IN ('booked','won') AND j.booked_at IS NOT NULL AND j.sent_at <= j.booked_at AND (j.next_sent_at IS NULL OR j.next_sent_at > j.booked_at)) AS booked_here,
+            (j.outcome IN ('booked','won') AND j.booked_at IS NOT NULL AND j.member_id = j.booked_member_id AND j.sent_at <= j.booked_at AND (j.next_sent_at IS NULL OR j.next_sent_at > j.booked_at)) AS booked_here,
             (j.client_won_at IS NOT NULL AND j.member_id = j.acquisition_member_id AND j.sent_at <= j.client_won_at AND (j.next_sent_at IS NULL OR j.next_sent_at > j.client_won_at)) AS won_here,
             (j.next_out_id IS NOT NULL) AS advanced,
             CASE WHEN j.first_reply_at IS NULL THEN NULL ELSE TIMESTAMPDIFF(SECOND, j.sent_at, j.first_reply_at) END AS latency_sec
@@ -267,7 +271,7 @@ final class OutreachAnalytics
     /** Prospect rows with their outcome measured over all time (a journey row's outcome is the prospect's current one). */
     private function scopedProspectsForJourney(): string
     {
-        $sql = 'SELECT s.id, s.uid, s.company_name, s.business_type, s.google_rating, s.review_count, s.has_website, s.city, s.state, s.outcome, s.booked_at, s.client_won_at, s.acquisition_member_id FROM (' . $this->prospectSql(false) . ') s';
+        $sql = 'SELECT s.id, s.uid, s.company_name, s.business_type, s.google_rating, s.review_count, s.has_website, s.city, s.state, s.outcome, s.booked_at, s.client_won_at, s.acquisition_member_id, s.booked_member_id FROM (' . $this->prospectSql(false) . ') s';
 
         return $this->f->outcome !== null ? $sql . ' WHERE s.outcome = ' . $this->b($this->f->outcome) : $sql;
     }

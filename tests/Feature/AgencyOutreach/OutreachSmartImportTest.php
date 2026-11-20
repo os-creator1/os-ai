@@ -305,4 +305,26 @@ CSV;
         $this->post($this->outreachRoute('prospects.import.commit', $a['workspace'], [$batch->uid]))->assertRedirect();
         $this->assertSame(1, AgencyProspect::where('workspace_id', $a['workspace']->id)->where('phone', '13035550188')->count());
     }
+
+    public function test_a_phone_created_by_a_concurrent_import_is_reused_not_a_500(): void
+    {
+        $a = $this->outreachAgency('Dupe', ['enrolled' => false]);
+        $this->authenticateAs($a['customer']);
+        $this->upload($a, "name,phone\nRace Co,+1 303 555 0188\n");
+        $batch = $this->batch($a);
+        $ws = $a['workspace'];
+
+        // Another import creates the same canonical phone just before this one inserts it.
+        AgencyProspect::creating(function ($p) use ($ws) {
+            if ($p->phone === '13035550188' && ! \Illuminate\Support\Facades\DB::table('agency_prospects')->where('workspace_id', $ws->id)->where('phone', '13035550188')->exists()) {
+                \Illuminate\Support\Facades\DB::table('agency_prospects')->insert(['uid' => 'rival', 'workspace_id' => $ws->id, 'company_name' => 'Rival', 'phone' => '13035550188', 'status' => 'active', 'created_at' => now(), 'updated_at' => now()]);
+            }
+        });
+
+        $this->post($this->outreachRoute('prospects.import.commit', $ws, [$batch->uid]))->assertRedirect();
+
+        $this->assertSame(1, AgencyProspect::where('workspace_id', $ws->id)->where('phone', '13035550188')->count());
+        $this->assertSame('imported', $batch->refresh()->status);
+        $this->assertSame('Rival', AgencyProspect::where('phone', '13035550188')->first()->company_name, 'the concurrently created prospect is reused and not overwritten');
+    }
 }
