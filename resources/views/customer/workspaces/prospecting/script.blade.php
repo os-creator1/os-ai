@@ -1,6 +1,7 @@
 @extends('layouts/contentLayoutMaster')
 
 @section('title', 'Outreach script and settings')
+@section('page-heading', 'own')
 
 @section('content')
 <div class="og page">

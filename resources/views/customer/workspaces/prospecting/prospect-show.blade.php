@@ -1,6 +1,7 @@
 @extends('layouts/contentLayoutMaster')
 
 @section('title', $prospect->company_name)
+@section('page-heading', 'own')
 
 @section('content')
     <div class="row mb-2">

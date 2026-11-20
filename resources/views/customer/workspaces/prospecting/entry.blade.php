@@ -6,6 +6,7 @@
 @endphp
 
 @section('title', 'Outreach')
+@section('page-heading', 'own')
 
 @section('content')
     <div class="row mb-2">

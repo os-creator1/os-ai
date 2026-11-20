@@ -1,6 +1,7 @@
 @extends('layouts/contentLayoutMaster')
 
 @section('title', 'Prospects')
+@section('page-heading', 'own')
 
 @section('content')
 @php
