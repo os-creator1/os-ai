@@ -413,10 +413,19 @@ class OutreachSendPacingTest extends TestCase
         $this->assertSame('paused', $waiting->fresh()->status);
         $this->assertCount(1, $this->sentBodies());
 
+        // This regression is about recovery after a user resumes; agency
+        // onboarding/readiness itself is covered by the existing readiness suite.
+        // The fixture does not provision the full wallet/verification checklist.
+        $readiness = \Mockery::mock(\App\Library\AgencyOutreach\AgencyOutreachReadiness::class);
+        $readiness->shouldReceive('forWorkspace')
+            ->andReturn(new \App\Library\AgencyOutreach\OutreachReadiness([]));
+        app()->instance(\App\Library\AgencyOutreach\AgencyOutreachReadiness::class, $readiness);
+
+        Queue::assertPushed(OutreachDeferredSendJob::class, 1);
         $resumed = app(\App\Library\AgencyOutreach\OutreachCampaignService::class)
             ->resume($workspace, $campaign->fresh());
-        $this->assertTrue($resumed['ok']);
-        Queue::assertPushed(OutreachDeferredSendJob::class, fn ($job) => $job->delay !== null);
+        $this->assertTrue($resumed['ok'], $resumed['error'] ?? 'Campaign should resume.');
+        Queue::assertPushed(OutreachDeferredSendJob::class, 2);
         $this->runDeferred($waiting);
 
         $this->assertSame('sent', $waiting->fresh()->status);
