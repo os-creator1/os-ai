@@ -154,7 +154,7 @@
                     <span class="ell">{{ $r->campaign_name ?? '—' }}</span>
                     <span class="ell">{{ $r->business_type ?: '—' }}<br><small class="mut">{{ collect([$r->city, $r->state])->filter()->implode(', ') ?: '—' }}</small></span>
                     <span>{{ $r->google_rating !== null ? '★ ' . $r->google_rating : '—' }}<br><small class="mut">{{ $r->review_count !== null ? '(' . $r->review_count . ')' : '' }}</small></span>
-                    <span class="ell mut">{{ $r->source_name ?? '—' }}</span>
+                    <span class="ell mut" title="{{ $r->group_names }}">{{ $r->group_names ?: ($r->source_name ?? '—') }}</span>
                     <span>{{ $r->steps_sent }}</span>
                     <span class="ell mut" title="{{ $r->last_in }}">{{ $r->last_in ? '“' . \Illuminate\Support\Str::limit($r->last_in, 50) . '”' : '—' }}</span>
                     <span>{{ P::duration($r->reply_sec !== null ? (int) $r->reply_sec : null) }}</span>

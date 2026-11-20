@@ -35,6 +35,9 @@ final class AnalyticsFilters
         public readonly ?int $channelId = null,
         public readonly ?int $scriptVersion = null,
         public readonly ?string $q = null,
+        public readonly ?string $groupUid = null,
+        public readonly ?string $cfKey = null,
+        public readonly ?string $cfValue = null,
     ) {
     }
 
@@ -59,6 +62,9 @@ final class AnalyticsFilters
             channelId: ctype_digit((string) $s('number')) ? (int) $s('number') : null,
             scriptVersion: ctype_digit((string) $s('script')) ? (int) $s('script') : null,
             q: $s('q'),
+            groupUid: $s('group'),
+            cfKey: preg_match('/^[a-z][a-z0-9_]{0,39}$/', (string) $s('cf')) === 1 ? $s('cf') : null,
+            cfValue: $s('cfv'),
         );
     }
 
@@ -82,6 +88,7 @@ final class AnalyticsFilters
         return $this->campaignUid !== null || $this->businessType !== null || $this->stepKey !== null || $this->geo !== null
             || $this->rating !== null || $this->reviews !== null || $this->website !== null || $this->batchUid !== null
             || $this->outcome !== null || $this->channelId !== null || $this->scriptVersion !== null || $this->q !== null
+            || $this->groupUid !== null || $this->cfKey !== null
             || $this->period !== '30';
     }
 
@@ -92,7 +99,7 @@ final class AnalyticsFilters
             'campaign' => $this->campaignUid, 'period' => $this->period !== '30' ? $this->period : null, 'from' => $this->from, 'to' => $this->to,
             'type' => $this->businessType, 'step' => $this->stepKey, 'geo' => $this->geo, 'rating' => $this->rating, 'reviews' => $this->reviews,
             'website' => $this->website, 'batch' => $this->batchUid, 'outcome' => $this->outcome, 'number' => $this->channelId,
-            'script' => $this->scriptVersion, 'q' => $this->q,
+            'script' => $this->scriptVersion, 'q' => $this->q, 'group' => $this->groupUid, 'cf' => $this->cfKey, 'cfv' => $this->cfValue,
         ], $override), fn ($v) => $v !== null && $v !== '');
     }
 

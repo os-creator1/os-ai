@@ -308,6 +308,12 @@ final class OutreachContactGroupBridge
                     }
 
                     $prospect ??= $this->createProspect($workspace, $phone, $contact, $info, $group);
+
+                    // Provenance: this group references this logical prospect (deduplicated; one identity per phone).
+                    \App\Models\AgencyProspectGroupLink::query()->updateOrCreate(
+                        ['contact_group_id' => $group->id, 'prospect_id' => $prospect->id],
+                        ['workspace_id' => $workspace->id, 'contact_id' => $contact->id, 'contact_in_group' => true],
+                    );
                     // Reconcile by the MEMBERSHIP, not only by source contact id:
                     // the same CRM contact may now have a different phone/prospect.
                     // Retain only the current membership, or refresh would text

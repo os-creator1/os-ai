@@ -120,7 +120,7 @@ CSV;
         $this->get($this->outreachRoute('prospects.import.review', $a['workspace'], [$batch->uid]))
             ->assertOk()->assertSee('data-role="import-issues"', false)->assertSee('name="mapping[0]"', false)->assertSee('Check fields');
 
-        $this->post($this->outreachRoute('prospects.import.commit', $a['workspace'], [$batch->uid]))->assertRedirect();
+        $this->post($this->outreachRoute('prospects.import.commit', $a['workspace'], [$batch->uid]), ['group_name' => 'Grp ' . uniqid()])->assertRedirect();
 
         $this->assertSame($before, AgencyProspectMessage::count(), 'Importing a file never creates or sends a message.');
         Bus::assertNothingDispatched();
@@ -181,9 +181,9 @@ CSV;
         $csv = "name,phone,primary category,rating\nGoogle Name,+1 720 664 0969,Photo booth,4.9\n";
         $this->upload($a, $csv);
         $batch = $this->batch($a);
-        $this->post($this->outreachRoute('prospects.import.commit', $ws, [$batch->uid]))->assertRedirect();
+        $this->post($this->outreachRoute('prospects.import.commit', $ws, [$batch->uid]), ['group_name' => 'Grp ' . uniqid()])->assertRedirect();
         // Committing the same batch again is a no-op.
-        $this->post($this->outreachRoute('prospects.import.commit', $ws, [$batch->uid]))->assertRedirect();
+        $this->post($this->outreachRoute('prospects.import.commit', $ws, [$batch->uid]), ['group_name' => 'Grp ' . uniqid()])->assertRedirect();
 
         $existing->refresh();
         $this->assertSame('My Own Name', $existing->company_name, 'Existing prospect details are never overwritten.');
@@ -209,7 +209,7 @@ CSV;
         $this->assertSame(1, $batch->summary['outcomes']['stopped']);
         $this->assertArrayHasKey('similar_client', $batch->summary['issues'], 'Similar name + different number is a review hint.');
 
-        $this->post($this->outreachRoute('prospects.import.commit', $ws, [$batch->uid]))->assertRedirect();
+        $this->post($this->outreachRoute('prospects.import.commit', $ws, [$batch->uid]), ['group_name' => 'Grp ' . uniqid()])->assertRedirect();
 
         $this->assertDatabaseMissing('agency_prospects', ['workspace_id' => $ws->id, 'phone' => '17205550001']);
         $this->assertSame('stopped', AgencyProspect::where('phone', '17205550002')->first()->status->value);
@@ -224,7 +224,7 @@ CSV;
         $this->authenticateAs($a['customer']);
         $this->upload($a, "business,mobile\nClient One,+1 303 555 0111\nClient Two,+1 303 555 0112\n", 'existing_clients');
         $batch = $this->batch($a);
-        $this->post($this->outreachRoute('prospects.import.commit', $a['workspace'], [$batch->uid]))->assertRedirect();
+        $this->post($this->outreachRoute('prospects.import.commit', $a['workspace'], [$batch->uid]), ['group_name' => 'Grp ' . uniqid()])->assertRedirect();
 
         $this->assertSame(2, \App\Models\AgencyProspectExclusion::where('workspace_id', $a['workspace']->id)->whereNull('removed_at')->count());
     }
@@ -293,7 +293,7 @@ CSV;
             }
         });
 
-        $this->post($this->outreachRoute('prospects.import.commit', $a['workspace'], [$batch->uid]), ['campaign_uid' => $campaign->uid])
+        $this->post($this->outreachRoute('prospects.import.commit', $a['workspace'], [$batch->uid]), ['campaign_uid' => $campaign->uid, 'group_name' => 'Grp ' . uniqid()])
             ->assertRedirect($this->outreachRoute('prospects.import.review', $a['workspace'], [$batch->uid]));
         $this->assertStringContainsString('already started', (string) session('flash_error'));
 
@@ -302,7 +302,7 @@ CSV;
         $this->assertSame('analyzed', $batch->refresh()->status, 'the batch stays re-runnable');
 
         // Importing to the prospect list only still works afterwards.
-        $this->post($this->outreachRoute('prospects.import.commit', $a['workspace'], [$batch->uid]))->assertRedirect();
+        $this->post($this->outreachRoute('prospects.import.commit', $a['workspace'], [$batch->uid]), ['group_name' => 'Grp ' . uniqid()])->assertRedirect();
         $this->assertSame(1, AgencyProspect::where('workspace_id', $a['workspace']->id)->where('phone', '13035550188')->count());
     }
 
@@ -321,7 +321,7 @@ CSV;
             }
         });
 
-        $this->post($this->outreachRoute('prospects.import.commit', $ws, [$batch->uid]))->assertRedirect();
+        $this->post($this->outreachRoute('prospects.import.commit', $ws, [$batch->uid]), ['group_name' => 'Grp ' . uniqid()])->assertRedirect();
 
         $this->assertSame(1, AgencyProspect::where('workspace_id', $ws->id)->where('phone', '13035550188')->count());
         $this->assertSame('imported', $batch->refresh()->status);

@@ -56,7 +56,7 @@
                     @if(count(array_filter($mapping)) === count($headers))<span class="pl g">✓ Auto-matched</span>@endif</div>
                 <div class="row h imp-cols" role="row"><span>Your column</span><span></span><span>Saved as</span><span>Example</span><span></span></div>
                 @foreach($headers as $i => $header)
-                    @php $field = $mapping[$header] ?? null; $via = $detail[$header]['via'] ?? 'none'; $example = collect($samples)->pluck($header)->filter(fn ($v) => $v !== null && $v !== '')->first(); @endphp
+                    @php $field = $mapping[$header] ?? null; $cfgx = $batch->extra_fields[$header] ?? null; $via = $detail[$header]['via'] ?? 'none'; $example = collect($samples)->pluck($header)->filter(fn ($v) => $v !== null && $v !== '')->first(); @endphp
                     @php $flag = $via === 'duplicate' || ($field === 'website' && ! empty($summary['issues']['social_as_website'])) || ($field === 'opening_hours' && ! empty($summary['issues']['address_in_hours'])); @endphp
                     <div class="row imp-cols" data-column="{{ $i }}">
                         <code class="ell" title="{{ $header }}">{{ $header }}</code>
@@ -64,9 +64,17 @@
                         <select name="mapping[{{ $i }}]" class="in" style="height:40px;font-size:14px" aria-label="Field for column {{ $header }}" @disabled($imported)>
                             <option value="">Ignore this column</option>
                             @foreach($fieldOptions as $key => $label)<option value="{{ $key }}" @selected($field === $key)>{{ $label }}</option>@endforeach
+                            @if(! $isClients && $business !== null)
+                                @php $cfg = $batch->extra_fields[$header] ?? null; @endphp
+                                <optgroup label="Custom fields">
+                                    <option value="cf_new" @selected(($cfg['action'] ?? null) === 'new')>Create custom field “{{ \Illuminate\Support\Str::limit($header, 40) }}”</option>
+                                    @foreach($definitions as $def)<option value="cf:{{ $def->uid }}" @selected(($cfg['action'] ?? null) === 'existing' && ($cfg['definition_uid'] ?? null) === $def->uid)>Use “{{ $def->label }}”</option>@endforeach
+                                </optgroup>
+                            @endif
                         </select>
                         <span class="mut ell" title="{{ $example }}">{{ $example ?? '—' }}@if($via === 'duplicate') <span class="pl a">Duplicate match</span>@elseif($via === 'content') <span class="pl b">Detected from values</span>@endif</span>
-                        <span class="ck {{ $field === null ? 'off' : ($flag ? 'warn' : 'ok') }}" title="{{ $field === null ? 'Ignored' : ($flag ? 'Worth a look' : 'Matched') }}" aria-label="{{ $field === null ? 'Ignored' : ($flag ? 'Worth a look' : 'Matched') }}">{{ $field === null ? '–' : ($flag ? '!' : '✓') }}</span>
+                        @php $off = $field === null && $cfgx === null; @endphp
+                        <span class="ck {{ $off ? 'off' : ($flag ? 'warn' : 'ok') }}" title="{{ $off ? 'Ignored' : ($flag ? 'Worth a look' : 'Matched') }}" aria-label="{{ $off ? 'Ignored' : ($flag ? 'Worth a look' : 'Matched') }}">{{ $off ? '–' : ($flag ? '!' : '✓') }}</span>
                     </div>
                 @endforeach
                 <div class="filters" style="padding:14px 20px">
@@ -114,17 +122,28 @@
         </div>
 
         @unless($imported)
+        @if(! $isClients && count($fieldPlan) > 0)
+            <div class="imp-plan" data-role="field-plan">
+                <h3>Custom fields on each contact</h3>
+                <p class="mut">Saved as real Custom Fields you can see and edit in the Contact profile. Existing fields are reused; nothing existing is overwritten.</p>
+                @foreach($fieldPlan as $f)
+                    <div class="qr"><span class="pl {{ $f['action'] === 'create' ? 'b' : ($f['action'] === 'reuse' ? 'g' : 'a') }}">{{ ['create' => 'Will create', 'reuse' => 'Will reuse', 'archived' => 'Archived — skipped', 'conflict' => 'Conflict — skipped', 'limit' => 'Limit — skipped'][$f['action']] }}</span>
+                        <span><b>{{ $f['label'] }}</b> <small class="mut">{{ str_replace('_', ' ', $f['type']) }} · {{ $f['source'] }}</small>@if($f['note'])<br><small class="mut">{{ $f['note'] }}</small>@endif</span></div>
+                @endforeach
+            </div>
+        @endif
         <form method="post" action="{{ route('customer.workspaces.prospecting.prospects.import.commit', [$workspaceUid, $batch->uid]) }}" class="foot imp-foot" data-role="import-commit">
             @csrf
-            <span class="imp-dest"><b>{{ $summary['ready'] ?? 0 }}</b> {{ $isClients ? 'clients' : 'prospects' }} will be added
-                @if(! $isClients)
-                    <label class="sel"><span>to</span><select name="campaign_uid" aria-label="Destination">
-                        <option value="">Prospect list only — no campaign</option>
-                        @foreach($draftCampaigns as $c)<option value="{{ $c->uid }}">Draft campaign · {{ $c->name }}</option>@endforeach
-                    </select></label>
-                    <span class="mut" title="Contact groups are filled from Contacts; Outreach reads them through the recipient bridge.">Contact groups: use Contacts import.</span>
-                @endif
-            </span>
+            @if(! $isClients)
+                <div class="fl" style="flex:1 1 320px">
+                    <label for="group_name">Contact group name</label>
+                    <input type="text" id="group_name" name="group_name" class="in @error('group_name') bad @enderror" maxlength="255" required value="{{ old('group_name', $defaultGroupName) }}" data-role="group-name">
+                    @error('group_name')<span class="err" role="alert">{{ $message }}</span>@enderror
+                    <span class="hint"><b>{{ $summary['ready'] ?? 0 }}</b> prospects will be saved to this one group, ready to pick for a campaign. Nothing is sent.</span>
+                </div>
+            @else
+                <span class="imp-dest"><b>{{ $summary['ready'] ?? 0 }}</b> clients will be added</span>
+            @endif
             <span class="grow"></span>
             <a class="btn" href="{{ route('customer.workspaces.prospecting.prospects.index', $workspaceUid) }}">Back</a>
             <button type="submit" class="btn pri" @disabled(($summary['ready'] ?? 0) === 0 && ! $isClients) data-role="import-confirm">
