@@ -193,6 +193,33 @@ class FaqAndGuideLinksTest extends TestCase
         $this->assertSame(['New corporate', 'Old wedding', 'Home support'], $titles(), 'only current service pages count as relevant; max three');
     }
 
+    public function test_home_row_is_capped_at_three_fills_from_newest_and_never_repeats(): void
+    {
+        [, $business, , $website] = $this->photoBoothContentTenant();
+        $page = (object) ['uid' => self::PAGE_HOME, 'is_home' => true];
+        $nav = [['slug' => 'blog', 'url' => 'https://' . self::DOMAIN . '/blog'], ['uid' => self::PAGE_WEDDING, 'slug' => 'w']];
+        $titles = fn () => array_column(app(WebsiteRelatedArticles::class)->forPage($website, $page, $nav, false)['items'], 'title');
+        $make = function (string $title, ?string $supports) use ($business) {
+            $this->guide($business, $title, strtolower($title), ['supports_page_uid' => $supports]);
+            $this->travel(2)->minutes();
+        };
+
+        // One relevant article, plenty of newer plain ones: relevant first, filled with only the two newest others.
+        $make('Relevant A', self::PAGE_WEDDING);
+        foreach (['Plain 1', 'Plain 2', 'Plain 3', 'Plain 4'] as $title) {
+            $make($title, null);
+        }
+        $this->assertSame(['Relevant A', 'Plain 4', 'Plain 3'], $titles());
+
+        // Four relevant articles: exactly the three newest relevant, no filler, no duplicates.
+        foreach (['Relevant B', 'Relevant C', 'Relevant D'] as $title) {
+            $make($title, self::PAGE_WEDDING);
+        }
+        $result = $titles();
+        $this->assertSame(['Relevant D', 'Relevant C', 'Relevant B'], $result);
+        $this->assertCount(3, array_unique($result));
+    }
+
     public function test_home_relevance_ranking_never_admits_an_ineligible_guide(): void
     {
         [, $business, , $website] = $this->photoBoothContentTenant();

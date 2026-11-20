@@ -44,9 +44,27 @@ final class WebsiteRelatedArticles
         // and publication date (newest first) breaks ties inside each group. With no such relationship it is simply newest-first.
         if ($isHome) {
             $servicePageUids = collect($navigationPages)->reject(fn ($entry) => ! empty($entry['is_home']))->pluck('uid')->filter()->all();
-            $articles = $query()->orderByDesc('published_at')->orderByDesc('id')->get()
-                ->sortBy(fn (WebsiteArticle $article) => in_array($article->supports_page_uid, $servicePageUids, true) ? 0 : 1)
-                ->take(self::MAX);
+
+            // At most three rows are ever read: the relevant ones first (newest first), then only enough of the newest remaining eligible ones.
+            $articles = $servicePageUids === []
+                ? collect()
+                : $query()->whereIn('supports_page_uid', $servicePageUids)->orderByDesc('published_at')->orderByDesc('id')->limit(self::MAX)->get();
+
+            $missing = self::MAX - $articles->count();
+
+            if ($missing > 0) {
+                $fill = $query()->orderByDesc('published_at')->orderByDesc('id');
+
+                if ($articles->isNotEmpty()) {
+                    $fill->whereNotIn('id', $articles->modelKeys());
+                }
+                if ($servicePageUids !== []) {
+                    // Relevant articles beyond the first three can't exist here (fewer than three were found), so nothing relevant is skipped.
+                    $fill->where(fn ($q) => $q->whereNull('supports_page_uid')->orWhereNotIn('supports_page_uid', $servicePageUids));
+                }
+
+                $articles = $articles->concat($fill->limit($missing)->get());
+            }
         } else {
             $articles = $query()->where('supports_page_uid', $uid)->orderByDesc('published_at')->limit(self::MAX)->get();
         }
