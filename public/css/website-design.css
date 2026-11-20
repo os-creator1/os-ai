@@ -703,3 +703,20 @@ body.wd h1, body.wd h2, body.wd h3, body.wd h4 { font-family: var(--wd-font-head
 .wd-trust-list li::before { content: "\2713"; flex: none; color: var(--wd-a); font-weight: 800; }
 /* A balanced 2 x 2 on a tablet instead of three across with one orphan; one column on a phone, one row of up to four on a wide screen. */
 @media (min-width: 480px) and (max-width: 959px) { .wd-trust-list { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+
+/* ---- Slice 6C: FAQ answers and guide cards ----------------------------------------------------------------------------------------
+   An answer keeps its own paragraph breaks (they used to collapse into one block), reads at a comfortable measure and leaves room for the
+   +/- marker. "All questions & answers" links a FAQ shown on another page to the FAQ page. Guide cards are the compact card form of the
+   "Helpful guides" / "Latest guides" band: title, a short excerpt, and a read link — styled from the template's tokens, so every template renders them. */
+.wd .website-faq-item p { white-space: pre-line; line-height: 1.65; max-width: 46em; padding-right: 2rem; }
+.wd .website-faq-more { margin: 1.5rem 0 0; text-align: center; }
+.wd .website-faq-more a { font-size: 0.8rem; font-weight: 800; letter-spacing: 0.06em; text-transform: uppercase; color: var(--wd-a); text-decoration: none; }
+.wd .website-faq-more a:hover, .wd .website-faq-more a:focus-visible { text-decoration: underline; text-underline-offset: 0.2em; }
+.wd-guides { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr)); gap: clamp(1rem, 2.4vw, 1.5rem); }
+.wd-guide { display: flex; flex-direction: column; gap: 0.6rem; background: var(--wd-card); color: var(--wd-card-ink, var(--wd-t-ink)); border: 1px solid var(--wd-t-line); border-radius: var(--wd-radius); box-shadow: var(--wd-shadow); padding: clamp(1.1rem, 2.2vw, 1.5rem); min-width: 0; }
+.wd-guide-title { margin: 0; font-size: 1.15rem; line-height: 1.25; overflow-wrap: break-word; text-transform: none; letter-spacing: normal; }
+.wd-guide-title a { color: inherit; text-decoration: none; }
+.wd-guide-title a:hover, .wd-guide-title a:focus-visible { text-decoration: underline; text-underline-offset: 0.2em; }
+.wd-guide-excerpt { margin: 0; color: var(--wd-t-muted); font-size: 0.95rem; line-height: 1.55; }
+.wd-guide-more { margin-top: auto; padding-top: 0.25rem; font-size: 0.8rem; font-weight: 800; letter-spacing: 0.06em; text-transform: uppercase; color: var(--wd-a); text-decoration: none; }
+.wd-guide-more:hover, .wd-guide-more:focus-visible { text-decoration: underline; text-underline-offset: 0.2em; }
