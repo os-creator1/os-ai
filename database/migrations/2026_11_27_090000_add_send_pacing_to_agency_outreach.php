@@ -28,9 +28,14 @@ return new class extends Migration {
             });
         }
 
-        if (Schema::hasTable('agency_prospect_messages') && ! Schema::hasColumn('agency_prospect_messages', 'deferred_until')) {
+        if (Schema::hasTable('agency_prospect_messages')) {
             Schema::table('agency_prospect_messages', function (Blueprint $table) {
-                $table->timestamp('deferred_until')->nullable();
+                if (! Schema::hasColumn('agency_prospect_messages', 'deferred_until')) {
+                    $table->timestamp('deferred_until')->nullable();
+                }
+                if (! Schema::hasColumn('agency_prospect_messages', 'outreach_send_slot_id')) {
+                    $table->unsignedBigInteger('outreach_send_slot_id')->nullable()->index();
+                }
             });
         }
 
@@ -45,9 +50,13 @@ return new class extends Migration {
     {
         Schema::dropIfExists('outreach_send_slots');
 
-        foreach (['agency_prospect_messages' => 'deferred_until', 'agency_prospect_campaigns' => 'min_send_interval_seconds'] as $table => $column) {
-            if (Schema::hasTable($table) && Schema::hasColumn($table, $column)) {
-                Schema::table($table, fn (Blueprint $t) => $t->dropColumn($column));
+        foreach (['agency_prospect_messages' => ['deferred_until', 'outreach_send_slot_id'],
+            'agency_prospect_campaigns' => ['min_send_interval_seconds']] as $table => $columns) {
+            if (Schema::hasTable($table)) {
+                $present = array_values(array_filter($columns, fn (string $column) => Schema::hasColumn($table, $column)));
+                if ($present !== []) {
+                    Schema::table($table, fn (Blueprint $t) => $t->dropColumn($present));
+                }
             }
         }
     }

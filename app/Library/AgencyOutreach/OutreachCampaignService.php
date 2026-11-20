@@ -6,6 +6,7 @@ use App\Enums\AgencyProspecting\AgencyProspectCampaignStatus;
 use App\Enums\AgencyProspecting\AgencyProspectStage;
 use App\Enums\AgencyProspecting\AgencyProspectStatus;
 use App\Jobs\Outreach\OutreachInitialSendJob;
+use App\Jobs\Outreach\OutreachDeferredSendJob;
 use App\Models\AgencyProspect;
 use App\Models\AgencyProspectCampaign;
 use App\Models\AgencyProspectCampaignMember;
@@ -166,6 +167,25 @@ class OutreachCampaignService
 
         foreach ($members as $memberId) {
             OutreachInitialSendJob::dispatch($memberId);
+        }
+
+        // The delayed retry may have fired while this campaign was paused.
+        // Its held row keeps the same operation key, but there is no remaining
+        // queued job after that attempt. Requeue only pacing-held messages in
+        // this exact campaign when the owner resumes it; other holds retain
+        // their existing dedicated recovery paths.
+        $held = AgencyProspectMessage::query()
+            ->where('workspace_id', $workspace->id)
+            ->whereHas('campaignMember', fn ($q) => $q->where('campaign_id', $campaign->id))
+            ->where('direction', AgencyProspectMessage::DIRECTION_OUTBOUND)
+            ->where('status', AgencyProspectMessage::STATUS_PAUSED)
+            ->whereIn('failure_reason', [OutreachSendBudget::REASON_RATE, OutreachSendBudget::REASON_OPENER_CAP])
+            ->get(['id', 'deferred_until']);
+
+        foreach ($held as $row) {
+            $due = $row->deferred_until !== null && $row->deferred_until->isFuture()
+                ? $row->deferred_until : now();
+            OutreachDeferredSendJob::dispatch((int) $row->id)->delay($due);
         }
 
         return ['ok' => true, 'error' => null, 'message' => 'Campaign resumed.'];

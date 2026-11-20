@@ -53,6 +53,7 @@ class AgencyProspectMessage extends Model
         'reply_due_at',
         'reply_category',
         'deferred_until',
+        'outreach_send_slot_id',
     ];
 
     protected $casts = [

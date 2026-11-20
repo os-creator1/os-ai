@@ -61,21 +61,36 @@ final class OutreachSendBudget
             $now = now();
             $opener = $row->purpose === AgencyProspectMessage::PURPOSE_INITIAL;
 
-            // New conversations are capped; ongoing ones never are.
+            // Bind this attempt to the EXACT sender slot while its row is locked.
+            // A later sender change can replace the association before a retry.
+            DB::table('agency_prospect_messages')->where('id', $row->id)
+                ->update(['outreach_send_slot_id' => $slot->id]);
+
+            // The 24h cap is based on ACTUAL successful deliveries, not ledger claim
+            // timestamps (which could precede a deferred send by days). Count only
+            // genuinely in-flight reservations alongside those deliveries. This is
+            // per sending-number slot, rather than a workspace-wide pooled cap.
             if ($opener && ($cap = (int) config('outreach.send_pacing.opener_daily_cap', 50)) > 0) {
-                $recent = AgencyProspectMessage::query()
+                $windowStart = $now->copy()->subDay();
+                $scope = AgencyProspectMessage::query()
                     ->where('workspace_id', $row->workspace_id)
+                    ->where('outreach_send_slot_id', $slot->id)
                     ->where('direction', AgencyProspectMessage::DIRECTION_OUTBOUND)
                     ->where('purpose', AgencyProspectMessage::PURPOSE_INITIAL)
-                    ->whereIn('status', [AgencyProspectMessage::STATUS_PENDING, AgencyProspectMessage::STATUS_SENT])
-                    ->where('id', '!=', $row->id)
-                    ->where('created_at', '>', $now->copy()->subDay())
-                    ->orderBy('created_at');
+                    ->where('id', '!=', $row->id);
 
-                if ($recent->count() >= $cap) {
-                    $oldest = $recent->first(['created_at']);
+                $sent = (clone $scope)->where('status', AgencyProspectMessage::STATUS_SENT)
+                    ->where('sent_at', '>', $windowStart);
+                $pendingCount = (clone $scope)->where('status', AgencyProspectMessage::STATUS_PENDING)->count();
 
-                    return ['granted' => false, 'reason' => self::REASON_OPENER_CAP, 'retryAt' => Carbon::parse($oldest->created_at)->addDay()->addSecond()];
+                if ($sent->count() + $pendingCount >= $cap) {
+                    $oldest = $sent->orderBy('sent_at')->first(['sent_at']);
+                    // When only in-flight attempts use the budget, check back
+                    // conservatively instead of assuming their claim time is a send.
+                    $retry = $oldest?->sent_at?->copy()->addDay()->addSecond()
+                        ?? $now->copy()->addMinute();
+
+                    return ['granted' => false, 'reason' => self::REASON_OPENER_CAP, 'retryAt' => $retry];
                 }
             }
 

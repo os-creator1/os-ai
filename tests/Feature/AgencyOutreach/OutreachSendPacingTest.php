@@ -362,6 +362,102 @@ class OutreachSendPacingTest extends TestCase
         $this->assertNotNull($d['deferred'][0]['next_at']);
     }
 
+
+    public function test_opener_cap_uses_actual_sent_time_even_when_claim_is_days_old(): void
+    {
+        config(['outreach.send_pacing.opener_daily_cap' => 2]);
+        [$workspace, , $campaign] = $this->agencyWithCampaign();
+        $m1 = $this->member($workspace, $campaign, self::P1);
+        $m2 = $this->member($workspace, $campaign, self::P2);
+        $m3 = $this->member($workspace, $campaign, self::P3);
+
+        $this->opener($m1);
+        $this->travel(10)->seconds();
+        $this->opener($m2);
+        $this->assertCount(2, $this->sentBodies());
+
+        $sent = AgencyProspectMessage::query()
+            ->whereIn('campaign_member_id', [$m1->id, $m2->id])
+            ->where('purpose', AgencyProspectMessage::PURPOSE_INITIAL)
+            ->get();
+
+        // Deferred messages were originally claimed days earlier; a new
+        // sender-day cap must still count them when they are delivered.
+        foreach ($sent as $row) {
+            $row->created_at = now()->subDays(2);
+            $row->save();
+        }
+
+        $this->travel(10)->seconds();
+        $this->opener($m3);
+        $third = $this->outboundRow($m3);
+
+        $this->assertSame('opener_daily_cap', $third->failure_reason);
+        $this->assertSame('paused', $third->status);
+        $this->assertEqualsWithDelta($sent->first()->sent_at->copy()->addDay()->timestamp,
+            $third->deferred_until->timestamp, 10);
+    }
+
+    public function test_campaign_resume_recovers_a_rate_deferred_reply_after_its_job_ran_while_paused(): void
+    {
+        [$workspace, $business, $campaign] = $this->agencyWithCampaign();
+        $m1 = $this->member($workspace, $campaign, self::P1);
+        $m2 = $this->member($workspace, $campaign, self::P2);
+        $this->reply($business, $m1, self::P1);
+        $this->reply($business, $m2, self::P2);
+        $waiting = $this->outboundRow($m2);
+
+        $campaign->update(['status' => 'paused']);
+        $this->travel(20)->seconds();
+        $this->runDeferred($waiting);
+        $this->assertSame('paused', $waiting->fresh()->status);
+        $this->assertCount(1, $this->sentBodies());
+
+        $resumed = app(\App\Library\AgencyOutreach\OutreachCampaignService::class)
+            ->resume($workspace, $campaign->fresh());
+        $this->assertTrue($resumed['ok']);
+        Queue::assertPushed(OutreachDeferredSendJob::class, fn ($job) => $job->delay !== null);
+        $this->runDeferred($waiting);
+
+        $this->assertSame('sent', $waiting->fresh()->status);
+        $this->assertCount(2, $this->sentBodies());
+    }
+
+    public function test_a_cancelled_rate_deferred_followup_never_sends_or_blocks_the_new_reply(): void
+    {
+        [$workspace, $business, $campaign] = $this->agencyWithCampaign();
+        $member = $this->member($workspace, $campaign, self::P1);
+        $member->update([
+            'followup_at' => now()->subMinute(),
+            'followup_cancelled_at' => now(),
+            'booking_link_sent_at' => now()->subHour(),
+        ]);
+        $deferred = AgencyProspectMessage::create([
+            'workspace_id' => $workspace->id,
+            'campaign_member_id' => $member->id,
+            'direction' => AgencyProspectMessage::DIRECTION_OUTBOUND,
+            'purpose' => AgencyProspectMessage::PURPOSE_FOLLOWUP,
+            'operation_key' => 'outreach:followup:' . $member->id,
+            'body' => 'Checking in about our call.',
+            'status' => AgencyProspectMessage::STATUS_PAUSED,
+            'failure_reason' => 'rate_limited',
+            'deferred_until' => now()->subSecond(),
+            'stage_from' => $member->stage->value,
+            'stage_to' => $member->stage->value,
+            'sequence_step_id' => 'legacy-followup',
+        ]);
+
+        // An ordinary inbound response must not be silenced by the cancelled
+        // follow-up's paused row; the old delayed retry must not send a nudge.
+        $this->reply($business, $member, self::P1);
+        $this->assertSame('failed', $deferred->fresh()->status);
+        $this->assertSame('followup_cancelled', $deferred->fresh()->failure_reason);
+        $this->assertCount(1, $this->sentBodies());
+
+        $this->runDeferred($deferred);
+        $this->assertCount(1, $this->sentBodies());
+    }
+
     public function test_pacing_is_off_on_a_synchronous_queue_so_nothing_is_stuck(): void
     {
         config(['queue.default' => 'sync']);

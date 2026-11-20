@@ -81,6 +81,18 @@ final class OutreachSendPipeline
             // A newer reply to the same conversation replaces an older one still WAITING for its
             // send slot: that older text is stale and must neither block nor follow this one.
             if ($plan->purpose === AgencyProspectMessage::PURPOSE_AI_REPLY) {
+                // An inbound cancels a pending timed follow-up. That follow-up
+                // may be PAUSED for rate limits and must not block this reply.
+                if ($member->followup_cancelled_at !== null) {
+                    AgencyProspectMessage::query()
+                        ->where('campaign_member_id', $member->id)
+                        ->where('direction', AgencyProspectMessage::DIRECTION_OUTBOUND)
+                        ->where('purpose', AgencyProspectMessage::PURPOSE_FOLLOWUP)
+                        ->where('status', AgencyProspectMessage::STATUS_PAUSED)
+                        ->update(['status' => AgencyProspectMessage::STATUS_FAILED,
+                            'failure_reason' => 'followup_cancelled', 'deferred_until' => null]);
+                }
+
                 AgencyProspectMessage::query()
                     ->where('campaign_member_id', $member->id)
                     ->where('direction', AgencyProspectMessage::DIRECTION_OUTBOUND)
@@ -170,6 +182,31 @@ final class OutreachSendPipeline
                 || $row->status !== AgencyProspectMessage::STATUS_PAUSED
                 || (int) $row->campaign_member_id !== (int) $member->id) {
                 return 'not_paused';
+            }
+
+            if ($row->purpose === AgencyProspectMessage::PURPOSE_FOLLOWUP) {
+                $since = $row->sequence_step_id === OutreachSequence::LEGACY_FOLLOWUP
+                    ? $member->booking_link_sent_at : $member->last_outbound_at;
+                $replied = $member->last_inbound_at !== null
+                    && ($since === null || $member->last_inbound_at->greaterThan($since));
+                $next = OutreachSequence::forWorkspace($member->workspace)->nextTimeStep(
+                    OutreachSequence::forWorkspace($member->workspace)->sentIdsFor($member)
+                );
+
+                // Unlike new scripted follow-up jobs, a deferred row bypasses
+                // OutreachFollowUpJob. Enforce all of its cancellation/step
+                // guards here under the member lock, before any provider call.
+                if ($member->followup_cancelled_at !== null
+                    || $member->followup_sent_at !== null
+                    || $member->followup_at === null
+                    || $replied
+                    || ($next['id'] ?? null) !== $row->sequence_step_id) {
+                    $row->update(['status' => AgencyProspectMessage::STATUS_FAILED,
+                        'failure_reason' => 'followup_cancelled', 'deferred_until' => null]);
+                    $this->cancelFollowUpIfFollowUp($row);
+
+                    return 'followup_cancelled';
+                }
             }
 
             $eligible = $this->eligibility->check($member, true);
