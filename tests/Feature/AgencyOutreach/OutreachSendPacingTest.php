@@ -556,6 +556,52 @@ class OutreachSendPacingTest extends TestCase
         $this->assertCount(2, $this->sentBodies(), 'No third, stale cold opener is ever sent.');
     }
 
+
+    public function test_obsolete_deferred_followup_cannot_cancel_its_new_timed_successor(): void
+    {
+        [$workspace, , $campaign] = $this->agencyWithCampaign();
+        $member = $this->member($workspace, $campaign, self::P1);
+        \App\Library\AgencyOutreach\OutreachScriptManager::save($workspace, ['sequence_steps' => [
+            ['id' => 'a', 'body' => 'Alpha text.', 'advance_on' => 'reply', 'enabled' => true],
+            ['id' => 't1', 'body' => 'Old nudge.', 'advance_on' => 'time', 'delay_hours' => 2, 'enabled' => true],
+            ['id' => 'b', 'body' => 'Beta text.', 'advance_on' => 'reply', 'enabled' => true],
+            ['id' => 't2', 'body' => 'New nudge.', 'advance_on' => 'time', 'delay_hours' => 3, 'enabled' => true],
+        ]]);
+        $when = now()->addHours(3);
+        $member->update([
+            'sequence_sent_ids' => ['a', 'b'],
+            'followup_at' => $when,
+            'followup_sent_at' => null,
+            'followup_cancelled_at' => null,
+        ]);
+        $old = AgencyProspectMessage::create([
+            'workspace_id' => $workspace->id,
+            'campaign_member_id' => $member->id,
+            'direction' => AgencyProspectMessage::DIRECTION_OUTBOUND,
+            'purpose' => AgencyProspectMessage::PURPOSE_FOLLOWUP,
+            'operation_key' => 'outreach:followup:' . $member->id . ':t1',
+            'body' => 'Old nudge.',
+            'status' => AgencyProspectMessage::STATUS_PAUSED,
+            'failure_reason' => 'rate_limited',
+            'sequence_step_id' => 't1',
+            'stage_from' => $member->stage->value,
+            'stage_to' => $member->stage->value,
+            'deferred_until' => now()->subSecond(),
+        ]);
+
+        $this->runDeferred($old);
+        $this->assertSame('failed', $old->fresh()->status);
+        $this->assertSame('followup_cancelled', $old->fresh()->failure_reason);
+        $this->assertNull($member->fresh()->followup_cancelled_at);
+        $this->assertEquals($when, $member->fresh()->followup_at,
+            'The newer T2 timer must survive rejection of obsolete T1.');
+
+        $this->travel(3)->hours();
+        app()->call([new \App\Jobs\Outreach\OutreachFollowUpJob($member->id), 'handle']);
+        $this->assertSame(['New nudge.'], $this->sentBodies());
+        $this->assertContains('t2', $member->fresh()->sequence_sent_ids);
+    }
+
     public function test_pacing_is_off_on_a_synchronous_queue_so_nothing_is_stuck(): void
     {
         config(['queue.default' => 'sync']);

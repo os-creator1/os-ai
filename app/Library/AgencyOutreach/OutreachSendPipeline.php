@@ -242,7 +242,14 @@ final class OutreachSendPipeline
                     || ($next['id'] ?? null) !== $row->sequence_step_id) {
                     $row->update(['status' => AgencyProspectMessage::STATUS_FAILED,
                         'failure_reason' => 'followup_cancelled', 'deferred_until' => null]);
-                    $this->cancelFollowUpIfFollowUp($row);
+
+                    // The member may now have a different timed successor
+                    // after the owner manually delivered a later reply step.
+                    // Close this obsolete ledger row without cancelling the
+                    // NEW step's live timer.
+                    if ($next !== null && $next['id'] === $row->sequence_step_id) {
+                        $this->cancelFollowUpIfFollowUp($row);
+                    }
 
                     return 'followup_cancelled';
                 }
