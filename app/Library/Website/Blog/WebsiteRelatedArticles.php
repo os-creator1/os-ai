@@ -39,11 +39,35 @@ final class WebsiteRelatedArticles
 
         $query = fn () => WebsiteArticle::query()->published()->where('website_id', $website->id)->where('noindex', false);
 
-        // The home page promises the newest guides, so its list is globally newest-first even when an older article explicitly supports home.
-        // Other pages show only the guides that explicitly support that page.
-        $articles = $isHome
-            ? $query()->orderByDesc('published_at')->limit(self::MAX)->get()
-            : $query()->where('supports_page_uid', $uid)->orderByDesc('published_at')->limit(self::MAX)->get();
+        // Other pages show only the guides that explicitly support that page. The home page ranks the eligible guides by relevance: those
+        // that support one of this site's current service/commercial pages (a non-home page in the navigation) come first, the rest follow,
+        // and publication date (newest first) breaks ties inside each group. With no such relationship it is simply newest-first.
+        if ($isHome) {
+            $servicePageUids = collect($navigationPages)->reject(fn ($entry) => ! empty($entry['is_home']))->pluck('uid')->filter()->all();
+
+            // At most three rows are ever read: the relevant ones first (newest first), then only enough of the newest remaining eligible ones.
+            $articles = $servicePageUids === []
+                ? collect()
+                : $query()->whereIn('supports_page_uid', $servicePageUids)->orderByDesc('published_at')->orderByDesc('id')->limit(self::MAX)->get();
+
+            $missing = self::MAX - $articles->count();
+
+            if ($missing > 0) {
+                $fill = $query()->orderByDesc('published_at')->orderByDesc('id');
+
+                if ($articles->isNotEmpty()) {
+                    $fill->whereNotIn('id', $articles->modelKeys());
+                }
+                if ($servicePageUids !== []) {
+                    // Relevant articles beyond the first three can't exist here (fewer than three were found), so nothing relevant is skipped.
+                    $fill->where(fn ($q) => $q->whereNull('supports_page_uid')->orWhereNotIn('supports_page_uid', $servicePageUids));
+                }
+
+                $articles = $articles->concat($fill->limit($missing)->get());
+            }
+        } else {
+            $articles = $query()->where('supports_page_uid', $uid)->orderByDesc('published_at')->limit(self::MAX)->get();
+        }
 
         return [
             'heading' => $isHome ? 'Latest guides' : 'Helpful guides',

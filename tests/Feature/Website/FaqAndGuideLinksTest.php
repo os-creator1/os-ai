@@ -155,6 +155,88 @@ class FaqAndGuideLinksTest extends TestCase
         $this->assertSame([], app(WebsiteRelatedArticles::class)->forPage($website, $page, [], false)['items'], 'no live blog entry, no links');
     }
 
+    public function test_home_ranks_guides_supporting_service_pages_first_then_newest_and_falls_back_to_newest(): void
+    {
+        [, $business, , $website] = $this->photoBoothContentTenant();
+        $page = (object) ['uid' => self::PAGE_HOME, 'is_home' => true];
+        $nav = [
+            ['slug' => 'blog', 'url' => 'https://' . self::DOMAIN . '/blog'],
+            ['uid' => self::PAGE_HOME, 'is_home' => true, 'slug' => 'home'],
+            ['uid' => self::PAGE_WEDDING, 'slug' => 'service-wedding-photo-booth-rental'],
+            ['uid' => self::PAGE_CORPORATE, 'slug' => 'service-corporate'],
+        ];
+        $titles = fn () => array_column(app(WebsiteRelatedArticles::class)->forPage($website, $page, $nav, false)['items'], 'title');
+
+        // No relationship data at all: newest first.
+        $this->guide($business, 'Plain one', 'plain one', ['supports_page_uid' => null]);
+        $this->travel(2)->minutes();
+        $this->guide($business, 'Plain two', 'plain two', ['supports_page_uid' => null]);
+        $this->travel(2)->minutes();
+        $this->guide($business, 'Plain three', 'plain three', ['supports_page_uid' => null]);
+        $this->travel(2)->minutes();
+        $this->assertSame(['Plain three', 'Plain two', 'Plain one'], $titles(), 'fallback is newest-eligible');
+
+        // Relevant (supports a current service page) outranks newer plain guides; recency orders the relevant ones among themselves.
+        $this->guide($business, 'Old wedding', 'old wedding', ['supports_page_uid' => self::PAGE_WEDDING]);
+        $this->travel(2)->minutes();
+        $this->guide($business, 'New corporate', 'new corporate', ['supports_page_uid' => self::PAGE_CORPORATE]);
+        $this->travel(2)->minutes();
+        $this->guide($business, 'Newest plain', 'newest plain', ['supports_page_uid' => null]);
+        $this->travel(2)->minutes();
+        $this->assertSame(['New corporate', 'Old wedding', 'Newest plain'], $titles(), 'relevance first, date breaks ties, newest fills the rest');
+
+        // A stale/unknown page uid or support for home itself is not a service-page relationship.
+        $stale = $this->guide($business, 'Stale support', 'stale support', ['supports_page_uid' => null]);
+        WebsiteArticle::query()->whereKey($stale->id)->update(['supports_page_uid' => 'aaaaaaaa-0000-4000-8000-0000000000ff']); // page since removed
+        $this->guide($business, 'Home support', 'home support', ['supports_page_uid' => self::PAGE_HOME]);
+        $this->travel(2)->minutes();
+        $this->assertSame(['New corporate', 'Old wedding', 'Home support'], $titles(), 'only current service pages count as relevant; max three');
+    }
+
+    public function test_home_row_is_capped_at_three_fills_from_newest_and_never_repeats(): void
+    {
+        [, $business, , $website] = $this->photoBoothContentTenant();
+        $page = (object) ['uid' => self::PAGE_HOME, 'is_home' => true];
+        $nav = [['slug' => 'blog', 'url' => 'https://' . self::DOMAIN . '/blog'], ['uid' => self::PAGE_WEDDING, 'slug' => 'w']];
+        $titles = fn () => array_column(app(WebsiteRelatedArticles::class)->forPage($website, $page, $nav, false)['items'], 'title');
+        $make = function (string $title, ?string $supports) use ($business) {
+            $this->guide($business, $title, strtolower($title), ['supports_page_uid' => $supports]);
+            $this->travel(2)->minutes();
+        };
+
+        // One relevant article, plenty of newer plain ones: relevant first, filled with only the two newest others.
+        $make('Relevant A', self::PAGE_WEDDING);
+        foreach (['Plain 1', 'Plain 2', 'Plain 3', 'Plain 4'] as $title) {
+            $make($title, null);
+        }
+        $this->assertSame(['Relevant A', 'Plain 4', 'Plain 3'], $titles());
+
+        // Four relevant articles: exactly the three newest relevant, no filler, no duplicates.
+        foreach (['Relevant B', 'Relevant C', 'Relevant D'] as $title) {
+            $make($title, self::PAGE_WEDDING);
+        }
+        $result = $titles();
+        $this->assertSame(['Relevant D', 'Relevant C', 'Relevant B'], $result);
+        $this->assertCount(3, array_unique($result));
+    }
+
+    public function test_home_relevance_ranking_never_admits_an_ineligible_guide(): void
+    {
+        [, $business, , $website] = $this->photoBoothContentTenant();
+        $this->guide($business, 'Live plain', 'live plain', ['supports_page_uid' => null]);
+        $draft = $this->draftArticle($business, ['title' => 'Relevant draft', 'primary_topic' => 'relevant draft', 'supports_page_uid' => self::PAGE_WEDDING]);
+        $hidden = $this->guide($business, 'Relevant hidden', 'relevant hidden', ['supports_page_uid' => self::PAGE_WEDDING, 'noindex' => true]);
+        [, $other] = $this->photoBoothContentTenant();
+        $this->guide($other, 'Foreign relevant', 'foreign relevant', ['supports_page_uid' => self::PAGE_WEDDING]);
+        $page = (object) ['uid' => self::PAGE_HOME, 'is_home' => true];
+        $nav = [['slug' => 'blog', 'url' => 'https://' . self::DOMAIN . '/blog'], ['uid' => self::PAGE_WEDDING, 'slug' => 'w']];
+
+        $resolver = app(WebsiteRelatedArticles::class);
+        $this->assertSame(['Live plain'], array_column($resolver->forPage($website, $page, $nav, false)['items'], 'title'));
+        $this->assertSame([], $resolver->forPage($website, $page, $nav, true)['items'], 'none in Preview');
+        $this->assertSame([], $resolver->forPage($website, $page, [['uid' => self::PAGE_WEDDING]], false)['items'], 'no live blog, none');
+    }
+
     // ------------------------------------------------------------------ FAQ
 
     public function test_faq_answers_keep_their_paragraphs_and_the_stylesheet_preserves_them(): void
