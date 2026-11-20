@@ -153,6 +153,7 @@ class AgencyOutreachController extends CustomerBaseController
             'group_mode' => ['required', 'in:existing,new'],
             'contact_group_uid' => ['required_if:group_mode,existing', 'nullable', 'string', 'max:64'],
             'new_group_name' => ['required_if:group_mode,new', 'nullable', 'string', 'max:255'],
+            'intent' => ['nullable', 'in:draft,start'],
         ], [
             'group_mode.required' => 'Choose a contact group for this campaign.',
             'contact_group_uid.required_if' => 'Select a contact group.',
@@ -216,9 +217,15 @@ class AgencyOutreachController extends CustomerBaseController
 
         $report = $campaign->fresh()->recipient_report ?? [];
 
+        // "Start campaign" in the New campaign panel only creates the draft and opens it: starting always goes
+        // through the draft page's Start action, so the readiness, consent and recipient checks can never be skipped.
+        $note = $request->input('intent') === 'start'
+            ? ' Check the recipients, then press Start campaign to begin.'
+            : ' Nothing has been sent.';
+
         return redirect()
             ->route('customer.workspaces.prospecting.campaigns.show', [$workspaceUid, $campaign->uid])
-            ->with('flash_success', 'Draft created with ' . ($report['eligible'] ?? 0) . ' recipient(s) from "' . ($name ?? $group?->name) . '". Nothing has been sent.');
+            ->with('flash_success', 'Draft created with ' . ($report['eligible'] ?? 0) . ' recipient(s) from "' . ($name ?? $group?->name) . '".' . $note);
     }
 
     /** Recipient summary for the picker: real counts for one group, nothing written. */

@@ -133,3 +133,39 @@ html[data-layout="dark-layout"] .og,.dark-layout .og{--og-bg:#17191F;--og-card:#
 }
 /* header-only wrapper used on Outreach sub-pages that keep their own legacy body (channels, settings) */
 .og.hd{background:transparent;margin:0 0 1rem;padding:0;min-height:0}
+.og .drawer[hidden],.og [hidden]{display:none!important}
+.og .picker{border:1px solid var(--og-line2);border-radius:10px;background:var(--og-card);overflow:hidden}
+.og .picker input[type=search]{border:0;border-bottom:1px solid var(--og-line3);border-radius:0;height:42px}
+.og .picker .opts{max-height:190px;overflow:auto;padding:4px}
+.og .picker label{display:flex;align-items:center;gap:10px;min-height:42px;padding:0 10px;border-radius:8px;font-size:14px;cursor:pointer;margin:0}
+.og .picker label:hover{background:var(--og-soft)}
+.og .picker label:has(input:checked){background:var(--og-brand-s2)}
+.og .picker label b{flex:1;font-weight:600}.og .picker label span{color:var(--og-mute);font-size:12.5px}
+.og .picker input[type=radio]{accent-color:var(--og-brand)}
+.og .rsum{padding:10px 12px;border-radius:10px;background:var(--og-soft);border:1px solid var(--og-line3);font-size:13px}
+.og .rsum ul{margin:4px 0 0;padding-left:18px}
+/* campaign detail + launched */
+.og .back{align-self:flex-start;display:inline-flex;align-items:center;gap:6px;min-height:36px;color:var(--og-brand-d);font-size:13.5px;font-weight:600}
+.og .back .ic{width:14px;height:14px}
+.og .titlebar{display:flex;flex-wrap:wrap;align-items:center;gap:12px}.og .titlebar h1{font-size:26px;font-weight:800;margin:0;min-width:0;overflow-wrap:anywhere}
+.og .panel{background:var(--og-card);border:1px solid var(--og-line);border-radius:16px;padding:20px;display:flex;flex-direction:column;gap:14px}
+.og .note{display:flex;gap:10px;align-items:flex-start;padding:12px 14px;border-radius:12px;background:var(--og-amber-s2);font-size:13px;line-height:1.5;color:var(--og-amber)}
+.og .note .ic{margin-top:2px}.og .note a{font-weight:600;color:var(--og-brand-d);text-decoration:underline}
+.og .after{display:flex;flex-direction:column;gap:4px;padding:12px 14px;border-radius:12px;background:var(--og-soft);border:1px solid var(--og-line3)}
+.og .stat2{display:flex;gap:10px}.og .stat2>div{flex:1;padding:12px;border-radius:12px;background:var(--og-soft);border:1px solid var(--og-line3);display:flex;flex-direction:column}
+.og .stat2 b{font-size:22px}.og .stat2 .warn{background:var(--og-amber-s2);border-color:#EBD6A8;color:var(--og-amber)}
+.og .hero{position:relative;overflow:hidden;border-radius:22px;padding:40px 36px;background:radial-gradient(ellipse at 20% 0%,#C9625A 0%,#B4514A 40%,#8F3B35 100%);color:#fff;display:flex;flex-wrap:wrap;align-items:center;gap:32px}
+.og .hero a{color:inherit}.og .hero h1{font-size:42px;line-height:1.05;font-weight:900;letter-spacing:-.03em;color:#fff}
+.og .hero p{font-size:17px;line-height:1.5;opacity:.92;max-width:520px;color:#fff}
+.og .hero .live{align-self:flex-start;display:inline-flex;align-items:center;gap:8px;height:30px;padding:0 12px;border-radius:999px;background:rgba(255,255,255,.18);font-size:13px;font-weight:700;letter-spacing:.06em}
+.og .hero .live i{width:8px;height:8px;border-radius:50%;background:#7CF0AE;box-shadow:0 0 0 4px rgba(124,240,174,.3)}
+.og .hero .btn.w{background:#fff;color:#8F3B35}.og .hero .btn.g{background:rgba(255,255,255,.14);color:#fff;border:1px solid rgba(255,255,255,.4)}
+.og .hero .conf{position:absolute;width:10px;height:14px;border-radius:2px;opacity:.85}
+.og .bar{height:6px;border-radius:999px;background:#EEE9E4;overflow:hidden;margin-top:4px}.og .bar i{display:block;height:100%;background:var(--og-brand);border-radius:999px}
+.og .k5.win{background:#F1F8F3;border-color:#CFE8D9}.og .k5.win b{color:#17693F}
+.og .act{display:flex;align-items:center;gap:12px;padding:12px 0;border-top:1px solid var(--og-line3)}.og .act>div{flex:1;min-width:0;display:flex;flex-direction:column}
+.og .miles{background:linear-gradient(160deg,var(--og-card) 50%,var(--og-amber-s2))}
+.og .miles .bars{display:flex;gap:6px}.og .miles .bars span{flex:1;height:8px;border-radius:999px;background:#EEE9E4}.og .miles .bars .done{background:#1F8A55}.og .miles .bars .cur{background:#D9A441}
+.og .live-dot{display:inline-flex;align-items:center;gap:6px;font-size:12.5px;color:var(--og-green);font-weight:600}
+.og .live-dot i{width:7px;height:7px;border-radius:50%;background:#1F8A55}
+@media (max-width:760px){.og .hero{padding:28px 20px}.og .hero h1{font-size:30px}.og .titlebar .grow{display:none}}

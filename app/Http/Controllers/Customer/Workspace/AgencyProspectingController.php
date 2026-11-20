@@ -375,6 +375,7 @@ class AgencyProspectingController extends CustomerBaseController
         $bridge = app(\App\Library\AgencyOutreach\OutreachContactGroupBridge::class);
         $groupBusiness = $campaign->isManaged() ? $bridge->businessFor($workspace, auth()->user()) : null;
         $linkedGroup = $campaign->usesContactGroup() ? $bridge->linkedGroup($workspace, $campaign) : null;
+        $summary = app(\App\Library\AgencyOutreach\OutreachCampaignService::class)->summaries($workspace, collect([$campaign]))[$campaign->id];
 
         return view('customer.workspaces.prospecting.campaign-show', [
             'workspaceUid' => $workspaceUid,
@@ -394,6 +395,15 @@ class AgencyProspectingController extends CustomerBaseController
             'availableChannels' => \App\Models\AgencyProspectingChannel::where('workspace_id', $workspace->id)
                 ->where('status', \App\Models\AgencyProspectingChannel::STATUS_ACTIVE)
                 ->get(),
+            // Redesigned detail page — presentation data only (read-only).
+            'summary' => $summary,
+            'launch' => $campaign->isManaged() && $campaign->status !== AgencyProspectCampaignStatus::Draft
+                ? app(\App\Library\AgencyOutreach\OutreachCampaignLaunchSnapshot::class)->forCampaign($workspace, $campaign, $summary)
+                : null,
+            'sequenceSteps' => $campaign->isManaged()
+                ? \App\Library\AgencyOutreach\OutreachSequence::forWorkspace($workspace)->enabledSteps()
+                : [],
+            'sendingNumber' => app(\App\Library\AgencyOutreach\AgencyOutreachReadiness::class)->forWorkspace($workspace)->info()['number'] ?? null,
         ]);
     }
 
