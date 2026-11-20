@@ -234,4 +234,102 @@ class OutreachImportGroupReviewTest extends TestCase
         $this->assertSame(4, Contacts::where('group_id', $this->bizGroups($a)->where('name', 'A free name')->value('id'))->count());
         $this->assertSame(4, AgencyProspect::where('workspace_id', $ws)->count());
     }
+
+    // ---------------------------------------------------------------- second review round
+
+    public function test_a_contact_moved_out_of_an_ordinary_group_stops_being_its_recipient(): void
+    {
+        $a = $this->outreachAgency('Move', ['enrolled' => false]);
+        $this->authenticateAs($a['customer']);
+        $biz = $a['business'];
+        $ordinary = ContactGroups::create(['customer_id' => $biz->customer_id, 'business_id' => $biz->id, 'name' => 'Ordinary', 'status' => true]);
+        $elsewhere = ContactGroups::create(['customer_id' => $biz->customer_id, 'business_id' => $biz->id, 'name' => 'Elsewhere', 'status' => true]);
+        $contacts = [];
+        foreach (['12025550101', '12025550102', '12025550103'] as $phone) {
+            $contacts[$phone] = Contacts::create(['customer_id' => $biz->customer_id, 'business_id' => $biz->id, 'group_id' => $ordinary->id, 'phone' => $phone, 'status' => 'subscribe']);
+        }
+
+        $this->post($this->outreachRoute('campaigns.managed.store', $a['workspace']), [
+            'name' => 'Ordinary draft', 'opening_message' => 'Hi', 'group_mode' => 'existing', 'contact_group_uid' => $ordinary->uid,
+        ])->assertRedirect();
+        $campaign = \App\Models\AgencyProspectCampaign::where('workspace_id', $a['workspace']->id)->where('name', 'Ordinary draft')->firstOrFail();
+        $this->assertSame(3, $campaign->members()->count());
+
+        // The CRM moves one contact to another group (as batchContactMove does).
+        $contacts['12025550102']->update(['group_id' => $elsewhere->id]);
+
+        $this->getJson($this->outreachRoute('recipient-groups.summary', $a['workspace']) . '?group=' . $ordinary->uid)
+            ->assertOk()->assertJsonPath('group_total', 2)->assertJsonPath('eligible', 2);
+        $this->post($this->outreachRoute('campaigns.recipients.refresh', $a['workspace'], [$campaign->uid]))->assertRedirect();
+        $this->assertSame(2, $campaign->members()->count(), 'the moved contact is dropped on refresh');
+
+        // An explicit import REFERENCE keeps working, and population never downgrades it to ordinary membership.
+        $a['business']->forceFill(['country_code' => 'US'])->save();
+        $this->commit($a, $this->upload($a, $this->csv(2), 'x.csv'), 'Imported');
+        $imported = $this->bizGroups($a)->where('name', 'Imported')->firstOrFail();
+        Contacts::where('business_id', $biz->id)->where('phone', '12133000000')->update(['group_id' => $elsewhere->id]);   // now only reachable by reference
+        AgencyProspectGroupLink::where('contact_group_id', $imported->id)->update(['contact_in_group' => false]);
+        $this->getJson($this->outreachRoute('recipient-groups.summary', $a['workspace']) . '?group=' . $imported->uid)->assertOk()->assertJsonPath('group_total', 2);
+        $this->post($this->outreachRoute('campaigns.managed.store', $a['workspace']), [
+            'name' => 'Imported draft', 'opening_message' => 'Hi', 'group_mode' => 'existing', 'contact_group_uid' => $imported->uid,
+        ])->assertRedirect();
+        $this->assertSame(0, AgencyProspectGroupLink::where('contact_group_id', $imported->id)->where('contact_in_group', true)->whereIn('contact_id',
+            Contacts::where('business_id', $biz->id)->where('group_id', '!=', $imported->id)->pluck('id'))->count(), 'a reference is never rewritten as membership');
+    }
+
+    public function test_a_reused_national_format_contact_is_still_a_valid_recipient_and_sendable(): void
+    {
+        $a = $this->outreachAgency('Natl', ['enrolled' => false]);
+        $a['business']->forceFill(['country_code' => 'US'])->save();
+        $this->authenticateAs($a['customer']);
+        $old = ContactGroups::create(['customer_id' => $a['business']->customer_id, 'business_id' => $a['business']->id, 'name' => 'Old list', 'status' => true]);
+        $contact = Contacts::create(['customer_id' => $a['business']->customer_id, 'business_id' => $a['business']->id, 'group_id' => $old->id, 'phone' => '2133000001', 'status' => 'subscribe']);
+
+        $this->commit($a, $this->upload($a, $this->csv(3)), 'Natl list');
+        $group = $this->bizGroups($a)->where('name', 'Natl list')->firstOrFail();
+        $this->assertSame(1, Contacts::where('business_id', $a['business']->id)->whereIn('phone', ['2133000001', '12133000001'])->count(), 'the historical contact is reused');
+
+        // It is a valid recipient (not "invalid phone"): all three of the imported numbers are eligible.
+        $this->getJson($this->outreachRoute('recipient-groups.summary', $a['workspace']) . '?group=' . $group->uid)
+            ->assertOk()->assertJsonPath('group_total', 3)->assertJsonPath('eligible', 3)->assertJsonPath('excluded', 0);
+
+        $this->post($this->outreachRoute('campaigns.managed.store', $a['workspace']), [
+            'name' => 'Natl draft', 'opening_message' => 'Hi', 'group_mode' => 'existing', 'contact_group_uid' => $group->uid,
+        ])->assertRedirect();
+        $campaign = \App\Models\AgencyProspectCampaign::where('workspace_id', $a['workspace']->id)->where('name', 'Natl draft')->firstOrFail();
+        $member = $campaign->members()->whereHas('prospect', fn ($q) => $q->where('phone', '12133000001'))->firstOrFail();
+        $this->assertSame((int) $contact->id, (int) $member->source_contact_id);
+
+        // The send-time recheck uses the same normalisation, so the contact is not refused as "changed".
+        $campaign->update(['status' => 'active']);
+        $result = app(\App\Library\AgencyOutreach\OutreachEligibility::class)->check($member->fresh(), false);
+        $this->assertNotSame('source_contact_unsubscribed_or_changed', $result->reason ?? null);
+    }
+
+    public function test_custom_field_comparison_counts_a_logical_prospect_once_even_with_two_contact_copies(): void
+    {
+        $a = $this->outreachAgency('Dup', ['enrolled' => false]);
+        $a['campaign']->update(['status' => 'active']);
+        $this->authenticateAs($a['customer']);
+        $biz = $a['business'];
+        $this->commit($a, $this->upload($a, $this->csv(2)), 'First');
+        $first = $this->bizGroups($a)->where('name', 'First')->firstOrFail();
+
+        // The CRM holds a COPY of the same person in another group, with the same custom value; both link to the one prospect.
+        $second = ContactGroups::create(['customer_id' => $biz->customer_id, 'business_id' => $biz->id, 'name' => 'Copy list', 'status' => true]);
+        $original = Contacts::where('group_id', $first->id)->where('phone', '12133000000')->firstOrFail();
+        $copy = Contacts::create(['customer_id' => $biz->customer_id, 'business_id' => $biz->id, 'group_id' => $second->id, 'phone' => '12133000000', 'status' => 'subscribe']);
+        $def = CustomFieldDefinition::where('business_id', $biz->id)->where('label', 'Business type')->firstOrFail();
+        app(CustomFieldValueService::class)->set($biz, $copy, $def, 'Photo booth');
+        $prospectId = AgencyProspect::where('workspace_id', $a['workspace']->id)->where('phone', '12133000000')->value('id');
+        AgencyProspectGroupLink::create(['workspace_id' => $a['workspace']->id, 'contact_group_id' => $second->id, 'prospect_id' => $prospectId, 'contact_id' => $copy->id, 'contact_in_group' => true]);
+        $this->contactedWithReply($a, '12133000000', true);
+
+        $an = new \App\Library\AgencyOutreach\Analytics\OutreachAnalytics($a['workspace'], \App\Library\AgencyOutreach\Analytics\AnalyticsFilters::fromRequest(\Illuminate\Http\Request::create('/', 'GET', ['period' => 'all'])));
+        $rows = collect($an->segments('cf:business_type'))->keyBy('segment');
+
+        $this->assertSame(1, $rows['Photo booth']['n'], 'one logical prospect, not one per Contact copy');
+        $this->assertSame(1, $rows['Photo booth']['replied']);
+        $this->assertSame(1, $an->kpis()['contacted']);
+    }
 }

@@ -111,7 +111,7 @@ final class OutreachEligibility
 
             if ($source === null
                 || $source->status !== Contacts::STATUS_SUBSCRIBE
-                || AgencyProspectPhoneNormalizer::normalize((string) $source->getRawOriginal('phone')) !== (string) $prospect->phone) {
+                || AgencyProspectPhoneNormalizer::normalizeStored((string) $source->getRawOriginal('phone'), \App\Library\Contacts\ContactPhone::regionFor($business)) !== (string) $prospect->phone) {
                 return OutreachEligibilityResult::refused('source_contact_unsubscribed_or_changed');
             }
         }

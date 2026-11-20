@@ -578,8 +578,10 @@ final class OutreachAnalytics
             default => 'cfv.value_text',
         };
 
-        return $this->segmentRows($value, 's', 'JOIN (SELECT DISTINCT prospect_id, contact_id FROM agency_prospect_group_links WHERE workspace_id = ' . $this->ws . ') glx ON glx.prospect_id = s.id'
-            . ' JOIN custom_field_values cfv ON cfv.contact_id = glx.contact_id AND cfv.definition_id = ' . (int) $def->id . ' AND ' . $this->storedColumn($def) . ' IS NOT NULL');
+        // One row per (logical prospect, value): two Contact copies of the same person with the same value count once.
+        return $this->segmentRows('x.seg', 's', 'JOIN (SELECT DISTINCT glx.prospect_id, ' . $value . ' AS seg FROM agency_prospect_group_links glx'
+            . ' JOIN custom_field_values cfv ON cfv.contact_id = glx.contact_id AND cfv.definition_id = ' . (int) $def->id
+            . ' WHERE glx.workspace_id = ' . $this->ws . ' AND ' . $this->storedColumn($def) . ' IS NOT NULL) x ON x.prospect_id = s.id');
     }
 
     /** The column a field type stores its value in (used for the plain presence test, which must not repeat bound labels). */
