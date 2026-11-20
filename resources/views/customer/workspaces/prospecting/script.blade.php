@@ -137,6 +137,28 @@
             </fieldset>
         </x-card>
 
+        <x-card title="Reply timing" :padded="true" class="mb-2" data-role="reply-timing">
+            <p class="text-caption">Replies wait a random moment inside these windows so the conversation feels natural. Use 0 for an immediate reply. A STOP is always handled immediately, and timed follow-ups keep their own waits.</p>
+            @foreach(\App\Library\AgencyOutreach\OutreachReplyTiming::LABELS as $category => $label)
+                <div class="row align-items-center mb-1" data-reply-delay="{{ $category }}">
+                    <div class="col-md-6"><label class="form-label mb-0" for="reply_delay_{{ $category }}_min">{{ $label }}</label></div>
+                    <div class="col-md-3">
+                        <div class="input-group input-group-sm">
+                            <input type="number" min="0" max="{{ \App\Library\AgencyOutreach\OutreachReplyTiming::MAX_MINUTES }}" id="reply_delay_{{ $category }}_min" name="reply_delay[{{ $category }}][min]" class="form-control @error('reply_delay.'.$category.'.min') is-invalid @enderror" value="{{ old('reply_delay.'.$category.'.min', $replyDelay[$category]['min']) }}" aria-label="{{ $label }}: shortest wait in minutes">
+                            <span class="input-group-text">min</span>
+                        </div>
+                    </div>
+                    <div class="col-md-3">
+                        <div class="input-group input-group-sm">
+                            <input type="number" min="0" max="{{ \App\Library\AgencyOutreach\OutreachReplyTiming::MAX_MINUTES }}" id="reply_delay_{{ $category }}_max" name="reply_delay[{{ $category }}][max]" class="form-control @error('reply_delay.'.$category.'.max') is-invalid @enderror" value="{{ old('reply_delay.'.$category.'.max', $replyDelay[$category]['max']) }}" aria-label="{{ $label }}: longest wait in minutes">
+                            <span class="input-group-text">max</span>
+                        </div>
+                    </div>
+                    @error('reply_delay.'.$category.'.max')<div class="col-12 text-danger small">{{ $message }}</div>@enderror
+                </div>
+            @endforeach
+        </x-card>
+
         <x-card title="AI help" :padded="true" class="mb-2">
             <div class="form-check">
                 <input type="hidden" name="ai_enabled" value="0">

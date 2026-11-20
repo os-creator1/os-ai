@@ -75,6 +75,12 @@ class OutreachRespondJob extends Base
             return;
         }
 
+        // Not due yet: the delayed dispatch scheduled for the stored moment answers it. An early or
+        // duplicate run changes nothing and never marks the message handled.
+        if ($inbound->reply_due_at !== null && $inbound->reply_due_at->isFuture()) {
+            return;
+        }
+
         $replyKey = 'outreach:reply:' . $inbound->id;
 
         if (AgencyProspectMessage::query()->where('operation_key', $replyKey)->exists()) {
@@ -85,6 +91,14 @@ class OutreachRespondJob extends Base
 
         if (! $eligible->ok()) {
             $ledger->markHandled($inbound->id, null, $eligible->reason);
+
+            return;
+        }
+
+        // A newer message from the prospect supersedes this reply: answering the older one now would
+        // be a stale reply. The newest message has its own due moment and answers the conversation.
+        if ($this->hasNewerInbound($member->id, $inbound->id)) {
+            $ledger->markHandled($inbound->id, null, 'superseded_by_newer_inbound');
 
             return;
         }
@@ -160,7 +174,7 @@ class OutreachRespondJob extends Base
             scriptVersion: OutreachScript::forWorkspace($eligible->workspace)->version(),
             suppressAfterManualReply: true,
             stepId: $decision->stepId,
-        ));
+        ), fn () => $this->hasNewerInbound($member->id, $inbound->id) ? 'superseded_by_newer_inbound' : null);
 
         // 'already_claimed' means a concurrent run owns this reply: it is not a reason for silence.
         $reason = $result->claimed()
@@ -168,5 +182,14 @@ class OutreachRespondJob extends Base
             : ($result->skipReason === 'already_claimed' ? null : $result->skipReason);
 
         $ledger->markHandled($inbound->id, $classification->intent, $reason);
+    }
+
+    private function hasNewerInbound(int $memberId, int $inboundId): bool
+    {
+        return AgencyProspectMessage::query()
+            ->where('campaign_member_id', $memberId)
+            ->where('direction', AgencyProspectMessage::DIRECTION_INBOUND)
+            ->where('id', '>', $inboundId)
+            ->exists();
     }
 }

@@ -41,6 +41,7 @@ class AgencyProspectingSetting extends Model
         'scheduling_mode',
         'script_version',
         'sequence_steps',
+        'reply_delay_windows',
         'faq_entries',
         'sequence_paused',
         'faq_fallback',
@@ -52,6 +53,7 @@ class AgencyProspectingSetting extends Model
         'script_version' => 'integer',
         'follow_up_delay_hours' => 'integer',
         'sequence_steps' => 'array',
+        'reply_delay_windows' => 'array',
         'faq_entries' => 'array',
         'sequence_paused' => 'boolean',
     ];

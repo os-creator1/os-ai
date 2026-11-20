@@ -381,6 +381,7 @@ class AgencyOutreachController extends CustomerBaseController
             'agencyName' => $settings?->agency_name,
             'websiteUrl' => $settings?->website_url,
             'bookingUrl' => $settings?->booking_url,
+            'replyDelay' => collect(\App\Library\AgencyOutreach\OutreachReplyTiming::windows($workspace))->map(fn (array $w) => ['min' => intdiv($w[0], 60), 'max' => intdiv($w[1], 60)])->all(),
             'followupEnabled' => $script->followUpEnabled(),
             'followupDelay' => $script->followUpDelayHours(),
             'aiEnabled' => $script->aiEnabled(),

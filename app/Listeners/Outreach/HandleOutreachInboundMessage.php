@@ -10,6 +10,8 @@ use App\Library\AgencyOutreach\AgencyOutreachBusinessResolver;
 use App\Library\AgencyOutreach\OutreachClassification;
 use App\Library\AgencyOutreach\OutreachConversationLinker;
 use App\Library\AgencyOutreach\OutreachInboundLedger;
+use App\Library\AgencyOutreach\OutreachReplyTiming;
+use App\Library\AgencyOutreach\OutreachSequence;
 use App\Library\AgencyOutreach\OutreachStageMachine;
 use App\Library\AgencyOutreach\OutreachStopClassifier;
 use App\Library\AgencyOutreach\OutreachStopService;
@@ -50,8 +52,12 @@ class HandleOutreachInboundMessage implements ShouldQueue
         private readonly OutreachConversationLinker $linker,
         private readonly OutreachInboundLedger $ledger,
         private readonly OutreachStopService $stops,
+        ?OutreachReplyTiming $timing = null,
     ) {
+        $this->timing = $timing ?? new OutreachReplyTiming();
     }
+
+    private readonly OutreachReplyTiming $timing;
 
     public function handle(InboundMessageReceived $event): void
     {
@@ -136,8 +142,10 @@ class HandleOutreachInboundMessage implements ShouldQueue
         $member->refresh();
 
         // A hard opt-out / rejection is applied NOW, not left to a queue worker.
+        // The same decision the responder makes, so a stop is never held back by reply pacing.
         $classification = OutreachClassification::of((string) $inbound->body);
-        $decision = OutreachStageMachine::decide($member->stage, $classification);
+        $sequence = OutreachSequence::forWorkspace($business->workspace);
+        $decision = OutreachStageMachine::decide($member->stage, $classification, $sequence, $sequence->sentIdsFor($member));
 
         if ($decision->stops()) {
             $this->stops->apply($member, $decision->action === 'opt_out', $inbound->id);
@@ -145,7 +153,14 @@ class HandleOutreachInboundMessage implements ShouldQueue
             return;
         }
 
-        OutreachRespondJob::dispatch($member->id, $inbound->id);
+        // Pace the answer: the due moment is chosen once and stored, so a redelivery re-queues the
+        // SAME moment. A delayed queue job carries the wait; no worker or request ever sleeps.
+        $due = $this->timing->dueAt($inbound, $business->workspace, $classification);
+        $pending = OutreachRespondJob::dispatch($member->id, $inbound->id);
+
+        if ($due !== null && $due->isFuture()) {
+            $pending->delay($due);
+        }
     }
 
     /** The prospect's one non-terminal membership of a `managed` campaign (the one-open-conversation invariant). */
