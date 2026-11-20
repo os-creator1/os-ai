@@ -36,6 +36,14 @@
                     <dt class="col-sm-4">Location</dt>
                     <dd class="col-sm-8">{{ $prospect->location ?? '—' }}</dd>
 
+                    @if($prospect->business_type)<dt class="col-sm-4">Business type</dt><dd class="col-sm-8">{{ $prospect->business_type }}</dd>@endif
+                    @if($prospect->google_rating !== null)<dt class="col-sm-4">Google rating</dt><dd class="col-sm-8">{{ $prospect->google_rating }}@if($prospect->review_count !== null) ({{ $prospect->review_count }} reviews)@endif</dd>@endif
+                    @if($prospect->address)<dt class="col-sm-4">Address</dt><dd class="col-sm-8">{{ $prospect->address }}</dd>@endif
+                    @if($prospect->social_url)<dt class="col-sm-4">Social page</dt><dd class="col-sm-8">{{ $prospect->social_url }}</dd>@endif
+
+                    <dt class="col-sm-4">Client</dt>
+                    <dd class="col-sm-8" data-role="client-won-status">@if($prospect->client_won_at)<x-badge variant="success">Client won {{ $prospect->client_won_at->format('M j, Y') }}</x-badge>@else —@endif</dd>
+
                     <dt class="col-sm-4">Status</dt>
                     <dd class="col-sm-8">
                         @if($prospect->status->value === 'active')
@@ -47,6 +55,13 @@
                         @endif
                     </dd>
                 </dl>
+
+                @unless($prospect->client_won_at)
+                    <form method="post" class="mt-3" action="{{ route('customer.workspaces.prospecting.prospects.client-won', [$workspaceUid, $prospect->uid]) }}">
+                        @csrf
+                        <x-button type="submit" variant="outline" size="sm" data-role="mark-client-won">Mark client won</x-button>
+                    </form>
+                @endunless
 
                 @if($prospect->status->value === 'active')
                     <div class="d-flex gap-2 mt-3">

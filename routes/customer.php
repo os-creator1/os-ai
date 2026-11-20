@@ -2498,6 +2498,17 @@
 
             Route::get('/prospects', 'Workspace\AgencyProspectingController@prospects')->name('prospects.index');
             Route::post('/prospects', 'Workspace\AgencyProspectingController@storeProspect')->name('prospects.store');
+            // Existing clients, STOP list and the smart CSV import. Registered BEFORE /prospects/{prospect}.
+            Route::get('/prospects/clients', 'Workspace\AgencyOutreachClientsController@clients')->name('prospects.clients');
+            Route::post('/prospects/clients', 'Workspace\AgencyOutreachClientsController@addClient')->name('prospects.clients.store');
+            Route::post('/prospects/clients/{exclusion}/remove', 'Workspace\AgencyOutreachClientsController@removeClient')->name('prospects.clients.remove');
+            Route::get('/prospects/excluded', 'Workspace\AgencyOutreachClientsController@excluded')->name('prospects.excluded');
+            Route::get('/prospects/import', 'Workspace\AgencyOutreachClientsController@importForm')->name('prospects.import');
+            Route::post('/prospects/import', 'Workspace\AgencyOutreachClientsController@importUpload')->name('prospects.import.upload');
+            Route::get('/prospects/import/{batch}', 'Workspace\AgencyOutreachClientsController@importReview')->name('prospects.import.review');
+            Route::post('/prospects/import/{batch}/map', 'Workspace\AgencyOutreachClientsController@importRemap')->name('prospects.import.map');
+            Route::post('/prospects/import/{batch}/commit', 'Workspace\AgencyOutreachClientsController@importCommit')->name('prospects.import.commit');
+            Route::post('/prospects/{prospect}/client-won', 'Workspace\AgencyOutreachClientsController@markClientWon')->name('prospects.client-won');
             Route::get('/prospects/{prospect}', 'Workspace\AgencyProspectingController@showProspect')->name('prospects.show');
             Route::post('/prospects/{prospect}/stop', 'Workspace\AgencyProspectingController@stopProspect')->name('prospects.stop');
             Route::post('/prospects/{prospect}/mark-booked', 'Workspace\AgencyProspectingController@markProspectBooked')->name('prospects.mark-booked');

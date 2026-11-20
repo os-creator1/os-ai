@@ -75,4 +75,36 @@ final class AgencyProspectPhoneNormalizer
             return null;
         }
     }
+
+    /**
+     * Same canonical output as {@see normalize()}, but for a number WITHOUT a country code and only when
+     * the caller passes an explicit, user-confirmed ISO region ("US", "GB"…). Numbers that already carry
+     * a "+" or a "00" international prefix are parsed exactly as normalize() does. libphonenumber keeps
+     * every meaningful national prefix (e.g. an Italian leading 0); nothing is stripped by hand.
+     */
+    public static function normalizeForRegion(?string $raw, ?string $region): ?string
+    {
+        if ($raw === null || trim($raw) === '') {
+            return null;
+        }
+
+        $trimmed = trim($raw);
+
+        if (str_starts_with($trimmed, '+') || str_starts_with($trimmed, '00')) {
+            return self::normalize(str_starts_with($trimmed, '00') ? '+' . substr($trimmed, 2) : $trimmed);
+        }
+
+        if ($region === null || ! preg_match('/^[A-Za-z]{2}$/', $region)) {
+            return null;
+        }
+
+        try {
+            $util = PhoneNumberUtil::getInstance();
+            $parsed = $util->parse($trimmed, strtoupper($region));
+
+            return $util->isValidNumber($parsed) ? ltrim($util->format($parsed, PhoneNumberFormat::E164), '+') : null;
+        } catch (NumberParseException) {
+            return null;
+        }
+    }
 }

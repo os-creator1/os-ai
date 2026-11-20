@@ -157,13 +157,16 @@ class AgencyProspectingController extends CustomerBaseController
     {
         $workspace = $this->resolveEntitledWorkspace($workspaceUid);
 
-        $groupBusiness = app(\App\Library\AgencyOutreach\OutreachContactGroupBridge::class)->businessFor($workspace, auth()->user());
-
         return view('customer.workspaces.prospecting.prospects', [
             'workspaceUid' => $workspaceUid,
             'rows' => app(\App\Library\AgencyOutreach\OutreachProspectListReader::class)->rows($workspace),
-            // Bulk import lives in Contacts (contact groups); Outreach campaigns text those groups.
-            'importUrl' => $groupBusiness === null ? null : route('customer.workspaces.businesses.contacts.index', [$workspaceUid, $groupBusiness->uid]),
+            // The smart CSV importer is Outreach's own. Contact groups are still filled from Contacts.
+            'importUrl' => route('customer.workspaces.prospecting.prospects.import', $workspaceUid),
+            'counts' => [
+                'all' => AgencyProspect::where('workspace_id', $workspace->id)->count(),
+                'clients' => \App\Models\AgencyProspectExclusion::where('workspace_id', $workspace->id)->whereNull('removed_at')->count(),
+                'excluded' => AgencyProspect::where('workspace_id', $workspace->id)->where('status', AgencyProspectStatus::Stopped->value)->count(),
+            ],
         ]);
     }
 
@@ -211,6 +214,11 @@ class AgencyProspectingController extends CustomerBaseController
         if (AgencyProspect::where('workspace_id', $workspace->id)->where('phone', $canonicalPhone)->exists()) {
             return redirect()->back()->withInput()
                 ->withErrors(['phone' => 'A prospect with this phone number already exists in this Workspace.']);
+        }
+
+        if (app(\App\Library\AgencyOutreach\OutreachExistingClients::class)->isExcluded((int) $workspace->id, $canonicalPhone)) {
+            return redirect()->back()->withInput()
+                ->withErrors(['phone' => 'This number is an existing client. Remove it from Existing clients first if that was a mistake.']);
         }
 
         AgencyProspect::create(array_merge($validated, [
@@ -781,6 +789,12 @@ class AgencyProspectingController extends CustomerBaseController
                 return redirect()
                     ->route('customer.workspaces.prospecting.campaigns.show', [$workspaceUid, $campaign->uid])
                     ->with('flash_error', 'Only active prospects can be enrolled.');
+            }
+
+            if (app(\App\Library\AgencyOutreach\OutreachExistingClients::class)->blocksProspect($locked)) {
+                return redirect()
+                    ->route('customer.workspaces.prospecting.campaigns.show', [$workspaceUid, $campaign->uid])
+                    ->with('flash_error', 'This business is an existing client and cannot be enrolled in a prospecting campaign.');
             }
 
             AgencyProspectCampaignMember::firstOrCreate(

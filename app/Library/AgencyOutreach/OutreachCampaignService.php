@@ -77,7 +77,9 @@ class OutreachCampaignService
                 ->get()
                 ->keyBy('id');
 
-            $eligible = $members->filter(fn ($member) => $prospects->get($member->prospect_id)?->status === AgencyProspectStatus::Active)->values();
+            $clients = app(OutreachExistingClients::class);
+            $eligible = $members->filter(fn ($member) => $prospects->get($member->prospect_id)?->status === AgencyProspectStatus::Active
+                && ! $clients->blocksProspect($prospects->get($member->prospect_id)))->values();
 
             if ($eligible->isEmpty()) {
                 return ['error' => 'Add at least one active prospect to this campaign before starting it.'];
