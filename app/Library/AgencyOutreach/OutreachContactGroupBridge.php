@@ -97,7 +97,12 @@ final class OutreachContactGroupBridge
             ->where('status', 1)
             ->withCount('subscribers')
             ->orderBy('name')
-            ->get();
+            ->get()
+            ->each(function (ContactGroups $group) {
+                // Contacts an import LINKED into the group (their number already lived in another group) are recipients too.
+                $group->subscribers_count += (int) DB::table('agency_prospect_group_links')
+                    ->where('contact_group_id', $group->id)->where('contact_in_group', false)->whereNotNull('contact_id')->count();
+            });
     }
 
     /** A group by uid, only if it belongs to this Business and is enabled. */
