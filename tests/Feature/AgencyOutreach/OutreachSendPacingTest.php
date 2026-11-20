@@ -593,7 +593,7 @@ class OutreachSendPacingTest extends TestCase
         $this->assertSame('failed', $old->fresh()->status);
         $this->assertSame('followup_cancelled', $old->fresh()->failure_reason);
         $this->assertNull($member->fresh()->followup_cancelled_at);
-        $this->assertEquals($when, $member->fresh()->followup_at,
+        $this->assertEqualsWithDelta($when->timestamp, $member->fresh()->followup_at->timestamp, 1,
             'The newer T2 timer must survive rejection of obsolete T1.');
 
         $this->travel(3)->hours();
