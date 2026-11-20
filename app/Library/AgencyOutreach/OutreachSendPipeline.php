@@ -78,6 +78,13 @@ final class OutreachSendPipeline
                 return 'step_already_sent';
             }
 
+            // This job may have spent time composing while a newer inbound
+            // arrived. A stale responder MUST fail its own freshness guard
+            // before it can touch another reply's queued delivery.
+            if ($guard !== null && ($reason = $guard($member, $eligible)) !== null) {
+                return $reason;
+            }
+
             // A newer reply to the same conversation replaces an older one still WAITING for its
             // send slot: that older text is stale and must neither block nor follow this one.
             if ($plan->purpose === AgencyProspectMessage::PURPOSE_AI_REPLY) {
@@ -93,21 +100,29 @@ final class OutreachSendPipeline
                             'failure_reason' => 'followup_cancelled', 'deferred_until' => null]);
                 }
 
-                AgencyProspectMessage::query()
-                    ->where('campaign_member_id', $member->id)
-                    ->where('direction', AgencyProspectMessage::DIRECTION_OUTBOUND)
-                    ->where('purpose', AgencyProspectMessage::PURPOSE_AI_REPLY)
-                    ->where('status', AgencyProspectMessage::STATUS_PAUSED)
-                    ->whereIn('failure_reason', [OutreachSendBudget::REASON_RATE, OutreachSendBudget::REASON_OPENER_CAP])
-                    ->update(['status' => AgencyProspectMessage::STATUS_FAILED, 'failure_reason' => 'superseded_by_newer_reply']);
+                if (preg_match('/^outreach:reply:(\d+)$/', $plan->operationKey, $replyMatch) === 1) {
+                    $currentInboundId = (int) $replyMatch[1];
+                    $waitingReplies = AgencyProspectMessage::query()
+                        ->where('campaign_member_id', $member->id)
+                        ->where('direction', AgencyProspectMessage::DIRECTION_OUTBOUND)
+                        ->where('purpose', AgencyProspectMessage::PURPOSE_AI_REPLY)
+                        ->where('status', AgencyProspectMessage::STATUS_PAUSED)
+                        ->whereIn('failure_reason', [OutreachSendBudget::REASON_RATE, OutreachSendBudget::REASON_OPENER_CAP])
+                        ->get(['id', 'operation_key']);
+
+                    foreach ($waitingReplies as $waiting) {
+                        if (preg_match('/^outreach:reply:(\d+)$/', (string) $waiting->operation_key, $oldMatch) === 1
+                            && (int) $oldMatch[1] < $currentInboundId) {
+                            AgencyProspectMessage::query()->whereKey($waiting->id)
+                                ->update(['status' => AgencyProspectMessage::STATUS_FAILED,
+                                    'failure_reason' => 'superseded_by_newer_reply', 'deferred_until' => null]);
+                        }
+                    }
+                }
             }
 
             if ($this->inFlight($member->id, null, true)) {
                 return 'send_in_flight';
-            }
-
-            if ($guard !== null && ($reason = $guard($member, $eligible)) !== null) {
-                return $reason;
             }
 
             if ($plan->suppressAfterManualReply && $this->linker->ownerRepliedAfterLatestInbound($eligible->business, $eligible->prospect)) {

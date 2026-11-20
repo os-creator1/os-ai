@@ -105,7 +105,7 @@ final class OutreachSendBudget
             }
 
             // Priority: an opener never jumps ahead of a reply or follow-up that is already waiting.
-            if ($opener && $this->higherPriorityWaiting($row)) {
+            if ($opener && $this->higherPriorityWaiting($row, (int) $slot->id)) {
                 $free = $free->max($now->copy()->addSeconds($interval));
             }
 
@@ -136,14 +136,23 @@ final class OutreachSendBudget
         return max($interval, (int) $perSender, (int) $provider, (int) $campaign);
     }
 
-    private function higherPriorityWaiting(AgencyProspectMessage $row): bool
+    private function higherPriorityWaiting(AgencyProspectMessage $row, int $slotId): bool
     {
         return AgencyProspectMessage::query()
             ->where('workspace_id', $row->workspace_id)
+            ->where('outreach_send_slot_id', $slotId)
             ->where('direction', AgencyProspectMessage::DIRECTION_OUTBOUND)
             ->where('status', AgencyProspectMessage::STATUS_PAUSED)
             ->where('failure_reason', self::REASON_RATE)
             ->where('purpose', '!=', AgencyProspectMessage::PURPOSE_INITIAL)
+            // A paused/ended campaign, manual hold, or terminal prospect
+            // cannot currently send; it must not indefinitely block active
+            // campaigns sharing this number.
+            ->whereHas('campaignMember', fn ($q) => $q
+                ->whereNotIn('stage', [6, 99])
+                ->whereNull('ai_paused_at')
+                ->whereHas('prospect', fn ($prospect) => $prospect->where('status', 'active'))
+                ->whereHas('campaign', fn ($campaign) => $campaign->where('status', 'active')))
             ->exists();
     }
 }

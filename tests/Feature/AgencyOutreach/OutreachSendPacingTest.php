@@ -467,6 +467,56 @@ class OutreachSendPacingTest extends TestCase
         $this->assertCount(1, $this->sentBodies());
     }
 
+
+    public function test_stale_responder_never_cancels_a_newer_rate_deferred_reply(): void
+    {
+        [$workspace, $business, $campaign] = $this->agencyWithCampaign();
+        $occupant = $this->member($workspace, $campaign, self::P1);
+        $prospect = $this->member($workspace, $campaign, self::P2);
+        $this->reply($business, $occupant, self::P1); // occupies this number for 10 seconds
+
+        $this->inbound($business, 'sounds good', self::P2);
+        $old = AgencyProspectMessage::query()->where('campaign_member_id', $prospect->id)
+            ->where('direction', AgencyProspectMessage::DIRECTION_INBOUND)->orderByDesc('id')->firstOrFail();
+
+        $this->inbound($business, 'actually how much does it cost?', self::P2);
+        $new = AgencyProspectMessage::query()->where('campaign_member_id', $prospect->id)
+            ->where('direction', AgencyProspectMessage::DIRECTION_INBOUND)->orderByDesc('id')->firstOrFail();
+
+        app()->call([new OutreachRespondJob($prospect->id, $new->id), 'handle']);
+        $newRow = $this->outboundRow($prospect);
+        $this->assertSame('paused', $newRow->status);
+
+        app()->call([new OutreachRespondJob($prospect->id, $old->id), 'handle']);
+        $this->assertSame('paused', $newRow->fresh()->status, 'Stale work cannot cancel the newer queued reply.');
+        $this->assertSame('superseded_by_newer_inbound', $old->fresh()->failure_reason);
+
+        $this->travel(10)->seconds();
+        $this->runDeferred($newRow);
+        $this->assertSame('sent', $newRow->fresh()->status);
+        $this->assertCount(2, $this->sentBodies());
+    }
+
+    public function test_paused_campaign_does_not_starve_an_active_campaign_opener(): void
+    {
+        [$workspace, $business, $campaign] = $this->agencyWithCampaign();
+        $other = $this->managedCampaign($workspace, ['name' => 'Active opener campaign']);
+        $one = $this->member($workspace, $campaign, self::P1);
+        $two = $this->member($workspace, $campaign, self::P2);
+        $opener = $this->member($workspace, $other, self::P3);
+
+        $this->reply($business, $one, self::P1);
+        $this->reply($business, $two, self::P2);
+        $this->assertSame('paused', $this->outboundRow($two)->status);
+        $campaign->update(['status' => 'paused']);
+        $this->travel(10)->seconds();
+
+        $this->opener($opener);
+        $this->assertSame('sent', $this->outboundRow($opener)->fresh()->status,
+            'An undeliverable held reply from another campaign is not higher-priority work.');
+        $this->assertCount(2, $this->sentBodies());
+    }
+
     public function test_pacing_is_off_on_a_synchronous_queue_so_nothing_is_stuck(): void
     {
         config(['queue.default' => 'sync']);
