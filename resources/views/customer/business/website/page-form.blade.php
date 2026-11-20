@@ -248,6 +248,17 @@
             {key: 'show_email', label: 'Show email', type: 'checkbox'},
             {key: 'show_address', label: 'Show address', type: 'checkbox'}
         ],
+        // Added by the generator on service/event pages (not offered as a new block): editable and removable here.
+        inquiry_panel: [
+            {key: 'heading', label: 'Heading', type: 'text'},
+            {key: 'body', label: 'Short text (optional)', type: 'textarea'},
+            {key: 'cta.label', label: 'Button label', type: 'text'},
+            {key: 'cta.url', label: 'Button link', type: 'text'},
+            {key: 'show_phone', label: 'Show phone', type: 'checkbox'},
+            {key: 'facts.0', label: 'Fact 1 (optional)', type: 'text'},
+            {key: 'facts.1', label: 'Fact 2 (optional)', type: 'text'},
+            {key: 'facts.2', label: 'Fact 3 (optional)', type: 'text'}
+        ],
         services: [{key: 'heading', label: 'Heading', type: 'text'}],
         testimonials: [{key: 'heading', label: 'Heading', type: 'text'}],
         faq: [{key: 'heading', label: 'Heading', type: 'text'}],

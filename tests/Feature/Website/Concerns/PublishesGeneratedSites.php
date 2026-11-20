@@ -88,7 +88,7 @@ trait PublishesGeneratedSites
                 $sections = [
                     $hero(($context['primary_service'] ?? 'Our services') . $in),
                     ['type' => 'services', 'data' => ['heading' => 'What we offer', 'items' => array_map(fn ($name) => ['name' => $name, 'description' => 'Book ' . $name . ' for your event.', 'price_label' => null], $services)]],
-                    $copy('Where we work', 'We work with customers ' . ($context['areas_served'] ?? [] ? 'in ' . implode(', ', $context['areas_served']) : 'by arrangement') . '.'),
+                    $copy('Where we work', trim(implode(' ', (array) ($payload['confirmed_facts']['differentiators'] ?? [])) . ' ') . 'We work with customers ' . ($context['areas_served'] ?? [] ? 'in ' . implode(', ', $context['areas_served']) : 'by arrangement') . '.'),
                 ];
                 break;
             case isset($entry['entity']['area']):

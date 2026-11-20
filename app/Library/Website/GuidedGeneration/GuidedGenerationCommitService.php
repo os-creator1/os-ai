@@ -400,7 +400,7 @@ final class GuidedGenerationCommitService
             // a cleanly recorded `failed` attempt, never an uncaught
             // exception left as a stuck `pending` row or a bare 500.
             $merged = $this->mergePlanWithContent($plan, $aiPages);
-            $bound = $this->mediaBinding->bind($website, $merged, $customSection, $customerFaq);
+            $bound = $this->mediaBinding->bind($website, $merged, $customSection, $customerFaq, $contentFacts);
             $bound['pages'] = $this->groundInventedFacts($bound['pages'], $business, $plan);
 
             DB::transaction(function () use ($business, $website, $template, $bound, $attempt, $retryCount, $fenceToken, $contentGaps) {

@@ -674,3 +674,22 @@ body.wd h1, body.wd h2, body.wd h3, body.wd h4 { font-family: var(--wd-font-head
    starts closer to the first instead of repeating the full band padding. */
 .wd-band-cta + .wd-band-cta { border-top: 1px solid var(--wd-t-line, rgba(0, 0, 0, 0.14)); }
 .wd-band-cta + .wd-band-cta > .wd-container { padding-top: clamp(1.75rem, 4vw, 3rem); }
+
+/* ---- Slice 6A: inquiry panel (service / event pages) --------------------------------------------------------------------------
+   Beside the page's first copy section on a wide screen, stacked under it on a phone (never overlaying content, navigation or the form).
+   Colours, radius and shadow come from the template's own tokens, so every template and niche gets the same panel in its own style. */
+.wd-has-panel { display: grid; grid-template-columns: minmax(0, 1fr); gap: clamp(1.5rem, 4vw, 3rem); align-items: start; }
+.wd-panel-main { min-width: 0; }
+.wd-panel-aside { min-width: 0; }
+@media (min-width: 960px) {
+    .wd-has-panel { grid-template-columns: minmax(0, 1fr) minmax(17rem, 21rem); }
+    .wd-panel-aside { position: sticky; top: 6.5rem; }
+}
+.wd-inquiry-panel { display: flex; flex-direction: column; gap: 0.85rem; background: var(--wd-card); color: var(--wd-card-ink, var(--wd-t-ink)); border: 1px solid var(--wd-t-line); border-radius: var(--wd-radius); box-shadow: var(--wd-shadow); padding: clamp(1.25rem, 2.4vw, 1.75rem); text-align: left; }
+.wd-inquiry-title { font-size: clamp(1.2rem, 2vw, 1.55rem); line-height: 1.2; margin: 0; overflow-wrap: break-word; }
+.wd-inquiry-body, .wd-inquiry-phone { margin: 0; color: var(--wd-t-muted); }
+.wd-inquiry-phone a { color: inherit; font-weight: 700; white-space: nowrap; }
+.wd-inquiry-panel .wd-btn { width: 100%; text-align: center; }
+.wd-inquiry-facts { list-style: none; margin: 0.15rem 0 0; padding: 0.85rem 0 0; border-top: 1px solid var(--wd-t-line); display: grid; gap: 0.4rem; font-size: 0.9rem; color: var(--wd-t-muted); }
+.wd-inquiry-facts li::before { content: "\2713"; color: var(--wd-a); font-weight: 700; margin-right: 0.5rem; }
+.wd-band-inquiry_panel .wd-inquiry-panel { max-width: 34rem; margin: 0 auto; }
