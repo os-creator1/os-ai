@@ -19,7 +19,7 @@
 @endphp
 
 @once
-    <link rel="stylesheet" href="{{ asset('css/outreach/outreach.css') }}?v=4">
+    <link rel="stylesheet" href="{{ asset('css/outreach/outreach.css') }}?v=6">
 @endonce
 
 @unless($ogInside)<div class="og hd">@endunless

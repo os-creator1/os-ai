@@ -344,3 +344,28 @@ html[data-layout="dark-layout"] .og,.dark-layout .og{--og-bg:#17191F;--og-card:#
  .og .seg-row{grid-template-columns:repeat(6,1fr)!important}.og .seg-row>span:first-child{grid-column:1/-1}
  .og .seg-row.h{display:none}
 }
+.og .seg-row{gap:8px}
+@media (max-width:720px){
+ /* wide data tables scroll inside their own card instead of widening the page */
+ .og .card.tw{overflow-x:auto;overflow-y:visible}
+ .og [data-role=message-table] .row{min-width:720px}
+ .og [data-role=explorer] .row{min-width:1000px}
+ .og [data-role=explorer] .filters{position:sticky;left:0}
+ /* drill-down businesses: stack each row so the name is always readable */
+ .og [data-role=step-businesses] .row.h{display:none}
+ .og [data-role=step-businesses] .row{grid-template-columns:repeat(3,minmax(0,1fr))!important}
+ .og [data-role=step-businesses] .row>:nth-child(1),.og [data-role=step-businesses] .row>:nth-child(5),.og [data-role=step-businesses] .row>:nth-child(6){grid-column:1/-1}
+ .og [data-role=step-businesses] .row>:nth-child(6){justify-self:start}
+ /* existing clients: name + menu on the first line, details below */
+ .og [data-role=clients-table] .row.h{display:none}
+ .og [data-role=clients-table] .row{grid-template-columns:minmax(0,1fr) auto!important;row-gap:4px}
+ .og [data-role=clients-table] .row>*{grid-column:1/-1}
+ .og [data-role=clients-table] .row>.who{grid-column:1}
+ .og [data-role=clients-table] .row>.acts{grid-column:2;grid-row:1}
+ /* import controls wrap instead of squashing */
+ .og .imp .sel{height:auto;min-height:40px;flex-wrap:wrap;padding:6px 10px}
+ .og .imp .sel select{max-width:100%;height:auto;min-height:32px}
+ .og .imp-foot{flex-wrap:wrap}
+}
+.og .search:focus-within{border-color:var(--og-brand);box-shadow:0 0 0 3px var(--og-focus)}
+.og .sel:focus-within{border-color:var(--og-brand)}

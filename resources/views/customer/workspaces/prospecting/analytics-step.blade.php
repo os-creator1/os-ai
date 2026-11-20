@@ -82,6 +82,7 @@
             @if($page > 1) · <a class="link" href="{{ $tabUrl($tab) }}&page={{ $page - 1 }}">Previous</a>@endif
             @if($page < $pages) · <a class="link" href="{{ $tabUrl($tab) }}&page={{ $page + 1 }}">Next</a>@endif</div>
     </section>
+    @include('customer.workspaces.prospecting._autosubmit')
 </div>
 @endsection
 

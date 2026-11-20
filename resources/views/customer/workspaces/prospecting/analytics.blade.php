@@ -95,7 +95,7 @@
     @endif
 
     @if($tab === 'messages')
-        <section class="card menu-card" data-role="message-table">
+        <section class="card menu-card tw" data-role="message-table" role="region" aria-label="Message performance table" tabindex="0">
             <div class="row h" style="grid-template-columns:minmax(0,1.4fr) repeat(8,minmax(60px,.7fr))"><span>Message</span><span>Reached</span><span>Replied</span><span>Reply rate</span><span>Median reply</span><span>Interested</span><span>Booked</span><span>Won</span><span>Advanced</span></div>
             @foreach($steps as $s)
                 <a class="row" href="{{ $stepUrl($s['step_key']) }}" style="grid-template-columns:minmax(0,1.4fr) repeat(8,minmax(60px,.7fr))">
@@ -137,7 +137,7 @@
     @endif
 
     @if($tab === 'explorer')
-        <section class="card menu-card" data-role="explorer">
+        <section class="card menu-card tw" data-role="explorer" role="region" aria-label="Prospect explorer table" tabindex="0">
             <form method="get" class="filters" style="padding:14px 16px">
                 @foreach($filters->toQuery() as $fk => $fv)<input type="hidden" name="{{ $fk }}" value="{{ $fv }}">@endforeach
                 <input type="hidden" name="tab" value="explorer">@if($reached)<input type="hidden" name="reached" value="{{ $reached }}">@endif

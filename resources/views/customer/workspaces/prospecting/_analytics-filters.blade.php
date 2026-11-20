@@ -34,10 +34,4 @@
         @if(! empty($showExport))<span class="grow"></span><a class="btn out sm" data-role="export-csv-inline" href="{{ route('customer.workspaces.prospecting.analytics.export', $workspaceUid) }}?{{ http_build_query($f->toQuery()) }}">Export CSV</a>@endif
     </div>
 </form>
-<script>
-(function () {
-    document.querySelectorAll('form[data-autosubmit]').forEach(function (f) {
-        f.querySelectorAll(':scope > .filters select').forEach(function (el) { el.addEventListener('change', function () { f.submit(); }); });
-    });
-})();
-</script>
+@include('customer.workspaces.prospecting._autosubmit')
