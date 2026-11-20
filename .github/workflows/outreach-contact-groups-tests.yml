@@ -12,6 +12,15 @@ on:
       - 'routes/customer.php'
       - 'app/Http/Controllers/Customer/Workspace/AgencyOutreachController.php'
       - 'app/Http/Controllers/Customer/Workspace/AgencyProspectingController.php'
+      - 'app/Library/AgencyOutreach/OutreachConversationLinks.php'
+      - 'app/Library/AgencyOutreach/OutreachCampaignLaunchSnapshot.php'
+      - 'public/css/outreach/outreach.css'
+      - 'resources/views/customer/workspaces/prospecting/overview.blade.php'
+      - 'resources/views/customer/workspaces/prospecting/prospects.blade.php'
+      - 'resources/views/customer/workspaces/prospecting/conversations.blade.php'
+      - 'resources/views/customer/workspaces/prospecting/script.blade.php'
+      - 'resources/views/customer/workspaces/prospecting/phone-messaging.blade.php'
+      - 'resources/views/customer/workspaces/prospecting/_nav.blade.php'
       - 'app/Models/AgencyProspectCampaign.php'
       - 'app/Models/AgencyProspectCampaignMember.php'
       - 'resources/views/customer/workspaces/prospecting/campaigns.blade.php'
@@ -19,6 +28,7 @@ on:
       - 'database/migrations/2026_11_24_090000_add_contact_group_source_to_agency_prospecting.php'
       - 'tests/Feature/AgencyOutreach/CampaignContactGroupTest.php'
       - 'tests/Feature/AgencyOutreach/EndCampaignTest.php'
+      - 'tests/Feature/AgencyOutreach/OutreachRedesignRenderTest.php'
       - '.github/workflows/outreach-contact-groups-tests.yml'
 
 permissions:
@@ -72,4 +82,4 @@ jobs:
       - name: Install dependencies
         run: composer install --no-interaction --prefer-dist --no-progress
       - name: Test campaign contact-group snapshots and sender eligibility
-        run: php artisan test tests/Feature/AgencyOutreach/CampaignContactGroupTest.php tests/Feature/AgencyOutreach/EndCampaignTest.php tests/Feature/AgencyOutreach/OutreachSafetyTest.php --stop-on-failure
+        run: php artisan test tests/Feature/AgencyOutreach/CampaignContactGroupTest.php tests/Feature/AgencyOutreach/EndCampaignTest.php tests/Feature/AgencyOutreach/OutreachSafetyTest.php tests/Feature/AgencyOutreach/UiScriptTest.php tests/Feature/AgencyOutreach/OutreachRedesignRenderTest.php --stop-on-failure
