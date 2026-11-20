@@ -12,6 +12,11 @@ on:
       - 'app/Jobs/Outreach/**'
       - 'app/Listeners/Outreach/**'
       - 'app/Library/AgencyOutreach/OutreachReplyTiming.php'
+      - 'app/Library/AgencyOutreach/OutreachSendBudget.php'
+      - 'app/Library/AgencyOutreach/OutreachResumeService.php'
+      - 'app/Library/AgencyOutreach/OutreachMessageSender.php'
+      - 'tests/Feature/AgencyOutreach/OutreachSendPacingTest.php'
+      - 'config/outreach.php'
       - 'app/Library/AgencyOutreach/OutreachScriptManager.php'
       - 'tests/Feature/AgencyOutreach/OutreachReplyTimingTest.php'
       - 'phpunit.xml'
@@ -74,4 +79,4 @@ jobs:
       - name: Install dependencies
         run: composer install --no-interaction --prefer-dist --no-progress
       - name: Test campaign contact-group snapshots and sender eligibility
-        run: php artisan test tests/Feature/AgencyOutreach/OutreachReplyTimingTest.php tests/Feature/AgencyOutreach/OutreachSequenceContinuityTest.php tests/Feature/AgencyOutreach/OutreachSequenceV2Test.php tests/Feature/AgencyOutreach/OutreachEngineTest.php tests/Feature/AgencyOutreach/OutreachSafetyTest.php --stop-on-failure
+        run: php artisan test tests/Feature/AgencyOutreach/OutreachSendPacingTest.php tests/Feature/AgencyOutreach/OutreachReplyTimingTest.php tests/Feature/AgencyOutreach/OutreachSequenceContinuityTest.php tests/Feature/AgencyOutreach/OutreachSequenceV2Test.php tests/Feature/AgencyOutreach/OutreachEngineTest.php tests/Feature/AgencyOutreach/OutreachSafetyTest.php --stop-on-failure
