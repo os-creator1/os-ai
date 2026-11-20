@@ -217,6 +217,29 @@ class PublicBlogTest extends TestCase
         $this->assertStringNotContainsString('/blog/' . $article->slug, $this->body(self::HOST . '/sitemap.xml'));
     }
 
+    public function test_an_article_noindex_never_makes_the_rest_of_the_website_noindex(): void
+    {
+        [, $business] = $this->photoBoothContentTenant();
+        $hidden = $this->publishedArticle($business, ['title' => 'Owner hidden booth notes', 'primary_topic' => 'owner hidden booth notes', 'noindex' => true]);
+        $open = $this->publishedArticle($business, ['title' => 'Open indexable booth guide', 'primary_topic' => 'open indexable booth guide']);
+
+        // The excluded article is noindex...
+        $this->get(self::HOST . '/blog/' . $hidden->slug)->assertOk()->assertHeader('X-Robots-Tag', 'noindex, follow');
+
+        // ...while its sibling article, the blog index and the site's own pages stay indexable, and the sitemap keeps them.
+        $this->get(self::HOST . '/blog/' . $open->slug)->assertOk()->assertHeader('X-Robots-Tag', 'index, follow');
+        $index = $this->get(self::HOST . '/blog')->assertOk()->assertHeader('X-Robots-Tag', 'index, follow')->getContent();
+        $this->assertStringContainsString('<meta name="robots" content="index, follow">', $index);
+        $home = $this->get(self::HOST . '/')->assertOk()->getContent();
+        $this->assertStringNotContainsString('noindex', $home);
+
+        $sitemap = $this->body(self::HOST . '/sitemap.xml');
+        $this->assertStringContainsString('<loc>https://' . self::DOMAIN . '/</loc>', $sitemap);
+        $this->assertStringContainsString('<loc>https://' . self::DOMAIN . '/blog</loc>', $sitemap);
+        $this->assertStringContainsString('<loc>https://' . self::DOMAIN . '/blog/' . $open->slug . '</loc>', $sitemap);
+        $this->assertStringNotContainsString('/blog/' . $hidden->slug, $sitemap);
+    }
+
     public function test_the_blog_cannot_bypass_a_website_the_owner_has_not_opened_to_search(): void
     {
         [, $business, , $website] = $this->photoBoothContentTenant();
