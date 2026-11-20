@@ -324,7 +324,7 @@ class AgencyByoTelnyxSetupTest extends TestCase
         $this->assertSame(1, substr_count($page->getContent(), 'Current sender'), 'Only one sender is current.');
 
         // Reachable from Outreach itself.
-        $this->get($this->outreachRoute('overview', $agency['workspace']))->assertOk()->assertSee('Phone &amp; Messaging', false);
+        $this->get($this->outreachRoute('overview', $agency['workspace']))->assertOk()->assertSee('Phone &amp; texting', false);
     }
 
     // ------------------------------------------------------------------ number eligibility

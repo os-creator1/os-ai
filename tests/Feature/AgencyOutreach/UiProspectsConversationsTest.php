@@ -77,8 +77,10 @@ class UiProspectsConversationsTest extends TestCase
 
         $html = $this->get($this->outreachRoute('prospects.index', $a['workspace']))->assertOk()->getContent();
 
-        foreach (['Name', 'Company', 'Phone', 'Email', 'Source', 'Campaign', 'Stage', 'Last message', 'Last activity', 'Status'] as $column) {
-            $this->assertStringContainsString("<th>{$column}</th>", $html);
+        // The redesigned list renders its header as a grid row of <span> cells (company and source sit
+        // under the prospect name; status is the stage pill's title).
+        foreach (['Prospect', 'Phone', 'Campaign', 'Stage', 'Last message'] as $column) {
+            $this->assertStringContainsString("<span>{$column}</span>", $html);
         }
 
         $this->assertStringContainsString('Call proposed', $html);
