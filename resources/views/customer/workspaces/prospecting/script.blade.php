@@ -3,21 +3,8 @@
 @section('title', 'Outreach script and settings')
 
 @section('content')
-    <div class="row mb-2">
-        <div class="col-12">
-            <h4 class="mb-0">Outreach</h4>
-            <p class="text-caption mb-0">The texts your prospects receive. Build the sequence your way: as many messages as your sales process needs, in the order you choose.</p>
-        </div>
-    </div>
-
-    @include('customer.workspaces.prospecting._nav', ['prospectingActive' => 'script'])
-
-    <p class="text-caption mb-2">Which number these texts come from is set in
-        <a href="{{ route('customer.workspaces.prospecting.phone-messaging', $workspaceUid) }}">Phone &amp; Messaging</a>.</p>
-
-    @foreach((array) session('outreach_warnings', []) as $warning)
-        <x-alert variant="warning" data-role="script-warning">{{ $warning }}</x-alert>
-    @endforeach
+<div class="og page">
+    @include('customer.workspaces.prospecting._nav', ['prospectingActive' => 'script', 'ogInside' => true])
 
     @php
         $tokens = [
@@ -43,134 +30,148 @@
         ];
     @endphp
 
-    <form method="post" action="{{ route('customer.workspaces.prospecting.script.update', $workspaceUid) }}" data-role="script-form" data-preview-url="{{ $previewUrl }}">
+    @foreach((array) session('outreach_warnings', []) as $warning)
+        <div class="alertbar" role="alert" data-role="script-warning"><span>{{ $warning }}</span></div>
+    @endforeach
+
+    @if($errors->any())
+        <div class="errsum" role="alert" data-role="script-errors">
+            <b>Fix {{ $errors->count() }} {{ \Illuminate\Support\Str::plural('thing', $errors->count()) }} before saving</b>
+            <ul>@foreach(collect($errors->all())->unique()->take(8) as $message)<li>{{ $message }}</li>@endforeach</ul>
+        </div>
+    @endif
+
+    <form method="post" action="{{ route('customer.workspaces.prospecting.script.update', $workspaceUid) }}" data-role="script-form" data-preview-url="{{ $previewUrl }}" novalidate>
         @csrf
-
-        <x-card title="Who you are" :padded="true" class="mb-2">
-            <div class="row">
-                <div class="col-md-6 mb-1">
-                    <label class="form-label" for="agency_name">Agency name</label>
-                    <input type="text" id="agency_name" name="agency_name" class="form-control @error('agency_name') is-invalid @enderror" value="{{ old('agency_name', $agencyName) }}">
-                    @error('agency_name')<div class="invalid-feedback">{{ $message }}</div>@enderror
-                    <p class="text-caption mb-0">Shown to prospects wherever your text uses your agency name.</p>
+        <div class="sc">
+            <aside class="sc-side" aria-label="Script sections">
+                <a href="#sc-who" class="on" data-spy><span class="n">1</span>Who you are</a>
+                <a href="#sc-messages" data-spy><span class="n">2</span>Messages</a>
+                <a href="#sc-answers" data-spy><span class="n">3</span>Approved answers</a>
+                <a href="#sc-booking" data-spy><span class="n">4</span>Booking</a>
+                <a href="#sc-timing" data-spy><span class="n">5</span>Reply timing</a>
+                <div class="seq">
+                    <input type="hidden" name="sequence_paused" id="sequence_paused" value="{{ old('sequence_paused', $sequencePaused) ? 1 : 0 }}">
+                    <label for="sequence_on"><input type="checkbox" class="swi" id="sequence_on" @checked(! old('sequence_paused', $sequencePaused)) aria-describedby="seq-help"><span id="seq-state">{{ old('sequence_paused', $sequencePaused) ? 'Sequence paused' : 'Sequence on' }}</span></label>
+                    <span class="mut" id="seq-help">STOP is always respected. Nothing is sent while paused; prospects stay where they are.</span>
                 </div>
-                <div class="col-md-6 mb-1">
-                    <label class="form-label" for="website_url">Website</label>
-                    <input type="text" id="website_url" name="website_url" class="form-control @error('website_url') is-invalid @enderror" value="{{ old('website_url', $websiteUrl) }}" placeholder="https://">
-                    @error('website_url')<div class="invalid-feedback">{{ $message }}</div>@enderror
-                </div>
-            </div>
-        </x-card>
+            </aside>
 
-        <x-card title="Message sequence" :padded="true" class="mb-2" data-role="sequence-editor">
-            <p class="text-caption">Your campaign's opening message starts the conversation. These messages follow, one at a time, in this order. Each is sent when the prospect replies, or after a wait if they have not replied yet. A reply to a timed message stops its timer.</p>
+            <div class="sc-main">
+                <p class="mut">Which number these texts come from is set in <a class="link" href="{{ route('customer.workspaces.prospecting.phone-messaging', $workspaceUid) }}">Phone &amp; texting</a>.</p>
 
-            <div class="form-check mb-1">
-                <input type="hidden" name="sequence_paused" value="0">
-                <input class="form-check-input" type="checkbox" id="sequence_paused" name="sequence_paused" value="1" @checked(old('sequence_paused', $sequencePaused))>
-                <label class="form-check-label" for="sequence_paused">Pause the sequence <span class="text-caption">(nothing is sent while paused; prospects stay where they are)</span></label>
-            </div>
-
-            <input type="hidden" name="sequence_steps_present" value="1">
-            <div data-role="steps"></div>
-
-            <div class="d-flex flex-wrap gap-1 mt-1">
-                <x-button type="button" variant="outline" size="sm" data-role="add-step">Add a message</x-button>
-                <x-button type="button" variant="outline" size="sm" data-role="load-starter">Use the three-message starter template</x-button>
-            </div>
-
-            <div class="mt-1">
-                <span class="text-caption">Insert a detail into the message you are editing:</span>
-                @foreach($tokens as $token => $label)
-                    <button type="button" class="btn btn-sm btn-outline-secondary ms-25" data-merge-insert="{{ $token }}" title="{{ $label }}">{{ $label }}</button>
-                @endforeach
-            </div>
-            <p class="text-caption mt-50 mb-0">Put your calendar link in whichever message suits your process: <code>@{{agency.calendar_link}}</code>.</p>
-        </x-card>
-
-        <x-card title="Approved answers" :padded="true" class="mb-2" data-role="faq-editor">
-            <p class="text-caption">When a prospect asks a question, Outreach answers from these approved answers first, then continues the sequence. It never invents facts. Add keywords to help match how prospects phrase the question; limit an answer to one campaign or niche if it only applies there.</p>
-            <input type="hidden" name="faq_entries_present" value="1">
-            <div data-role="faq"></div>
-            <x-button type="button" variant="outline" size="sm" data-role="add-faq" class="mt-1">Add a question and answer</x-button>
-
-            <div class="mt-2">
-                <label class="form-label" for="faq_fallback">When a question is not covered by an approved answer</label>
-                <select id="faq_fallback" name="faq_fallback" class="form-select">
-                    <option value="ai" @selected(old('faq_fallback', $faqFallback) === 'ai')>Let AI answer in one short sentence using only the facts on this page</option>
-                    <option value="continue" @selected(old('faq_fallback', $faqFallback) === 'continue')>Skip it and continue with the next message</option>
-                    <option value="handoff" @selected(old('faq_fallback', $faqFallback) === 'handoff')>Do not reply; leave it for me to answer</option>
-                </select>
-            </div>
-        </x-card>
-
-        <x-card title="Booking" :padded="true" class="mb-2">
-            <div class="mb-1">
-                <label class="form-label" for="booking_url">Calendar link</label>
-                <input type="text" id="booking_url" name="booking_url" class="form-control @error('booking_url') is-invalid @enderror" value="{{ old('booking_url', $bookingUrl) }}" placeholder="https://">
-                @error('booking_url')<div class="invalid-feedback">{{ $message }}</div>@enderror
-                <p class="text-caption mb-0">Any booking page you already use. Prospects get it in any message that contains the calendar link detail.</p>
-            </div>
-            @if($bookingTypes !== [])
-                <div class="mb-1 d-flex gap-2 align-items-end" data-role="booking-type-picker">
-                    <div>
-                        <label class="form-label" for="booking_type_choice">Use my Booking Type page</label>
-                        <select id="booking_type_choice" class="form-select">
-                            @foreach($bookingTypes as $type)
-                                <option value="{{ $type['url'] }}">{{ $type['name'] }}</option>
-                            @endforeach
-                        </select>
-                    </div>
-                    <x-button type="button" variant="outline" size="sm" data-role="use-booking-type">Use this page</x-button>
-                </div>
-            @endif
-            <fieldset class="mt-1">
-                <legend class="form-label">How prospects book</legend>
-                <div class="form-check">
-                    <input class="form-check-input" type="radio" id="mode_link" checked disabled>
-                    <label class="form-check-label" for="mode_link">Calendar link</label>
-                </div>
-                <div class="form-check">
-                    <input class="form-check-input" type="radio" id="mode_conv" disabled>
-                    <label class="form-check-label" for="mode_conv">Pick a time in the conversation <span class="text-caption">(coming later)</span></label>
-                </div>
-            </fieldset>
-        </x-card>
-
-        <x-card title="Reply timing" :padded="true" class="mb-2" data-role="reply-timing">
-            <p class="text-caption">Replies wait a random moment inside these windows so the conversation feels natural. Use 0 for an immediate reply. A STOP is always handled immediately, and timed follow-ups keep their own waits.</p>
-            @foreach(\App\Library\AgencyOutreach\OutreachReplyTiming::LABELS as $category => $label)
-                <div class="row align-items-center mb-1" data-reply-delay="{{ $category }}">
-                    <div class="col-md-6"><label class="form-label mb-0" for="reply_delay_{{ $category }}_min">{{ $label }}</label></div>
-                    <div class="col-md-3">
-                        <div class="input-group input-group-sm">
-                            <input type="number" min="0" max="{{ \App\Library\AgencyOutreach\OutreachReplyTiming::MAX_MINUTES }}" id="reply_delay_{{ $category }}_min" name="reply_delay[{{ $category }}][min]" class="form-control @error('reply_delay.'.$category.'.min') is-invalid @enderror" value="{{ old('reply_delay.'.$category.'.min', $replyDelay[$category]['min']) }}" aria-label="{{ $label }}: shortest wait in minutes">
-                            <span class="input-group-text">min</span>
+                <section class="sec" id="sc-who" aria-labelledby="h-who">
+                    <div class="sec-h"><span class="num">1</span><div><b id="h-who">Who you are</b><span class="d">Good wherever a message says your agency.</span></div></div>
+                    <div class="split" style="flex-wrap:wrap">
+                        <div class="fl" style="flex:1 1 240px">
+                            <label for="agency_name">Agency name</label>
+                            <input type="text" id="agency_name" name="agency_name" class="in @error('agency_name') bad @enderror" value="{{ old('agency_name', $agencyName) }}">
+                            @error('agency_name')<span class="err" role="alert">{{ $message }}</span>@enderror
+                            <span class="hint">Shown to prospects wherever your text uses your agency name.</span>
+                        </div>
+                        <div class="fl" style="flex:1 1 240px">
+                            <label for="website_url">Website</label>
+                            <input type="text" id="website_url" name="website_url" class="in @error('website_url') bad @enderror" value="{{ old('website_url', $websiteUrl) }}" placeholder="https://">
+                            @error('website_url')<span class="err" role="alert">{{ $message }}</span>@enderror
                         </div>
                     </div>
-                    <div class="col-md-3">
-                        <div class="input-group input-group-sm">
-                            <input type="number" min="0" max="{{ \App\Library\AgencyOutreach\OutreachReplyTiming::MAX_MINUTES }}" id="reply_delay_{{ $category }}_max" name="reply_delay[{{ $category }}][max]" class="form-control @error('reply_delay.'.$category.'.max') is-invalid @enderror" value="{{ old('reply_delay.'.$category.'.max', $replyDelay[$category]['max']) }}" aria-label="{{ $label }}: longest wait in minutes">
-                            <span class="input-group-text">max</span>
+                </section>
+
+                <section class="sec" id="sc-messages" data-role="sequence-editor" aria-labelledby="h-msg">
+                    <div class="sec-h"><span class="num">2</span><div><b id="h-msg">Messages</b><span class="d">Your campaign's opening message starts the conversation. These follow one at a time, in order — each when they reply, or after a wait. A reply stops the timer.</span></div></div>
+                    <input type="hidden" name="sequence_steps_present" value="1">
+                    <div data-role="steps"></div>
+                    <div class="addrow">
+                        <button type="button" class="btn out sm" data-role="add-step"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>Add message</button>
+                        <button type="button" class="btn out sm" data-role="load-starter">Use starter template</button>
+                    </div>
+                    <div class="toks" role="group" aria-label="Insert a detail into the message you are editing">
+                        <span>Insert into the message you're editing:</span>
+                        @foreach($tokens as $token => $label)
+                            <button type="button" class="tok" data-merge-insert="{{ $token }}" title="{{ $token }}">{{ $label }}</button>
+                        @endforeach
+                    </div>
+                    <span class="hint">Put your calendar link in whichever message suits your process: <code>@{{agency.calendar_link}}</code>.</span>
+                </section>
+
+                <section class="sec" id="sc-answers" data-role="faq-editor" aria-labelledby="h-faq">
+                    <div class="sec-h"><span class="num">3</span><div><b id="h-faq">Approved answers</b><span class="d">When a prospect asks something, we answer from these first — never invented facts. Add keywords to help match how they phrase it; limit an answer to one campaign or niche if it only applies there.</span></div></div>
+                    <input type="hidden" name="faq_entries_present" value="1">
+                    <div data-role="faq" style="display:flex;flex-direction:column;gap:10px"></div>
+                    <div class="addrow"><button type="button" class="btn out sm" data-role="add-faq"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>Add question &amp; answer</button></div>
+
+                    <div class="fallback" data-role="faq-fallback">
+                        <div class="tx"><b>Question not covered?</b><span>What happens when a question is not covered by an approved answer.</span></div>
+                        <div class="fl" style="flex:1 1 280px">
+                            <label class="sr" for="faq_fallback">When a question is not covered by an approved answer</label>
+                            <select id="faq_fallback" name="faq_fallback" class="in">
+                                <option value="ai" @selected(old('faq_fallback', $faqFallback) === 'ai')>Let AI answer in one short sentence using only the facts on this page</option>
+                                <option value="continue" @selected(old('faq_fallback', $faqFallback) === 'continue')>Skip it and continue with the next message</option>
+                                <option value="handoff" @selected(old('faq_fallback', $faqFallback) === 'handoff')>Do not reply; leave it for me to answer</option>
+                            </select>
+                        </div>
+                        <label style="display:flex;align-items:center;gap:10px;margin:0;font-size:13.5px;font-weight:600;flex:1 1 240px">
+                            <input type="hidden" name="ai_enabled" value="0">
+                            <input type="checkbox" class="swi" id="ai_enabled" name="ai_enabled" value="1" @checked(old('ai_enabled', $aiEnabled))>
+                            <span>Allow AI to answer a question your approved answers do not cover<span class="mut" style="display:block;font-weight:400">One short sentence from the facts on this page, then your next message follows. STOP is always respected.</span></span>
+                        </label>
+                    </div>
+                </section>
+
+                <section class="sec" id="sc-booking" aria-labelledby="h-book">
+                    <div class="sec-h"><span class="num">4</span><div><b id="h-book">Booking</b><span class="d">How prospects book a call.</span></div></div>
+                    <div class="bk">
+                        <div class="sel1">
+                            <div class="ttl"><span class="rd" aria-hidden="true"></span><b>Send a calendar link</b></div>
+                            <input type="text" id="booking_url" name="booking_url" class="in @error('booking_url') bad @enderror" value="{{ old('booking_url', $bookingUrl) }}" placeholder="https://" aria-label="Calendar link" style="font-size:13.5px">
+                            @error('booking_url')<span class="err" role="alert">{{ $message }}</span>@enderror
+                            <span class="mut">Any booking page you already use. Prospects get it in any message that contains the calendar link detail.</span>
+                            @if($bookingTypes !== [])
+                                <div data-role="booking-type-picker" style="display:flex;flex-wrap:wrap;gap:8px;align-items:center">
+                                    <label for="booking_type_choice" class="mut" style="margin:0">Or use your booking type:</label>
+                                    <select id="booking_type_choice" class="in" style="height:38px;width:auto;flex:1 1 160px;font-size:13.5px">
+                                        @foreach($bookingTypes as $type)<option value="{{ $type['url'] }}">{{ $type['name'] }}</option>@endforeach
+                                    </select>
+                                    <button type="button" class="btn out sm" data-role="use-booking-type">Use this page</button>
+                                </div>
+                            @endif
+                        </div>
+                        <div class="dis" aria-disabled="true">
+                            <div class="ttl"><span class="rd o" aria-hidden="true"></span><b>Pick a time in the chat</b><span class="pl n">Coming soon</span></div>
+                            <span class="mut">The AI offers times and books it for them.</span>
                         </div>
                     </div>
-                    @error('reply_delay.'.$category.'.max')<div class="col-12 text-danger small">{{ $message }}</div>@enderror
+                </section>
+
+                <section class="sec" id="sc-timing" data-role="reply-timing" aria-labelledby="h-timing">
+                    <div class="sec-h"><span class="num">5</span><div><b id="h-timing">Reply timing</b><span class="d">Replies wait a random moment inside these windows so it feels human. Use 0 for an immediate reply. STOP is always handled immediately, and timed follow-ups keep their own waits.</span></div></div>
+                    <div class="rt">
+                        @foreach(\App\Library\AgencyOutreach\OutreachReplyTiming::LABELS as $category => $label)
+                            <div data-reply-delay="{{ $category }}">
+                                <label class="lbl" for="reply_delay_{{ $category }}_min">{{ $label }}</label>
+                                <div class="pair">
+                                    <input type="number" min="0" max="{{ \App\Library\AgencyOutreach\OutreachReplyTiming::MAX_MINUTES }}" id="reply_delay_{{ $category }}_min" name="reply_delay[{{ $category }}][min]" value="{{ old('reply_delay.'.$category.'.min', $replyDelay[$category]['min']) }}" aria-label="{{ $label }}: shortest wait in minutes">
+                                    <span class="mut">–</span>
+                                    <input type="number" min="0" max="{{ \App\Library\AgencyOutreach\OutreachReplyTiming::MAX_MINUTES }}" id="reply_delay_{{ $category }}_max" name="reply_delay[{{ $category }}][max]" value="{{ old('reply_delay.'.$category.'.max', $replyDelay[$category]['max']) }}" aria-label="{{ $label }}: longest wait in minutes">
+                                    <small>min</small>
+                                </div>
+                                @error('reply_delay.'.$category.'.min')<span class="err" role="alert">{{ $message }}</span>@enderror
+                                @error('reply_delay.'.$category.'.max')<span class="err" role="alert">{{ $message }}</span>@enderror
+                            </div>
+                        @endforeach
+                    </div>
+                </section>
+
+                <div class="savebar" id="savebar" data-role="savebar">
+                    <span class="dot" aria-hidden="true"></span>
+                    <span class="st" role="status" aria-live="polite" id="savebar-text">All changes saved</span>
+                    <a href="{{ route('customer.workspaces.prospecting.settings.show', $workspaceUid) }}">Older agent setup</a>
+                    <button type="submit" class="btn pri">Save script</button>
                 </div>
-            @endforeach
-        </x-card>
-
-        <x-card title="AI help" :padded="true" class="mb-2">
-            <div class="form-check">
-                <input type="hidden" name="ai_enabled" value="0">
-                <input class="form-check-input" type="checkbox" id="ai_enabled" name="ai_enabled" value="1" @checked(old('ai_enabled', $aiEnabled))>
-                <label class="form-check-label" for="ai_enabled">Allow AI to answer a question your approved answers do not cover</label>
             </div>
-            <p class="text-caption mb-0">AI only writes one short sentence from the approved answers and facts on this page, then your next message follows. Prospects who reply STOP are never texted again, whatever you choose here.</p>
-        </x-card>
-
-        <x-button type="submit" variant="primary">Save script and settings</x-button>
-        <a class="ms-2 text-caption" href="{{ route('customer.workspaces.prospecting.settings.show', $workspaceUid) }}">Older agent setup</a>
+        </div>
     </form>
+</div>
 @endsection
 
 @section('page-script')
@@ -193,38 +194,47 @@
             // ---- steps -------------------------------------------------------------------------
             var steps = data.steps.slice();
 
+            var ICON = {
+                up: '<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 19V5M6 11l6-6 6 6"/></svg>',
+                down: '<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M6 13l6 6 6-6"/></svg>',
+                dup: '<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M4 16V6a2 2 0 0 1 2-2h10"/></svg>',
+                del: '<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 7h14M10 7V4h4v3M7 7l1 13h8l1-13"/></svg>'
+            };
+            function iconBtn(act, label, disabled) {
+                return '<button type="button" class="ib sm2" data-act="' + act + '" title="' + label + '" aria-label="' + label + '"' + (disabled ? ' disabled' : '') + '>' + ICON[act] + '</button>';
+            }
+
             function renderSteps() {
                 stepsEl.innerHTML = '';
                 steps.forEach(function (s, i) {
                     var n = 'sequence_steps[' + i + ']';
+                    var pill = i === 0 ? '<span class="pl n">First text</span>'
+                        : (s.advance_on === 'time' ? '<span class="pl a">After ' + esc(s.delay_hours || 24) + 'h wait</span>' : '<span class="pl b">After reply</span>');
                     var card = el(
-                        '<div class="border rounded p-1 mb-1" data-step-card="' + esc(s.id) + '">' +
+                        '<div class="stp' + (s.enabled ? '' : ' off') + '" data-step-card="' + esc(s.id) + '">' +
                         '<input type="hidden" name="' + n + '[id]" value="' + esc(s.id) + '">' +
-                        '<div class="d-flex flex-wrap justify-content-between align-items-center mb-50">' +
-                        '<strong>Message ' + (i + 1) + '</strong>' +
-                        '<span>' +
-                        '<button type="button" class="btn btn-sm btn-outline-secondary" data-act="up"' + (i === 0 ? ' disabled' : '') + '>Move up</button> ' +
-                        '<button type="button" class="btn btn-sm btn-outline-secondary" data-act="down"' + (i === steps.length - 1 ? ' disabled' : '') + '>Move down</button> ' +
-                        '<button type="button" class="btn btn-sm btn-outline-secondary" data-act="dup">Duplicate</button> ' +
-                        '<button type="button" class="btn btn-sm btn-outline-danger" data-act="del">Delete</button>' +
-                        '</span></div>' +
-                        '<textarea class="form-control" rows="3" name="' + n + '[body]" data-preview-source="' + esc(s.id) + '">' + esc(s.body) + '</textarea>' +
-                        '<div class="row mt-50">' +
-                        '<div class="col-md-5"><label class="form-label">Sent</label>' +
-                        '<select class="form-select" name="' + n + '[advance_on]" data-advance>' +
+                        '<div class="rail"><span class="c">' + (i + 1) + '</span><i></i></div>' +
+                        '<div class="body">' +
+                        '<div class="hd"><b>Message ' + (i + 1) + '</b>' + pill +
+                        '<input type="hidden" name="' + n + '[enabled]" value="0">' +
+                        '<input class="swi" type="checkbox" name="' + n + '[enabled]" value="1"' + (s.enabled ? ' checked' : '') + ' aria-label="Message ' + (i + 1) + ' enabled" title="Enabled">' +
+                        iconBtn('up', 'Move message ' + (i + 1) + ' up', i === 0) +
+                        iconBtn('down', 'Move message ' + (i + 1) + ' down', i === steps.length - 1) +
+                        iconBtn('dup', 'Duplicate message ' + (i + 1)) +
+                        iconBtn('del', 'Delete message ' + (i + 1)) +
+                        '</div>' +
+                        '<textarea class="in" rows="3" name="' + n + '[body]" data-preview-source="' + esc(s.id) + '" aria-label="Message ' + (i + 1) + ' text">' + esc(s.body) + '</textarea>' +
+                        '<div class="opts">' +
+                        '<div class="fl"><label>Sent</label>' +
+                        '<select class="in" style="height:42px" name="' + n + '[advance_on]" data-advance>' +
                         '<option value="reply"' + (s.advance_on === 'reply' ? ' selected' : '') + '>When the prospect replies</option>' +
                         '<option value="time"' + (s.advance_on === 'time' ? ' selected' : '') + '>After a wait, if they have not replied</option>' +
                         '</select></div>' +
-                        '<div class="col-md-4"' + (s.advance_on === 'time' ? '' : ' hidden') + ' data-delay><label class="form-label">Wait (hours)</label>' +
-                        '<input type="number" min="1" max="720" class="form-control" name="' + n + '[delay_hours]" value="' + esc(s.delay_hours || 24) + '"></div>' +
-                        '<div class="col-md-3 d-flex align-items-end"><div class="form-check">' +
-                        '<input type="hidden" name="' + n + '[enabled]" value="0">' +
-                        '<input class="form-check-input" type="checkbox" name="' + n + '[enabled]" value="1"' + (s.enabled ? ' checked' : '') + '>' +
-                        '<label class="form-check-label">Enabled</label></div></div>' +
+                        '<div class="fl" style="flex:0 1 140px"' + (s.advance_on === 'time' ? '' : ' hidden') + ' data-delay><label>Wait (hours)</label>' +
+                        '<input type="number" min="1" max="720" class="in" style="height:42px" name="' + n + '[delay_hours]" value="' + esc(s.delay_hours || 24) + '"></div>' +
                         '</div>' +
-                        '<p class="text-caption mt-50 mb-25">What a prospect will see:</p>' +
-                        '<div class="border rounded p-50" data-preview-target="' + esc(s.id) + '" aria-live="polite">&nbsp;</div>' +
-                        '</div>'
+                        '<div class="prev" data-preview-target="' + esc(s.id) + '" aria-live="polite" aria-label="What a prospect will see">&nbsp;</div>' +
+                        '</div></div>'
                     );
                     stepsEl.appendChild(card);
                 });
@@ -260,9 +270,12 @@
             });
 
             stepsEl.addEventListener('change', function (e) {
+                var card = e.target.closest('[data-step-card]');
+                if (!card) { return; }
                 if (e.target.matches('[data-advance]')) {
-                    e.target.closest('[data-step-card]').querySelector('[data-delay]').hidden = e.target.value !== 'time';
+                    card.querySelector('[data-delay]').hidden = e.target.value !== 'time';
                 }
+                if (e.target.matches('input.swi')) { card.classList.toggle('off', !e.target.checked); }
             });
 
             form.querySelector('[data-role="add-step"]').addEventListener('click', function () {
@@ -284,29 +297,37 @@
                 faqEl.innerHTML = '';
                 faq.forEach(function (q, i) {
                     var n = 'faq_entries[' + i + ']';
+                    var ids = q.campaign_ids || [];
                     var camp = data.campaigns.map(function (c) {
-                        var on = (q.campaign_ids || []).indexOf(c.id) !== -1;
-                        return '<label class="me-1"><input type="checkbox" name="' + n + '[campaign_ids][]" value="' + c.id + '"' + (on ? ' checked' : '') + '> ' + esc(c.name) + '</label>';
+                        var on = ids.indexOf(c.id) !== -1;
+                        return '<label style="display:inline-flex;align-items:center;gap:6px;margin:0 12px 4px 0;font-size:13.5px;font-weight:400"><input type="checkbox" name="' + n + '[campaign_ids][]" value="' + c.id + '"' + (on ? ' checked' : '') + '> ' + esc(c.name) + '</label>';
                     }).join('');
+                    var scope = ids.length ? ids.length + (ids.length === 1 ? ' campaign' : ' campaigns') : 'All campaigns';
+                    var open = (!q.question && !q.answer) || q._open;
                     faqEl.appendChild(el(
-                        '<div class="border rounded p-1 mb-1" data-faq-card="' + esc(q.id) + '">' +
+                        '<details class="qa" data-faq-card="' + esc(q.id) + '"' + (open ? ' open' : '') + '>' +
+                        '<summary><span class="q" aria-hidden="true">?</span>' +
+                        '<span class="t"><b>' + esc(q.question || 'New question') + '</b><span>' + esc(q.answer || 'Write the approved answer') + '</span></span>' +
+                        '<span class="pl n">' + esc(scope) + '</span>' +
+                        '<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 10l5 5 5-5"/></svg></summary>' +
+                        '<div class="qb">' +
                         '<input type="hidden" name="' + n + '[id]" value="' + esc(q.id) + '">' +
                         '<input type="hidden" name="' + n + '[intent]" value="' + esc(q.intent || '') + '">' +
-                        '<div class="d-flex justify-content-end mb-50"><span>' +
-                        '<button type="button" class="btn btn-sm btn-outline-secondary" data-act="up"' + (i === 0 ? ' disabled' : '') + '>Move up</button> ' +
-                        '<button type="button" class="btn btn-sm btn-outline-secondary" data-act="down"' + (i === faq.length - 1 ? ' disabled' : '') + '>Move down</button> ' +
-                        '<button type="button" class="btn btn-sm btn-outline-secondary" data-act="dup">Duplicate</button> ' +
-                        '<button type="button" class="btn btn-sm btn-outline-danger" data-act="del">Delete</button></span></div>' +
-                        '<label class="form-label">Question</label>' +
-                        '<input type="text" class="form-control mb-50" name="' + n + '[question]" value="' + esc(q.question) + '">' +
-                        '<label class="form-label">Approved answer</label>' +
-                        '<textarea class="form-control mb-50" rows="2" name="' + n + '[answer]">' + esc(q.answer) + '</textarea>' +
-                        '<label class="form-label">Keywords that mean this question <span class="text-caption">(comma separated, optional)</span></label>' +
-                        '<input type="text" class="form-control mb-50" name="' + n + '[keywords]" value="' + esc(q.keywords) + '">' +
-                        '<div class="row"><div class="col-md-6"><label class="form-label">Only for this niche <span class="text-caption">(optional)</span></label>' +
-                        '<input type="text" class="form-control" name="' + n + '[niche]" value="' + esc(q.niche || '') + '"></div>' +
-                        (data.campaigns.length ? '<div class="col-md-6"><label class="form-label">Only for these campaigns <span class="text-caption">(none = all)</span></label><div>' + camp + '</div></div>' : '') +
-                        '</div></div>'
+                        '<div class="fl"><label>Question</label>' +
+                        '<input type="text" class="in" style="font-weight:600" name="' + n + '[question]" value="' + esc(q.question) + '"></div>' +
+                        '<div class="fl"><label>Answer</label>' +
+                        '<textarea class="in" rows="2" name="' + n + '[answer]">' + esc(q.answer) + '</textarea></div>' +
+                        '<div class="row3">' +
+                        '<div class="fl" style="flex:2 1 260px"><label>Also matches <span>(comma separated, optional)</span></label>' +
+                        '<input type="text" class="in" name="' + n + '[keywords]" value="' + esc(q.keywords) + '" placeholder="price, cost, how much"></div>' +
+                        '<div class="fl" style="flex:1 1 160px"><label>Niche <span>(optional)</span></label>' +
+                        '<input type="text" class="in" name="' + n + '[niche]" value="' + esc(q.niche || '') + '" placeholder="e.g. dog training"></div>' +
+                        '</div>' +
+                        (data.campaigns.length ? '<div class="fl"><label>Use in <span>(none ticked = all campaigns)</span></label><div>' + camp + '</div></div>' : '') +
+                        '<div class="acts2">' +
+                        iconBtn('up', 'Move answer up', i === 0) + iconBtn('down', 'Move answer down', i === faq.length - 1) +
+                        iconBtn('dup', 'Duplicate answer') + iconBtn('del', 'Delete answer') +
+                        '</div></div></details>'
                     ));
                 });
             }
@@ -318,7 +339,8 @@
                     out.push({
                         id: card.getAttribute('data-faq-card'), question: get('question'), answer: get('answer'),
                         keywords: get('keywords'), niche: get('niche'), intent: get('intent'),
-                        campaign_ids: Array.prototype.map.call(card.querySelectorAll('input[type="checkbox"]:checked'), function (c) { return parseInt(c.value, 10); })
+                        campaign_ids: Array.prototype.map.call(card.querySelectorAll('input[type="checkbox"]:checked'), function (c) { return parseInt(c.value, 10); }),
+                        _open: card.open
                     });
                 });
                 faq = out;
@@ -339,7 +361,7 @@
 
             form.querySelector('[data-role="add-faq"]').addEventListener('click', function () {
                 syncFaq();
-                faq.push({id: uid('q'), question: '', answer: '', keywords: '', intent: '', niche: '', campaign_ids: []});
+                faq.push({id: uid('q'), question: '', answer: '', keywords: '', intent: '', niche: '', campaign_ids: [], _open: true});
                 renderFaq();
             });
 
@@ -383,6 +405,43 @@
                     if (choice) { document.getElementById('booking_url').value = choice.value; }
                 }
             });
+
+            // ---- unsaved changes ------------------------------------------------------------------
+            var bar = document.getElementById('savebar'), barText = document.getElementById('savebar-text');
+            var dirty = false, submitting = false;
+            function setDirty(v) {
+                dirty = v;
+                bar.classList.toggle('dirty', v);
+                barText.textContent = v ? 'Unsaved changes' : 'All changes saved';
+            }
+            form.addEventListener('input', function (e) { if (e.target.id !== 'sequence_on') { setDirty(true); } });
+            form.addEventListener('change', function () { setDirty(true); });
+            form.addEventListener('click', function (e) { if (e.target.closest('[data-act],[data-role="add-step"],[data-role="add-faq"],[data-role="load-starter"],[data-merge-insert],[data-role="use-booking-type"]')) { setDirty(true); } });
+            form.addEventListener('submit', function () { submitting = true; });
+            window.addEventListener('beforeunload', function (e) { if (dirty && !submitting) { e.preventDefault(); e.returnValue = ''; } });
+
+            // sequence on/off switch drives the stored "paused" flag
+            var seqOn = document.getElementById('sequence_on'), seqPaused = document.getElementById('sequence_paused'), seqState = document.getElementById('seq-state');
+            if (seqOn) {
+                seqOn.addEventListener('change', function () {
+                    seqPaused.value = seqOn.checked ? '0' : '1';
+                    seqState.textContent = seqOn.checked ? 'Sequence on' : 'Sequence paused';
+                    setDirty(true);
+                });
+            }
+
+            // section navigation highlight
+            var links = Array.prototype.slice.call(document.querySelectorAll('[data-spy]'));
+            if ('IntersectionObserver' in window) {
+                var io = new IntersectionObserver(function (entries) {
+                    entries.forEach(function (en) {
+                        if (en.isIntersecting) {
+                            links.forEach(function (l) { l.classList.toggle('on', l.getAttribute('href') === '#' + en.target.id); });
+                        }
+                    });
+                }, {rootMargin: '-20% 0px -65% 0px'});
+                links.forEach(function (l) { var t = document.querySelector(l.getAttribute('href')); if (t) { io.observe(t); } });
+            }
 
             renderSteps();
             renderFaq();
