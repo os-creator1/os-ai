@@ -91,9 +91,9 @@
                     <label for="phone">Phone</label>
                     <div class="phone">
                         <select name="country_code" aria-label="Country code">
-                            @foreach($codes as $code => $label)<option value="{{ $code }}" @selected(old('country_code', '+1') === $code)>{{ $code }} {{ $label }}</option>@endforeach
+                            @foreach($codes as $code => $label)<option value="{{ $code }}" title="{{ $label }}" @selected(old('country_code', '+1') === $code)>{{ $code }}</option>@endforeach
                         </select>
-                        <input type="tel" id="phone" name="phone" class="in @error('phone') bad @enderror" placeholder="(555) 123-4567" value="{{ old('phone') }}" inputmode="tel" autocomplete="off" @error('phone') aria-invalid="true" aria-describedby="phone-err" @enderror>
+                        <input type="tel" id="phone" name="phone" class="in @error('phone') bad @enderror" placeholder="(555) 123-4567" value="{{ old('phone') }}" inputmode="tel" autocomplete="off" autofocus @error('phone') aria-invalid="true" aria-describedby="phone-err" @enderror>
                     </div>
                     @error('phone')<span class="err" id="phone-err" role="alert">{{ $message }}</span>@enderror
                     @error('country_code')<span class="err" role="alert">{{ $message }}</span>@enderror

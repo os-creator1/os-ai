@@ -12,7 +12,7 @@ html[data-layout="dark-layout"] .og,.dark-layout .og{--og-bg:#17191F;--og-card:#
 .og .ic{width:16px;height:16px;flex:none;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
 .og .head{display:flex;flex-wrap:wrap;align-items:flex-end;gap:12px}
 .og .head>div{flex:1 1 320px}
-.og .head h1{font-size:28px;font-weight:800;letter-spacing:-.02em;color:var(--og-ink)}
+.og .head h1,.og .head h4{font-size:28px;font-weight:800;letter-spacing:-.02em;color:var(--og-ink);line-height:1.2;margin:0}
 .og .head p{margin-top:2px;font-size:14.5px;color:var(--og-neutral)}
 .og .tabs{display:flex;gap:24px;border-bottom:1px solid var(--og-line);flex-wrap:wrap}
 .og .tab{display:inline-flex;align-items:center;gap:8px;min-height:44px;font-size:14.5px;font-weight:500;color:var(--og-mute);border-bottom:2px solid transparent;margin-bottom:-1px}
@@ -127,6 +127,7 @@ html[data-layout="dark-layout"] .og,.dark-layout .og{--og-bg:#17191F;--og-card:#
  .og .row.h{display:none}
  .og .row.rsp{grid-template-columns:minmax(0,1fr) auto!important;gap:6px 10px}
  .og .row.rsp>*{grid-column:auto}
+ .og .row.rsp>[data-l]::before{content:attr(data-l) ": ";color:var(--og-mute2);font-size:12px}
  .og .toast{right:16px;left:16px}
  .og dialog.modal{margin-top:24px}
  .og .drawer{max-width:none}

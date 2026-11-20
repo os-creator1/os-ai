@@ -21,6 +21,7 @@
     $stageLabel = fn ($s) => \App\Library\AgencyOutreach\OutreachProspectStatusPresenter::stageLabel($s);
     $ini = fn ($name) => \Illuminate\Support\Str::upper(\Illuminate\Support\Str::substr(preg_replace('/[^\p{L}\p{N} ]/u', '', (string) $name) ?: '?', 0, 2));
 @endphp
+<link rel="stylesheet" href="{{ asset('css/outreach/outreach.css') }}?v=1">
 <div class="og page">
     <a class="back" href="{{ $campaignsUrl }}"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M19 12H5M11 6l-6 6 6 6"/></svg>Campaigns</a>
 
@@ -347,7 +348,7 @@
             @endif
 
             @if($members->isNotEmpty())
-                <div data-role="enrolled-prospects" style="display:flex;flex-direction:column">
+                <div data-role="enrolled-prospects" style="display:flex;flex-direction:column;max-height:340px;overflow:auto">
                     <span class="eyebrow" style="margin:4px 0 6px">Enrolled prospects</span>
                     @foreach($members as $member)
                         <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;padding:8px 0;border-top:1px solid var(--og-line3)">

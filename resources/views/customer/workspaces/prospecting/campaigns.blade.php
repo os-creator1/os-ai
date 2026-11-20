@@ -54,10 +54,10 @@
                                 <span class="pl {{ $tone($st) }}">{{ ucfirst($st) }}</span>
                                 @if($summary['paused_for_funds'])<span class="pl a">Paused — add funds</span>@endif
                             </span>
-                            <span>{{ $summary['prospects'] }}</span>
-                            <span>{{ $summary['replies'] }}</span>
-                            <span>{{ $summary['booked'] }}</span>
-                            <span class="mut">{{ $campaign->created_at?->format('M j') }}</span>
+                            <span data-l="Prospects">{{ $summary['prospects'] }}</span>
+                            <span data-l="Replies">{{ $summary['replies'] }}</span>
+                            <span data-l="Calls">{{ $summary['booked'] }}</span>
+                            <span class="mut" data-l="Created">{{ $campaign->created_at?->format('M j') }}</span>
                             <details class="menu">
                                 <summary class="ib" aria-label="Actions for {{ $campaign->name }}"><svg class="ic" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.3"/><circle cx="12" cy="12" r="1.3"/><circle cx="19" cy="12" r="1.3"/></svg></summary>
                                 <div class="pop" role="menu">
