@@ -88,6 +88,18 @@ final class OutreachSendPipeline
             // A newer reply to the same conversation replaces an older one still WAITING for its
             // send slot: that older text is stale and must neither block nor follow this one.
             if ($plan->purpose === AgencyProspectMessage::PURPOSE_AI_REPLY) {
+                // A real inbound starts the conversation even if the cold
+                // opener was rate/cap deferred. Close that unsent opener now
+                // rather than blocking the answer with send_in_flight.
+                AgencyProspectMessage::query()
+                    ->where('campaign_member_id', $member->id)
+                    ->where('direction', AgencyProspectMessage::DIRECTION_OUTBOUND)
+                    ->where('purpose', AgencyProspectMessage::PURPOSE_INITIAL)
+                    ->where('status', AgencyProspectMessage::STATUS_PAUSED)
+                    ->whereIn('failure_reason', [OutreachSendBudget::REASON_RATE, OutreachSendBudget::REASON_OPENER_CAP])
+                    ->update(['status' => AgencyProspectMessage::STATUS_FAILED,
+                        'failure_reason' => 'superseded_by_inbound', 'deferred_until' => null]);
+
                 // An inbound cancels a pending timed follow-up. That follow-up
                 // may be PAUSED for rate limits and must not block this reply.
                 if ($member->followup_cancelled_at !== null) {
@@ -197,6 +209,18 @@ final class OutreachSendPipeline
                 || $row->status !== AgencyProspectMessage::STATUS_PAUSED
                 || (int) $row->campaign_member_id !== (int) $member->id) {
                 return 'not_paused';
+            }
+
+            if ($row->purpose === AgencyProspectMessage::PURPOSE_INITIAL
+                && in_array($row->failure_reason, [OutreachSendBudget::REASON_RATE, OutreachSendBudget::REASON_OPENER_CAP], true)
+                && $member->last_inbound_at !== null
+                && $member->last_inbound_at->greaterThanOrEqualTo($row->created_at)) {
+                // The reply job may still be waiting for its own due time.
+                // Never deliver the cold opener after a prospect responded.
+                $row->update(['status' => AgencyProspectMessage::STATUS_FAILED,
+                    'failure_reason' => 'superseded_by_inbound', 'deferred_until' => null]);
+
+                return 'superseded_by_inbound';
             }
 
             if ($row->purpose === AgencyProspectMessage::PURPOSE_FOLLOWUP) {

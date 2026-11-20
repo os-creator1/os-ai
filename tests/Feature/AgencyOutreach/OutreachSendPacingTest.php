@@ -517,6 +517,45 @@ class OutreachSendPacingTest extends TestCase
         $this->assertCount(2, $this->sentBodies());
     }
 
+
+    public function test_customer_inbound_supersedes_rate_deferred_opener_before_retry(): void
+    {
+        [$workspace, $business, $campaign] = $this->agencyWithCampaign();
+        $m1 = $this->member($workspace, $campaign, self::P1);
+        $m2 = $this->member($workspace, $campaign, self::P2);
+
+        $this->opener($m1);  // uses the sender's first slot
+        $this->opener($m2);  // its unsent opener is deferred
+        $opener = $this->outboundRow($m2);
+        $this->assertSame('paused', $opener->status);
+
+        // Their message is more important than a now-stale cold opener.
+        $this->inbound($business, 'sounds good', self::P2);
+        $inbound = AgencyProspectMessage::query()
+            ->where('campaign_member_id', $m2->id)
+            ->where('direction', AgencyProspectMessage::DIRECTION_INBOUND)
+            ->orderByDesc('id')->firstOrFail();
+
+        app()->call([new OutreachRespondJob($m2->id, $inbound->id), 'handle']);
+        $this->assertSame('failed', $opener->fresh()->status);
+        $this->assertSame('superseded_by_inbound', $opener->fresh()->failure_reason);
+
+        $this->travel(10)->seconds();
+        $this->runDeferred($opener);
+        $this->assertSame('failed', $opener->fresh()->status);
+        $this->assertNull($opener->fresh()->sent_at);
+        $this->assertSame(1, AgencyProspectMessage::query()
+            ->where('campaign_member_id', $m2->id)->where('purpose', AgencyProspectMessage::PURPOSE_AI_REPLY)->count(),
+            'The real reply was claimed, rather than silenced by the opener.');
+
+        $reply = $this->outboundRow($m2);
+        if ($reply->status === AgencyProspectMessage::STATUS_PAUSED) {
+            $this->runDeferred($reply);
+        }
+        $this->assertSame('sent', $reply->fresh()->status);
+        $this->assertCount(2, $this->sentBodies(), 'No third, stale cold opener is ever sent.');
+    }
+
     public function test_pacing_is_off_on_a_synchronous_queue_so_nothing_is_stuck(): void
     {
         config(['queue.default' => 'sync']);
