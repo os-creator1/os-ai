@@ -48,7 +48,8 @@ final class WebsiteDesign
 
     public function toneFor(string $sectionType): string
     {
-        return $this->tones[$sectionType] ?? 'light';
+        // A trust strip is a slim band under the hero: the template's tint tone sets it apart from both the hero and the sections below.
+        return $this->tones[$sectionType] ?? ($sectionType === 'trust_strip' ? 'tint' : 'light');
     }
 
     /**
@@ -71,7 +72,18 @@ final class WebsiteDesign
 
         usort($indexed, fn (array $a, array $b) => [$a[0], $a[1]] <=> [$b[0], $b[1]]);
 
-        return array_map(fn (array $row) => $row[2], $indexed);
+        $ordered = array_map(fn (array $row) => $row[2], $indexed);
+
+        // The trust strip belongs directly under the hero, whatever order the template gives the other sections.
+        $stripAt = array_search('trust_strip', array_column($ordered, 'type'), true);
+
+        if ($stripAt !== false) {
+            $strip = array_splice($ordered, (int) $stripAt, 1)[0];
+            $heroAt = array_search('hero', array_column($ordered, 'type'), true);
+            array_splice($ordered, $heroAt === false ? (int) $stripAt : (int) $heroAt + 1, 0, [$strip]);
+        }
+
+        return $ordered;
     }
 
     /**

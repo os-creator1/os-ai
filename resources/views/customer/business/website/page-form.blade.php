@@ -248,6 +248,13 @@
             {key: 'show_email', label: 'Show email', type: 'checkbox'},
             {key: 'show_address', label: 'Show address', type: 'checkbox'}
         ],
+        // Added by the generator under the homepage hero from the facts you confirmed (not offered as a new block): editable and removable here.
+        trust_strip: [
+            {key: 'facts.0', label: 'Fact 1', type: 'text'},
+            {key: 'facts.1', label: 'Fact 2', type: 'text'},
+            {key: 'facts.2', label: 'Fact 3 (optional)', type: 'text'},
+            {key: 'facts.3', label: 'Fact 4 (optional)', type: 'text'}
+        ],
         // Added by the generator on service/event pages (not offered as a new block): editable and removable here.
         inquiry_panel: [
             {key: 'heading', label: 'Heading', type: 'text'},

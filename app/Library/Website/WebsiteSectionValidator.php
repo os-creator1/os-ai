@@ -142,6 +142,10 @@ final class WebsiteSectionValidator
                 'show_email' => 'required|boolean',
                 'show_address' => 'required|boolean',
             ],
+            WebsiteSectionType::TrustStrip => [
+                'facts' => 'required|array|min:1|max:4',
+                'facts.*' => 'nullable|string|max:70',
+            ],
             WebsiteSectionType::InquiryPanel => [
                 'heading' => 'required|string|max:120',
                 'body' => 'nullable|string|max:300',

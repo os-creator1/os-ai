@@ -110,6 +110,19 @@ class NicheSafeUrlsTest extends TestCase
         $this->assertStringNotContainsString('photo-booth-contact', $blog);
     }
 
+    public function test_another_niche_gets_the_same_trust_strip_from_its_own_confirmed_facts(): void
+    {
+        $facts = ['Lessons are one to one', 'Every plan starts with a free assessment', 'Weekend and evening times', 'Progress notes after every session'];
+        [$website] = $this->publishedSite('tutoring', true, true, true, $facts);
+        $home = $this->get($this->url('/'))->assertOk()->getContent();
+
+        $this->assertSame(1, substr_count($home, 'data-testid="trust-strip"'));
+        preg_match('#<section\b[^>]*data-testid="trust-strip".*?</section>#s', $home, $strip);
+        preg_match_all('#<li>(.*?)</li>#s', $strip[0], $items);
+        $this->assertSame($facts, array_map('trim', $items[1]), 'the tutoring studio\'s own confirmed facts, verbatim');
+        $this->assertStringNotContainsString('photo', mb_strtolower($strip[0]), 'nothing photo-booth in a tutoring strip');
+    }
+
     public function test_the_vocabulary_is_chosen_by_template_niche_first_then_by_the_businesss_own_niche(): void
     {
         [, $booth] = $this->entitledTenant(['name' => 'Harbor Booths', 'industry' => 'photo_booth_service']);

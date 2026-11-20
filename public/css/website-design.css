@@ -693,3 +693,13 @@ body.wd h1, body.wd h2, body.wd h3, body.wd h4 { font-family: var(--wd-font-head
 .wd-inquiry-facts { list-style: none; margin: 0.15rem 0 0; padding: 0.85rem 0 0; border-top: 1px solid var(--wd-t-line); display: grid; gap: 0.4rem; font-size: 0.9rem; color: var(--wd-t-muted); }
 .wd-inquiry-facts li::before { content: "\2713"; color: var(--wd-a); font-weight: 700; margin-right: 0.5rem; }
 .wd-band-inquiry_panel .wd-inquiry-panel { max-width: 34rem; margin: 0 auto; }
+
+/* ---- Slice 6B: homepage trust strip ----------------------------------------------------------------------------------------------
+   A slim band directly under the hero: two to four short owner-confirmed advantages. Items flow into as many columns as fit (a 2 x 2 block on a
+   phone, a single row on a wide screen); colours come from the template's tint tone, so every template and niche styles it itself. */
+.wd-band-trust_strip > .wd-container { padding-top: clamp(1rem, 2.4vw, 1.5rem); padding-bottom: clamp(1rem, 2.4vw, 1.5rem); }
+.wd-trust-list { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr)); gap: 0.6rem 1.5rem; }
+.wd-trust-list li { display: flex; align-items: flex-start; gap: 0.55rem; min-width: 0; font-size: 0.9rem; font-weight: 700; line-height: 1.35; color: var(--wd-t-ink); overflow-wrap: break-word; }
+.wd-trust-list li::before { content: "\2713"; flex: none; color: var(--wd-a); font-weight: 800; }
+/* A balanced 2 x 2 on a tablet instead of three across with one orphan; one column on a phone, one row of up to four on a wide screen. */
+@media (min-width: 480px) and (max-width: 959px) { .wd-trust-list { grid-template-columns: repeat(2, minmax(0, 1fr)); } }

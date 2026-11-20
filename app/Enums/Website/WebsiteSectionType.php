@@ -36,6 +36,13 @@ enum WebsiteSectionType: string
      */
     case InquiryPanel = 'inquiry_panel';
 
+    /**
+     * Slice 6B — the compact homepage trust strip directly under the hero: two to four short, OWNER-CONFIRMED business advantages, verbatim.
+     * Chosen deterministically (GuidedGeneration\TrustFacts) and stamped by MediaBindingService; never AI-authored, never invented. The facts
+     * live in the page itself, so a published page is frozen by the revision like any other section.
+     */
+    case TrustStrip = 'trust_strip';
+
     /** Website Builder redesign — the wizard's single optional editorial/story section. */
     case CustomSection = 'custom_section';
 }

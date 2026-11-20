@@ -21,7 +21,8 @@ use Illuminate\Support\Str;
 trait PublishesGeneratedSites
 {
     /** A published, generated site: [Website, array<string, string> page slug => page_type]. */
-    private function publishedSite(string $niche = 'booth', bool $withAreas = true, bool $withLocation = true, bool $publish = true): array
+    /** @param array<int, string> $differentiators owner-CONFIRMED facts (the knowledge profile's differentiators), confirmed before generation */
+    private function publishedSite(string $niche = 'booth', bool $withAreas = true, bool $withLocation = true, bool $publish = true, array $differentiators = []): array
     {
         [$customer, $business] = $this->entitledTenant(['name' => $niche === 'booth' ? 'Harbor Booths' : 'Petal Tutoring', 'industry' => $niche === 'booth' ? 'photo_booth_service' : 'professional_services']);
         $names = $niche === 'booth' ? ['Magic Mirror Photo Booth', 'Open-Air Photo Booth', '360 Video Booth'] : ['SAT Preparation', 'Algebra Tutoring', 'Reading Support'];
@@ -36,6 +37,10 @@ trait PublishesGeneratedSites
         \Illuminate\Support\Facades\DB::table('businesses')->where('id', $business->id)->update(['phone' => '6015550142', 'email' => 'hello@harborbooths.example']);
 
         // The owner has already let search engines in, so generated pages are born indexable.
+        if ($differentiators !== []) {
+            app(\App\Library\Business\BusinessKnowledgeProfileManager::class)->updateFields($business->fresh(), ['differentiators' => $differentiators], 'manual_edit', (int) $customer->user_id, true);
+        }
+
         $website = $this->createWebsite($business->fresh(), ['name' => 'Harbor', 'indexing_released_at' => now()]);
         $template = WebsiteTemplate::findActiveOrFail('photo_booth_modern');
         $this->fakeProvider();

@@ -162,16 +162,51 @@ final class MediaBindingService
     }
 
     /**
+     * The homepage trust strip: the facts TrustFacts chose (two to four, owner-confirmed, verbatim) in one section directly under the hero.
+     * Nothing is stamped when fewer than two suitable facts exist, or when the home page already has a strip.
+     *
+     * @param  array<int, array<string, mixed>>  $pages
+     * @param  array<int, string>  $facts
+     * @return array<int, array<string, mixed>>
+     */
+    private function stampTrustStrip(array $pages, array $facts): array
+    {
+        if (count($facts) < TrustFacts::MIN) {
+            return $pages;
+        }
+
+        foreach ($pages as $index => $page) {
+            if (empty($page['is_home'])) {
+                continue;
+            }
+
+            $sections = (array) ($page['sections'] ?? []);
+
+            if (collect($sections)->contains(fn ($section) => ($section['type'] ?? null) === 'trust_strip')) {
+                return $pages;
+            }
+
+            $heroAt = collect($sections)->search(fn ($section) => ($section['type'] ?? null) === 'hero');
+            array_splice($sections, $heroAt === false ? 0 : $heroAt + 1, 0, [['type' => 'trust_strip', 'data' => ['facts' => array_values($facts)]]]);
+            $pages[$index]['sections'] = $sections;
+
+            return $pages;
+        }
+
+        return $pages;
+    }
+
+    /**
      * The inquiry panel of a service or event page: ONE service-specific call to action to the contact page (which carries the installed
      * Forms-module lead form, or the plain contact block), the business's verified phone, and up to three CONFIRMED owner facts
      * (the questionnaire's own differentiators — never generated). The wording is the niche's own contact wording. Nothing about
      * availability or price is stated. A page that already has a panel is left alone.
      *
      * @param  array<int, array<string, mixed>>  $pages
-     * @param  ?array<string, mixed>  $contentFacts  SeoContentFacts::build()
+     * @param  array<int, string>  $panelFacts  confirmed facts available to the panels (TrustFacts::select()['rest'])
      * @return array<int, array<string, mixed>>
      */
-    private function stampInquiryPanels(Website $website, array $pages, ?array $contentFacts): array
+    private function stampInquiryPanels(Website $website, array $pages, array $panelFacts): array
     {
         $contact = collect($pages)->firstWhere('page_type', 'contact');
         $contactSlug = is_array($contact) ? (string) ($contact['slug'] ?? '') : '';
@@ -180,10 +215,8 @@ final class MediaBindingService
             return $pages;
         }
 
-        $facts = array_slice(array_values(array_filter(array_map(
-            fn ($fact) => is_string($fact) ? \Illuminate\Support\Str::limit(trim($fact), 120, '') : null,
-            (array) ($contentFacts['differentiators'] ?? []),
-        ))), 0, 3);
+        // Up to three confirmed facts the homepage strip does NOT already show (so nothing is repeated site-wide).
+        $facts = array_slice(array_map(fn (string $fact) => \Illuminate\Support\Str::limit($fact, 120, ''), $panelFacts), 0, 3);
         $label = \App\Library\Website\WebsiteNicheVocabulary::contactCtaLabel($contactSlug, true);
         $hasPhone = trim((string) ($website->business?->phone ?? '')) !== '';
 
@@ -510,7 +543,10 @@ final class MediaBindingService
         $pages = $this->linkAreaPages($pages);
         $pages = $this->linkServicePages($pages);
         $pages = $this->linkServiceCards($pages);
-        $pages = $this->stampInquiryPanels($website, $pages, $contentFacts);
+        // The owner-confirmed facts, split deterministically: what the homepage strip shows, and what is left for the service pages' panels.
+        $trust = TrustFacts::select($contentFacts);
+        $pages = $this->stampTrustStrip($pages, $trust['strip']);
+        $pages = $this->stampInquiryPanels($website, $pages, $trust['rest']);
         $pages = $this->closeBookablePagesWithInquiry($pages);
         $pages = $this->bindAreaHub($website, $pages);
         $pages = $this->catalogReferences->stampPackagePages($pages, (int) $website->business_id);
