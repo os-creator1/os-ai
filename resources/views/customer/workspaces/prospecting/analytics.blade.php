@@ -14,13 +14,13 @@
     $formatPhone = fn ($d) => '+' . $d;
 @endphp
 <div class="og page">
-    @include('customer.workspaces.prospecting._nav', ['prospectingActive' => 'analytics', 'ogInside' => true])
+    @include('customer.workspaces.prospecting._nav', ['prospectingActive' => 'analytics', 'ogInside' => true, 'ogActions' => 'analytics', 'exportUrl' => route('customer.workspaces.prospecting.analytics.export', $workspaceUid) . '?' . http_build_query($filters->toQuery())])
 
-    <nav class="tabs" aria-label="Analytics sections" data-role="analytics-subtabs" style="gap:20px">
+    <div class="seg" role="tablist" aria-label="Analytics sections" data-role="analytics-subtabs" style="align-self:flex-start">
         @foreach($tabs as $key => $label)
-            <a class="tab @if($tab === $key) on @endif" href="{{ $url(['tab' => $key]) }}" @if($tab === $key) aria-current="page" @endif>{{ $label }}</a>
+            <a href="{{ $url(['tab' => $key]) }}" role="tab" @if($tab === $key) class="on" aria-selected="true" aria-current="page" @else aria-selected="false" @endif>{{ $label }}</a>
         @endforeach
-    </nav>
+    </div>
 
     @include('customer.workspaces.prospecting._analytics-filters', ['hidden' => ['tab' => $tab]])
 
@@ -28,41 +28,46 @@
 
     @if(in_array($tab, ['performance', 'messages'], true))
         @php $k = $kpis; @endphp
-        <div class="kpis" data-role="analytics-kpis">
+        <div class="kpis kgrid" data-role="analytics-kpis">
             <a class="k5" href="{{ $exUrl('contacted') }}"><span>Contacted</span><b>{{ $k['contacted'] }}</b><small>of {{ $k['eligible'] }} eligible</small></a>
-            <a class="k5" href="{{ $exUrl('replied') }}"><span>Reply rate</span><b>{{ P::pct($k['replied'], $k['contacted']) }}</b><small>{{ $k['replied'] }} of {{ $k['contacted'] }} contacted</small></a>
-            <a class="k5" href="{{ $exUrl('interested') }}"><span>Interested</span><b>{{ P::pct($k['interested'], $k['contacted']) }}</b><small>{{ $k['interested'] }} of {{ $k['contacted'] }} contacted</small></a>
+            <a class="k5" href="{{ $exUrl('replied') }}"><span>Reply rate</span><b class="t-b">{{ P::pct($k['replied'], $k['contacted']) }}</b><small>{{ $k['replied'] }} of {{ $k['contacted'] }} contacted</small></a>
+            <a class="k5" href="{{ $exUrl('interested') }}"><span>Interested</span><b class="t-g">{{ P::pct($k['interested'], $k['contacted']) }}</b><small>{{ $k['interested'] }} of {{ $k['contacted'] }} contacted</small></a>
             <a class="k5" href="{{ $exUrl('rejected') }}"><span>Rejected</span><b>{{ P::pct($k['rejected'], $k['contacted']) }}</b><small>{{ $k['rejected'] }} of {{ $k['contacted'] }} contacted</small></a>
             <a class="k5" href="{{ $exUrl('opted_out') }}"><span>Opted out</span><b>{{ P::pct($k['opted_out'], $k['contacted']) }}</b><small>{{ $k['opted_out'] }} replied STOP</small></a>
             <a class="k5" href="{{ $exUrl('booked') }}"><span>Calls booked</span><b>{{ $k['booked'] }}</b><small>{{ P::pct($k['booked'], $k['contacted']) }} of contacted</small></a>
-            <a class="k5" href="{{ $exUrl('won') }}"><span>Clients won</span><b>{{ $k['won'] }}</b><small>{{ $k['booked'] > 0 ? P::pct($k['won'], $k['booked']) . ' of ' . $k['booked'] . ' booked calls' : 'no booked calls yet' }}</small></a>
+            <a class="k5" href="{{ $exUrl('won') }}"><span>Clients won</span><b class="t-r">{{ $k['won'] }}</b><small>{{ $k['booked'] > 0 ? P::pct($k['won'], $k['booked']) . ' of ' . $k['booked'] . ' booked calls' : 'no booked calls yet' }}</small></a>
             <div class="k5"><span>Median reply time</span><b>{{ P::duration($k['median_reply_sec']) }}</b><small>75% within {{ P::duration($k['p75_reply_sec']) }} · {{ $k['reply_samples'] }} replies</small></div>
             <div class="k5"><span>Imported</span><b>{{ $k['imported'] }}</b><small>{{ $k['eligible'] }} eligible</small></div>
         </div>
     @endif
 
     @if($tab === 'performance' || $tab === 'messages')
+        @php $worst = collect($steps)->sortByDesc('rejected')->first(); @endphp
         <section class="card pad" data-role="message-journey" aria-labelledby="journey-h">
-            <h3 id="journey-h" style="font-size:16px;font-weight:700">Where prospects drop off</h3>
-            <p class="mut">Click a message to see exactly who stopped there and why. Rates use the prospects who actually received that message.</p>
+            <div class="head" style="align-items:flex-start"><div><h3 id="journey-h" style="font-size:17px;font-weight:700">Where prospects drop off</h3>
+                <p class="mut" style="margin-top:2px">Click a message to see exactly who stopped there and why. Rates use the prospects who actually received that message.</p></div>
+                <div class="legend" aria-hidden="true"><span><i class="g"></i>Interested</span><span><i class="b"></i>Other reply</span><span><i class="a"></i>Rejected</span><span><i class="s"></i>Opted out</span><span><i class="n"></i>No response yet</span></div></div>
             @if(count($steps) === 0)
                 <div class="empty" data-role="journey-empty"><b>No confirmed messages in this view</b>Messages appear once they are delivered. Try widening the period or resetting filters.</div>
             @else
                 <div class="jr">
                     @foreach($steps as $s)
-                        <a class="jr-step" href="{{ $stepUrl($s['step_key']) }}" data-step="{{ $s['step_key'] }}">
-                            <b>{{ $s['number'] }}. {{ $s['label'] }}</b>
-                            <span class="mut">{{ $s['reached'] }} reached @if($s['state'] !== 'live')· {{ $s['state'] }}@endif</span>
-                            <span class="jr-rate">{{ P::pct($s['replied'], $s['reached']) }} replied</span>
+                        <a class="jr-step @if($worst && $worst['step_key'] === $s['step_key'] && $s['rejected'] > 0) hot @endif" href="{{ $stepUrl($s['step_key']) }}" data-step="{{ $s['step_key'] }}">
+                            <span class="jr-t"><span class="num">{{ $s['number'] }}</span><b>{{ $s['label'] }}</b>@if($s['state'] !== 'live')<span class="pl a">{{ $s['state'] }}</span>@endif</span>
+                            <span class="jr-r"><b>{{ P::pct($s['replied'], $s['reached']) }}</b><span class="mut">replied · {{ $s['reached'] }} reached</span></span>
                             <span class="jr-bar" role="img" aria-label="{{ $s['interested'] }} interested, {{ $s['other_replies'] }} other, {{ $s['rejected'] }} rejected, {{ $s['opted_out'] }} opted out, {{ $s['no_response'] }} no response yet">
-                                @foreach(['interested' => 'g', 'other_replies' => 'b', 'rejected' => 'r', 'opted_out' => 'a', 'no_response' => 'n'] as $field => $tone)
+                                @foreach(['interested' => 'g', 'other_replies' => 'b', 'rejected' => 'a', 'opted_out' => 's'] as $field => $tone)
                                     @if($s[$field] > 0)<i class="{{ $tone }}" style="width:{{ $s[$field] / max(1, $s['reached']) * 100 }}%"></i>@endif
                                 @endforeach
                             </span>
-                            <span class="mut">{{ $s['interested'] }} interested · {{ $s['rejected'] }} rejected · {{ $s['opted_out'] }} STOP · {{ $s['no_response'] }} no response yet</span>
+                            <span class="jr-c"><span class="t-g"><b>{{ $s['interested'] }}</b> interested</span><span class="t-a"><b>{{ $s['rejected'] }}</b> rejected</span><span><b>{{ $s['opted_out'] }}</b> STOP</span></span>
                         </a>
                     @endforeach
                 </div>
+                @if($worst && $worst['rejected'] > 0)
+                    <div class="jr-note" data-role="journey-note"><span><b>{{ $worst['label'] }}</b> lost the most to rejection — <b>{{ $worst['rejected'] }} rejected</b>. {{ $worst['no_response'] }} got no reply yet.</span>
+                        <a class="link" href="{{ $stepUrl($worst['step_key']) }}">See the {{ $worst['reached'] }} businesses</a></div>
+                @endif
                 @if($unattributed > 0)<p class="mut" data-role="unattributed-note">{{ $unattributed }} sent conversation replies or hand-written texts belong to no scripted message, so they are not counted in any step.</p>@endif
             @endif
         </section>
@@ -70,19 +75,18 @@
 
     @if($tab === 'performance')
         <div class="grid2">
-            <section class="card pad" style="flex:1 1 360px" data-role="funnel" aria-labelledby="funnel-h">
+            <section class="card pad" style="flex:1 1 420px" data-role="funnel" aria-labelledby="funnel-h">
                 <h3 id="funnel-h" style="font-size:16px;font-weight:700">Funnel</h3>
                 <p class="mut">Each stage counts a prospect once. Stages are counted independently: a conversation can skip a stage, so every percentage names what it is a share of.</p>
                 @foreach($funnel as $st)
                     <div class="fn" data-stage="{{ $st['key'] }}">
                         <span>{{ $st['label'] }}</span>
-                        <span class="fn-bar"><i style="width:{{ $funnel[0]['count'] > 0 ? min(100, $st['count'] / max(1, $funnel[0]['count']) * 100) : 0 }}%"></i></span>
-                        <b>{{ $st['count'] }}</b>
-                        <small class="mut">{{ $st['pct'] !== null ? $st['pct'] . '% of ' . $st['of'] . ' ' . $st['of_label'] : 'n = ' . $st['count'] }}</small>
+                        <span class="fn-bar"><i class="s-{{ $st['key'] }}" style="width:{{ $funnel[0]['count'] > 0 ? min(100, $st['count'] / max(1, $funnel[0]['count']) * 100) : 0 }}%"></i></span>
+                        <span class="fn-n"><b>{{ $st['count'] }}</b> <small class="mut">{{ $st['pct'] !== null ? $st['pct'] . '% of ' . $st['of'] . ' ' . $st['of_label'] : '' }}</small></span>
                     </div>
                 @endforeach
             </section>
-            <section class="card pad" style="flex:1 1 360px" data-role="segments-preview" aria-labelledby="seg-h">
+            <section class="card pad" style="flex:1 1 480px" data-role="segments-preview" aria-labelledby="seg-h">
                 <h3 id="seg-h" style="font-size:16px;font-weight:700">By business type</h3>
                 @include('customer.workspaces.prospecting._analytics-segments', ['rows' => $segments, 'dimension' => 'type'])
                 <a class="link" href="{{ $url(['tab' => 'types']) }}">All segments →</a>
@@ -112,7 +116,7 @@
 
     @if($tab === 'timing')
         @php $t = $timing; $maxBucket = max(1, collect($t['distribution'])->max('count') ?? 1); $maxHour = max(1, collect($t['hours'])->max('sent') ?? 1); @endphp
-        <div class="kpis" data-role="timing-kpis">
+        <div class="kpis kgrid" data-role="timing-kpis">
             <div class="k5"><span>Median reply time</span><b>{{ P::duration($t['overall']['p50']) }}</b><small>{{ $t['overall']['n'] }} replies</small></div>
             <div class="k5"><span>75th percentile</span><b>{{ P::duration($t['overall']['p75']) }}</b><small>75% reply within</small></div>
             <div class="k5"><span>AI replies sent</span><b>{{ $t['ai']['replies'] }}</b><small>{{ $t['ai']['paced'] }} with a planned wait</small></div>
@@ -154,7 +158,7 @@
                     <span>{{ $r->steps_sent }}</span>
                     <span class="ell mut" title="{{ $r->last_in }}">{{ $r->last_in ? '“' . \Illuminate\Support\Str::limit($r->last_in, 50) . '”' : '—' }}</span>
                     <span>{{ P::duration($r->reply_sec !== null ? (int) $r->reply_sec : null) }}</span>
-                    <span class="pl {{ ['won' => 'g', 'booked' => 'g', 'interested' => 'b', 'replied' => 'b', 'rejected' => 'r', 'opted_out' => 'a'][$r->outcome] ?? 'n' }}">{{ ['none' => 'Not contacted', 'no_response' => 'No response', 'opted_out' => 'Opted out', 'won' => 'Client won', 'booked' => 'Call booked'][$r->outcome] ?? ucfirst($r->outcome) }}</span>
+                    <span class="pl {{ ['won' => 'g', 'booked' => 'g', 'interested' => 'g', 'replied' => 'b', 'rejected' => 'a', 'opted_out' => 'n'][$r->outcome] ?? 'n' }}">{{ ['none' => 'Not contacted', 'no_response' => 'No response', 'opted_out' => 'Opted out', 'won' => 'Client won', 'booked' => 'Call booked'][$r->outcome] ?? ucfirst($r->outcome) }}</span>
                 </div>
             @empty
                 <div class="empty" data-role="explorer-empty"><b>No prospects match these filters</b>Reset filters or widen the period.</div>

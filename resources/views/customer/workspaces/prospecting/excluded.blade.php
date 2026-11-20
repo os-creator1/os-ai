@@ -12,7 +12,7 @@
     $cols = 'minmax(0,1.8fr) 170px minmax(0,1.2fr) 110px';
 @endphp
 <div class="og page">
-    @include('customer.workspaces.prospecting._nav', ['prospectingActive' => 'prospects', 'ogInside' => true, 'ogActions' => 'prospects', 'importUrl' => route('customer.workspaces.prospecting.prospects.import', $workspaceUid)])
+    @include('customer.workspaces.prospecting._nav', ['prospectingActive' => 'prospects', 'ogInside' => true, 'ogActions' => null])
 
     <div class="filters">@include('customer.workspaces.prospecting._prospect-tabs', ['ptActive' => 'excluded'])</div>
 
