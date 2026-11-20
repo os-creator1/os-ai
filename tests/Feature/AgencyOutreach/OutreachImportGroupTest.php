@@ -112,9 +112,12 @@ class OutreachImportGroupTest extends TestCase
         $this->get(route('customer.workspaces.businesses.people.show', [$a['workspace']->uid, $a['business']->uid, $contact->uid]))
             ->assertOk()->assertSee('Photo booth')->assertSee('Google rating');
 
-        // The done view links to the group and to a campaign with the group preselected.
-        $this->get($this->outreachRoute('prospects.import.done', $a['workspace'], [$batch->uid]))
+        // The done view links to the group and to a campaign with the group preselected, and both links resolve.
+        $done = $this->get($this->outreachRoute('prospects.import.done', $a['workspace'], [$batch->uid]))
             ->assertOk()->assertSee('Dallas Photographers')->assertSee('data-role="new-campaign-from-group"', false)->assertSee('group=' . $group->uid, false);
+        $groupUrl = route('customer.workspaces.businesses.contacts.show', [$a['workspace']->uid, $a['business']->uid, $group->uid]);
+        $this->assertStringContainsString($groupUrl, html_entity_decode($done->getContent()));
+        $this->get($groupUrl)->assertOk()->assertSee('Dallas Photographers');
     }
 
     public function test_the_group_is_in_contacts_and_the_campaign_picker_with_a_real_eligible_count(): void
