@@ -1,0 +1,89 @@
+name: MotionGrove Mobile Phase 1
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'app/Http/Controllers/Mobile/**'
+      - 'app/Http/Middleware/EnsureMobileToken.php'
+      - 'app/Http/Middleware/RejectMobileTokenOnLegacyApi.php'
+      - 'app/Library/Mobile/**'
+      - 'app/Models/MobileDevice.php'
+      - 'app/Providers/RouteServiceProvider.php'
+      - 'routes/mobile.php'
+      - 'database/migrations/*create_mobile_devices_table.php'
+      - 'tests/Feature/Mobile/**'
+      - 'mobile/**'
+      - '.github/workflows/mobile-phase1-tests.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mobile-phase1-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: Mobile API (PHP 8.2 + MySQL 8)
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      APP_ENV: testing
+      APP_KEY: base64:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+      DB_CONNECTION: mysql
+      DB_HOST: 127.0.0.1
+      DB_PORT: '3306'
+      DB_DATABASE: ultimatesms_testing
+      DB_USERNAME: ultimatesms_test
+      DB_PASSWORD: Choose-A-Local-Test-Password
+      EXPECTED_TEST_DATABASE: ultimatesms_testing
+      QUEUE_CONNECTION: sync
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_DATABASE: ultimatesms_testing
+          MYSQL_USER: ultimatesms_test
+          MYSQL_PASSWORD: Choose-A-Local-Test-Password
+          MYSQL_ROOT_PASSWORD: root
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.2'
+          extensions: bcmath, curl, dom, exif, fileinfo, gd, intl, mbstring, pdo_mysql, zip
+          coverage: none
+          tools: composer:v2
+      - name: Install PHP dependencies
+        run: composer install --no-interaction --prefer-dist --no-progress
+      - name: Run Mobile API regression suite
+        run: php artisan test tests/Feature/Mobile --stop-on-failure
+
+  client:
+    name: Mobile client (Node + TypeScript + Jest)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: mobile
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: mobile/package-lock.json
+      - name: Install locked mobile dependencies
+        run: npm ci --no-audit --no-fund
+      - name: Type-check mobile client
+        run: npm run typecheck
+      - name: Run mobile client tests
+        run: npm test -- --runInBand --ci
