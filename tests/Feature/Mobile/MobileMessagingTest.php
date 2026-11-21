@@ -204,13 +204,16 @@ class MobileMessagingTest extends TestCase
 
     public function test_mobile_rejects_legacy_non_managed_senders_before_any_provider_attempt(): void
     {
-        [$owner, $business, $workspace] = $this->entitledTenant();
-        // The Business must be otherwise eligible to access Messaging; only
-        // its managed identity/BYO sender is intentionally absent here.
-        $this->sendableChannel($business);
-        $owner->forceFill(['permissions' => json_encode(Customer::customerPermissions())])->save();
+        [$owner, $business, $workspace, $identity] = $this->managedTenant();
         $box = $this->conversation($business);
         $token = $this->tokenFor($owner);
+
+        // The conversation and its owner were authorized while the managed
+        // identity existed. After archival only the legacy sending server
+        // remains, and a mobile request must NOT silently fall back to it.
+        DB::table('business_messaging_identities')
+            ->where('id', $identity->id)
+            ->update(['status' => 'archived']);
 
         // Without a managed identity or an explicitly selected BYO channel,
         // legacy SMS cannot promise replay-safe idempotency after a timeout.
