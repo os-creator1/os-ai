@@ -428,4 +428,37 @@ class OutreachImportGroupReviewTest extends TestCase
         $this->assertNotNull($legacy->fresh()->contact_group_id);
         $this->assertSame($contactCount + 2, Contacts::where('business_id', $biz->id)->count());
     }
+
+    public function test_two_csv_columns_mapping_to_the_same_custom_field_preserve_first_value(): void
+    {
+        $a = $this->outreachAgency('SameField', ['enrolled' => false]);
+        $this->authenticateAs($a['customer']);
+
+        $definition = app(CustomFieldDefinitionManager::class)->create($a['business'], 'Business type', 'text');
+        $csv = "name,phone,primary category,Alternate category\n"
+            . "Acme,+12133000001,Photo booth,Dog trainer\n";
+        $batch = $this->upload($a, $csv, 'same-field.csv');
+
+        // The built-in category and the extra column both target the same existing definition.
+        $batch->update(['extra_fields' => [
+            'Alternate category' => ['action' => 'existing', 'definition_uid' => $definition->uid],
+        ]]);
+        $plan = collect(app(ProspectGroupMaterializer::class)->plan($a['business'], $batch->fresh()))
+            ->where('definition_id', $definition->id)->pluck('key')->all();
+        $this->assertContains('business_type', $plan);
+        $this->assertContains('extra:Alternate category', $plan);
+
+        $this->commit($a, $batch->fresh(), 'Same field list')->assertRedirect();
+        $contact = Contacts::where('business_id', $a['business']->id)->where('phone', '12133000001')->firstOrFail();
+
+        // First successful value wins; later mappings may never overwrite it.
+        $this->assertDatabaseHas('custom_field_values', [
+            'contact_id' => $contact->id,
+            'definition_id' => $definition->id,
+            'value_text' => 'Photo booth',
+        ]);
+        $this->assertSame(1, DB::table('custom_field_values')
+            ->where('contact_id', $contact->id)->where('definition_id', $definition->id)->count());
+    }
+
 }
