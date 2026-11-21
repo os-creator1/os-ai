@@ -88,9 +88,9 @@ export function ConversationsScreen({ navigation }: Props) {
   }, [navigation, business]);
 
   if (!scope) return null;
-  if (error && items === null) return <ErrorState message={error} onRetry={load} />;
-  if (items === null) return <Loading />;
 
+  // Keep search and filter controls mounted while a new query is loading:
+  // replacing the entire screen here would blur the TextInput on every key.
   return (
     <View style={s.wrap}>
       <TextInput style={s.search} placeholder="Search name or number" accessibilityLabel="Search" value={search}
@@ -106,12 +106,18 @@ export function ConversationsScreen({ navigation }: Props) {
       </View>
       <FlatList
         testID="conversation-list"
-        data={items}
+        data={items ?? []}
         keyExtractor={(c) => c.uid}
         onEndReached={() => { void loadMore(); }}
         onEndReachedThreshold={0.3}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={async () => { setRefreshing(true); await load(true); setRefreshing(false); }} />}
-        ListEmptyComponent={<Text style={s.empty}>No conversations yet.</Text>}
+        ListEmptyComponent={
+          items === null
+            ? error
+              ? <ErrorState message={error} onRetry={() => { void load(); }} />
+              : <Loading />
+            : <Text style={s.empty}>No conversations yet.</Text>
+        }
         ListFooterComponent={nextPage !== null ? (
           loadingMore ? <Text style={s.empty}>Loading older conversations…</Text>
             : <View style={s.footer}>
