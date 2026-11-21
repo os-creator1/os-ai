@@ -9,7 +9,12 @@ use App\Http\Controllers\Customer\Workspace\Concerns\ResolvesAgencyProspectingWo
 use App\Library\AgencyOutreach\Import\ProspectCsvReader;
 use App\Library\AgencyOutreach\Import\ProspectFieldMapper;
 use App\Library\AgencyOutreach\Import\ProspectImporter;
+use App\Library\AgencyOutreach\Import\ProspectGroupMaterializer;
+use App\Library\AgencyOutreach\OutreachContactGroupBridge;
 use App\Library\AgencyOutreach\OutreachExistingClients;
+use App\Library\CustomFields\CustomFieldDefinitionManager;
+use App\Models\Business;
+use App\Models\ContactGroups;
 use App\Library\AgencyProspecting\AgencyProspectPhoneNormalizer;
 use App\Models\AgencyProspect;
 use App\Models\AgencyProspectCampaign;
@@ -194,6 +199,7 @@ class AgencyOutreachClientsController extends CustomerBaseController
             ->orderBy('row_number')->limit(100)->get();
 
         $firstRows = AgencyProspectImportRow::query()->where('batch_id', $b->id)->orderBy('row_number')->limit(3)->get(['original']);
+        $business = app(OutreachContactGroupBridge::class)->businessFor($workspace, Auth::user());
 
         return view('customer.workspaces.prospecting.import-review', [
             'workspaceUid' => $workspaceUid,
@@ -202,10 +208,12 @@ class AgencyOutreachClientsController extends CustomerBaseController
             'rows' => $rows,
             'outcome' => $outcome,
             'samples' => $firstRows->map(fn ($r) => $r->original)->all(),
-            'draftCampaigns' => AgencyProspectCampaign::query()->where('workspace_id', $workspace->id)
-                ->where('status', AgencyProspectCampaignStatus::Draft->value)->orderBy('name')->get(['uid', 'name']),
             'regions' => self::REGIONS,
             'step' => $b->status === 'imported' ? 3 : 2,
+            'business' => $business,
+            'fieldPlan' => $business !== null && $b->kind === 'prospects' ? app(ProspectGroupMaterializer::class)->plan($business, $b) : [],
+            'definitions' => $business === null ? collect() : app(CustomFieldDefinitionManager::class)->forBusiness($business),
+            'defaultGroupName' => $b->group_name ?: trim((string) preg_replace('/\.(csv|txt|tsv)$/i', '', (string) $b->filename)) ?: 'Imported prospects',
         ]);
     }
 
@@ -221,7 +229,27 @@ class AgencyOutreachClientsController extends CustomerBaseController
             'region' => ['nullable', 'string', 'size:2', 'in:' . implode(',', array_keys(self::REGIONS))],
         ]);
 
-        $mapping = ProspectFieldMapper::sanitise((array) $request->input('mapping', []), (array) $b->headers);
+        // A column may be saved as a built-in field, as a Custom Field (new, or one that already exists), or ignored.
+        $submitted = (array) $request->input('mapping', []);
+        $business = app(OutreachContactGroupBridge::class)->businessFor($workspace, Auth::user());
+        $definitions = app(CustomFieldDefinitionManager::class);
+        $extras = [];
+        $builtin = [];
+
+        foreach (array_values((array) $b->headers) as $i => $header) {
+            $value = is_string($submitted[$i] ?? null) ? $submitted[$i] : '';
+
+            if ($value === 'cf_new' && $business !== null) {
+                $extras[$header] = ['action' => 'new', 'label' => mb_substr(trim($header), 0, CustomFieldDefinitionManager::MAX_LABEL)];
+            } elseif (preg_match('/^cf:([A-Za-z0-9_-]{1,64})$/', $value, $m) === 1 && $business !== null && $definitions->findByUid($business, $m[1]) !== null) {
+                $extras[$header] = ['action' => 'existing', 'definition_uid' => $m[1]];
+            } else {
+                $builtin[$i] = $value;
+            }
+        }
+
+        $mapping = ProspectFieldMapper::sanitise($builtin, (array) $b->headers);
+        $b->update(['extra_fields' => $extras]);
         $this->importer->analyze($workspace, $b, $mapping, $request->input('region') ?: null);
 
         return redirect()->route('customer.workspaces.prospecting.prospects.import.review', [$workspaceUid, $b->uid])
@@ -246,17 +274,65 @@ class AgencyOutreachClientsController extends CustomerBaseController
                 ->with('flash_success', $r['already_imported'] ? 'That file was already imported.' : "{$r['created']} existing clients added ({$r['already']} were already listed).");
         }
 
-        $r = $this->importer->commitProspects($workspace, $b, $request->input('campaign_uid'));
+        $business = app(OutreachContactGroupBridge::class)->businessFor($workspace, Auth::user());
 
-        if (! empty($r['campaign_closed'])) {
+        if ($business === null) {
+            return back()->with('flash_error', 'Your Outreach business is not set up, so a contact group cannot be created yet.');
+        }
+
+        // The import writes Contacts and Custom Field definitions/values, so it needs the same permissions as the normal CRM endpoints
+        // (create_contact / update_contact), checked BEFORE anything is written.
+        if (! Auth::user()->can('create_contact') || ! Auth::user()->can('update_contact')) {
+            return back()->with('flash_error', 'You do not have permission to create or update contacts, so this import cannot create the contact group.');
+        }
+
+        $groupExists = $b->contact_group_id !== null;
+        $groupName = $groupExists
+            ? (string) $b->group_name
+            : trim((string) $request->validate(['group_name' => ['required', 'string', 'max:255']], ['group_name.required' => 'Name the contact group for this import.'])['group_name']);
+
+        if (! $groupExists) {
+            if (! Auth::user()->can('create_contact_group')) {
+                return back()->withInput()->withErrors(['group_name' => 'You do not have permission to create contact groups.']);
+            }
+
+            if (ContactGroups::where('customer_id', $business->customer_id)->where('name', $groupName)->exists()) {
+                return back()->withInput()->withErrors(['group_name' => 'A contact group with this name already exists. Choose a different name.']);
+            }
+        }
+
+        try {
+            $r = $this->importer->commitWithGroup($workspace, $business, $b, $groupName, $request->input('campaign_uid'), (int) Auth::id());
+        } catch (\Illuminate\Auth\Access\AuthorizationException $e) {
+            return back()->with('flash_error', $e->getMessage() . ' Nothing was imported.');
+        }
+
+        if (! empty($r['name_conflict'])) {
+            return back()->withInput()->withErrors(['group_name' => 'A contact group with this name already exists. Choose a different name. Nothing was imported.']);
+        }
+
+        if (! empty($r['prospects']['campaign_closed'])) {
             return redirect()->route('customer.workspaces.prospecting.prospects.import.review', [$workspaceUid, $b->uid])
                 ->with('flash_error', 'That campaign has already started, so prospects cannot be added to it. Nothing was imported; choose another destination.');
         }
 
-        return redirect()->route('customer.workspaces.prospecting.prospects.index', $workspaceUid)
-            ->with('flash_success', $r['already']
-                ? 'That file was already imported.'
-                : "Imported {$r['created']} new prospects ({$r['updated']} existing updated). No messages were sent.");
+        return redirect()->route('customer.workspaces.prospecting.prospects.import.done', [$workspaceUid, $b->uid]);
+    }
+
+    public function importDone(string $workspaceUid, string $batch)
+    {
+        $workspace = $this->resolveEntitledWorkspace($workspaceUid);
+        $b = $this->batch($workspace, $batch);
+        abort_unless($b->kind === 'prospects' && $b->status === 'imported', 404);
+
+        $business = app(OutreachContactGroupBridge::class)->businessFor($workspace, Auth::user());
+        $group = $business === null || $b->contact_group_id === null ? null
+            : ContactGroups::query()->where('id', $b->contact_group_id)->where('business_id', $business->id)->first();
+
+        return view('customer.workspaces.prospecting.import-done', [
+            'workspaceUid' => $workspaceUid, 'batch' => $b, 'group' => $group, 'business' => $business,
+            'report' => (array) $b->group_report, 'summary' => (array) $b->summary, 'step' => 3,
+        ]);
     }
 
     // ---------------------------------------------------------------- helpers

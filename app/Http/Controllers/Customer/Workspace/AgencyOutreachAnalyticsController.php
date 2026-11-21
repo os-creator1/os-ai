@@ -63,7 +63,16 @@ class AgencyOutreachAnalyticsController extends CustomerBaseController
                 'geo' => ['City / state', $analytics->segments('geo')],
                 'source' => ['Lead source / import', $analytics->segments('source')],
                 'campaign' => ['Campaign', $analytics->segments('campaign')],
+                'group' => ['Contact group', $analytics->segments('group')],
             ];
+
+            foreach (array_slice(array_filter($analytics->customFieldOptions(), fn ($o) => in_array($o['type'], ['text', 'select', 'boolean'], true)), 0, 6) as $field) {
+                $rows = $analytics->segments('cf:' . $field['key']);
+
+                if ($rows !== []) {
+                    $data['dimensions']['cf:' . $field['key']] = [$field['label'] . ' (custom field)', $rows];
+                }
+            }
         }
 
         if ($tab === 'timing') {
@@ -115,7 +124,7 @@ class AgencyOutreachAnalyticsController extends CustomerBaseController
 
         return response()->streamDownload(function () use ($analytics, $reached) {
             $out = fopen('php://output', 'w');
-            fputcsv($out, ['Business', 'Phone', 'Campaign', 'Business type', 'Rating', 'Reviews', 'Website', 'State', 'City', 'Source', 'Steps sent', 'Last message', 'Last reply', 'Reply seconds', 'Outcome', 'Booked', 'Client won']);
+            fputcsv($out, ['Business', 'Phone', 'Campaign', 'Business type', 'Rating', 'Reviews', 'Website', 'State', 'City', 'Source', 'Group', 'Steps sent', 'Last message', 'Last reply', 'Reply seconds', 'Outcome', 'Booked', 'Client won']);
 
             for ($page = 1; $page <= 200; $page++) {
                 $res = $analytics->explorer($page, 100, is_string($reached) ? $reached : null);
@@ -123,7 +132,7 @@ class AgencyOutreachAnalyticsController extends CustomerBaseController
                 foreach ($res['rows'] as $r) {
                     // Spreadsheet-safe: a value starting with = + - @ must not execute as a formula.
                     $cells = [$r->company_name, $r->phone, $r->campaign_name, $r->business_type, $r->google_rating, $r->review_count,
-                        $r->has_website === null ? '' : ($r->has_website ? 'Yes' : 'No'), $r->state, $r->city, $r->source_name, $r->steps_sent,
+                        $r->has_website === null ? '' : ($r->has_website ? 'Yes' : 'No'), $r->state, $r->city, $r->source_name, $r->group_names, $r->steps_sent,
                         $r->last_out, $r->last_in, $r->reply_sec, $r->outcome, $r->is_booked ? 'Yes' : 'No', $r->is_won ? 'Yes' : 'No'];
                     fputcsv($out, array_map(fn ($c) => is_string($c) && preg_match('/^[=+\-@\t\r]/', $c) ? "'" . $c : $c, $cells));
                 }

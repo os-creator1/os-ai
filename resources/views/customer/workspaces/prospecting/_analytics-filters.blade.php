@@ -8,11 +8,14 @@
     @foreach($hidden as $hk => $hv)<input type="hidden" name="{{ $hk }}" value="{{ $hv }}">@endforeach
     <div class="filters">
         <label class="sel"><span>Campaign</span><select name="campaign"><option value="">All</option>@foreach($options['campaigns'] as $c)<option value="{{ $c->uid }}" {{ $opt($c->uid, $f->campaignUid) }}>{{ $c->name }}</option>@endforeach</select></label>
+        @if(! empty($options['groups']))
+            <label class="sel"><span>Group</span><select name="group" aria-label="Contact group"><option value="">All</option>@foreach($options['groups'] as $g)<option value="{{ $g->uid }}" {{ $opt($g->uid, $f->groupUid) }}>{{ $g->name }}</option>@endforeach</select></label>
+        @endif
         <label class="sel"><span>Period</span><select name="period" aria-label="Period">@foreach(\App\Library\AgencyOutreach\Analytics\AnalyticsFilters::PERIODS as $k => $l)<option value="{{ $k }}" {{ $opt($k, $f->period) }}>{{ $l }}</option>@endforeach<option value="custom" {{ $opt('custom', $f->period) }}>Custom…</option></select></label>
         <label class="sel"><span>Business type</span><select name="type"><option value="">All</option>@foreach($options['types'] as $t)<option value="{{ $t }}" {{ $opt($t, $f->businessType) }}>{{ $t }}</option>@endforeach</select></label>
         <label class="sel"><span>Message</span><select name="step"><option value="">All</option>@foreach($options['steps'] ?? [] as $s)<option value="{{ $s['key'] }}" {{ $opt($s['key'], $f->stepKey) }}>{{ $s['label'] }}</option>@endforeach</select></label>
     </div>
-    <details class="more afilters-more" @if($f->geo || $f->from || $f->to || $f->rating || $f->reviews || $f->website || $f->batchUid || $f->outcome || $f->channelId || $f->scriptVersion) open @endif>
+    <details class="more afilters-more" @if($f->geo || $f->from || $f->to || $f->rating || $f->reviews || $f->website || $f->batchUid || $f->outcome || $f->channelId || $f->scriptVersion || $f->cfKey) open @endif>
         <summary class="btn out sm"><svg class="ic" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>More filters</summary>
         <div class="filters card pad" style="margin-top:8px">
             <label class="sel"><span>From</span><input type="date" name="from" value="{{ $f->from }}" aria-label="From date"></label>
@@ -25,6 +28,34 @@
             <label class="sel"><span>Outcome</span><select name="outcome"><option value="">Any</option>@foreach(['no_response' => 'No response', 'replied' => 'Replied', 'interested' => 'Interested', 'rejected' => 'Rejected', 'opted_out' => 'Opted out', 'booked' => 'Call booked', 'won' => 'Client won'] as $k => $l)<option value="{{ $k }}" {{ $opt($k, $f->outcome) }}>{{ $l }}</option>@endforeach</select></label>
             <label class="sel"><span>Sending number</span><select name="number"><option value="">Any</option>@foreach($options['channels'] as $ch)<option value="{{ $ch->id }}" {{ $opt($ch->id, $f->channelId) }}>{{ $ch->sender_number }}</option>@endforeach</select></label>
             <label class="sel"><span>Script version</span><select name="script"><option value="">Any</option>@foreach($options['versions'] as $v)<option value="{{ $v }}" {{ $opt($v, $f->scriptVersion) }}>v{{ $v }}</option>@endforeach</select></label>
+            @if(! empty($options['fields']))
+                <label class="sel"><span>Custom field</span><select name="cf" aria-label="Custom field"><option value="">None</option>@foreach($options['fields'] as $cfo)<option value="{{ $cfo['key'] }}" {{ $opt($cfo['key'], $f->cfKey) }}>{{ $cfo['label'] }}</option>@endforeach</select></label>
+                <label class="sel" data-cfv-wrap><span>equals</span>
+                    {{-- Text fields take a typed value; a select field offers its option LABELS but submits the stable option id. --}}
+                    <input type="text" name="cfv" value="{{ $f->cfValue }}" aria-label="Custom field value" placeholder="any value" maxlength="120" data-cfv-text @if((collect($options['fields'])->firstWhere('key', $f->cfKey)['type'] ?? null) === 'select') hidden disabled @endif>
+                    @foreach($options['fields'] as $cfo)
+                        @if(($cfo['type'] ?? null) === 'select')
+                            <select name="cfv" aria-label="Custom field value" data-cfv-select="{{ $cfo['key'] }}" @if($f->cfKey !== $cfo['key']) hidden disabled @endif>
+                                <option value="">Any value</option>
+                                @foreach($cfo['options'] as $o)<option value="{{ $o['id'] }}" {{ $opt($o['id'], $f->cfValue) }}>{{ $o['label'] }}</option>@endforeach
+                            </select>
+                        @endif
+                    @endforeach
+                </label>
+                <script>
+                    (function () {
+                        var form = document.currentScript.closest('form'); if (!form) { return; }
+                        var cf = form.querySelector('select[name="cf"]'), text = form.querySelector('[data-cfv-text]'), picks = form.querySelectorAll('[data-cfv-select]');
+                        function sync() {
+                            var chosen = null;
+                            picks.forEach(function (p) { var on = p.getAttribute('data-cfv-select') === cf.value; p.hidden = p.disabled = !on; if (on) { chosen = p; } });
+                            text.hidden = text.disabled = !!chosen;
+                        }
+                        cf.addEventListener('change', function () { picks.forEach(function (p) { p.value = ''; }); text.value = ''; sync(); });
+                        sync();
+                    })();
+                </script>
+            @endif
             <button type="submit" class="btn pri sm">Apply filters</button>
         </div>
     </details>

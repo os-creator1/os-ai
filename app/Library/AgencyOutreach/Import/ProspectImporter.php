@@ -13,6 +13,7 @@ use App\Models\AgencyProspectExclusion;
 use App\Models\AgencyProspectImportBatch;
 use App\Models\AgencyProspectImportRow;
 use App\Models\Blacklists;
+use App\Models\Business;
 use App\Models\Workspace;
 use Illuminate\Support\Facades\DB;
 
@@ -345,6 +346,41 @@ final class ProspectImporter
         });
 
         return $result;
+    }
+
+    /**
+     * The one import: canonical prospects + ONE Contact Group + Custom Field values, atomically. A failure anywhere rolls
+     * everything back and leaves the batch re-runnable; a repeat of a finished batch changes nothing. Never sends or queues.
+     *
+     * @return array{prospects: array<string,mixed>, group: array<string,mixed>}
+     */
+    public function commitWithGroup(Workspace $workspace, Business $business, AgencyProspectImportBatch $batch, string $groupName, ?string $campaignUid = null, ?int $actorId = null): array
+    {
+        try {
+            return DB::transaction(function () use ($workspace, $business, $batch, $groupName, $campaignUid, $actorId) {
+                $prospects = $this->commitProspects($workspace, $batch, $campaignUid);
+
+                if (! empty($prospects['campaign_closed'])) {
+                    return ['prospects' => $prospects, 'group' => []];
+                }
+
+                $fresh = $batch->fresh();
+                $group = app(ProspectGroupMaterializer::class)->materialize($workspace, $business, $fresh, $fresh->group_name ?? $groupName, true, $actorId);
+
+                if (! empty($group['name_conflict'])) {
+                    // The name was taken between review and commit: undo the prospects too, so nothing commits without its group.
+                    throw new \RuntimeException('contact group name conflict');
+                }
+
+                return ['prospects' => $prospects, 'group' => $group];
+            });
+        } catch (\RuntimeException $e) {
+            if ($e->getMessage() !== 'contact group name conflict') {
+                throw $e;
+            }
+
+            return ['prospects' => [], 'group' => [], 'name_conflict' => true];
+        }
     }
 
     /**

@@ -3,6 +3,7 @@
 namespace App\Library\AgencyOutreach\Analytics;
 
 use App\Models\AgencyProspectCampaign;
+use App\Models\CustomFieldDefinition;
 use App\Models\AgencyProspectImportBatch;
 use App\Models\Workspace;
 use Illuminate\Support\Facades\DB;
@@ -31,9 +32,14 @@ final class OutreachAnalytics
 {
     public const SMALL_SAMPLE = 20;
 
+    /** Custom field types that make sense as a filter value / comparison dimension. */
+    public const SEGMENT_FIELD_TYPES = ['text', 'select', 'number', 'boolean', 'email', 'phone'];
+
     private int $ws;
     private ?int $campaignId = null;
     private ?int $batchId = null;
+    private ?int $groupId = null;
+    private ?CustomFieldDefinition $cf = null;
     /** @var array<string,mixed> */
     private array $bind = [];
     private int $n = 0;
@@ -46,6 +52,20 @@ final class OutreachAnalytics
             $this->campaignId = AgencyProspectCampaign::query()->where('workspace_id', $this->ws)->where('uid', $f->campaignUid)->value('id');
             // An unknown / foreign campaign matches nothing, it never widens the scope.
             $this->campaignId ??= 0;
+        }
+
+        if ($f->groupUid !== null) {
+            // Only a group that actually references this Workspace's prospects can match; a foreign uid matches nothing.
+            $this->groupId = DB::table('contact_groups as cg')->join('agency_prospect_group_links as gl', 'gl.contact_group_id', '=', 'cg.id')
+                ->where('gl.workspace_id', $this->ws)->where('cg.uid', $f->groupUid)->value('cg.id') ?? 0;
+        }
+
+        if ($f->cfKey !== null) {
+            $business = \App\Library\AgencyOutreach\AgencyOutreachBusinessResolver::forWorkspace($workspace);
+            $this->cf = $business === null ? null : CustomFieldDefinition::query()->where('business_id', $business->id)
+                ->where('entity', CustomFieldDefinition::ENTITY_CONTACT)->where('key', $f->cfKey)->first();
+            // An unknown field (or none) with a requested filter matches nothing.
+            $this->cf ??= new CustomFieldDefinition(['id' => 0, 'type' => 'text']);
         }
 
         if ($f->batchUid !== null) {
@@ -109,6 +129,15 @@ final class OutreachAnalytics
             $c .= ' AND (p.company_name LIKE ' . $this->b($like) . ' OR p.phone LIKE ' . $this->b($like) . ')';
         }
 
+        if ($this->groupId !== null) {
+            $c .= ' AND EXISTS (SELECT 1 FROM agency_prospect_group_links glf WHERE glf.prospect_id = p.id AND glf.workspace_id = ' . $this->ws . ' AND glf.contact_group_id = ' . (int) $this->groupId . ')';
+        }
+
+        if ($this->cf !== null) {
+            $c .= ' AND EXISTS (SELECT 1 FROM agency_prospect_group_links glc JOIN custom_field_values cfv ON cfv.contact_id = glc.contact_id AND cfv.definition_id = ' . (int) $this->cf->id
+                . ' WHERE glc.prospect_id = p.id AND glc.workspace_id = ' . $this->ws . $this->cfValueCondition() . ')';
+        }
+
         if ($f->stepKey !== null) {
             $c .= ' AND EXISTS (SELECT 1 FROM agency_prospect_messages ms JOIN agency_prospect_campaign_members cms ON cms.id = ms.campaign_member_id
                 WHERE cms.prospect_id = p.id AND cms.workspace_id = ' . $this->ws . " AND ms.direction = 'outbound' AND ms.status = 'sent' AND ms.sent_at IS NOT NULL
@@ -120,6 +149,22 @@ final class OutreachAnalytics
         }
 
         return $c;
+    }
+
+    /** The value test for the selected custom field (type-aware); no value given = "has any value". */
+    private function cfValueCondition(): string
+    {
+        $v = $this->f->cfValue;
+
+        if ($v === null || $this->cf === null) {
+            return '';
+        }
+
+        return match ($this->cf->type) {
+            'number', 'currency' => is_numeric($v) ? ' AND cfv.value_number = ' . $this->b((string) $v) : ' AND 1 = 0',
+            'boolean' => ' AND cfv.value_bool = ' . (in_array(mb_strtolower($v), ['yes', 'true', '1'], true) ? 1 : 0),
+            default => ' AND cfv.value_text = ' . $this->b($v),
+        };
     }
 
     /** Every confirmed send of the Workspace, with NO display filter: the complete timeline successors are read from. */
@@ -475,6 +520,16 @@ final class OutreachAnalytics
             return $this->campaignSegments();
         }
 
+        if ($dimension === 'group') {
+            // A prospect referenced by two groups appears in BOTH group rows (that is the comparison); global totals elsewhere stay unique.
+            return $this->segmentRows('cg.name', 's', 'JOIN agency_prospect_group_links gl ON gl.prospect_id = s.id AND gl.workspace_id = ' . $this->ws
+                . ' JOIN contact_groups cg ON cg.id = gl.contact_group_id');
+        }
+
+        if (str_starts_with($dimension, 'cf:')) {
+            return $this->customFieldSegments(substr($dimension, 3));
+        }
+
         $expr = match ($dimension) {
             'rating' => "CASE WHEN s.google_rating IS NULL THEN 'No rating' WHEN s.google_rating >= 4.5 THEN '4.5+' WHEN s.google_rating >= 4 THEN '4–4.4' WHEN s.google_rating >= 3 THEN '3–3.9' ELSE 'Under 3' END",
             'reviews' => "CASE WHEN s.review_count IS NULL THEN 'No review data' WHEN s.review_count >= 50 THEN '50+ reviews' WHEN s.review_count >= 10 THEN '10–49 reviews' ELSE 'Under 10 reviews' END",
@@ -488,7 +543,7 @@ final class OutreachAnalytics
     }
 
     /** @return list<array<string, mixed>> */
-    private function segmentRows(string $expr, string $alias): array
+    private function segmentRows(string $expr, string $alias, string $join = ''): array
     {
         $rows = $this->select("SELECT {$expr} AS segment, COUNT(*) AS n,
                 SUM(s.has_reply = 1) AS replied,
@@ -496,12 +551,64 @@ final class OutreachAnalytics
                 SUM(s.is_booked = 1) AS booked,
                 SUM(s.outcome = 'rejected') AS rejected,
                 SUM(s.is_won = 1) AS won
-            FROM (" . $this->scopedProspects('contacted') . ') s GROUP BY segment ORDER BY n DESC, segment LIMIT 30');
+            FROM (" . $this->scopedProspects('contacted') . ") s {$join} GROUP BY segment ORDER BY n DESC, segment LIMIT 30");
 
         return array_map(fn ($r) => [
             'segment' => (string) $r->segment, 'n' => (int) $r->n, 'replied' => (int) $r->replied, 'interested' => (int) $r->interested,
             'booked' => (int) $r->booked, 'rejected' => (int) $r->rejected, 'won' => (int) $r->won, 'small' => (int) $r->n < self::SMALL_SAMPLE,
         ], $rows);
+    }
+
+    /** @return list<array<string, mixed>> real stored values of one Business Custom Field, one row per value. */
+    private function customFieldSegments(string $key): array
+    {
+        $business = \App\Library\AgencyOutreach\AgencyOutreachBusinessResolver::forWorkspace($this->workspace);
+        $def = $business === null ? null : CustomFieldDefinition::query()->where('business_id', $business->id)
+            ->where('entity', CustomFieldDefinition::ENTITY_CONTACT)->where('key', $key)->whereNull('archived_at')->first();
+
+        if ($def === null || ! in_array($def->type, self::SEGMENT_FIELD_TYPES, true)) {
+            return [];
+        }
+
+        $value = match ($def->type) {
+            'number', 'currency' => 'CAST(cfv.value_number AS CHAR)',
+            'boolean' => "IF(cfv.value_bool = 1, 'Yes', 'No')",
+            // A select stores the option's stable id; the comparison shows the label (an id with no option left shows as stored).
+            'select' => $this->optionLabelCase($def),
+            default => 'cfv.value_text',
+        };
+
+        // One row per (logical prospect, value): two Contact copies of the same person with the same value count once.
+        return $this->segmentRows('x.seg', 's', 'JOIN (SELECT DISTINCT glx.prospect_id, ' . $value . ' AS seg FROM agency_prospect_group_links glx'
+            . ' JOIN custom_field_values cfv ON cfv.contact_id = glx.contact_id AND cfv.definition_id = ' . (int) $def->id
+            . ' WHERE glx.workspace_id = ' . $this->ws . ' AND ' . $this->storedColumn($def) . ' IS NOT NULL) x ON x.prospect_id = s.id');
+    }
+
+    /** The column a field type stores its value in (used for the plain presence test, which must not repeat bound labels). */
+    private function storedColumn(CustomFieldDefinition $def): string
+    {
+        return match ($def->type) {
+            'number', 'currency' => 'cfv.value_number',
+            'boolean' => 'cfv.value_bool',
+            default => 'cfv.value_text',
+        };
+    }
+
+    /** SQL mapping a select field's stored option ids to their labels. */
+    private function optionLabelCase(CustomFieldDefinition $def): string
+    {
+        $options = array_filter($def->optionList(), fn ($o) => is_array($o) && isset($o['id'], $o['label']));
+
+        if ($options === []) {
+            return 'cfv.value_text';
+        }
+
+        $when = '';
+        foreach ($options as $o) {
+            $when .= ' WHEN ' . $this->b((string) $o['id']) . ' THEN ' . $this->b((string) $o['label']);
+        }
+
+        return 'CASE cfv.value_text' . $when . ' ELSE cfv.value_text END';
     }
 
     /** @return list<array<string, mixed>> */
@@ -513,7 +620,8 @@ final class OutreachAnalytics
         foreach ($campaigns as $c) {
             $f = new AnalyticsFilters(campaignUid: $c->uid, period: $this->f->period, from: $this->f->from, to: $this->f->to,
                 businessType: $this->f->businessType, geo: $this->f->geo, rating: $this->f->rating, reviews: $this->f->reviews,
-                website: $this->f->website, batchUid: $this->f->batchUid, channelId: $this->f->channelId, scriptVersion: $this->f->scriptVersion);
+                website: $this->f->website, batchUid: $this->f->batchUid, channelId: $this->f->channelId, scriptVersion: $this->f->scriptVersion,
+                groupUid: $this->f->groupUid, cfKey: $this->f->cfKey, cfValue: $this->f->cfValue);
             $k = (new self($this->workspace, $f))->kpis();
 
             if ($k['contacted'] > 0) {
@@ -602,6 +710,8 @@ final class OutreachAnalytics
                    JOIN agency_prospect_messages o ON o.campaign_member_id = i.campaign_member_id AND o.direction = 'outbound' AND o.status = 'sent' AND o.sent_at <= i.received_at
                    WHERE cm2.prospect_id = t.id AND cm2.workspace_id = {$this->ws}{$camp} AND i.direction = 'inbound' AND i.received_at IS NOT NULL
                      AND o.id = (SELECT o2.id FROM agency_prospect_messages o2 WHERE o2.campaign_member_id = i.campaign_member_id AND o2.direction = 'outbound' AND o2.status = 'sent' AND o2.sent_at IS NOT NULL AND o2.sent_at <= i.received_at ORDER BY o2.sent_at DESC, o2.id DESC LIMIT 1)) AS reply_sec,
+                (SELECT GROUP_CONCAT(DISTINCT cgn.name ORDER BY cgn.name SEPARATOR '; ') FROM agency_prospect_group_links gln JOIN contact_groups cgn ON cgn.id = gln.contact_group_id
+                   WHERE gln.prospect_id = t.id AND gln.workspace_id = {$this->ws}) AS group_names,
                 (SELECT b.filename FROM agency_prospect_import_batches b WHERE b.id = t.import_batch_id) AS source_name
             FROM ({$base}) t ORDER BY t.id DESC LIMIT {$perPage} OFFSET {$offset}");
 
@@ -659,7 +769,26 @@ final class OutreachAnalytics
                     SELECT id, COALESCE(sequence_step_id, CASE WHEN purpose = 'initial' THEN 'opener' END) AS step_key
                     FROM agency_prospect_messages WHERE workspace_id = {$ws} AND direction = 'outbound' AND status = 'sent' AND sent_at IS NOT NULL) x
                 WHERE x.step_key IS NOT NULL GROUP BY x.step_key LIMIT 30"),
+            'groups' => DB::table('agency_prospect_group_links as gl')->join('contact_groups as cg', 'cg.id', '=', 'gl.contact_group_id')
+                ->where('gl.workspace_id', $ws)->distinct()->orderBy('cg.name')->limit(100)->get(['cg.uid', 'cg.name'])->all(),
+            'fields' => $this->customFieldOptions(),
             'versions' => DB::table('agency_prospect_messages')->where('workspace_id', $ws)->whereNotNull('script_version')->distinct()->orderBy('script_version')->limit(50)->pluck('script_version')->all(),
         ];
+    }
+
+    /** @return list<array{key: string, label: string, type: string, options: list<array{id: string, label: string}>}> active contact custom fields usable as a filter/dimension. */
+    public function customFieldOptions(): array
+    {
+        $business = \App\Library\AgencyOutreach\AgencyOutreachBusinessResolver::forWorkspace($this->workspace);
+
+        if ($business === null) {
+            return [];
+        }
+
+        return CustomFieldDefinition::query()->where('business_id', $business->id)->where('entity', CustomFieldDefinition::ENTITY_CONTACT)
+            ->whereNull('archived_at')->whereIn('type', self::SEGMENT_FIELD_TYPES)->orderBy('position')->limit(60)->get(['key', 'label', 'type', 'options'])
+            ->map(fn ($d) => ['key' => $d->key, 'label' => $d->label, 'type' => $d->type,
+                // A select's filter value is the option's stable id; the picker shows the label.
+                'options' => $d->type === 'select' ? array_map(fn ($o) => ['id' => (string) $o['id'], 'label' => (string) $o['label']], array_filter($d->optionList(), fn ($o) => is_array($o) && isset($o['id'], $o['label']))) : []])->all();
     }
 }

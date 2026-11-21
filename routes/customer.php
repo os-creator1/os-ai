@@ -2507,6 +2507,7 @@
             Route::post('/prospects/import', 'Workspace\AgencyOutreachClientsController@importUpload')->name('prospects.import.upload');
             Route::get('/prospects/import/{batch}', 'Workspace\AgencyOutreachClientsController@importReview')->name('prospects.import.review');
             Route::post('/prospects/import/{batch}/map', 'Workspace\AgencyOutreachClientsController@importRemap')->name('prospects.import.map');
+            Route::get('/prospects/import/{batch}/done', 'Workspace\AgencyOutreachClientsController@importDone')->name('prospects.import.done');
             Route::post('/prospects/import/{batch}/commit', 'Workspace\AgencyOutreachClientsController@importCommit')->name('prospects.import.commit');
             Route::post('/prospects/{prospect}/client-won', 'Workspace\AgencyOutreachClientsController@markClientWon')->name('prospects.client-won');
             Route::get('/prospects/{prospect}', 'Workspace\AgencyProspectingController@showProspect')->name('prospects.show');

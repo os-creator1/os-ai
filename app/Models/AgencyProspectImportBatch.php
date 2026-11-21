@@ -11,11 +11,11 @@ class AgencyProspectImportBatch extends Model
     use HasUid;
 
     protected $fillable = [
-        'workspace_id', 'kind', 'filename', 'status', 'region', 'headers', 'mapping', 'summary',
+        'workspace_id', 'kind', 'filename', 'status', 'region', 'headers', 'mapping', 'extra_fields', 'summary', 'group_report',
         'contact_group_id', 'group_name', 'created_by_user_id', 'imported_at',
     ];
 
-    protected $casts = ['headers' => 'array', 'mapping' => 'array', 'summary' => 'array', 'imported_at' => 'datetime'];
+    protected $casts = ['headers' => 'array', 'mapping' => 'array', 'extra_fields' => 'array', 'summary' => 'array', 'group_report' => 'array', 'imported_at' => 'datetime'];
 
     public function rows(): HasMany
     {

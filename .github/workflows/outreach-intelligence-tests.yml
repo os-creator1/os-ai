@@ -5,6 +5,9 @@ on:
     branches: [main]
     paths:
       - 'app/Library/AgencyOutreach/**'
+      - 'app/Console/Commands/Outreach/BackfillImportContactGroups.php'
+      - 'app/Models/AgencyProspectGroupLink.php'
+      - 'app/Library/CustomFields/**'
       - 'app/Library/AgencyProspecting/AgencyProspectPhoneNormalizer.php'
       - 'app/Http/Controllers/Customer/Workspace/AgencyOutreachAnalyticsController.php'
       - 'app/Http/Controllers/Customer/Workspace/AgencyOutreachClientsController.php'
@@ -14,12 +17,15 @@ on:
       - 'app/Models/AgencyProspectImportBatch.php'
       - 'app/Models/AgencyProspectImportRow.php'
       - 'database/migrations/2026_12_19_100000_add_outreach_exclusions_imports_and_client_won.php'
+      - 'database/migrations/2026_12_20_100000_link_outreach_imports_to_contact_groups.php'
       - 'resources/views/customer/workspaces/prospecting/**'
       - 'public/css/outreach/outreach.css'
       - 'routes/customer.php'
       - 'tests/Feature/AgencyOutreach/OutreachAnalyticsTest.php'
       - 'tests/Feature/AgencyOutreach/OutreachExistingClientsTest.php'
       - 'tests/Feature/AgencyOutreach/OutreachSmartImportTest.php'
+      - 'tests/Feature/AgencyOutreach/OutreachImportGroupTest.php'
+      - 'tests/Feature/AgencyOutreach/OutreachImportGroupReviewTest.php'
       - 'tests/Feature/AgencyOutreach/OutreachSingleHeadingTest.php'
       - '.github/workflows/outreach-intelligence-tests.yml'
 
@@ -74,4 +80,4 @@ jobs:
       - name: Install dependencies
         run: composer install --no-interaction --prefer-dist --no-progress
       - name: Test Outreach analytics, exclusions, import and single-heading regressions
-        run: php artisan test tests/Feature/AgencyOutreach/OutreachAnalyticsTest.php tests/Feature/AgencyOutreach/OutreachExistingClientsTest.php tests/Feature/AgencyOutreach/OutreachSmartImportTest.php tests/Feature/AgencyOutreach/OutreachSingleHeadingTest.php tests/Feature/AgencyOutreach/OutreachRedesignRenderTest.php tests/Feature/AgencyOutreach/OutreachSendPacingTest.php tests/Feature/AgencyOutreach/OutreachReplyTimingTest.php tests/Feature/AgencyOutreach/OutreachEngineTest.php tests/Feature/AgencyOutreach/CampaignContactGroupTest.php --stop-on-failure
+        run: php artisan test tests/Feature/AgencyOutreach/OutreachAnalyticsTest.php tests/Feature/AgencyOutreach/OutreachExistingClientsTest.php tests/Feature/AgencyOutreach/OutreachSmartImportTest.php tests/Feature/AgencyOutreach/OutreachImportGroupTest.php tests/Feature/AgencyOutreach/OutreachImportGroupReviewTest.php tests/Feature/AgencyOutreach/OutreachSingleHeadingTest.php tests/Feature/AgencyOutreach/OutreachRedesignRenderTest.php tests/Feature/AgencyOutreach/OutreachSendPacingTest.php tests/Feature/AgencyOutreach/OutreachReplyTimingTest.php tests/Feature/AgencyOutreach/OutreachEngineTest.php tests/Feature/AgencyOutreach/CampaignContactGroupTest.php --stop-on-failure

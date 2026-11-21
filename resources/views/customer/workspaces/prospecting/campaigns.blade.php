@@ -127,7 +127,7 @@
                             <div class="opts" role="radiogroup" aria-label="Contact groups">
                                 @forelse($contactGroups as $group)
                                     <label data-name="{{ \Illuminate\Support\Str::lower($group->name) }}">
-                                        <input type="radio" name="contact_group_uid" value="{{ $group->uid }}" @checked(old('contact_group_uid') === $group->uid)>
+                                        <input type="radio" name="contact_group_uid" value="{{ $group->uid }}" @checked(old('contact_group_uid', request('group')) === $group->uid)>
                                         <b>{{ $group->name }}</b><span>{{ number_format($group->subscribers_count) }} {{ \Illuminate\Support\Str::plural('contact', $group->subscribers_count) }}</span>
                                     </label>
                                 @empty

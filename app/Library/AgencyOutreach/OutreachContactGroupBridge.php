@@ -97,7 +97,12 @@ final class OutreachContactGroupBridge
             ->where('status', 1)
             ->withCount('subscribers')
             ->orderBy('name')
-            ->get();
+            ->get()
+            ->each(function (ContactGroups $group) {
+                // Contacts an import LINKED into the group (their number already lived in another group) are recipients too.
+                $group->subscribers_count += (int) DB::table('agency_prospect_group_links')
+                    ->where('contact_group_id', $group->id)->where('contact_in_group', false)->whereNotNull('contact_id')->count();
+            });
     }
 
     /** A group by uid, only if it belongs to this Business and is enabled. */
@@ -188,6 +193,21 @@ final class OutreachContactGroupBridge
 
     // ------------------------------------------------------------------
 
+    /**
+     * Every Contact of this Business the group stands for: the ones that live in it plus the ones an import linked to it by EXPLICIT
+     * reference (a number that already belonged to another group). Ordinary provenance (contact_in_group = true) is NOT membership:
+     * a Contact that was moved out of the group is no longer its recipient. One query, so a Contact reached both ways is counted and enrolled once.
+     */
+    private function members(ContactGroups $group, Business $business): \Illuminate\Database\Eloquent\Builder
+    {
+        return Contacts::query()
+            ->where('business_id', (int) $business->id)
+            ->where(function ($q) use ($group) {
+                $q->where('group_id', $group->id)
+                    ->orWhereIn('id', \App\Models\AgencyProspectGroupLink::query()->where('contact_group_id', $group->id)->where('contact_in_group', false)->whereNotNull('contact_id')->select('contact_id'));
+            });
+    }
+
     private function run(Workspace $workspace, ContactGroups $group, ?AgencyProspectCampaign $campaign, bool $persist): array
     {
         $business = AgencyOutreachBusinessResolver::forWorkspace($workspace);
@@ -197,30 +217,30 @@ final class OutreachContactGroupBridge
             throw new \DomainException('That contact group does not belong to this Workspace\'s Business.');
         }
 
-        $total = Contacts::query()->where('group_id', $group->id)->where('business_id', (int) $business->id)->count();
+        $total = $this->members($group, $business)->count();
         $report = ['group_total' => $total, 'eligible' => 0, 'excluded' => 0, 'reasons' => [], 'skipped' => [], 'too_large' => $total > self::MAX_CONTACTS];
 
         if ($report['too_large']) {
             return $report;
         }
 
+        // A historical Contact may hold its number in the Business's own national form; read it with the Business region.
+        $region = \App\Library\Contacts\ContactPhone::regionFor($business);
         $suppressed = $this->suppressedNumbers($business);
         $seen = [];
         $keepMemberIds = [];
         $fieldTags = $this->fieldIds($group);
 
-        Contacts::query()
-            ->where('group_id', $group->id)
-            ->where('business_id', (int) $business->id)
+        $this->members($group, $business)
             ->orderBy('id')
-            ->chunkById(self::CHUNK, function ($contacts) use (&$report, &$seen, &$keepMemberIds, $suppressed, $workspace, $campaign, $persist, $fieldTags, $group) {
+            ->chunkById(self::CHUNK, function ($contacts) use (&$report, &$seen, &$keepMemberIds, $suppressed, $workspace, $campaign, $persist, $fieldTags, $group, $region) {
                 $details = $this->details($contacts->pluck('id')->all(), $fieldTags);
                 $candidates = [];
 
                 foreach ($contacts as $contact) {
                     // The model casts `phone` to int, which would mangle formatting; read what is stored.
                     $raw = trim((string) $contact->getRawOriginal('phone'));
-                    $phone = AgencyProspectPhoneNormalizer::normalize($raw);
+                    $phone = AgencyProspectPhoneNormalizer::normalizeStored($raw, $region);
                     $reason = null;
 
                     if ($contact->status !== Contacts::STATUS_SUBSCRIBE) {
@@ -308,6 +328,12 @@ final class OutreachContactGroupBridge
                     }
 
                     $prospect ??= $this->createProspect($workspace, $phone, $contact, $info, $group);
+
+                    // Provenance: this group references this logical prospect (deduplicated; one identity per phone).
+                    \App\Models\AgencyProspectGroupLink::query()->updateOrCreate(
+                        ['contact_group_id' => $group->id, 'prospect_id' => $prospect->id],
+                        ['workspace_id' => $workspace->id, 'contact_id' => $contact->id, 'contact_in_group' => (int) $contact->group_id === (int) $group->id],
+                    );
                     // Reconcile by the MEMBERSHIP, not only by source contact id:
                     // the same CRM contact may now have a different phone/prospect.
                     // Retain only the current membership, or refresh would text
