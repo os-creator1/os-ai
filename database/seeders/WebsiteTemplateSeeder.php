@@ -63,7 +63,44 @@ class WebsiteTemplateSeeder extends Seeder
      */
     public static function nicheTemplates(): array
     {
-        return self::dogBoardingTemplates(self::sharedPageManifest());
+        $manifest = self::sharedPageManifest();
+
+        return array_merge(self::dogBoardingTemplates($manifest), self::tutoringTemplates($manifest));
+    }
+
+    /**
+     * Tutoring looks: the four structural designs every niche shares (modern, editorial, luxury, conversion), under the
+     * niche's own template keys and calm school-friendly colours. Same SEO page manifest; only the theme tokens differ.
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    private static function tutoringTemplates(array $manifest): array
+    {
+        $make = fn (string $key, string $name, string $description, string $font, string $primary, string $secondary, string $button, string $width, string $variant) => [
+            'key' => $key,
+            'niche_key' => 'tutoring_exam_prep',
+            'display_name' => $name,
+            'description' => $description,
+            'theme' => [
+                'font' => $font,
+                'primary_color' => $primary,
+                'secondary_color' => $secondary,
+                'button_style' => $button,
+                'content_width' => $width,
+                'header_variant' => $variant,
+                'footer_variant' => $variant,
+            ],
+            'page_manifest' => $manifest,
+            'manifest_version' => 1,
+            'is_active' => true,
+        ];
+
+        return [
+            $make('tutoring_modern', 'Bold Scholar', 'Navy and amber with a full-width hero, big headlines and one clear inquiry button.', 'system', '#f59e0b', '#0f2a5c', 'rounded', '1160px', 'modern'),
+            $make('tutoring_editorial', 'Classic Study', 'Clean white and deep blue with a centered logo, serif headlines and calm, spacious sections.', 'serif', '#1d4ed8', '#1b1b1b', 'solid', '1000px', 'editorial'),
+            $make('tutoring_luxury', 'Midnight Scholar', 'Dark navy with gold accents and refined type for a premium, focused feel.', 'system', '#d4a017', '#0b1220', 'pill', '1120px', 'luxury'),
+            $make('tutoring_conversion', 'Bright Minds', 'Soft sky and warm coral with rounded tiles and a floating menu. Friendly and bright.', 'system', '#fb7185', '#1e3a5f', 'pill', '1120px', 'conversion'),
+        ];
     }
 
     /**

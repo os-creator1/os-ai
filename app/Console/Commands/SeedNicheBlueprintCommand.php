@@ -13,6 +13,7 @@ use App\Models\NicheBlueprintComponent;
 use App\Models\User;
 use Illuminate\Console\Command;
 use Database\Seeders\DogBoardingWebsiteSetupQuestionnaireSeeder;
+use Database\Seeders\TutoringWebsiteSetupQuestionnaireSeeder;
 use Database\Seeders\WebsiteTemplateSeeder;
 use RuntimeException;
 
@@ -78,6 +79,12 @@ class SeedNicheBlueprintCommand extends Command
         if ($niche === DogBoardingBlueprint::KEY) {
             (new WebsiteTemplateSeeder())->runForNiche($niche);
             (new DogBoardingWebsiteSetupQuestionnaireSeeder())->run();
+        }
+
+        // Tutoring likewise owns its four looks and its versioned setup questionnaire (idempotent, niche-scoped seeds).
+        if ($niche === TutoringBlueprint::KEY) {
+            (new WebsiteTemplateSeeder())->runForNiche($niche);
+            (new TutoringWebsiteSetupQuestionnaireSeeder())->run();
         }
 
         $blueprint = NicheBlueprint::query()->where('key', $niche)->first()
