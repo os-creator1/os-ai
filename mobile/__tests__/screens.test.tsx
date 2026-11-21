@@ -87,6 +87,25 @@ describe('signed-in screens', () => {
     expect(nav.navigate).toHaveBeenCalledWith('ConversationDetail', { uid: 'c1', title: 'Ann Lee' });
   });
 
+  it('loads older conversations when the server supplies a next page', async () => {
+    const conversations = jest.fn(async (_scope, query) => query.page === 2
+      ? { data: [
+          { uid: 'c2', display_name: 'Older Lead', phone: '+15552220002', unread: false, pinned: false, last_message: null, updated_at: null },
+        ], meta: { page: 2, next_page: null } }
+      : { data: [
+          { uid: 'c1', display_name: 'Ann Lee', phone: '+15551110001', unread: true, pinned: false, last_message: null, updated_at: null },
+        ], meta: { page: 1, next_page: 2 } });
+    await signedIn(() => <ConversationsScreen {...({ navigation: nav, route: { params: undefined } } as any)} />, fakeApi({ conversations }));
+    await waitFor(() => screen.getByText('Ann Lee'));
+    await fireEvent.press(screen.getByText('Load older leads'));
+    await waitFor(() => screen.getByText('Older Lead'));
+    expect(conversations).toHaveBeenCalledWith(
+      { workspaceUid: 'ws-1', businessUid: 'biz-1' },
+      expect.objectContaining({ page: 2, filter: 'all' }),
+    );
+    expect(screen.getByText('Ann Lee')).toBeTruthy();
+  });
+
   it('shows an error state with retry when the API refuses (e.g. foreign business)', async () => {
     const api = fakeApi({ conversations: jest.fn(async () => { throw new ApiError(404, 'not_found', 'Not found.'); }) });
     await signedIn(() => <ConversationsScreen {...({ navigation: nav, route: { params: undefined } } as any)} />, api);
