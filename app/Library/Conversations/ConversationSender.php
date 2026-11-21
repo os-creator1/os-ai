@@ -45,7 +45,7 @@ class ConversationSender
     /**
      * @param  string  $sendUid  the client's UUID: one logical message, one bubble, across retries
      */
-    public function reply(ChatBox $box, string $message, ?UploadedFile $media, string $sendUid): JsonResponse
+    public function reply(ChatBox $box, string $message, ?UploadedFile $media, string $sendUid, bool $requireManaged = false): JsonResponse
     {
         $business = $box->business;
 
@@ -69,6 +69,12 @@ class ConversationSender
 
         $input['idempotency_token'] = $sendUid;
         $input['send_uid'] = $sendUid;
+        // Mobile sends require a durable operation key and tracked transport.
+        // If the identity disappears after the mobile preflight, the transport
+        // delegate MUST refuse instead of falling through to legacy SMS.
+        if ($requireManaged) {
+            $input['require_managed'] = true;
+        }
 
         // Correction round 4, item 3 — the managed dispatch operation
         // key is scoped to THIS conversation, distinct from the raw
