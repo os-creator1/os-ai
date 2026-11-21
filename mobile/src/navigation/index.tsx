@@ -8,14 +8,23 @@ import { ContactProfileScreen } from '../screens/ContactProfileScreen';
 import { ConversationDetailScreen } from '../screens/ConversationDetailScreen';
 import { ConversationsScreen } from '../screens/ConversationsScreen';
 import { LoginScreen } from '../screens/LoginScreen';
-import { Loading } from '../screens/ui';
+import { Button, ErrorState, Loading } from '../screens/ui';
+import { View } from 'react-native';
 import type { RootStack } from './types';
 
 const Stack = createNativeStackNavigator<RootStack>();
 
 export function Navigation() {
-  const { ready, signedIn, scope } = useAuth();
+  const { ready, restoreError, retryRestore, discardStoredSession, signedIn, scope } = useAuth();
   if (!ready) return <Loading />;
+  if (restoreError) {
+    return (
+      <View style={{ flex: 1 }}>
+        <ErrorState message={restoreError} onRetry={() => { void retryRestore(); }} />
+        <Button title="Sign in with another account" variant="plain" onPress={() => { void discardStoredSession(); }} />
+      </View>
+    );
+  }
 
   return (
     <NavigationContainer>
