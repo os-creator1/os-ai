@@ -147,6 +147,9 @@ class MobileConversationController extends MobileController
         // Straight to the column, no model save: reading must not bump updated_at, or it would re-sort the inbox.
         DB::table('chat_boxes')->where('id', $box->id)->where('business_id', $resolved[1]->id)->update(['notification' => 0]);
 
+        // The user's other phones (and this one, on another screen) drop their unread badge live.
+        app(\App\Library\Mobile\MobileConversationNotifier::class)->changed($box->setRelation('business', $resolved[1]), \App\Events\Mobile\MobileConversationChanged::READ);
+
         return response()->json(['data' => ['uid' => $box->uid, 'unread' => false]])->header('Cache-Control', 'no-store');
     }
 

@@ -1,5 +1,5 @@
 import type {
-  CallingCapability, ContactProfile, ConversationDetail, ConversationSummary, LoginResult, Me, Scope, SendResult,
+  CallingCapability, ContactProfile, ConversationDetail, ConversationSummary, LoginResult, Me, RealtimeConfig, Scope, SendResult,
 } from './types';
 
 export class ApiError extends Error {
@@ -77,6 +77,10 @@ export function createApi({ baseUrl, getToken, onUnauthorized, fetchImpl }: Deps
       call<SendResult>('POST', `${base(s)}/conversations/${encodeURIComponent(uid)}/reply`, { body, idempotency_key: idempotencyKey }),
     retry: (s: Scope, uid: string, sendUid: string) =>
       call<SendResult>('POST', `${base(s)}/conversations/${encodeURIComponent(uid)}/retry`, { send_uid: sendUid }),
+    realtimeConfig: () => call<RealtimeConfig>('GET', 'realtime/config'),
+    /** Pusher-protocol channel authorization for a mobile token. Resolves to the signed auth payload. */
+    broadcastAuth: (socketId: string, channelName: string) =>
+      call<{ auth: string; channel_data?: string }>('POST', 'broadcasting/auth', { socket_id: socketId, channel_name: channelName }, true, true),
     contact: (s: Scope, uid: string) => call<ContactProfile>('GET', `${base(s)}/contacts/${encodeURIComponent(uid)}`),
     callingCapability: (s: Scope) => call<CallingCapability>('GET', `${base(s)}/calls/capability`),
   };

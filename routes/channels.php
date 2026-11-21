@@ -71,3 +71,21 @@ Broadcast::channel('chat.business.{businessUid}', function (User $user, string $
         return false;
     }
 });
+
+
+/*
+| MotionGrove Mobile (Phase 2B). A phone listens on ITS OWN per-user, per-Business channel; events on it are content-free
+| ("conversation X changed"). Subscription requires the SAME decision the dispatcher used to choose recipients
+| (MobileRecipients::mayReceive: membership, module, permission, entitlement, lock), re-evaluated at subscribe time, and the
+| channel's user uid must be the authenticated user. Reached only through POST /api/mobile/v1/broadcasting/auth with a
+| mobile-scoped Sanctum token.
+*/
+Broadcast::channel('mobile.business.{businessUid}.user.{userUid}', function (User $user, string $businessUid, string $userUid): bool {
+    if (! hash_equals((string) $user->uid, $userUid)) {
+        return false;
+    }
+
+    $business = Business::query()->where('uid', $businessUid)->first();
+
+    return $business !== null && app(\App\Library\Mobile\MobileRecipients::class)->mayReceive($user, $business);
+});

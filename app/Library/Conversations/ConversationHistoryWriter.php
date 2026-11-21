@@ -138,6 +138,7 @@ final class ConversationHistoryWriter
      * already answered" flag is reset. The caller holds the transaction.
      *
      * @param  list<string>  $mediaUrls
+     * @return int|null the conversation (chat_boxes.id) the message was filed under
      */
     public function recordManagedInbound(
         Business $business,
@@ -146,11 +147,11 @@ final class ConversationHistoryWriter
         ?string $body,
         array $mediaUrls,
         string $messageType,
-    ): void {
+    ): ?int {
         $conversation = $this->conversationFor($business, $businessNumber, $contactNumber);
 
         if ($conversation === null) {
-            return;
+            return null;
         }
 
         $conversation->reply_by_customer = true;
@@ -176,6 +177,9 @@ final class ConversationHistoryWriter
             'sms_type' => $messageType,
             'direction' => Reports::DIRECTION_INCOMING,
         ]);
+
+        // The exact thread this message landed in — carried on the domain event so listeners never have to guess it.
+        return (int) $conversation->id;
     }
 
     /**
@@ -554,6 +558,18 @@ final class ConversationHistoryWriter
                 'send_status' => ManagedSendStateMachine::DELIVERY_FAILED,
                 'send_failure_reason' => ConversationSendFailureReason::DeliveryFailed->value,
             ]);
+    }
+
+    /**
+     * ONLY 'sent' -> 'delivered', on the carrier's delivery receipt for the operation that still owns the bubble. Anything else
+     * (a bubble that already failed, or moved to a later attempt) is left exactly as it is.
+     */
+    public function markManagedOutboundDelivered(int $operationId): void
+    {
+        ChatBoxMessage::query()
+            ->where('business_messaging_operation_id', $operationId)
+            ->where('send_status', ManagedSendStateMachine::SENT)
+            ->update(['send_status' => ManagedSendStateMachine::DELIVERED]);
     }
 
     /**

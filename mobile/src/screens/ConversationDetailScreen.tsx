@@ -6,6 +6,8 @@ import type { ConversationDetail, Message } from '../api/types';
 import { useAuth } from '../auth/AuthContext';
 import { isFailed, statusLabel } from '../conversations/status';
 import { uuidv4 } from '../conversations/uuid';
+import { setActiveConversation } from '../notifications/target';
+import { useRealtime } from '../realtime/RealtimeProvider';
 import type { RootStack } from '../navigation/types';
 import { colors, space } from '../theme';
 import { Button, ErrorState, Loading } from './ui';
@@ -25,7 +27,16 @@ type Pending = {
 type Row = (Message & { pending?: false }) | { pending: true; key: string; body: string; state: Pending['state']; error?: string; canRetry: boolean; mode: Pending['mode'] };
 type RetryAttempt = { state: 'sending' | 'failed' | 'unconfirmed'; error?: string };
 
-export function ConversationDetailScreen({ route, navigation }: Props) {
+/**
+ * Keyed by conversation: opening another conversation (a notification tap while one is already open reuses the route and only
+ * changes its params) mounts a FRESH thread — draft, pending/failed sends, retry state and loaded history never carry over,
+ * so a failed message from one customer can never be retried into another's conversation.
+ */
+export function ConversationDetailScreen(props: Props) {
+  return <ConversationThread key={props.route.params.uid} {...props} />;
+}
+
+function ConversationThread({ route, navigation }: Props) {
   const { api, scope } = useAuth();
   const uid = route.params.uid;
   const [data, setData] = useState<ConversationDetail | null>(null);
@@ -42,6 +53,11 @@ export function ConversationDetailScreen({ route, navigation }: Props) {
   const listRef = useRef<FlatList<Row>>(null);
   const stick = useRef(true);
   const readSent = useRef(false);
+  const dataRef = useRef<ConversationDetail | null>(null);
+  // Live refreshes can overlap; only the most recently STARTED one may apply its result.
+  const liveSeq = useRef(0);
+  // Is this screen the one the user is looking at? A screen kept mounted under another one (Contact profile) is not.
+  const focused = useRef(true);
   const earlierInFlight = useRef(false);
   const [loadingEarlier, setLoadingEarlier] = useState(false);
   const threadGeneration = useRef(0);
@@ -49,6 +65,7 @@ export function ConversationDetailScreen({ route, navigation }: Props) {
   const load = useCallback(async (): Promise<boolean> => {
     if (!scope) return false;
     const version = ++threadGeneration.current;
+    liveSeq.current++;
     earlierInFlight.current = false;
     setLoadingEarlier(false);
     setError(null);
@@ -56,6 +73,7 @@ export function ConversationDetailScreen({ route, navigation }: Props) {
       const d = await api.conversation(scope, uid);
       if (version !== threadGeneration.current) return false;
       setData(d);
+      dataRef.current = d;
       setHasMore(d.has_more);
       setOlder([]);
       // Only the actual server history proves a previously unconfirmed
@@ -80,6 +98,56 @@ export function ConversationDetailScreen({ route, navigation }: Props) {
       return false;
     }
   }, [api, scope, uid]);
+
+  /**
+   * Live update (realtime event, reconnect, app resume): re-read the latest window WITHOUT discarding older pages the
+   * user already loaded, never overwriting a newer full load, and never flashing a spinner. Messages are de-duplicated
+   * by id when rendered, so an event racing a send's own refresh cannot create a second bubble.
+   */
+  const refreshLive = useCallback(async () => {
+    if (!scope) return;
+    const version = threadGeneration.current;
+    const mine = ++liveSeq.current;
+    try {
+      const d = await api.conversation(scope, uid);
+      if (version !== threadGeneration.current || mine !== liveSeq.current) return;
+      // Scroll intent is NOT touched here: a background update keeps the user where they are (see onScroll).
+      // The server only returns the latest window. Messages that just slid out of it stay on screen: they are folded
+      // into the loaded history, so a growing thread never opens a gap. `hasMore` is left as it was: the slid-out
+      // messages are contiguous with the old window, so what lies before the loaded history is unchanged.
+      const prev = dataRef.current?.messages ?? [];
+      const firstNew = d.messages[0]?.id ?? Number.POSITIVE_INFINITY;
+      const slid = prev.filter((m) => m.id < firstNew);
+      if (slid.length > 0) setOlder((o) => [...o, ...slid]);
+      setData(d);
+      dataRef.current = d;
+      const confirmed = new Set(d.messages.map((m) => m.send_uid).filter((key): key is string => !!key));
+      setPending((attempts) => attempts.filter((attempt) => !confirmed.has(attempt.key)));
+      setRetryAttempts((attempts) => Object.fromEntries(
+        Object.entries(attempts).filter(([key, attempt]) => attempt.state !== 'unconfirmed' || !confirmed.has(key)),
+      ));
+      // Marked read only when the user can actually see it: a hidden (covered) screen never clears unread.
+      if (d.conversation.unread && focused.current) api.markRead(scope, uid).catch(() => undefined);
+    } catch { /* a failed live refresh is silent; the next event or pull-to-refresh retries */ }
+  }, [api, scope, uid]);
+
+  useRealtime((e) => {
+    if (e.kind === 'resync' || (e.kind === 'change' && e.conversation_uid === uid)) void refreshLive();
+  });
+
+  // Focus, not mount: when another screen is pushed on top, this conversation is no longer "being viewed", so it neither
+  // marks new messages read nor suppresses their notification banner. Coming back refreshes (and marks read) once.
+  useEffect(() => {
+    const nav: any = navigation;
+    const apply = (isFocused: boolean) => {
+      focused.current = isFocused;
+      setActiveConversation(isFocused ? uid : null);
+    };
+    apply(typeof nav.isFocused === 'function' ? nav.isFocused() : true);
+    const offFocus = typeof nav.addListener === 'function' ? nav.addListener('focus', () => { apply(true); void refreshLive(); }) : null;
+    const offBlur = typeof nav.addListener === 'function' ? nav.addListener('blur', () => apply(false)) : null;
+    return () => { offFocus?.(); offBlur?.(); setActiveConversation(null); };
+  }, [navigation, uid, refreshLive]);
 
   useEffect(() => { void load(); }, [load]);
 
@@ -169,7 +237,10 @@ export function ConversationDetailScreen({ route, navigation }: Props) {
   }, [text, dispatch]);
 
   const rows = useMemo<Row[]>(() => {
-    const server = [...older, ...(data?.messages ?? [])];
+    // De-duplicated by id: a live refresh and an earlier page can overlap.
+    const byId = new Map<number, Message>();
+    for (const m of [...older, ...(data?.messages ?? [])]) byId.set(m.id, m);
+    const server = [...byId.values()].sort((a, b) => a.id - b.id);
     const known = new Set(server.map((m) => m.send_uid).filter(Boolean));
     const extra: Row[] = pending.filter((p) => !known.has(p.key)).map((p) => ({ pending: true, ...p }));
     return [...server, ...extra];
@@ -191,6 +262,12 @@ export function ConversationDetailScreen({ route, navigation }: Props) {
         contentContainerStyle={{ padding: space.md }}
         refreshing={refreshing}
         onRefresh={async () => { setRefreshing(true); await load(); setRefreshing(false); }}
+        scrollEventThrottle={100}
+        // Follow new messages only while the user is at (or near) the bottom; scrolling up to read history stops the following.
+        onScroll={(e) => {
+          const { contentOffset, contentSize, layoutMeasurement } = e.nativeEvent;
+          stick.current = contentOffset.y + layoutMeasurement.height >= contentSize.height - 80;
+        }}
         onContentSizeChange={() => { if (stick.current) listRef.current?.scrollToEnd({ animated: true }); }}
         ListHeaderComponent={hasMore
           ? <Button title={loadingEarlier ? 'Loading earlier messages…' : 'Load earlier messages'} variant="plain" disabled={loadingEarlier} onPress={() => { void loadEarlier(); }} />

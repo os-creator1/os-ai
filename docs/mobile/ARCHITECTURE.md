@@ -165,3 +165,55 @@ Locked accounts remain a uniform 404 (no oracle), as for reads.
 **Known limits (Phase 2B):** no push/real-time (refresh or reopen to see inbound and new delivery states), text only (no
 MMS upload), the desktop inbox clears its unread badge in the browser only, so a conversation read on the phone stays read
 on desktop but one opened on desktop is not persisted as read until the desktop adopts the same endpoint.
+
+
+## 10. Phase 2B — real-time messages and push notifications
+
+**No second messaging system.** Both features hang off seams that already exist:
+
+| Trigger | Existing seam used | Mobile reaction |
+|---|---|---|
+| Inbound SMS (managed *and* legacy) | `InboundMessageReceived` — the authoritative, after-commit domain event emitted once per stored message, with its own webhook de-duplication | queued `NotifyMobileOfInboundMessage` → live event + push |
+| Delivery receipt (delivered / failed) | `InboundWebhookAttributionResolver` transition + `ConversationHistoryWriter` (now also moves a bubble `sent → delivered`, like it already moved `sent → delivery_failed`); new `OutboundDeliveryStateChanged` after-commit event | live `status` event (never a push) |
+| Outbound send / retry | `ConversationSender` (shared with desktop) | live `outbound` event (never a push) |
+| Mark read | the Phase 2A read endpoint | live `read` event |
+
+**Who is told — one authority.** `MobileRecipients` decides recipients **at dispatch time, server-side**, and the channel
+authorization re-asks the same question at subscribe time: enabled account with a live (unexpired, unrevoked) mobile session →
+`MobileBusinessAccess::resolve` (active Workspace, account not locked, membership/ownership, Conversations module visible,
+`chat_box`, Business active, entitlement) → the conversation's Location reachable. Anyone else gets nothing.
+
+**Live events** use the platform's existing Pusher-protocol broadcaster (`BROADCAST_DRIVER=pusher`; works with a self-hosted
+Soketi via `PUSHER_HOST`). `MobileConversationChanged` is broadcast (queued) on a **per-user, per-Business private channel**
+`private-mobile.business.{businessUid}.user.{userUid}` and is deliberately **content-free**:
+`{type: received|outbound|status|read, business_uid, conversation_uid}`. The phone re-reads through the normal API, which applies
+tenancy/Location/permission rules. (The web `chat.business.{uid}` channel is unchanged and is not used by mobile: its events carry
+message content and are not Location-filtered.) Auth: `POST /api/mobile/v1/broadcasting/auth` with a mobile-scoped token; only that
+channel shape, only the caller's own uid, only while `MobileRecipients::mayReceive` holds. `GET /realtime/config` returns the **public**
+app key/cluster/host only.
+
+**Push** (Expo's free service) is queued and never blocks the webhook; it is OFF unless `MOBILE_PUSH_ENABLED=true`. Payload is fixed
+generic text plus two opaque uids — title `MotionGrove`, body `New message received.`, `data {v:1,t:'message',b:<business uid>,c:<conversation uid>}`.
+No text, name, number or Business name. Exactly-once per device: `mobile_push_deliveries` has a UNIQUE `(device, occurrence key)`,
+claimed before the provider call, so webhook replays and queue retries cannot double-send; a transport failure releases the claim.
+Malformed tokens and Expo's `DeviceNotRegistered` clear the token. Logged-out, expired, revoked, disabled and locked sessions are
+never targets. Messages older than `mobile.fresh_message_seconds` (imports/backfills) never push. A provider outage is logged
+and swallowed — the inbound message is already stored.
+
+**Phone.** `RealtimeProvider` keeps one subscription for (user, selected Business), drops events for any other Business, emits
+`resync` on every (re)connect and on app resume so missed messages are re-read from the API, and tears down on Business switch,
+sign-out, 401 or lock. Detail and list screens merge instead of reloading (de-duplicated by id/uid; older pages kept). A push tap goes through
+`NotificationRouter`: payload shape is validated, then the **server is asked again** which Businesses the person may open; the tapped
+Business must be listed with Conversations enabled, is selected explicitly, and only then is the conversation opened (where a 404 just
+shows "not found"). Notification permission is requested only on an explicit tap (banner), not at launch.
+
+### Enabling real-time and push on production (operator prerequisites — not done by this PR)
+1. Run the new migrations (`mobile_push_deliveries`; `mobile_devices` from Phase 1).
+2. Real-time: `BROADCAST_DRIVER=pusher` with `PUSHER_APP_ID/KEY/SECRET/CLUSTER` (or `PUSHER_HOST/PORT/SCHEME` for Soketi), and a running queue worker (broadcast events are queued).
+3. Push: `MOBILE_PUSH_ENABLED=true`; optional `EXPO_ACCESS_TOKEN` if Expo "enhanced push security" is on; a queue worker; outbound HTTPS to `exp.host`.
+4. Mobile build: EAS project id in `app.config.ts` (`extra.eas.projectId`), Android FCM credentials and iOS APNs key uploaded to **Expo** (never to this repo), then a new development/production build.
+
+### Limits
+Expo push *receipts* (delayed delivery errors) are not polled; `DeviceNotRegistered` is handled from the immediate ticket. Existing socket
+subscriptions at the provider cannot be revoked server-side on logout/lock — they receive only content-free notices and any re-read is
+refused by the API; the app disconnects locally. Inbound MMS media is not previewed. Mobile 2FA and native calling are later phases.

@@ -1,8 +1,11 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { FlatList, Pressable, RefreshControl, StyleSheet, Text, TextInput, View } from 'react-native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
+import { ApiError } from '../api/client';
 import type { ConversationSummary } from '../api/types';
 import { useAuth } from '../auth/AuthContext';
+import { NotificationBanner } from '../notifications/NotificationBanner';
+import { useRealtime } from '../realtime/RealtimeProvider';
 import { colors, space } from '../theme';
 import type { RootStack } from '../navigation/types';
 import { Button, ErrorState, Loading } from './ui';
@@ -52,6 +55,62 @@ export function ConversationsScreen({ navigation }: Props) {
     return () => { generation.current++; };
   }, [load]);
 
+  const itemsRef = useRef<ConversationSummary[] | null>(null);
+  useEffect(() => { itemsRef.current = items; }, [items]);
+  const changedUids = useRef(new Set<string>());
+  const needsFullReload = useRef(false);
+
+  /**
+   * Live update. Page 1 is re-read and folded in (changed conversations jump to the top in server order; older pages the user
+   * loaded stay; nothing is shown twice). A conversation the event names that is loaded but NOT on page 1 — e.g. one on page 2
+   * that was just read on another device, which does not change its sort key — is reconciled individually from the API rather
+   * than assumed unchanged. A resync (reconnect / app resume) or a filtered/searched view simply reloads.
+   */
+  const refreshTop = useCallback(async () => {
+    if (!scope) return;
+    const uids = [...changedUids.current];
+    changedUids.current.clear();
+    if (needsFullReload.current || filter !== 'all' || search.trim() !== '') {
+      needsFullReload.current = false;
+      void load(true);
+      return;
+    }
+    const current = generation.current;
+    try {
+      const res = await api.conversations(scope, { filter, page: 1 });
+      if (generation.current !== current) return;
+      const onPageOne = new Set(res.data.map((c) => c.uid));
+      const patches = new Map<string, ConversationSummary | null>();
+      for (const uid of uids) {
+        if (onPageOne.has(uid) || !itemsRef.current?.some((c) => c.uid === uid)) continue;
+        try {
+          patches.set(uid, (await api.conversation(scope, uid)).conversation);
+        } catch (e) {
+          // No longer reachable (moved Location, access lost): drop it from the list.
+          if (e instanceof ApiError && e.status === 404) patches.set(uid, null);
+        }
+      }
+      if (generation.current !== current) return;
+      setItems((previous) => {
+        if (previous === null) return res.data;
+        const rest = previous
+          .filter((c) => !onPageOne.has(c.uid))
+          .flatMap((c) => (patches.has(c.uid) ? (patches.get(c.uid) ? [patches.get(c.uid) as ConversationSummary] : []) : [c]));
+        return [...res.data, ...rest];
+      });
+      setNextPage((n) => n ?? res.meta.next_page);
+    } catch { /* silent: the next event or pull-to-refresh retries */ }
+  }, [api, scope, filter, search, load]);
+
+  const debounce = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useRealtime((e) => {
+    if (e.kind === 'change') changedUids.current.add(e.conversation_uid);
+    else needsFullReload.current = true;
+    if (debounce.current) clearTimeout(debounce.current);
+    debounce.current = setTimeout(() => { void refreshTop(); }, 250);
+  });
+  useEffect(() => () => { if (debounce.current) clearTimeout(debounce.current); }, []);
+
   const loadMore = useCallback(async () => {
     if (!scope || nextPage === null || items === null || refreshing || fetchingMore.current) return;
     fetchingMore.current = true;
@@ -93,6 +152,7 @@ export function ConversationsScreen({ navigation }: Props) {
   // replacing the entire screen here would blur the TextInput on every key.
   return (
     <View style={s.wrap}>
+      <NotificationBanner />
       <TextInput style={s.search} placeholder="Search name or number" accessibilityLabel="Search" value={search}
         onChangeText={setSearch} autoCapitalize="none" returnKeyType="search" />
       <View style={s.tabs}>
