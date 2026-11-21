@@ -184,6 +184,32 @@ describe('composer', () => {
     expect(screen.getByText('Retry')).toBeTruthy();
   });
 
+  it('clears an unconfirmed retry warning after refresh confirms the persisted outcome', async () => {
+    const key = '33333333-3333-4333-8333-333333333333';
+    const failed = {
+      ...inbound, id: 5, direction: 'outbound', body: 'Still waiting',
+      send_uid: key, status: 'failed', status_message: 'Previous send failed.', retryable: true,
+    };
+    const conversation = jest.fn()
+      .mockResolvedValueOnce(detail([inbound, failed]))
+      .mockRejectedValueOnce(new ApiError(0, 'network', 'History unavailable'))
+      .mockResolvedValue(detail([inbound, {
+        ...failed, status: 'delivery_failed',
+        status_message: 'Carrier could not deliver.', retryable: true,
+      }]));
+    const api = fakeApi({ conversation });
+    await open(api);
+
+    fireEvent.press(screen.getByText('Retry'));
+    await waitFor(() => screen.getByText(/Message accepted, but history could not refresh/));
+    expect(api.retry).toHaveBeenCalledTimes(1);
+
+    fireEvent(screen.getByTestId('message-refresh'), 'refresh');
+    await waitFor(() => screen.getByText('Carrier could not deliver.'));
+    await waitFor(() => expect(screen.queryByText(/Message accepted, but history could not refresh/)).toBeNull());
+    expect(screen.getByText('Retry')).toBeTruthy();
+  });
+
   it('renders a delivery-failed message with its reason and a Retry that calls retry()', async () => {
     const failed = { ...inbound, id: 5, direction: 'outbound', body: 'Missed it', send_uid: '22222222-2222-4222-8222-222222222222', status: 'delivery_failed', status_message: 'The carrier could not deliver this message.', retryable: true };
     const api = fakeApi({ conversation: jest.fn(async () => detail([inbound, failed])) });
