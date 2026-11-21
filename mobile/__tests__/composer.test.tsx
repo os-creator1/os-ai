@@ -65,6 +65,37 @@ describe('composer', () => {
     expect(screen.queryByText('Sending…')).toBeNull();
   });
 
+  it('keeps a confirmed outgoing bubble visible if the post-send history refresh fails', async () => {
+    const conversation = jest.fn()
+      .mockResolvedValueOnce(detail([inbound]))
+      .mockRejectedValueOnce(new ApiError(0, 'network', 'offline during refresh'));
+    const api = fakeApi({ conversation });
+    await open(api);
+    await type('Confirmed request');
+    await fireEvent.press(screen.getByLabelText('Send'));
+    await waitFor(() => screen.getByText(/Message accepted, but history could not refresh/));
+    expect(screen.getByText('Confirmed request')).toBeTruthy();
+    // A confirmed operation must never get a second-send Retry just because
+    // reading history is temporarily unavailable.
+    expect(screen.queryByText('Retry')).toBeNull();
+    expect(api.reply).toHaveBeenCalledTimes(1);
+  });
+
+  it('serializes older-page loads and never inserts duplicate history rows', async () => {
+    let resolveOlder: (v: any) => void = () => {};
+    const conversation = jest.fn()
+      .mockResolvedValueOnce({ ...detail([inbound]), has_more: true })
+      .mockImplementation(() => new Promise((resolve) => { resolveOlder = resolve; }));
+    const api = fakeApi({ conversation });
+    await open(api);
+    await fireEvent.press(screen.getByText('Load earlier messages'));
+    await fireEvent.press(screen.getByText('Loading earlier messages…'));
+    expect(conversation.mock.calls.filter((args: unknown[]) => args[2] === 1)).toHaveLength(1);
+    resolveOlder({ ...detail([{ ...inbound, id: 0, body: 'Oldest inquiry' }]), has_more: false });
+    await waitFor(() => screen.getByText('Oldest inquiry'));
+    expect(screen.getAllByText('Oldest inquiry')).toHaveLength(1);
+  });
+
   it('does not send an empty message', async () => {
     const api = await open();
     await type('   ');
