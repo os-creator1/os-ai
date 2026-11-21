@@ -4,8 +4,7 @@ Status: Phase 1 (foundation). Scope: a React Native (Expo) iOS/Android client fo
 and — in a later milestone — voice calling and push. It is a **new frontend for the existing Laravel platform, not a
 second CRM**: every rule below reuses a Laravel service boundary instead of re-implementing it.
 
-Governance: built under `CLAUDE.md` route 3 (explicitly human-authorized manual lane). Claude pushes the branch;
-ChatGPT opens the PR; the human merges. No deploy, no live SMS, no real calls, no production data.
+Governance: built under `CLAUDE.md` route 3 (explicitly human-authorized manual lane). Claude can own the PR through a verified self-merge under the current `CLAUDE.md` and `AGENTS.md` gates. No deploy, no live SMS, no real calls, no production data.
 
 ## 1. What already exists (inspected) and what was missing
 
@@ -32,6 +31,7 @@ Revisit extracting to its own repo when the mobile release cadence diverges from
 ## 3. Stack
 
 * React Native 0.88, **Expo SDK 58**, TypeScript (strict), React Navigation native-stack.
+  The initial MVP intentionally uses a typed React Navigation stack in `src/navigation`, not Expo Router; the matching `mobile/AGENTS.md` documents this choice. A Router migration is a separate, explicitly scoped decision.
 * **Native development builds** (`expo-dev-client`), not Expo Go: required for the Telnyx/WebRTC native modules later.
 * `expo-secure-store` (Keychain / Android Keystore) for the token; `expo-notifications` for push registration.
 * Tests: `jest-expo` + React Native Testing Library. Backend: PHPUnit feature tests.
@@ -78,7 +78,7 @@ Package: `@telnyx/react-voice-commons-sdk` 1.2.2 (MIT) over `@telnyx/react-nativ
 Every Business route is `workspaces/{workspaceUid}/businesses/{businessUid}/…` and runs `MobileBusinessAccess::resolve`,
 the **same authorities in the same order** as `ChatBoxController::resolveBusiness()` and the `chat.business.{uid}`
 broadcast channel: active Workspace → Business inside it → `BusinessRouteAccess` → permission (`chat_box` / `view_contact`)
-→ Business is Active → `EntitlementManager` (`conversations` / `crm`). Then the record is fetched by **uid AND business_id**,
+→ per-member module visibility (`MemberModuleVisibility`, so a hidden Conversations or Contacts module stays hidden in mobile) → Business is Active → `EntitlementManager` (`conversations` / `crm`). Then the record is fetched by **uid AND business_id**,
 and the Location ACL (`CrmLocationScope`, `LocationAccessGuard`) applies. **Any** failure — foreign Business, mixed
 Workspace/Business pair, missing uid, numeric id in place of a uid, NULL-business legacy row, un-entitled plan, missing
 permission — is the **same 404 `not_found`**, so a probe learns nothing.
