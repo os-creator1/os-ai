@@ -202,6 +202,55 @@ class MobileMessagingTest extends TestCase
         $this->assertCount(0, $this->fakeAdapter->sentRequests);
     }
 
+    public function test_mobile_rejects_legacy_non_managed_senders_before_any_provider_attempt(): void
+    {
+        [$owner, $business, $workspace] = $this->entitledTenant();
+        $owner->forceFill(['permissions' => json_encode(Customer::customerPermissions())])->save();
+        $box = $this->conversation($business);
+        $token = $this->tokenFor($owner);
+
+        // Without a managed identity or an explicitly selected BYO channel,
+        // legacy SMS cannot promise replay-safe idempotency after a timeout.
+        $key = (string) Str::uuid();
+        $this->reply($token, $workspace, $business, $box, 'Do not send twice', $key)
+            ->assertStatus(422)->assertJsonPath('error.code', 'messaging_unavailable');
+        $this->reply($token, $workspace, $business, $box, 'Do not send twice', $key)
+            ->assertStatus(422)->assertJsonPath('error.code', 'messaging_unavailable');
+
+        $this->assertCount(0, $this->fakeAdapter->sentRequests);
+        $this->assertSame(0, DB::table('chat_box_messages')->where('box_id', $box->id)->count());
+    }
+
+    public function test_opening_mobile_thread_reconciles_a_stale_sending_claim_without_a_provider_call(): void
+    {
+        [$owner, $business, $workspace] = $this->managedTenant();
+        $box = $this->conversation($business);
+        $token = $this->tokenFor($owner);
+
+        $messageId = DB::table('chat_box_messages')->insertGetId([
+            'box_id' => $box->id,
+            'message' => 'Unconfirmed attempt',
+            'direction' => 'outgoing',
+            'send_by' => 'from',
+            'sms_type' => 'plain',
+            'send_uid' => (string) Str::uuid(),
+            'send_status' => 'sending',
+            'send_claimed_at' => now()->subMinutes(5),
+            'retry_count' => 1,
+            'created_at' => now()->subMinutes(5),
+            'updated_at' => now()->subMinutes(5),
+        ]);
+
+        $messages = $this->mobile($token, 'GET', $this->path($workspace, $business, "conversations/{$box->uid}"))
+            ->assertOk()->json('data.messages');
+        $m = collect($messages)->firstWhere('id', $messageId);
+
+        $this->assertSame('failed', $m['status']);
+        $this->assertTrue($m['retryable']);
+        $this->assertSame('failed', DB::table('chat_box_messages')->where('id', $messageId)->value('send_status'));
+        $this->assertCount(0, $this->fakeAdapter->sentRequests);
+    }
+
     // ---- opt-out / STOP / DNC -----------------------------------------------------------------------------------
 
     public function test_a_stopped_number_on_the_blacklist_is_refused_with_no_provider_call(): void
