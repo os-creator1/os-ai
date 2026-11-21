@@ -172,7 +172,7 @@ final class WebsiteDesigns
      */
     private static function nicheDesigns(): array
     {
-        return self::$niche ??= self::dogBoardingDesigns(self::all());
+        return self::$niche ??= array_merge(self::dogBoardingDesigns(self::all()), self::tutoringDesigns(self::all()));
     }
 
     /**
@@ -189,6 +189,44 @@ final class WebsiteDesigns
             'dog_boarding_warm' => ['photo_booth_editorial', 1, 'Warm Kennel', 'Cream and clay with calm serif headlines and a centered logo. Spacious and reassuring.', 'Family-style boarding and owners who want a calm, homely feel.', ['#fbf6ef', '#b45309']],
             'dog_boarding_fresh' => ['photo_booth_modern', 2, 'Fresh Field', 'Deep green and sunshine with a full-width photo hero and one clear request button.', 'Facilities with outdoor space and active daycare.', ['#14532d', '#facc15']],
             'dog_boarding_playful' => ['photo_booth_conversion', 3, 'Happy Tails', 'Soft sky and coral with rounded tiles and a floating menu. Friendly and bright.', 'Daycare-led and puppy-focused businesses.', ['#1e3a5f', '#fb7185']],
+        ];
+
+        $out = [];
+
+        foreach ($specs as $templateKey => [$from, $number, $label, $tagline, $bestFor, $swatch]) {
+            $d = $base[$from];
+            $out[$templateKey] = new WebsiteDesign(
+                key: $d->key,
+                templateKey: $templateKey,
+                number: $number,
+                label: $label,
+                tagline: $tagline,
+                bestFor: $bestFor,
+                variants: $d->variants,
+                tones: $d->tones,
+                homeOrder: array_values(array_diff($d->homeOrder, ['backdrops'])),
+                swatch: $swatch,
+                announcementBar: $d->announcementBar,
+            );
+        }
+
+        return $out;
+    }
+
+    /**
+     * The Tutoring templates: the four structural designs under their own template keys, labels and swatches. Layout
+     * variants, tones and home order are inherited (the backdrop band is a Photo Booth feature, so it is dropped).
+     *
+     * @param  array<string, WebsiteDesign>  $base
+     * @return array<string, WebsiteDesign>
+     */
+    private static function tutoringDesigns(array $base): array
+    {
+        $specs = [
+            'tutoring_modern' => ['photo_booth_modern', 1, 'Bold Scholar', 'Navy and amber with a full-width hero, big headlines and one clear inquiry button.', 'Tutoring centres that want a confident, energetic look.', ['#0f2a5c', '#f59e0b']],
+            'tutoring_editorial' => ['photo_booth_editorial', 2, 'Classic Study', 'Clean white and deep blue with a centered logo and calm serif headlines.', 'Established tutors and exam-preparation specialists.', ['#ffffff', '#1d4ed8']],
+            'tutoring_luxury' => ['photo_booth_luxury', 3, 'Midnight Scholar', 'Dark navy with gold accents and refined type.', 'Premium one-on-one and exam coaching.', ['#0b1220', '#d4a017']],
+            'tutoring_conversion' => ['photo_booth_conversion', 4, 'Bright Minds', 'Soft sky and warm coral with rounded tiles and a floating menu.', 'Friendly, family-focused tutoring.', ['#1e3a5f', '#fb7185']],
         ];
 
         $out = [];
