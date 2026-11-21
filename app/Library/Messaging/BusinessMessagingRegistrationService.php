@@ -193,6 +193,11 @@ class BusinessMessagingRegistrationService
 
             $attributes['provider_campaign_id'] = null;
             $attributes['provider_registration_id'] = null;
+            // A replacement request must never inherit the previous carrier
+            // verification's status, explanation, or last-check timestamp.
+            $attributes['provider_status'] = null;
+            $attributes['provider_status_reason'] = null;
+            $attributes['provider_status_checked_at'] = null;
         }
 
         $registration->update($attributes);
