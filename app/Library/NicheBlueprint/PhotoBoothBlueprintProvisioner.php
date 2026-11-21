@@ -128,7 +128,11 @@ class PhotoBoothBlueprintProvisioner
         $resolution = $explicit ? $this->assignableBlueprint() : $this->installer->resolveBlueprint($business);
 
         if (! $resolution instanceof NicheBlueprint) {
-            return $this->result(self::BLOCKED_NO_PUBLISHED_BLUEPRINT, 'no active Blueprint resolves ('.$resolution->abortReason.'); run blueprint:seed-photo-booth first');
+            // Explicit assignment resolves directly by the Photo Booth Blueprint and may find no match.
+            // Do not dereference a null resolution; fail closed without writing the vertical or profile.
+            $reason = $resolution === null ? 'no matching active Photo Booth Blueprint' : (string) $resolution->abortReason;
+
+            return $this->result(self::BLOCKED_NO_PUBLISHED_BLUEPRINT, 'no active Blueprint resolves ('.$reason.'); run blueprint:seed-photo-booth first');
         }
 
         if ($resolution->key !== self::BLUEPRINT_KEY) {
