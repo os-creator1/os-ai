@@ -49,6 +49,15 @@ class ConversationSender
      */
     public function reply(ChatBox $box, string $message, ?UploadedFile $media, string $sendUid, bool $requireManaged = false): JsonResponse
     {
+        $response = $this->performReply($box, $message, $media, $sendUid, $requireManaged);
+        // Phones (including this user's other devices) see the new outgoing bubble live. Never throws; never pushes.
+        app(\App\Library\Mobile\MobileConversationNotifier::class)->changed($box, \App\Events\Mobile\MobileConversationChanged::OUTBOUND);
+
+        return $response;
+    }
+
+    private function performReply(ChatBox $box, string $message, ?UploadedFile $media, string $sendUid, bool $requireManaged): JsonResponse
+    {
         $business = $box->business;
 
         $owner = $this->owner($business);

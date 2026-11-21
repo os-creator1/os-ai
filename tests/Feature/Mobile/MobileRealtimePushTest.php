@@ -278,14 +278,18 @@ class MobileRealtimePushTest extends TestCase
         $this->assertCount(0, $this->push->sent, 'A revoked session is never a push target.');
     }
 
-    public function test_a_disabled_account_and_a_locked_workspace_receive_nothing(): void
+    public function test_a_locked_workspace_receives_nothing(): void
     {
         Event::fake([MobileConversationChanged::class]);
-        [$owner, , $workspace, $identity] = $this->managedTenant();
+        [$owner, $business, $workspace] = $this->managedTenant();
         $this->phone($owner, self::TOKEN_A);
+        $box = $this->conversation($business);
+        app(ConversationHistoryWriter::class)->recordManagedInbound($business, '14155550199', '14155552671', 'hello', [], 'plain');
 
         app(EntitlementManager::class)->changePlanStatus($workspace, WorkspacePlanAssignmentStatus::Suspended, $this->platformAdminId(), 'Lock fixture.');
-        $this->inbound($identity);
+        // (The managed webhook itself refuses a locked account, so drive the listener the webhook would have queued.)
+        (new NotifyMobileOfInboundMessage())->handle(InboundMessageReceived::fromManagedOperation((int) $business->id, self::CUSTOMER, 1));
+
         $this->assertCount(0, $this->push->sent);
         $this->assertCount(0, $this->changedFor($owner->user));
     }
@@ -431,6 +435,11 @@ class MobileRealtimePushTest extends TestCase
             'broadcasting.connections.pusher.app_id' => '1234',
             'broadcasting.connections.pusher.options.cluster' => 'mt1',
         ]);
+
+        // In production the default driver is known at boot, when routes/channels.php registers its callbacks. A test
+        // switches driver afterwards, so register them again on the pusher driver.
+        $this->app->make(\Illuminate\Broadcasting\BroadcastManager::class)->purge();
+        require base_path('routes/channels.php');
     }
 
     private function auth(string $token, string $channel)
@@ -465,6 +474,7 @@ class MobileRealtimePushTest extends TestCase
         $channel = 'private-' . MobileConversationChanged::channelName($business->uid, $owner->user->uid);
 
         $this->app['auth']->forgetGuards();
+        $this->flushHeaders();
         $this->postJson('/api/mobile/v1/broadcasting/auth', ['socket_id' => '1.2', 'channel_name' => $channel])->assertStatus(401);
         $wildcard = $owner->user->createToken('legacy', ['*'])->plainTextToken;
         $this->auth($wildcard, $channel)->assertStatus(401);
