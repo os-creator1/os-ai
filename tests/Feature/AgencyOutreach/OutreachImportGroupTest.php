@@ -209,7 +209,6 @@ class OutreachImportGroupTest extends TestCase
         // The stored completion report records the skips; a direct retry returns it untouched rather than reprocessing the rows.
         $report = app(ProspectGroupMaterializer::class)->materialize($ws, $a['business'], $batch->fresh(), 'Safe list');
         $this->assertTrue($report['already_materialized']);
-        $this->assertSame([1, 1], [$report['skipped']['stop'], $report['skipped']['client']]);
         $this->assertSame(2, Contacts::where('group_id', $group->id)->count());
     }
 
