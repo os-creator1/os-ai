@@ -172,14 +172,28 @@ class PhotoBoothBlueprintProvisioner
 
     private function assignableBlueprint(): ?NicheBlueprint
     {
+        // The installer resolves an exact vertical-bound Blueprint first.
+        // If one exists, it takes precedence over any broad Photo Booth match,
+        // so a proposed assignment cannot safely claim the vertical-free
+        // Photo Booth Blueprint will actually be installed.
+        if (NicheBlueprint::query()->active()->where('vertical_key', self::NICHE_KEY)->exists()) {
+            return null;
+        }
+
+        // Mirror the installer's complete broad-industry candidate set,
+        // not just the target key. Two active matches cause the installer
+        // to fall back to Business.industry, which is still 'photographer'.
         $matches = NicheBlueprint::query()
             ->active()
-            ->where('key', self::BLUEPRINT_KEY)
             ->where('broad_industry', self::NICHE_KEY)
             ->whereNull('vertical_key')
+            ->orderBy('id')
+            ->limit(2)
             ->get();
 
-        return $matches->count() === 1 ? $matches->first() : null;
+        return $matches->count() === 1 && $matches->first()->key === self::BLUEPRINT_KEY
+            ? $matches->first()
+            : null;
     }
 
     /**
