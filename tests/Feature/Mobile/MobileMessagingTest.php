@@ -327,6 +327,60 @@ class MobileMessagingTest extends TestCase
         $this->assertSame((string) (1_000_000 - self::RATE_MICRO), (string) DB::table('business_usage_wallets')->where('business_id', $business->id)->value('available_balance_micro'), 'Billed once.');
     }
 
+    public function test_retry_after_contact_unsubscribes_releases_claimed_bubble_without_sending(): void
+    {
+        [$owner, $business, $workspace] = $this->managedTenant();
+        $this->fundAndPrice($business, 0);
+        $box = $this->conversation($business);
+        $token = $this->tokenFor($owner);
+        $failed = $this->reply($token, $workspace, $business, $box, 'Please confirm')
+            ->assertStatus(422);
+        $sendUid = $failed->json('error.send_uid');
+
+        // Contact opts out after the initial failed attempt.
+        $groupId = DB::table('contact_groups')->insertGetId([
+            'uid' => (string) Str::uuid(), 'customer_id' => $business->customer_id,
+            'business_id' => $business->id, 'name' => 'Opted-out contacts',
+            'created_at' => now(), 'updated_at' => now(),
+        ]);
+        DB::table('contacts')->insert([
+            'uid' => (string) Str::uuid(), 'customer_id' => $business->customer_id,
+            'business_id' => $business->id, 'group_id' => $groupId,
+            'phone' => (int) self::PERSON, 'status' => 'unsubscribe',
+            'created_at' => now(), 'updated_at' => now(),
+        ]);
+
+        $this->mobile($token, 'POST', $this->path($workspace, $business, "conversations/{$box->uid}/retry"), [
+            'send_uid' => $sendUid,
+        ])->assertStatus(422)->assertJsonPath('error.code', 'opted_out');
+
+        $bubble = DB::table('chat_box_messages')->where('box_id', $box->id)->where('send_uid', $sendUid)->sole();
+        $this->assertSame('failed', $bubble->send_status, 'An opt-out refusal must release the existing sending claim.');
+        $this->assertCount(0, $this->fakeAdapter->sentRequests);
+        $this->assertSame(1, DB::table('chat_box_messages')->where('box_id', $box->id)->count());
+    }
+
+    public function test_demo_mode_refuses_a_retry_without_provider_or_wallet_side_effects(): void
+    {
+        [$owner, $business, $workspace] = $this->managedTenant();
+        $this->fundAndPrice($business, 0);
+        $box = $this->conversation($business);
+        $token = $this->tokenFor($owner);
+        $sendUid = $this->reply($token, $workspace, $business, $box, 'Please reply')
+            ->assertStatus(422)->json('error.send_uid');
+        $this->fundAndPrice($business, 1_000_000);
+        config(['app.stage' => 'demo']);
+
+        $this->mobile($token, 'POST', $this->path($workspace, $business, "conversations/{$box->uid}/retry"), [
+            'send_uid' => $sendUid,
+        ])->assertStatus(422)->assertJsonPath('error.code', 'unavailable');
+
+        $this->assertSame('failed', DB::table('chat_box_messages')->where('send_uid', $sendUid)->value('send_status'));
+        $this->assertCount(0, $this->fakeAdapter->sentRequests);
+        $this->assertSame(1_000_000, (int) DB::table('business_usage_wallets')
+            ->where('business_id', $business->id)->value('available_balance_micro'));
+    }
+
     // ---- authorization ------------------------------------------------------------------------------------------
 
     public function test_another_businesss_conversation_cannot_be_replied_to_retried_or_read(): void
