@@ -657,7 +657,7 @@ class BatchedGuidedGenerationTest extends TestCase
             ->first(fn (string $type) => ! in_array($type, $entry['allowed_section_types'], true)) ?? $this->fail('every probe type is allowed on ' . $entry['page_key']);
     }
 
-    public function test_a_disallowed_section_and_an_overlong_seo_title_are_repaired_in_place_with_no_extra_ai_call(): void
+    public function test_an_overlong_seo_title_is_repaired_in_place_with_no_extra_ai_call(): void
     {
         [$customer, $business, $website, $template] = $this->largeBusiness();
         $long = 'Photo Booth Rental and Event Services for Weddings, Corporate Parties and Birthdays Across the Region';
@@ -665,11 +665,6 @@ class BatchedGuidedGenerationTest extends TestCase
 
         $this->provider(function (array $entry, int $call) use ($long) {
             $page = $this->defaultPage($entry);
-            $first = $entry['page_key'] === $this->calls[$call - 1]['keys'][0];
-            if ($first) {
-                // pages.0.sections.N.type: a type this page does not allow.
-                $page['sections'][] = ['type' => $this->disallowedType($entry), 'data' => ['heading' => 'Not allowed here']];
-            }
             if ($entry['page_key'] === ($this->calls[$call - 1]['keys'][3] ?? null)) {
                 $page['seo_title'] = ($call === 1 ? $long : 'Batch ' . $call . ' Event Photo Booth Hire and Guest Experience Packages for Every Celebration') . ' - Harbor';   // pages.3.seo_title: over 70 characters, distinct per batch
             }
@@ -681,17 +676,36 @@ class BatchedGuidedGenerationTest extends TestCase
 
         $this->assertSame(WebsiteGuidedGenerationAttempt::STATUS_SUCCEEDED, $attempt->status, (string) $attempt->failure_reason);
         $this->assertSame(0, $attempt->retry_count, 'repaired, not retried');
-        $planned = $this->plan($business, $template, $website);
-        $this->assertCount(count($this->expectedBatches($business, $planned)), $this->calls, 'one request per batch and nothing more');
-
+        $this->assertCount(count($this->expectedBatches($business, $this->plan($business, $template, $website))), $this->calls, 'one request per batch and nothing more');
         foreach ($website->fresh()->pages as $page) {
-            $allowed = collect($planned)->firstWhere('slug', $page->slug ?? '') ['allowed_section_types'] ?? null;
-            foreach ($page->sections as $section) {
-                $this->assertNotSame('Not allowed here', $section['data']['heading'] ?? null, 'the disallowed section never reached a page');
-            }
             $this->assertLessThanOrEqual(70, mb_strlen((string) $page->seo_title));
         }
         $this->assertTrue($website->fresh()->pages->contains(fn ($page) => str_starts_with((string) $page->seo_title, 'Photo Booth Rental and Event Services for Weddings')), 'the long title was shortened at a word, not rewritten');
+    }
+
+    public function test_a_substantive_section_the_page_does_not_allow_is_never_silently_deleted_it_is_rejected_and_retried_with_the_reason(): void
+    {
+        [$customer, $business, $website, $template] = $this->largeBusiness();
+        $this->homePage($website, ['title' => 'Published Home']);
+        $revision = app(\App\Library\Website\WebsitePublisher::class)->publish($website->fresh(), $customer->user_id);
+        $draftBefore = $website->fresh()->pages()->get(['id', 'title', 'slug', 'sections'])->toArray();
+        $substantive = ['type' => 'x', 'data' => ['heading' => 'Real customer praise', 'body' => 'Substantive copy the page may not carry.']];
+
+        // pages.0.sections.N.type on BOTH tries: the first page carries a section its plan entry does not allow.
+        $this->rawProvider(function (array $payload) use (&$substantive) {
+            $substantive['type'] = $this->disallowedType($payload['plan'][0]);
+
+            return json_encode(['pages' => array_map(fn ($entry, $i) => $this->defaultPage($entry, $i === 0 ? ['sections' => array_merge($this->defaultPage($entry)['sections'], [$substantive])] : []), $payload['plan'], array_keys($payload['plan']))]);
+        });
+
+        $attempt = $this->generate($customer, $business, $website, $template);
+
+        $this->assertSame(WebsiteGuidedGenerationAttempt::STATUS_FAILED, $attempt->status, 'the content was not deleted to make validation pass');
+        $this->assertCount(1 + GenerationBatchPlanner::MAX_RETRIES_PER_BATCH, $this->calls, 'the existing single retry, nothing more');
+        $this->assertStringNotContainsString('PREVIOUS ANSWER FOR THIS REQUEST WAS REJECTED', $this->calls[0]['system']);
+        $this->assertStringContainsString('is not allowed on the', $this->calls[1]['system'], 'the retry receives the reason');
+        $this->assertSame($draftBefore, $website->fresh()->pages()->get(['id', 'title', 'slug', 'sections'])->toArray(), 'nothing was committed');
+        $this->assertSame($revision->id, $website->fresh()->published_revision_id, 'the published website is untouched');
     }
 
     public function test_a_corrective_retry_tells_the_model_why_and_a_valid_answer_then_completes_generation(): void
@@ -790,8 +804,9 @@ class BatchedGuidedGenerationTest extends TestCase
 
         $this->assertCount(3, $out['pages'], 'no page is added or removed');
         $home = $out['pages'][0];
-        $this->assertSame(['hero', 'text'], array_column($home['sections'], 'type'), 'image_text with real copy became text; invented testimonials and an empty image_text are dropped, never converted');
+        $this->assertSame(['hero', 'text', 'testimonials', 'image_text'], array_column($home['sections'], 'type'), 'image_text with real copy became text; every other unsupported section (testimonials, an empty image_text) is left exactly as written for validation to reject');
         $this->assertSame('Same words.', $home['sections'][1]['data']['body']);
+        $this->assertSame(['items' => [['quote' => 'Invented praise']]], $home['sections'][2]['data'], 'untouched');
         $this->assertLessThanOrEqual(70, mb_strlen($home['seo_title']));
         $this->assertSame('word', substr($home['seo_title'], -4), 'cut at a word boundary');
         $this->assertNull($home['meta_description'], 'a blank description is absent, never invented');

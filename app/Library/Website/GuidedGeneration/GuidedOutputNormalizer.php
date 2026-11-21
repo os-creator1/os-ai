@@ -2,15 +2,13 @@
 
 namespace App\Library\Website\GuidedGeneration;
 
-use Illuminate\Support\Str;
-
 /**
  * Deterministic repair of the model's batch output BEFORE it is validated — only for mistakes whose repair cannot change what the
  * page says or add anything the model did not write:
  *
  *   - an `image_text` section on a page that allows `text` but not `image_text` is the same heading and body as a `text` section;
- *   - any other section type the plan does not allow on that page is dropped (a model-written form is never repaired: it fails) (the validator still requires a hero and, with the
- *     content-quality rules, the sections the page needs, so a page that lost something it needs fails and is retried);
+ *   - any OTHER section the plan does not allow on that page is left exactly as written: it is substantive content the page may not
+ *     carry, so deleting it would hide a real problem. Validation rejects it and the existing bounded retry receives the reason;
  *   - an over-long seo_title / meta_description is shortened at a word boundary (never rewritten); a blank one becomes null.
  *
  * It never adds a page, removes a page, renames a page_key, touches page content, or invents a fact: a duplicate title, missing
@@ -22,9 +20,6 @@ final class GuidedOutputNormalizer
     public const SEO_TITLE_MAX = 70;
 
     public const META_DESCRIPTION_MAX = 160;
-
-    /** Section types the model must never author: left in place so validation rejects the whole batch. */
-    private const NEVER_REPAIRED = ['form', 'forms_module_form'];
 
     /**
      * @param  array<int, mixed>  $pages  the decoded `pages` array, as returned
@@ -57,20 +52,13 @@ final class GuidedOutputNormalizer
                         continue;
                     }
 
-                    // A form the model wrote is a reference to something that does not exist (the system binds the real form): that is a
-                    // rule violation to fail and retry, never to tidy away.
-                    if (in_array($section['type'], self::NEVER_REPAIRED, true)) {
-                        $kept[] = $section;
-
-                        continue;
-                    }
-
+                    // Only the same heading and body as plain text is converted; anything else stays for validation to reject.
                     $converted = self::asText($section, $allowed);
                     if ($converted !== null) {
                         $kept[] = $converted;
                         $notes[] = "{$key}: image_text became text";
                     } else {
-                        $notes[] = "{$key}: dropped a '" . Str::limit(preg_replace('/[^a-z0-9_]/i', '', $section['type']) ?? '', 30, '') . "' section the page does not allow";
+                        $kept[] = $section;
                     }
                 }
                 $pages[$index]['sections'] = $kept;
