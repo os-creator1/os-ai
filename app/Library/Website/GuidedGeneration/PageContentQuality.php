@@ -103,12 +103,6 @@ final class PageContentQuality
                 }
             }
 
-            // The kinds of events the owner described are part of what the business offers: with any, the home page says so.
-            $events = (array) ($facts['events'] ?? []);
-            if ($events !== [] && count(array_filter($events, fn (string $event) => self::mentionsName($body, $event))) < 1) {
-                $problems[] = 'The home page should say which kinds of events the business covers: it names none of the confirmed event types (' . implode(', ', array_slice($events, 0, 4)) . ').';
-            }
-
             if ($diffs !== [] && ! self::representsAny($body, $diffs)) {
                 $problems[] = 'None of the confirmed differentiators is reflected on the home page; state at least one real reason to choose this business.';
             }
