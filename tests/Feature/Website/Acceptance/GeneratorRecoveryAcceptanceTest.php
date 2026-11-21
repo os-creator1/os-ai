@@ -272,4 +272,78 @@ class GeneratorRecoveryAcceptanceTest extends TestCase
         $this->assertContains('wedding-photo-booth-rental<->wedding-booth', $pairs, 'the new event page and the owner\'s wedding page target the same thing: reported for review');
         $this->assertEmpty(array_filter($pairs, fn ($pair) => str_contains($pair, 'privacy-policy')), 'legal pages are never compared');
     }
+
+    /** @return array<string, string> FAQ answers by key, as the canonical rebuild's FAQ defaults would write them */
+    private function canonicalFaq($business): array
+    {
+        $context = \App\Library\Website\Setup\WizardPresentationAnswers::canonicalBlueprintContext($business->fresh());
+        $items = app(\App\Library\Website\Setup\WizardContentDefaults::class)->faq($business->fresh(), $context['answers']);
+
+        return collect($items)->pluck('answer', 'key')->all();
+    }
+
+    public function test_the_canonical_faq_never_contradicts_the_confirmed_booking_and_pricing_or_the_active_packages(): void
+    {
+        [, $business] = $this->publishedSite('booth', true, true, true, []);
+        $customer = Customer::query()->where('user_id', $business->customer_id)->firstOrFail();
+        $profiles = app(\App\Library\Business\BusinessKnowledgeProfileManager::class);
+        $set = fn (array $fields) => $profiles->updateFields($business, $fields, 'manual_edit', (int) $customer->user_id, true);
+        $package = CatalogItem::create(['business_id' => $business->id, 'type' => 'package', 'name' => 'Magic Mirror Experience', 'description' => 'Two hours with an attendant.', 'price_minor' => 84900, 'currency_code' => 'USD', 'position' => 0, 'created_by_user_id' => $customer->user_id]);
+
+        // Call booking + fixed packages (an active, priced package exists): the FAQ says to call and that packages carry prices.
+        $set(['primary_conversion_goal' => 'call', 'pricing_method' => 'fixed']);
+        $faq = $this->canonicalFaq($business);
+        $this->assertStringContainsString('Give us a call at 6015550142', $faq['faq_booking']);
+        $this->assertStringNotContainsString('quote request form', $faq['faq_booking']);
+        $this->assertStringContainsString('packages are listed with their prices', $faq['faq_cost']);
+        $this->assertStringContainsString('Magic Mirror Experience', $faq['faq_included'], 'the FAQ names the very package the page lists');
+
+        // Quote-only pricing: the page lists no packages, so the FAQ must not point at them or at prices.
+        $set(['pricing_method' => 'quote_only']);
+        $faq = $this->canonicalFaq($business);
+        $this->assertStringContainsString('custom quotes', $faq['faq_cost']);
+        $this->assertStringNotContainsString('Magic Mirror Experience', $faq['faq_included']);
+
+        // "Fixed" pricing but no active package: nothing to point at, so no claim that packages are listed.
+        $set(['pricing_method' => 'fixed']);
+        $package->forceFill(['lifecycle_state' => 'archived'])->save();
+        $faq = $this->canonicalFaq($business);
+        $this->assertStringNotContainsString('packages are listed', $faq['faq_cost']);
+        $this->assertStringNotContainsString('Magic Mirror Experience', $faq['faq_included']);
+
+        // A "book online" goal without a bookable Calendar type: no "Book Now" button exists, so the FAQ never promises one.
+        $set(['primary_conversion_goal' => 'calendar_booking']);
+        $faq = $this->canonicalFaq($business);
+        $this->assertStringNotContainsString('Book Now', $faq['faq_booking']);
+        $this->assertSame('quote_request', \App\Library\Website\Setup\WizardPresentationAnswers::canonicalBlueprintContext($business->fresh())['cta']);
+    }
+
+    public function test_reviews_already_confirmed_in_the_profile_are_not_recovery_candidates_and_readiness_clears_them(): void
+    {
+        [$website, $business] = $this->publishedSite('booth', true, true, true, []);
+        $customer = Customer::query()->where('user_id', $business->customer_id)->firstOrFail();
+        $quote = 'The mirror booth was the hit of our reception.';
+        $this->homePage($website->fresh() ?: $website, []);   // no-op guard: the site keeps a home page
+        $this->subPage($website, 'reviews', ['title' => 'Reviews', 'sections' => [$this->section('hero'), ['type' => 'testimonials', 'data' => ['heading' => 'Kind words', 'items' => [
+            ['quote' => '  ' . strtoupper($quote), 'author_name' => 'Dana R.'],
+            ['quote' => 'A second review only the old page has.', 'author_name' => 'Sam T.'],
+        ]]]]]);
+        $links = ['answers' => '/answers', 'confirm_areas' => '/confirm'];
+        $readiness = fn () => collect(app(\App\Library\Website\WebsiteHealthChecker::class)->check($website->fresh(), $links)['checks'])->firstWhere('key', 'content_readiness');
+
+        // Nothing confirmed yet: both reviews are candidates and readiness says so.
+        $this->assertCount(2, ExistingPageFactCandidates::forWebsite($website->fresh())['testimonials']);
+        $this->assertStringContainsString('2 review(s)', implode(' ', $readiness()['items']));
+
+        // The owner confirms one in the Knowledge Profile: it is no longer a candidate; only the other remains.
+        app(\App\Library\Business\BusinessKnowledgeProfileManager::class)->updateFields($business, ['testimonials' => [['quote' => $quote, 'author_name' => 'Dana R.']]], 'manual_edit', (int) $customer->user_id, true);
+        $left = ExistingPageFactCandidates::forWebsite($website->fresh())['testimonials'];
+        $this->assertSame(['A second review only the old page has.'], array_column($left, 'quote'));
+        $this->assertStringContainsString('1 review(s)', implode(' ', $readiness()['items']));
+
+        // Both confirmed: no candidate and the readiness check no longer mentions reviews.
+        app(\App\Library\Business\BusinessKnowledgeProfileManager::class)->updateFields($business, ['testimonials' => [['quote' => $quote, 'author_name' => 'Dana R.'], ['quote' => 'A second review only the old page has.', 'author_name' => 'Sam T.']]], 'manual_edit', (int) $customer->user_id, true);
+        $this->assertSame([], ExistingPageFactCandidates::forWebsite($website->fresh())['testimonials']);
+        $this->assertStringNotContainsString('review(s)', implode(' ', $readiness()['items'] ?? []));
+    }
 }

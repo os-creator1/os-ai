@@ -47,6 +47,9 @@ final class ExistingPageFactCandidates
         $areas = [];
         $testimonials = [];
 
+        // Reviews already CONFIRMED in the Knowledge Profile are not candidates: the generator already uses them.
+        $confirmed = self::confirmedQuotes($business);
+
         foreach ($website->pages()->orderBy('sort_order')->orderBy('id')->get(['title', 'slug', 'sections']) as $page) {
             $slug = strtolower((string) $page->slug);
             $isAreaPage = in_array($slug, self::AREA_PAGE_SLUGS, true);
@@ -64,7 +67,7 @@ final class ExistingPageFactCandidates
                 if ($type === 'testimonials') {
                     foreach ((array) ($data['items'] ?? []) as $item) {
                         $quote = is_array($item) ? trim((string) ($item['quote'] ?? '')) : '';
-                        if ($quote !== '' && count($testimonials) < self::MAX_REVIEWS) {
+                        if ($quote !== '' && ! isset($confirmed[self::normalized($quote)]) && count($testimonials) < self::MAX_REVIEWS) {
                             $testimonials[] = ['quote' => Str::limit($quote, 600, ''), 'author' => ($a = trim((string) ($item['author_name'] ?? ($item['author'] ?? '')))) === '' ? null : Str::limit($a, 120, ''), 'source' => (string) $page->title];
                         }
                     }
@@ -105,6 +108,37 @@ final class ExistingPageFactCandidates
         }
 
         return max(0, $added);
+    }
+
+    /** @return array<string, true> normalised quotes of the testimonials the owner has confirmed (none when the field is unconfirmed) */
+    private static function confirmedQuotes(?Business $business): array
+    {
+        if ($business === null) {
+            return [];
+        }
+
+        $confirmedFields = app(\App\Library\Business\BusinessKnowledgeProfileManager::class)->completenessCheck($business)->presentFieldKeys;
+
+        if (! in_array(\App\Enums\Business\BusinessKnowledgeProfileFieldKey::Testimonials->value, $confirmedFields, true)) {
+            return [];
+        }
+
+        $profile = \App\Models\BusinessKnowledgeProfile::where('business_id', $business->id)->first();
+        $quotes = [];
+
+        foreach ((array) ($profile?->testimonials ?? []) as $item) {
+            $quote = is_array($item) ? self::normalized((string) ($item['quote'] ?? '')) : '';
+            if ($quote !== '') {
+                $quotes[$quote] = true;
+            }
+        }
+
+        return $quotes;
+    }
+
+    private static function normalized(string $quote): string
+    {
+        return mb_strtolower(trim(preg_replace('/\s+/u', ' ', strip_tags($quote)) ?? ''));
     }
 
     /** @return array<int, string> */
