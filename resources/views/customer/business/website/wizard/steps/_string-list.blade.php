@@ -24,6 +24,7 @@
         'detail' => $detailsBySlug[\Illuminate\Support\Str::slug($entry)] ?? [],
         'galleryPhotos' => $galleryPhotos,
         'galleryTotal' => $areaPhotoTotal ?? count($galleryPhotos),
+        'areaLabels' => is_array($areaLabels ?? null) ? $areaLabels : [],
     ];
 @endphp
 @if ($area)

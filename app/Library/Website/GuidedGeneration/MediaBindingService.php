@@ -78,8 +78,14 @@ final class MediaBindingService
      * @param  array<int, array<string, mixed>>  $pages
      * @return array<int, array<string, mixed>>
      */
-    private function linkAreaPages(array $pages): array
+    private function linkAreaPages(array $pages, ?Website $website = null): array
     {
+        // "Planning an event in X?" is Photo Booth wording: a niche with the neutral vocabulary (e.g. Tutoring) gets a neutral line.
+        $neutralNiche = $website?->business !== null && \App\Library\Website\WebsiteNicheVocabulary::nicheFor(
+            $website->business,
+            \App\Models\WebsiteTemplate::where('key', $website->template_key)->value('niche_key'),
+        ) === \App\Library\Website\WebsiteNicheVocabulary::NEUTRAL;
+
         $slugOf = fn (string $type) => collect($pages)->firstWhere('page_type', $type)['slug'] ?? null;
         $contactSlug = $slugOf('contact');
         $servicesSlug = $slugOf('services_overview');
@@ -134,7 +140,7 @@ final class MediaBindingService
             }
             if ($buttons !== []) {
                 $pages[$index]['sections'][] = ['type' => 'cta', 'data' => [
-                    'heading' => \Illuminate\Support\Str::limit('Planning an event in ' . $area . '?', 120, ''),
+                    'heading' => \Illuminate\Support\Str::limit(($neutralNiche ? 'Ready to get started in ' : 'Planning an event in ') . $area . '?', 120, ''),
                     'body' => null,
                     'buttons' => array_slice($buttons, 0, 2),
                 ]];
@@ -540,7 +546,7 @@ final class MediaBindingService
         // Package blocks reference their canonical Packages & Products row
         // by uid (resolved live at preview/publish) — stamped here from the
         // catalog, never trusted from AI output.
-        $pages = $this->linkAreaPages($pages);
+        $pages = $this->linkAreaPages($pages, $website);
         $pages = $this->linkServicePages($pages);
         $pages = $this->linkServiceCards($pages);
         // The owner-confirmed facts, split deterministically: what the homepage strip shows, and what is left for the service pages' panels.

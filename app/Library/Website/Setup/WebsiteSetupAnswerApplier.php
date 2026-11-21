@@ -99,6 +99,7 @@ final class WebsiteSetupAnswerApplier
             // owner's order" interleaved the steps and could drop a core
             // service (a 360 or mirror booth) in favour of an event type.
             $servicePosition = 0;
+            $booking = [];
 
             foreach ($allSteps as $step) {
                 $module = $step['target_module'];
@@ -145,6 +146,8 @@ final class WebsiteSetupAnswerApplier
                         : $submittedPackageKeys = array_merge($submittedPackageKeys, $this->applyPackages($business, $value, $step)),
                     'backdrop' => $submittedBackdropKeys = array_merge($submittedBackdropKeys, $this->applyBackdrops($business, $value, $step)),
                     'website_form' => $this->applyForm($business, $website, $value),
+                    // The owner's consultation-booking choices; applied once, after every step has been read.
+                    'booking_type' => $booking[(string) $step['target_field']] = $value,
                     // 'gallery', 'answers', 'custom_section': presentation-
                     // only or already-canonical-elsewhere — left in
                     // QuestionnaireResponse.answers, read directly by
@@ -164,8 +167,19 @@ final class WebsiteSetupAnswerApplier
             if ($submittedBackdropKeys !== null) {
                 $this->reconcileRemovedBackdrops($business, $submittedBackdropKeys);
             }
+
+            // Only a questionnaire that asked the question touches the Calendar, and only as the owner answered it.
+            $this->bookingOutcome = $booking === [] ? null : app(ConsultationBookingSetup::class)->apply($business, $booking, $actorUserId);
         });
     }
+
+    /** What the last apply() did with the owner's consultation-booking answers (null: the questionnaire never asked). */
+    public function bookingOutcome(): ?array
+    {
+        return $this->bookingOutcome;
+    }
+
+    private ?array $bookingOutcome = null;
 
     private function applyBusinessField(Business $business, ?string $field, mixed $value): void
     {

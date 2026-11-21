@@ -940,6 +940,18 @@ class WebsiteWizardController extends CustomerBaseController
      *
      * @return array<string, array<int, array{prompt: string, edit_key: string, kind: string, value: ?string, entries: array<int, array{label: string, meta: ?string, thumb: ?string}>}>> heading => blocks (empty groups omitted)
      */
+    /** What happened to the owner's consultation-booking choices, in plain words (empty when the questionnaire never asked). */
+    private function bookingNote(): string
+    {
+        $outcome = $this->answerApplier->bookingOutcome();
+
+        return match ($outcome['state'] ?? null) {
+            \App\Library\Website\Setup\ConsultationBookingSetup::STATE_READY => ' Online consultation booking is on: your site now offers a booking button.',
+            \App\Library\Website\Setup\ConsultationBookingSetup::STATE_NOT_READY, \App\Library\Website\Setup\ConsultationBookingSetup::STATE_NOT_INSTALLED => ' ' . trim((string) ($outcome['reason'] ?? '')),
+            default => '',
+        };
+    }
+
     private function answerSummary(QuestionnaireResponse $response): array
     {
         $groupOf = [
@@ -954,6 +966,7 @@ class WebsiteWizardController extends CustomerBaseController
             'faq' => 'Website content',
             'website_form' => 'Contact & other',
             'answers' => 'Contact & other',
+            'booking_type' => 'Contact & other',
         ];
 
         $groups = ['About your business' => [], 'Services & packages' => [], 'Website content' => [], 'Contact & other' => []];
@@ -1182,7 +1195,7 @@ class WebsiteWizardController extends CustomerBaseController
 
                     return redirect()->route('customer.workspaces.businesses.website.studio.show', [$workspaceUid, $businessUid])->with([
                         'status' => 'success',
-                        'message' => 'Your setup answers were updated.',
+                        'message' => 'Your setup answers were updated.' . $this->bookingNote(),
                     ]);
                 }
 
@@ -1221,7 +1234,7 @@ class WebsiteWizardController extends CustomerBaseController
 
                     return redirect()->route('customer.workspaces.businesses.website.preview', [$workspaceUid, $businessUid])->with([
                         'status' => 'success',
-                        'message' => 'Your website is ready! Review it below, then connect a domain or publish whenever you\'re ready.',
+                        'message' => 'Your website is ready! Review it below, then connect a domain or publish whenever you\'re ready.' . $this->bookingNote(),
                     ]);
                 }
 

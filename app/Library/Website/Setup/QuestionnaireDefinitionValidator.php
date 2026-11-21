@@ -39,7 +39,19 @@ final class QuestionnaireDefinitionValidator
     private const VALID_TARGET_MODULES = [
         'business', 'business_location', 'knowledge_profile', 'business_service',
         'catalog_item', 'backdrop', 'website_form', 'gallery', 'answers', 'custom_section', 'faq',
-        'website_look',
+        'website_look', 'booking_type',
+    ];
+
+    /**
+     * The owner's answers that configure the booking type the niche blueprint installed
+     * (Website\Setup\ConsultationBookingSetup): the field a step writes and the one input type that carries it.
+     */
+    private const BOOKING_FIELD_TYPES = [
+        'enabled' => ['boolean'],
+        'duration_minutes' => ['select'],
+        'minimum_notice_minutes' => ['select'],
+        'days' => ['multi_select'],
+        'hours' => ['select'],
     ];
 
     /**
@@ -157,9 +169,9 @@ final class QuestionnaireDefinitionValidator
         'tel' => ['business', 'business_location', 'knowledge_profile', 'answers'],
         'email' => ['business', 'knowledge_profile', 'answers'],
         'textarea' => ['business', 'knowledge_profile', 'answers'],
-        'select' => ['knowledge_profile', 'answers'],
-        'multi_select' => ['website_form', 'knowledge_profile', 'answers'],
-        'boolean' => ['answers', 'knowledge_profile'],
+        'select' => ['knowledge_profile', 'answers', 'booking_type'],
+        'multi_select' => ['website_form', 'knowledge_profile', 'answers', 'booking_type'],
+        'boolean' => ['answers', 'knowledge_profile', 'booking_type'],
         'repeatable_group' => ['business_service', 'catalog_item', 'backdrop', 'custom_section', 'faq', 'knowledge_profile'],
         'photo_upload' => ['gallery'],
         // A flat list of strings: service areas land on the primary
@@ -258,6 +270,14 @@ final class QuestionnaireDefinitionValidator
 
                 if (! in_array($inputType, self::KNOWLEDGE_PROFILE_FIELD_TYPES[$targetField], true)) {
                     throw new DomainException("Step '{$key}' combines input_type '{$inputType}' with knowledge_profile field '{$targetField}', which has no real application path for that type.");
+                }
+            } elseif ($targetModule === 'booking_type') {
+                if (! is_string($targetField) || ! isset(self::BOOKING_FIELD_TYPES[$targetField])) {
+                    throw new DomainException("Step '{$key}' targets 'booking_type' with an unsupported or missing target_field.");
+                }
+
+                if (! in_array($inputType, self::BOOKING_FIELD_TYPES[$targetField], true)) {
+                    throw new DomainException("Step '{$key}' combines input_type '{$inputType}' with booking field '{$targetField}', which has no real application path for that type.");
                 }
             } elseif ($targetModule === 'website_look') {
                 if ($targetField !== 'logo') {
@@ -401,6 +421,17 @@ final class QuestionnaireDefinitionValidator
 
         if (array_key_exists('area_details', $step) && ! ($inputType === 'string_list' && $targetModule === 'business_location')) {
             throw new DomainException("Step '{$key}' sets area_details, which only a business_location string_list supports.");
+        }
+
+        if (array_key_exists('area_labels', $step)) {
+            $labels = $step['area_labels'];
+            $allowed = ['intro', 'venues_label', 'venues_example', 'logistics_label', 'logistics_example', 'photos_label'];
+
+            if (! ($inputType === 'string_list' && $targetModule === 'business_location' && ($step['area_details'] ?? false) === true)
+                || ! is_array($labels) || array_diff(array_keys($labels), $allowed) !== []
+                || collect($labels)->contains(fn ($text) => ! is_string($text) || trim($text) === '' || mb_strlen($text) > 240)) {
+                throw new DomainException("Step '{$key}' has invalid area_labels (only an area_details service-area list may reword its local-details panel, with short text for: " . implode(', ', $allowed) . ').');
+            }
         }
 
         if (($step['shared_fact'] ?? false) && ! in_array($targetModule, ['business', 'business_location'], true)) {

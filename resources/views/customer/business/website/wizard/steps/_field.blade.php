@@ -170,6 +170,7 @@
                 'fieldName' => $n('value'),
                 'areaState' => $areaState[$stepKey] ?? null,
                 'areaDetailsName' => $wantsAreaDetails ? $n('area_details') : null,
+                'areaLabels' => is_array($step['area_labels'] ?? null) ? $step['area_labels'] : [],
                 'areaDetailsSaved' => $wantsAreaDetails ? ($answers[\App\Library\Website\Setup\ServiceAreaDetails::ANSWER_KEY] ?? []) : [],
                 'areaPhotos' => $areaPhotos,
                 'areaPhotoTotal' => $galleryTotal,

@@ -130,7 +130,8 @@ class TutoringWebsiteSetupQuestionnaireSeeder extends Seeder
             self::step('email', 'Contact email', 'email', true, 'business', 'email', screen: 'basics', sharedFact: true),
             self::step('logo', 'Logo', 'image', false, 'website_look', 'logo', screen: 'basics'),
             self::step('base_location', 'Where do you teach?', 'location', true, 'business_location', null, sharedFact: true, helpText: 'Your main location. We use it for your contact details and to suggest nearby areas.'),
-            self::step('service_area_cities', 'Which areas do your students come from?', 'string_list', true, 'business_location', null, sharedFact: true, suggest: true, areaPages: false, helpText: 'One place per row. We only mention areas you list here and never create a separate page for each one.'),
+            self::step('service_area_cities', 'Which areas do your students come from?', 'string_list', true, 'business_location', null, sharedFact: true, suggest: true, areaDetails: true, areaLabels: self::areaLabels(),
+                helpText: 'One place per row. Every area you list is mentioned on your site. An area gets a page of its own only when you add something true and specific about it (open "Add local details" on its row); the others stay in the list.'),
 
             // B. What you teach — real Services records
             self::step('lesson_services', 'What do you teach?', 'repeatable_group', true, 'business_service', null,
@@ -156,14 +157,44 @@ class TutoringWebsiteSetupQuestionnaireSeeder extends Seeder
                 helpText: 'Upload real photos of your space or lessons if you have them. We never create photos for you.',
                 categories: [['value' => 'space', 'label' => 'Learning space'], ['value' => 'team', 'label' => 'Teachers'], ['value' => 'branding', 'label' => 'Branding']]),
 
-            // E. Look and conversion
+            // E. Consultation booking — configures the booking type the Tutoring blueprint installed (inactive, nobody assigned).
+            // A booking button appears on the site only once the Calendar would really accept a booking.
+            self::step('consultation_booking', 'Can families book a free consultation online?', 'boolean', false, 'booking_type', 'enabled', screen: 'booking_choice',
+                helpText: 'Choose Yes to switch on the consultation booking type from your Tutoring setup. If it cannot take bookings yet, it stays off and your student inquiry form stays the main button.'),
+            self::step('consultation_days', 'Which days can you take a consultation?', 'multi_select', false, 'booking_type', 'days', screen: 'booking_details', screenPrompt: 'When can you take consultations?', screenHelp: 'These become your own working hours in the Calendar. Leave anything out that you cannot do.',
+                options: ['mon' => 'Monday', 'tue' => 'Tuesday', 'wed' => 'Wednesday', 'thu' => 'Thursday', 'fri' => 'Friday', 'sat' => 'Saturday', 'sun' => 'Sunday'],
+                conditional: ['depends_on' => 'consultation_booking', 'condition' => 'equals', 'value' => true]),
+            self::step('consultation_hours', 'During which hours?', 'select', false, 'booking_type', 'hours', screen: 'booking_details',
+                options: ['morning' => 'Mornings (9:00-12:00)', 'afternoon' => 'Afternoons (13:00-17:00)', 'after_school' => 'After school (15:30-19:00)', 'business_hours' => 'Business hours (9:00-17:00)'],
+                conditional: ['depends_on' => 'consultation_booking', 'condition' => 'equals', 'value' => true]),
+            self::step('consultation_duration', 'How long is a consultation?', 'select', false, 'booking_type', 'duration_minutes', screen: 'booking_details',
+                options: ['m15' => '15 minutes', 'm30' => '30 minutes', 'm45' => '45 minutes', 'm60' => '60 minutes'],
+                conditional: ['depends_on' => 'consultation_booking', 'condition' => 'equals', 'value' => true]),
+            self::step('consultation_notice', 'How much notice do you need?', 'select', false, 'booking_type', 'minimum_notice_minutes', screen: 'booking_details',
+                options: ['none' => 'No notice', 'h1' => '1 hour', 'h4' => '4 hours', 'd1' => '1 day', 'd2' => '2 days'],
+                conditional: ['depends_on' => 'consultation_booking', 'condition' => 'equals', 'value' => true]),
+
+            // F. Look and conversion
             self::step('brand_personality', 'What style fits your business?', 'select', true, 'knowledge_profile', 'brand_voice',
                 helpText: 'This picks the look we start with. You can compare and change it before you generate.',
                 options: ['bold' => 'Bold & confident', 'calm' => 'Calm & classic', 'premium' => 'Premium & dark', 'friendly' => 'Friendly & bright'],
                 templateHint: ['bold' => 'tutoring_modern', 'calm' => 'tutoring_editorial', 'premium' => 'tutoring_luxury', 'friendly' => 'tutoring_conversion']),
             self::step('primary_cta', 'What should visitors do first?', 'select', true, 'knowledge_profile', 'primary_conversion_goal',
-                helpText: 'The student inquiry form from your Tutoring setup is what visitors fill in. An inquiry is never an instant booking.',
+                helpText: 'The student inquiry form from your Tutoring setup is what visitors fill in; it stays your main button unless online consultation booking is really on. An inquiry is never an instant booking.',
                 options: ['quote_request' => 'Send a student inquiry (recommended)', 'call' => 'Call us']),
+        ];
+    }
+
+    /** The local-details panel in this niche's words (the defaults are Photo Booth's). */
+    public static function areaLabels(): array
+    {
+        return [
+            'intro' => 'Only add what is true. These details let this place get its own page; anything you leave blank is simply not mentioned. The grey text is an example, not something we will publish.',
+            'venues_label' => 'Places you actually teach in or near here',
+            'venues_example' => "e.g. The Hattiesburg Public Library\nYour studio on Main Street",
+            'logistics_label' => 'How lessons work for students from this area',
+            'logistics_example' => 'e.g. Lessons are held at the library or online; evening slots are available.',
+            'photos_label' => 'Photos taken here',
         ];
     }
 
@@ -186,12 +217,15 @@ class TutoringWebsiteSetupQuestionnaireSeeder extends Seeder
         ?array $rowFields = null,
         ?string $itemKind = null,
         ?bool $areaPages = null,
+        ?bool $areaDetails = null,
+        ?array $areaLabels = null,
+        ?array $conditional = null,
         ?array $templateHint = null,
         bool $ownerConfirms = false,
     ): array {
         $step = [
             'key' => $key, 'prompt' => $prompt, 'help_text' => $helpText, 'input_type' => $inputType, 'required' => $required, 'options' => $options,
-            'conditional_visibility' => null, 'target_module' => $targetModule, 'target_field' => $targetField, 'ai_instructions' => null,
+            'conditional_visibility' => $conditional, 'target_module' => $targetModule, 'target_field' => $targetField, 'ai_instructions' => null,
         ];
 
         foreach (['screen' => $screen, 'categories' => $categories, 'screen_prompt' => $screenPrompt, 'screen_help' => $screenHelp, 'presets' => $presets, 'row_fields' => $rowFields, 'item_kind' => $itemKind, 'template_hint' => $templateHint] as $name => $value) {
@@ -208,6 +242,14 @@ class TutoringWebsiteSetupQuestionnaireSeeder extends Seeder
 
         if ($areaPages !== null) {
             $step['area_pages'] = $areaPages;
+        }
+
+        if ($areaDetails !== null) {
+            $step['area_details'] = $areaDetails;
+        }
+
+        if ($areaLabels !== null) {
+            $step['area_labels'] = $areaLabels;
         }
 
         return $step;

@@ -6,6 +6,8 @@
 --}}
 @php
     $detail = is_array($detail ?? null) ? $detail : [];
+    // A niche may reword the local-details panel (its step's `area_labels`); the defaults are the original wording.
+    $labels = is_array($areaLabels ?? null) ? $areaLabels : [];
     $venueText = implode("\n", (array) ($detail['venues'] ?? []));
     $logisticsText = (string) ($detail['logistics'] ?? '');
     $chosenPhotos = (array) ($detail['photos'] ?? []);
@@ -24,14 +26,14 @@
                 Add local details (optional)
                 <span class="badge bg-success ms-1 {{ $hasDetail ? '' : 'd-none' }}" data-area-detail-badge>Details added</span>
             </summary>
-            <p class="text-caption mt-2 mb-2">Only add what is true. These details let this place get its own page; anything you leave blank is simply not mentioned. The grey text is an example, not something we will publish.</p>
-            <label class="form-label small mb-1">Venues you have actually worked at here <span class="text-caption fw-normal">(one per line)</span></label>
-            <textarea class="form-control form-control-sm mb-2" rows="2" maxlength="1000" data-area-field="venues" placeholder="{{ \App\Library\Website\Setup\ServiceAreaDetails::EXAMPLES['venues'] }}">{{ $venueText }}</textarea>
-            <label class="form-label small mb-1">Travel, setup or service details for this area</label>
-            <textarea class="form-control form-control-sm mb-2" rows="2" maxlength="600" data-area-field="logistics" placeholder="{{ \App\Library\Website\Setup\ServiceAreaDetails::EXAMPLES['logistics'] }}">{{ $logisticsText }}</textarea>
+            <p class="text-caption mt-2 mb-2">{{ $labels['intro'] ?? 'Only add what is true. These details let this place get its own page; anything you leave blank is simply not mentioned. The grey text is an example, not something we will publish.' }}</p>
+            <label class="form-label small mb-1">{{ $labels['venues_label'] ?? 'Venues you have actually worked at here' }} <span class="text-caption fw-normal">(one per line)</span></label>
+            <textarea class="form-control form-control-sm mb-2" rows="2" maxlength="1000" data-area-field="venues" placeholder="{{ $labels['venues_example'] ?? \App\Library\Website\Setup\ServiceAreaDetails::EXAMPLES['venues'] }}">{{ $venueText }}</textarea>
+            <label class="form-label small mb-1">{{ $labels['logistics_label'] ?? 'Travel, setup or service details for this area' }}</label>
+            <textarea class="form-control form-control-sm mb-2" rows="2" maxlength="600" data-area-field="logistics" placeholder="{{ $labels['logistics_example'] ?? \App\Library\Website\Setup\ServiceAreaDetails::EXAMPLES['logistics'] }}">{{ $logisticsText }}</textarea>
             @if (! empty($galleryPhotos))
                 @php($photoMax = \App\Library\Website\LocalAreaUsefulness::MAX_PHOTOS)
-                <div class="small mb-1">Event photos taken here <span class="text-caption fw-normal">(from your uploaded gallery)</span>
+                <div class="small mb-1">{{ $labels['photos_label'] ?? 'Event photos taken here' }} <span class="text-caption fw-normal">(from your uploaded gallery)</span>
                     <span class="ms-2 fw-bold" data-area-photo-count role="status" data-max="{{ $photoMax }}">{{ count($chosenPhotos) }} of {{ $photoMax }} photos selected</span></div>
                 <div class="d-flex flex-wrap gap-2">
                     @foreach ($galleryPhotos as $photo)
