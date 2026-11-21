@@ -83,9 +83,12 @@ describe('composer', () => {
 
   it('serializes older-page loads and never inserts duplicate history rows', async () => {
     let resolveOlder: (v: any) => void = () => {};
-    const conversation = jest.fn()
-      .mockResolvedValueOnce({ ...detail([inbound]), has_more: true })
-      .mockImplementation(() => new Promise((resolve) => { resolveOlder = resolve; }));
+    // Startup can fetch the thread more than once during auth hydration;
+    // defer only the cursor request, never a plain initial thread read.
+    const conversation = jest.fn(async (_scope?: unknown, _uid?: unknown, before?: number) =>
+      before === undefined
+        ? { ...detail([inbound]), has_more: true }
+        : new Promise((resolve) => { resolveOlder = resolve; }));
     const api = fakeApi({ conversation });
     await open(api);
     await fireEvent.press(screen.getByText('Load earlier messages'));
