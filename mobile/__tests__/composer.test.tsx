@@ -125,6 +125,24 @@ describe('composer', () => {
     expect(api.reply).toHaveBeenCalledTimes(1);
   });
 
+  it('shows a fresh retry refusal on an existing failed bubble instead of silently ignoring it', async () => {
+    const key = '11111111-1111-4111-8111-111111111111';
+    const failed = {
+      ...inbound, id: 5, direction: 'outbound', body: 'Please confirm',
+      send_uid: key, status: 'failed', status_message: 'Original attempt failed.', retryable: true,
+    };
+    const api = fakeApi({
+      conversation: jest.fn(async () => detail([inbound, failed])),
+      retry: jest.fn(async () => { throw new ApiError(422, 'insufficient_balance', 'Add funds to retry this SMS.', true, key); }),
+    });
+    await open(api);
+    await fireEvent.press(screen.getByText('Retry'));
+    await waitFor(() => screen.getByText('Add funds to retry this SMS.'));
+    expect(screen.getByText('Original attempt failed.')).toBeTruthy();
+    expect(api.retry).toHaveBeenCalledWith(scope, 'c1', key);
+    expect(screen.getByText('Retry')).toBeTruthy();
+  });
+
   it('renders a delivery-failed message with its reason and a Retry that calls retry()', async () => {
     const failed = { ...inbound, id: 5, direction: 'outbound', body: 'Missed it', send_uid: '22222222-2222-4222-8222-222222222222', status: 'delivery_failed', status_message: 'The carrier could not deliver this message.', retryable: true };
     const api = fakeApi({ conversation: jest.fn(async () => detail([inbound, failed])) });
