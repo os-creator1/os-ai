@@ -23,7 +23,7 @@ type Pending = {
   canRetry: boolean;
 };
 type Row = (Message & { pending?: false }) | { pending: true; key: string; body: string; state: Pending['state']; error?: string; canRetry: boolean; mode: Pending['mode'] };
-type RetryAttempt = { state: 'sending' | 'failed'; error?: string };
+type RetryAttempt = { state: 'sending' | 'failed' | 'unconfirmed'; error?: string };
 
 export function ConversationDetailScreen({ route, navigation }: Props) {
   const { api, scope } = useAuth();
@@ -42,12 +42,19 @@ export function ConversationDetailScreen({ route, navigation }: Props) {
   const listRef = useRef<FlatList<Row>>(null);
   const stick = useRef(true);
   const readSent = useRef(false);
+  const earlierInFlight = useRef(false);
+  const [loadingEarlier, setLoadingEarlier] = useState(false);
+  const threadGeneration = useRef(0);
 
-  const load = useCallback(async () => {
-    if (!scope) return;
+  const load = useCallback(async (): Promise<boolean> => {
+    if (!scope) return false;
+    const version = ++threadGeneration.current;
+    earlierInFlight.current = false;
+    setLoadingEarlier(false);
     setError(null);
     try {
       const d = await api.conversation(scope, uid);
+      if (version !== threadGeneration.current) return false;
       setData(d);
       setHasMore(d.has_more);
       setOlder([]);
@@ -56,24 +63,41 @@ export function ConversationDetailScreen({ route, navigation }: Props) {
         readSent.current = true;
         api.markRead(scope, uid).catch(() => { readSent.current = false; });
       }
+      return true;
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Could not load this conversation.');
+      if (version === threadGeneration.current) {
+        setError(e instanceof Error ? e.message : 'Could not load this conversation.');
+      }
+      return false;
     }
   }, [api, scope, uid]);
 
   useEffect(() => { void load(); }, [load]);
 
   const loadEarlier = useCallback(async () => {
-    if (!scope || !data) return;
+    if (!scope || !data || !hasMore || earlierInFlight.current) return;
     const first = (older[0] ?? data.messages[0])?.id;
     if (!first) return;
+    const version = threadGeneration.current;
+    earlierInFlight.current = true;
+    setLoadingEarlier(true);
     try {
       const d = await api.conversation(scope, uid, first);
+      if (version !== threadGeneration.current) return;
       stick.current = false;
-      setOlder((o) => [...d.messages, ...o]);
+      setOlder((o) => {
+        const seen = new Set([...o, ...data.messages].map((m) => m.id));
+        return [...d.messages.filter((m) => !seen.has(m.id)), ...o];
+      });
       setHasMore(d.has_more);
     } catch { /* keep what we have; the button stays for another try */ }
-  }, [api, scope, uid, data, older]);
+    finally {
+      if (version === threadGeneration.current) {
+        earlierInFlight.current = false;
+        setLoadingEarlier(false);
+      }
+    }
+  }, [api, scope, uid, data, older, hasMore]);
 
   const dispatch = useCallback(async (key: string, body: string, mode: Pending['mode']) => {
     if (!scope || inflight.current.has(key)) return; // a second tap on the same message is a no-op
@@ -86,7 +110,19 @@ export function ConversationDetailScreen({ route, navigation }: Props) {
       if (mode === 'retry') await api.retry(scope, uid, key);
       else await api.reply(scope, uid, body, key);
       stick.current = true;
-      await load();
+      const refreshed = await load();
+      if (!refreshed) {
+        // The send/retry itself already succeeded. Do NOT remove the bubble,
+        // and do NOT offer a second send merely because the GET failed.
+        const note = 'Message accepted, but history could not refresh. Refresh the conversation to confirm its status.';
+        setPending((p) => p.map((x) => x.key === key ? {
+          ...x, state: 'failed', error: note, canRetry: false,
+        } : x));
+        if (mode === 'retry') {
+          setRetryAttempts((p) => ({ ...p, [key]: { state: 'unconfirmed', error: note } }));
+        }
+        return;
+      }
       setPending((p) => p.filter((x) => x.key !== key));
       setRetryAttempts((p) => {
         const next = { ...p };
@@ -145,7 +181,9 @@ export function ConversationDetailScreen({ route, navigation }: Props) {
         contentContainerStyle={{ padding: space.md }}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={async () => { setRefreshing(true); await load(); setRefreshing(false); }} />}
         onContentSizeChange={() => { if (stick.current) listRef.current?.scrollToEnd({ animated: true }); }}
-        ListHeaderComponent={hasMore ? <Button title="Load earlier messages" variant="plain" onPress={loadEarlier} /> : undefined}
+        ListHeaderComponent={hasMore
+          ? <Button title={loadingEarlier ? 'Loading earlier messages…' : 'Load earlier messages'} variant="plain" disabled={loadingEarlier} onPress={loadEarlier} />
+          : undefined}
         renderItem={({ item }) => <Bubble
           item={item}
           retryAttempt={'pending' in item && item.pending ? undefined : retryAttempts[(item as Message).send_uid ?? '']}
@@ -196,9 +234,9 @@ function Bubble({ item, retryAttempt, onRetry }: {
       {out && isFailed(m.status) ? (
         <>
           {m.status_message ? <Text style={s.errorText}>{m.status_message}</Text> : null}
-          {retryAttempt?.state === 'failed' && retryAttempt.error ? <Text style={s.errorText}>{retryAttempt.error}</Text> : null}
+          {(retryAttempt?.state === 'failed' || retryAttempt?.state === 'unconfirmed') && retryAttempt.error ? <Text style={s.errorText}>{retryAttempt.error}</Text> : null}
           {retryAttempt?.state === 'sending' ? <Text style={s.meta}>Retrying…</Text> : null}
-          {m.retryable && m.send_uid && retryAttempt?.state !== 'sending'
+          {m.retryable && m.send_uid && retryAttempt?.state !== 'sending' && retryAttempt?.state !== 'unconfirmed'
             ? <Pressable accessibilityRole="button" onPress={() => onRetry(m.send_uid!, m.body ?? '', 'retry')}><Text style={s.retry}>Retry</Text></Pressable>
             : null}
         </>
