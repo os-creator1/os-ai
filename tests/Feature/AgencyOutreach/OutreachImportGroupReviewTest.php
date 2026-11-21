@@ -461,4 +461,82 @@ class OutreachImportGroupReviewTest extends TestCase
             ->where('contact_id', $contact->id)->where('definition_id', $definition->id)->count());
     }
 
+    public function test_duplicate_column_targets_fill_only_blank_or_invalid_values_and_never_overwrite(): void
+    {
+        $a = $this->outreachAgency('DupCols', ['enrolled' => false]);
+        $this->authenticateAs($a['customer']);
+        $biz = $a['business'];
+        $defs = app(CustomFieldDefinitionManager::class);
+        $type = $defs->create($biz, 'Business type', 'text');
+        $site = $defs->create($biz, 'Website URL', 'text');
+        $longUrl = 'https://long.example.com/' . str_repeat('a', 300);          // a valid URL, but over a text field's 255 limit
+
+        $csv = "name,phone,primary category,Alt category,website,Alt site\n"
+            . "Blank first,+12133000001,,Dog trainer,https://one.example.com,\n"                 // earlier column blank -> later fills
+            . "Invalid first,+12133000002,Photo booth,Ignored alt,{$longUrl},https://alt.example.com\n"   // earlier URL invalid -> later fills
+            . "Existing wins,+12133000003,Mirror booth,Other alt,https://three.example.com,https://alt3.example.com\n";
+        $batch = $this->upload($a, $csv, 'dup-cols.csv');
+        $batch->update(['extra_fields' => [
+            'Alt category' => ['action' => 'existing', 'definition_uid' => $type->uid],
+            'Alt site' => ['action' => 'existing', 'definition_uid' => $site->uid],
+        ]]);
+
+        // A contact of the Business already holds a hand-typed value for row 3.
+        $old = ContactGroups::create(['customer_id' => $biz->customer_id, 'business_id' => $biz->id, 'name' => 'Old list', 'status' => true]);
+        $existing = Contacts::create(['customer_id' => $biz->customer_id, 'business_id' => $biz->id, 'group_id' => $old->id, 'phone' => '12133000003', 'status' => 'subscribe']);
+        app(CustomFieldValueService::class)->set($biz, $existing, $type, 'Hand typed');
+
+        $this->commit($a, $batch->fresh(), 'Dup cols')->assertRedirect();
+        $value = fn (string $phone, CustomFieldDefinition $def) => DB::table('custom_field_values')
+            ->where('contact_id', Contacts::where('business_id', $biz->id)->where('phone', $phone)->value('id'))->where('definition_id', $def->id)->pluck('value_text')->all();
+
+        $this->assertSame(['Dog trainer'], $value('12133000001', $type), 'a blank first column lets the later column fill the field');
+        $this->assertSame(['Photo booth'], $value('12133000002', $type), 'the first valid value wins; the later column never overwrites it');
+        $this->assertSame(['https://alt.example.com'], $value('12133000002', $site), 'an invalid first value is skipped so the later column can fill');
+        $this->assertSame(['https://one.example.com'], $value('12133000001', $site));
+        $this->assertSame(['Hand typed'], $value('12133000003', $type), 'an existing non-blank value is never replaced');
+        $this->assertSame(['https://three.example.com'], $value('12133000003', $site), 'only the first of two columns fills a blank field');
+
+        // Exactly one value row per (contact, definition), whatever the column count.
+        $this->assertSame(0, DB::table('custom_field_values')->select('contact_id', 'definition_id')->groupBy('contact_id', 'definition_id')->havingRaw('COUNT(*) > 1')->get()->count());
+
+        // The report counts what was really written and what was skipped as invalid.
+        $report = (array) $batch->fresh()->group_report;
+        $this->assertGreaterThanOrEqual(1, $report['values_skipped'], 'the over-long URL is reported as skipped');
+        $this->assertSame(DB::table('custom_field_values')->count() - 1, (int) $report['values_saved'], 'values_saved = rows the import really wrote (all rows minus the hand-typed one)');
+    }
+
+    public function test_import_batch_filter_is_consistent_across_kpis_explorer_and_export(): void
+    {
+        $a = $this->outreachAgency('Batch', ['enrolled' => false]);
+        $a['campaign']->update(['status' => 'active']);
+        $this->authenticateAs($a['customer']);
+        $first = $this->upload($a, $this->csv(3, 3000000), 'first.csv');
+        $this->commit($a, $first, 'First list');
+        $second = $this->upload($a, $this->csv(3, 3000003), 'second.csv');
+        $this->commit($a, $second, 'Second list');
+
+        foreach (['12133000000', '12133000001', '12133000003', '12133000004'] as $phone) {
+            $this->contactedWithReply($a, $phone, $phone === '12133000001' || $phone === '12133000003');
+        }
+
+        $an = fn (array $q) => new \App\Library\AgencyOutreach\Analytics\OutreachAnalytics($a['workspace'], \App\Library\AgencyOutreach\Analytics\AnalyticsFilters::fromRequest(\Illuminate\Http\Request::create('/', 'GET', $q + ['period' => 'all'])));
+        $k1 = $an(['batch' => $first->uid])->kpis();
+        $k2 = $an(['batch' => $second->uid])->kpis();
+
+        $this->assertSame([3, 2, 1], [$k1['imported'], $k1['contacted'], $k1['replied']]);
+        $this->assertSame([3, 2, 1], [$k2['imported'], $k2['contacted'], $k2['replied']]);
+        $this->assertSame($k1['contacted'] + $k2['contacted'], $an([])->kpis()['contacted'], 'batches partition the prospects: nothing double counted');
+        $this->assertSame($k1['contacted'], $an(['batch' => $first->uid])->explorer(1, 25, 'contacted')['total'], 'Explorer agrees with the KPI');
+        $this->assertSame($k1['replied'], $an(['batch' => $first->uid])->explorer(1, 25, 'replied')['total']);
+
+        $csv = $this->get($this->outreachRoute('analytics.export', $a['workspace']) . '?period=all&batch=' . $second->uid)->streamedContent();
+        $this->assertStringContainsString('Business 3000003', $csv);
+        $this->assertStringNotContainsString('Business 3000000', $csv, 'the export honours the same batch filter');
+
+        // A batch of another workspace matches nothing.
+        $b = $this->outreachAgency('BatchB', ['enrolled' => false]);
+        $foreign = new \App\Library\AgencyOutreach\Analytics\OutreachAnalytics($b['workspace'], \App\Library\AgencyOutreach\Analytics\AnalyticsFilters::fromRequest(\Illuminate\Http\Request::create('/', 'GET', ['batch' => $first->uid, 'period' => 'all'])));
+        $this->assertSame(0, $foreign->kpis()['imported']);
+    }
 }
