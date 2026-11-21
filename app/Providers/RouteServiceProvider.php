@@ -153,9 +153,16 @@
 
             Route::prefix('api/v3')
                 ->name('api.')
-                ->middleware(['api', 'auth:sanctum', 'json.response', \App\Http\Middleware\CustomerAccountAccessApiGate::class])
+                ->middleware(['api', 'auth:sanctum', 'json.response', \App\Http\Middleware\RejectMobileTokenOnLegacyApi::class, \App\Http\Middleware\CustomerAccountAccessApiGate::class])
                 ->namespace($this->namespace . '\API')
                 ->group(base_path('routes/api.php'));
+
+            // MotionGrove Mobile (see docs/mobile/ARCHITECTURE.md). Its own versioned surface; login is public and
+            // throttled, everything else needs a `mobile`-ability Sanctum token.
+            Route::prefix('api/mobile/v1')
+                ->name('mobile.')
+                ->middleware(['api', 'json.response'])
+                ->group(base_path('routes/mobile.php'));
 
         }
 
