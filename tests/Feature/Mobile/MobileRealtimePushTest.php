@@ -120,6 +120,10 @@ class MobileRealtimePushTest extends TestCase
             destinationNumber: self::BUSINESS_NUMBER, fromNumber: self::CUSTOMER, body: $body, mediaUrls: [],
             providerMessageId: $providerId ?? 'pm_' . Str::random(10), deliveryStatus: null, occurredAt: CarbonImmutable::now(),
         ));
+        // The provider webhook is unauthenticated: it must never inherit a phone's bearer header from an earlier call.
+        $this->flushHeaders();
+        $this->app['auth']->forgetGuards();
+        $this->app['auth']->shouldUse(config('auth.defaults.guard'));
         $this->postJson(route('inbound.telnyx_managed'), ['probe' => true])->assertOk();
     }
 
