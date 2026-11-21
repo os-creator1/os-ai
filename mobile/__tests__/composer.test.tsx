@@ -37,9 +37,10 @@ function fakeApi(over: Record<string, any> = {}): any {
 }
 const nav: any = { navigate: jest.fn(), setOptions: jest.fn() };
 
+let lastRender: ReturnType<typeof render>;
 async function open(api = fakeApi()) {
   const { Login } = require('./helpers');
-  await render(
+  lastRender = render(
     <AuthProvider apiOverride={api}>
       <Login api={api}><ConversationDetailScreen {...({ navigation: nav, route: { params: { uid: 'c1', title: 'Ann' } } } as any)} /></Login>
     </AuthProvider>,
@@ -206,7 +207,7 @@ describe('composer', () => {
 
     // React Native renders RefreshControl as RCTRefreshControl on Android
     // and strips its testID. Trigger the actual native refresh handler.
-    const refreshControl = screen.UNSAFE_getByType('RCTRefreshControl' as any);
+    const refreshControl = lastRender.UNSAFE_getByType('RCTRefreshControl' as any);
     await act(async () => { await refreshControl.props.onRefresh(); });
     await waitFor(() => screen.getByText('Carrier could not deliver.'));
     await waitFor(() => expect(screen.queryByText(/Message accepted, but history could not refresh/)).toBeNull());
