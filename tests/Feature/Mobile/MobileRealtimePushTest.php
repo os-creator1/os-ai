@@ -371,6 +371,27 @@ class MobileRealtimePushTest extends TestCase
         $this->assertCount(3, $this->changedFor($owner->user, 'received'), 'But the live refresh still happens.');
     }
 
+    public function test_sessions_older_than_the_account_wide_revocation_cutoff_receive_nothing(): void
+    {
+        Event::fake([MobileConversationChanged::class]);
+        [$owner, , , $identity] = $this->managedTenant();
+        $this->phone($owner, self::TOKEN_A);
+
+        // "Sign out everywhere" / a password reset: the cutoff moves past every existing token (the API already refuses them).
+        DB::table('users')->where('id', $owner->user_id)->update(['password_changed_at' => now()->addMinute()]);
+        $this->inbound($identity);
+        $this->assertCount(0, $this->push->sent);
+        $this->assertCount(0, $this->changedFor($owner->user));
+
+        // The user signs in again: a session created AFTER the cutoff is fine (old rows cleared so only it can match).
+        DB::table('mobile_devices')->delete();
+        DB::table('personal_access_tokens')->delete();
+        DB::table('users')->where('id', $owner->user_id)->update(['password_changed_at' => now()->subHour()]);
+        $this->phone($owner, self::TOKEN_B, null, 'install-new-0001');
+        $this->inbound($identity);
+        $this->assertSame([self::TOKEN_B], array_column($this->push->sent, 'to'));
+    }
+
     public function test_a_disabled_user_receives_nothing(): void
     {
         [$owner, , , $identity] = $this->managedTenant();

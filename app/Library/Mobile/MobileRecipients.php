@@ -40,6 +40,7 @@ final class MobileRecipients
             ->join('users as u', 'u.id', '=', 'd.user_id')
             ->where('u.status', true)
             ->where(fn ($q) => $q->whereNull('t.expires_at')->orWhere('t.expires_at', '>', now()))
+            ->tap(fn ($q) => self::sessionNotRevoked($q))
             ->distinct()->pluck('d.user_id');
 
         $out = collect();
@@ -91,11 +92,23 @@ final class MobileRecipients
     {
         $ids = DB::table('mobile_devices as d')
             ->join('personal_access_tokens as t', 't.id', '=', 'd.personal_access_token_id')
+            ->join('users as u', 'u.id', '=', 'd.user_id')
+            ->tap(fn ($q) => self::sessionNotRevoked($q))
             ->where('d.user_id', $user->id)
             ->whereNotNull('d.push_token')->where('d.push_token', '!=', '')
             ->where(fn ($q) => $q->whereNull('t.expires_at')->orWhere('t.expires_at', '>', now()))
             ->pluck('d.id');
 
         return MobileDevice::query()->whereIn('id', $ids)->get();
+    }
+
+    /**
+     * The same account-wide cutoff EnsureMobileToken applies to API calls: a password reset or "Sign out everywhere" sets
+     * users.password_changed_at, and every token created at or before it is dead. A phone the API would refuse must not
+     * be told anything or pushed to either. Expects the query to join `personal_access_tokens as t` and `users as u`.
+     */
+    private static function sessionNotRevoked(\Illuminate\Database\Query\Builder $q): void
+    {
+        $q->where(fn ($w) => $w->whereNull('u.password_changed_at')->orWhere(fn ($x) => $x->whereNotNull('t.created_at')->whereColumn('t.created_at', '>', 'u.password_changed_at')));
     }
 }

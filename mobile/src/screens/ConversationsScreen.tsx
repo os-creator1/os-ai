@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { FlatList, Pressable, RefreshControl, StyleSheet, Text, TextInput, View } from 'react-native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
+import { ApiError } from '../api/client';
 import type { ConversationSummary } from '../api/types';
 import { useAuth } from '../auth/AuthContext';
 import { NotificationBanner } from '../notifications/NotificationBanner';
@@ -54,22 +55,48 @@ export function ConversationsScreen({ navigation }: Props) {
     return () => { generation.current++; };
   }, [load]);
 
+  const itemsRef = useRef<ConversationSummary[] | null>(null);
+  useEffect(() => { itemsRef.current = items; }, [items]);
+  const changedUids = useRef(new Set<string>());
+  const needsFullReload = useRef(false);
+
   /**
-   * Live update: fold page 1 into what is already on screen. Conversations that moved or changed (new message, unread,
-   * delivery state) jump to the top in server order; older pages the user loaded stay; nothing is shown twice.
-   * Under the Unread filter a read/unread change can add or remove rows, so that view simply reloads.
+   * Live update. Page 1 is re-read and folded in (changed conversations jump to the top in server order; older pages the user
+   * loaded stay; nothing is shown twice). A conversation the event names that is loaded but NOT on page 1 — e.g. one on page 2
+   * that was just read on another device, which does not change its sort key — is reconciled individually from the API rather
+   * than assumed unchanged. A resync (reconnect / app resume) or a filtered/searched view simply reloads.
    */
   const refreshTop = useCallback(async () => {
     if (!scope) return;
-    if (filter !== 'all' || search.trim() !== '') { void load(true); return; }
+    const uids = [...changedUids.current];
+    changedUids.current.clear();
+    if (needsFullReload.current || filter !== 'all' || search.trim() !== '') {
+      needsFullReload.current = false;
+      void load(true);
+      return;
+    }
     const current = generation.current;
     try {
       const res = await api.conversations(scope, { filter, page: 1 });
       if (generation.current !== current) return;
+      const onPageOne = new Set(res.data.map((c) => c.uid));
+      const patches = new Map<string, ConversationSummary | null>();
+      for (const uid of uids) {
+        if (onPageOne.has(uid) || !itemsRef.current?.some((c) => c.uid === uid)) continue;
+        try {
+          patches.set(uid, (await api.conversation(scope, uid)).conversation);
+        } catch (e) {
+          // No longer reachable (moved Location, access lost): drop it from the list.
+          if (e instanceof ApiError && e.status === 404) patches.set(uid, null);
+        }
+      }
+      if (generation.current !== current) return;
       setItems((previous) => {
         if (previous === null) return res.data;
-        const fresh = new Set(res.data.map((c) => c.uid));
-        return [...res.data, ...previous.filter((c) => !fresh.has(c.uid))];
+        const rest = previous
+          .filter((c) => !onPageOne.has(c.uid))
+          .flatMap((c) => (patches.has(c.uid) ? (patches.get(c.uid) ? [patches.get(c.uid) as ConversationSummary] : []) : [c]));
+        return [...res.data, ...rest];
       });
       setNextPage((n) => n ?? res.meta.next_page);
     } catch { /* silent: the next event or pull-to-refresh retries */ }
@@ -77,10 +104,10 @@ export function ConversationsScreen({ navigation }: Props) {
 
   const debounce = useRef<ReturnType<typeof setTimeout> | null>(null);
   useRealtime((e) => {
-    if (e.kind === 'change' || e.kind === 'resync') {
-      if (debounce.current) clearTimeout(debounce.current);
-      debounce.current = setTimeout(() => { void refreshTop(); }, 250);
-    }
+    if (e.kind === 'change') changedUids.current.add(e.conversation_uid);
+    else needsFullReload.current = true;
+    if (debounce.current) clearTimeout(debounce.current);
+    debounce.current = setTimeout(() => { void refreshTop(); }, 250);
   });
   useEffect(() => () => { if (debounce.current) clearTimeout(debounce.current); }, []);
 

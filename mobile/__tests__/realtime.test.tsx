@@ -5,6 +5,7 @@ import { AuthProvider, useAuth } from '../src/auth/AuthContext';
 import { RealtimeProvider } from '../src/realtime/RealtimeProvider';
 import { channelFor, parseChange } from '../src/realtime/types';
 import { ConversationDetailScreen } from '../src/screens/ConversationDetailScreen';
+import { ApiError } from '../src/api/client';
 import { ConversationsScreen } from '../src/screens/ConversationsScreen';
 import { isActiveConversation } from '../src/notifications/target';
 
@@ -278,6 +279,61 @@ describe('live conversation list', () => {
     expect(screen.getByLabelText('Unread')).toBeTruthy();
     expect(screen.getAllByText('Bo')).toHaveLength(1);
     expect(screen.getAllByText('Ann')).toHaveLength(1);
+    jest.useRealTimers();
+  });
+
+  it('reconciles a conversation loaded on a later page when it is read elsewhere (page 1 alone would leave its badge)', async () => {
+    jest.useFakeTimers();
+    const conversations = jest.fn(async (_s: any, q: any) => q.page === 2
+      ? { data: [row('c9', 'Older Lead', true, 'unread preview')], meta: { page: 2, next_page: null } }
+      : { data: [row('c1', 'Ann', false, 'top')], meta: { page: 1, next_page: 2 } });
+    const conversation = jest.fn(async () => ({ conversation: row('c9', 'Older Lead', false, 'unread preview'), contact_uid: null, has_more: false, messages: [] }));
+    const { factory, created } = fakeTransports();
+    await mount(fakeApi({ conversations, conversation }), factory, <ConversationsScreen {...({ navigation: { navigate: jest.fn(), setOptions: jest.fn() }, route: { params: undefined } } as any)} />);
+    await waitFor(() => screen.getByText('Ann'));
+    await fireEvent.press(screen.getByText('Load older leads'));
+    await waitFor(() => screen.getByText('Older Lead'));
+    expect(screen.getByLabelText('Unread')).toBeTruthy();
+    await waitFor(() => expect(created).toHaveLength(1));
+
+    await act(async () => { created[0].emit(channelFor('biz-aaaaaaaa', 'user-uid-0001'), { type: 'read', business_uid: 'biz-aaaaaaaa', conversation_uid: 'c9' }); });
+    await act(async () => { jest.advanceTimersByTime(400); });
+    await waitFor(() => expect(screen.queryByLabelText('Unread')).toBeNull());
+    expect(screen.getAllByText('Older Lead')).toHaveLength(1);
+    expect(screen.getAllByText('Ann')).toHaveLength(1);
+    jest.useRealTimers();
+  });
+
+  it('drops a loaded conversation the server says is no longer reachable', async () => {
+    jest.useFakeTimers();
+    const conversations = jest.fn(async (_s: any, q: any) => q.page === 2
+      ? { data: [row('c9', 'Gone Lead', false, 'x')], meta: { page: 2, next_page: null } }
+      : { data: [row('c1', 'Ann', false, 'top')], meta: { page: 1, next_page: 2 } });
+    const conversation = jest.fn(async () => { throw new ApiError(404, 'not_found', 'Not found.'); });
+    const { factory, created } = fakeTransports();
+    await mount(fakeApi({ conversations, conversation }), factory, <ConversationsScreen {...({ navigation: { navigate: jest.fn(), setOptions: jest.fn() }, route: { params: undefined } } as any)} />);
+    await waitFor(() => screen.getByText('Ann'));
+    await fireEvent.press(screen.getByText('Load older leads'));
+    await waitFor(() => screen.getByText('Gone Lead'));
+    await waitFor(() => expect(created).toHaveLength(1));
+    await act(async () => { created[0].emit(channelFor('biz-aaaaaaaa', 'user-uid-0001'), { type: 'status', business_uid: 'biz-aaaaaaaa', conversation_uid: 'c9' }); });
+    await act(async () => { jest.advanceTimersByTime(400); });
+    await waitFor(() => expect(screen.queryByText('Gone Lead')).toBeNull());
+    jest.useRealTimers();
+  });
+
+  it('reloads the list after a reconnect or app resume', async () => {
+    jest.useFakeTimers();
+    const conversations = jest.fn()
+      .mockResolvedValueOnce({ data: [row('c1', 'Ann', false, 'before')], meta: { page: 1, next_page: null } })
+      .mockResolvedValue({ data: [row('c2', 'New Lead', true, 'arrived while offline'), row('c1', 'Ann', false, 'before')], meta: { page: 1, next_page: null } });
+    const { factory, created } = fakeTransports();
+    await mount(fakeApi({ conversations }), factory, <ConversationsScreen {...({ navigation: { navigate: jest.fn(), setOptions: jest.fn() }, route: { params: undefined } } as any)} />);
+    await waitFor(() => screen.getByText('Ann'));
+    await waitFor(() => expect(created).toHaveLength(1));
+    await act(async () => { created[0].connect(); });
+    await act(async () => { jest.advanceTimersByTime(400); });
+    await waitFor(() => screen.getByText('New Lead'));
     jest.useRealTimers();
   });
 });
