@@ -1,6 +1,8 @@
 import React from 'react';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react-native';
-import { AuthProvider } from '../src/auth/AuthContext';
+import { AuthProvider, useAuth } from '../src/auth/AuthContext';
+import { Pressable, Text, View } from 'react-native';
+import * as SecureStore from 'expo-secure-store';
 import { ApiError } from '../src/api/client';
 import { LoginScreen } from '../src/screens/LoginScreen';
 import { BusinessSelectorScreen } from '../src/screens/BusinessSelectorScreen';
@@ -156,5 +158,52 @@ describe('signed-in screens', () => {
     await signedIn(() => <CallsScreen />);
     await waitFor(() => screen.getByText(/Not available yet/));
     expect(screen.getByText('Voice calling is coming in the next milestone.')).toBeTruthy();
+  });
+});
+
+describe('restoring a saved mobile session', () => {
+  function SessionProbe() {
+    const { ready, signedIn, restoreError, retryRestore } = useAuth();
+    return (
+      <View>
+        <Text>{ready ? 'hydration complete' : 'hydrating'}</Text>
+        <Text>{signedIn ? 'session restored' : 'session not restored'}</Text>
+        {restoreError ? <Text>{restoreError}</Text> : null}
+        <Pressable onPress={() => { void retryRestore(); }}><Text>Retry startup</Text></Pressable>
+      </View>
+    );
+  }
+
+  async function seedSavedToken() {
+    await SecureStore.setItemAsync('mg.token', 'previously-valid-token');
+    await SecureStore.setItemAsync('mg.expires', new Date(Date.now() + 3600000).toISOString());
+    await SecureStore.deleteItemAsync('mg.scope');
+  }
+
+  it('preserves a valid stored token when the network is down and restores it on retry', async () => {
+    await seedSavedToken();
+    const meFn = jest.fn()
+      .mockRejectedValueOnce(new ApiError(0, 'network', 'offline'))
+      .mockResolvedValue(me);
+    render(<AuthProvider apiOverride={fakeApi({ me: meFn })}><SessionProbe /></AuthProvider>);
+
+    await waitFor(() => screen.getByText('Could not connect to MotionGrove. Check your connection and try again.'));
+    expect(await SecureStore.getItemAsync('mg.token')).toBe('previously-valid-token');
+    fireEvent.press(screen.getByText('Retry startup'));
+    await waitFor(() => screen.getByText('session restored'));
+    expect(meFn).toHaveBeenCalledTimes(2);
+    expect(await SecureStore.getItemAsync('mg.token')).toBe('previously-valid-token');
+    await SecureStore.deleteItemAsync('mg.token');
+    await SecureStore.deleteItemAsync('mg.expires');
+  });
+
+  it('clears the saved token when the server truly rejects authentication', async () => {
+    await seedSavedToken();
+    const api = fakeApi({ me: jest.fn().mockRejectedValue(new ApiError(401, 'unauthenticated', 'Sign in again.')) });
+    render(<AuthProvider apiOverride={api}><SessionProbe /></AuthProvider>);
+    await waitFor(() => screen.getByText('hydration complete'));
+    expect(await SecureStore.getItemAsync('mg.token')).toBeNull();
+    expect(screen.getByText('session not restored')).toBeTruthy();
+    expect(screen.queryByText('Could not connect to MotionGrove. Check your connection and try again.')).toBeNull();
   });
 });
