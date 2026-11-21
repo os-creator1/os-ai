@@ -7,6 +7,7 @@ use App\Enums\Entitlement\PlatformFeature;
 use App\Enums\Workspace\WorkspaceMemberModule;
 use App\Exceptions\Workspace\BusinessWorkspaceMismatchException;
 use App\Exceptions\Workspace\WorkspaceBusinessNotFoundException;
+use App\Library\Entitlement\CustomerAccountAccessGuard;
 use App\Library\Entitlement\EntitlementManager;
 use App\Library\Entitlement\CustomerAccountAccessResolver;
 use App\Library\Workspace\BusinessRouteAccess;
@@ -16,6 +17,7 @@ use App\Models\Business;
 use App\Models\User;
 use App\Models\Workspace;
 use App\Repositories\Contracts\WorkspaceRepository;
+use Illuminate\Http\Exceptions\HttpResponseException;
 use Illuminate\Support\Facades\Gate;
 
 /**
@@ -72,6 +74,12 @@ final class MobileBusinessAccess
 
         if ($business->status !== BusinessStatus::Active) {
             return null;
+        }
+
+        // Locked (billing/suspension) is reported as such, before the entitlement check would fold it into a 404.
+        // Reached only after tenancy and permission passed, so a foreign Business still learns nothing.
+        if (app(CustomerAccountAccessGuard::class)->decisionForBusiness($business)->isLocked()) {
+            throw new HttpResponseException(response()->json(['error' => ['code' => 'account_locked', 'message' => 'This account is locked. Sign in on the web to resolve it.']], 403)->header('Cache-Control', 'no-store'));
         }
 
         return $this->entitled($actor, $workspace, $business, $feature) ? [$workspace, $business] : null;
