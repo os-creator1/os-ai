@@ -367,7 +367,8 @@ class MobileRealtimePushTest extends TestCase
         (new NotifyMobileOfInboundMessage())->handle(InboundMessageReceived::fromManagedOperation((int) $business->id, self::CUSTOMER, $oldOperation, (int) $box->id));
 
         $this->assertCount(0, $this->push->sent, 'The old occurrence must not ring a phone.');
-        $this->assertCount(2, $this->changedFor($owner->user, 'received'), 'But the live refresh still happens.');
+        // Two real webhooks + the stale occurrence's own listener run: the live refresh still goes out each time.
+        $this->assertCount(3, $this->changedFor($owner->user, 'received'), 'But the live refresh still happens.');
     }
 
     public function test_a_disabled_user_receives_nothing(): void
