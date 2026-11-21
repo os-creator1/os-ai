@@ -37,10 +37,10 @@ function fakeApi(over: Record<string, any> = {}): any {
 }
 const nav: any = { navigate: jest.fn(), setOptions: jest.fn() };
 
-let lastRender: ReturnType<typeof render>;
+let lastRender: Awaited<ReturnType<typeof render>>;
 async function open(api = fakeApi()) {
   const { Login } = require('./helpers');
-  lastRender = render(
+  lastRender = await render(
     <AuthProvider apiOverride={api}>
       <Login api={api}><ConversationDetailScreen {...({ navigation: nav, route: { params: { uid: 'c1', title: 'Ann' } } } as any)} /></Login>
     </AuthProvider>,
