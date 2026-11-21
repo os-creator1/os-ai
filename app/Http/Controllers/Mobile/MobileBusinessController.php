@@ -25,8 +25,8 @@ class MobileBusinessController extends MobileController
                 'business_uid' => $business->uid,
                 'name' => $business->name,
                 'features' => [
-                    'conversations' => Gate::forUser($user)->allows('chat_box') && $access->entitled($user, $workspace, $business, MobileBusinessAccess::FEATURE_CONVERSATIONS),
-                    'contacts' => Gate::forUser($user)->allows('view_contact') && $access->entitled($user, $workspace, $business, MobileBusinessAccess::FEATURE_CRM),
+                    'conversations' => $access->moduleVisible($user, $workspace, MobileBusinessAccess::FEATURE_CONVERSATIONS, 'chat_box') && Gate::forUser($user)->allows('chat_box') && $access->entitled($user, $workspace, $business, MobileBusinessAccess::FEATURE_CONVERSATIONS),
+                    'contacts' => $access->moduleVisible($user, $workspace, MobileBusinessAccess::FEATURE_CRM, 'view_contact') && Gate::forUser($user)->allows('view_contact') && $access->entitled($user, $workspace, $business, MobileBusinessAccess::FEATURE_CRM),
                 ],
             ];
         }
