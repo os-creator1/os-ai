@@ -797,6 +797,11 @@ class BatchedGuidedGenerationTest extends TestCase
         $this->assertNull($home['meta_description'], 'a blank description is absent, never invented');
         $this->assertSame(str_repeat('x', 200), $out['pages'][1]['seo_title'], 'a page_key outside the plan is left for the validator to reject');
         $this->assertSame('not-a-page', $out['pages'][2]);
+
+        // A model-written form is never tidied away: it stays, so validation fails the batch.
+        $form = ['type' => 'form', 'data' => ['form_uid' => 'ai-invented']];
+        $kept = \App\Library\Website\GuidedGeneration\GuidedOutputNormalizer::normalize([['page_key' => 'about', 'sections' => [$hero, $form]]], $plan);
+        $this->assertSame(['hero', 'form'], array_column($kept['pages'][0]['sections'], 'type'));
     }
 
     public function test_rejection_notes_are_bounded_printable_and_name_the_required_pages(): void

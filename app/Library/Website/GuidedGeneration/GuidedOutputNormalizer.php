@@ -9,7 +9,7 @@ use Illuminate\Support\Str;
  * page says or add anything the model did not write:
  *
  *   - an `image_text` section on a page that allows `text` but not `image_text` is the same heading and body as a `text` section;
- *   - any other section type the plan does not allow on that page is dropped (the validator still requires a hero and, with the
+ *   - any other section type the plan does not allow on that page is dropped (a model-written form is never repaired: it fails) (the validator still requires a hero and, with the
  *     content-quality rules, the sections the page needs, so a page that lost something it needs fails and is retried);
  *   - an over-long seo_title / meta_description is shortened at a word boundary (never rewritten); a blank one becomes null.
  *
@@ -22,6 +22,9 @@ final class GuidedOutputNormalizer
     public const SEO_TITLE_MAX = 70;
 
     public const META_DESCRIPTION_MAX = 160;
+
+    /** Section types the model must never author: left in place so validation rejects the whole batch. */
+    private const NEVER_REPAIRED = ['form', 'forms_module_form'];
 
     /**
      * @param  array<int, mixed>  $pages  the decoded `pages` array, as returned
@@ -49,6 +52,14 @@ final class GuidedOutputNormalizer
                 $kept = [];
                 foreach ($page['sections'] as $section) {
                     if (! is_array($section) || ! is_string($section['type'] ?? null) || in_array($section['type'], $allowed, true)) {
+                        $kept[] = $section;
+
+                        continue;
+                    }
+
+                    // A form the model wrote is a reference to something that does not exist (the system binds the real form): that is a
+                    // rule violation to fail and retry, never to tidy away.
+                    if (in_array($section['type'], self::NEVER_REPAIRED, true)) {
                         $kept[] = $section;
 
                         continue;
