@@ -212,6 +212,26 @@ class PhotoBoothNicheAssignmentTest extends TestCase
         $this->assertNull($this->profileVertical($unplanned), 'a blocked Business is not assigned either');
     }
 
+    public function test_explicit_assignment_with_no_photo_booth_blueprint_fails_closed_without_writing(): void
+    {
+        // No seed: a selected photographer must receive a normal blocked result,
+        // not an exception from dereferencing a missing Blueprint resolution.
+        [, $kaleb] = $this->client('Kaleb Hill Photography', 'photographer', self::KALEB);
+        $this->wipe($kaleb);
+
+        $out = $this->ok([
+            '--business' => [self::KALEB],
+            '--assign-photo-booth' => true,
+            '--apply' => true,
+        ]);
+
+        $this->assertStringContainsString(PhotoBoothBlueprintProvisioner::BLOCKED_NO_PUBLISHED_BLUEPRINT, $out);
+        $this->assertSame(0, $this->records($kaleb));
+        $this->assertNull($this->profileVertical($kaleb));
+        $this->assertSame(0, BusinessVertical::query()->where('key', PhotoBoothBlueprintProvisioner::NICHE_KEY)->count());
+        $this->assertSame('photographer', $kaleb->fresh()->industry->value);
+    }
+
     public function test_websites_and_customisations_are_preserved_by_the_assignment(): void
     {
         $this->seedPhotoBoothBlueprintV2();
