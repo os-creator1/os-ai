@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { FlatList, KeyboardAvoidingView, Platform, Pressable, RefreshControl, StyleSheet, Text, TextInput, View } from 'react-native';
+import { FlatList, KeyboardAvoidingView, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { ApiError } from '../api/client';
 import type { ConversationDetail, Message } from '../api/types';
@@ -185,10 +185,12 @@ export function ConversationDetailScreen({ route, navigation }: Props) {
       ) : null}
       <FlatList
         ref={listRef}
+        testID="conversation-messages"
         data={rows}
         keyExtractor={(r) => ('pending' in r && r.pending ? `p-${r.key}` : `m-${(r as Message).id}`)}
         contentContainerStyle={{ padding: space.md }}
-        refreshControl={<RefreshControl testID="message-refresh" refreshing={refreshing} onRefresh={async () => { setRefreshing(true); await load(); setRefreshing(false); }} />}
+        refreshing={refreshing}
+        onRefresh={async () => { setRefreshing(true); await load(); setRefreshing(false); }}
         onContentSizeChange={() => { if (stick.current) listRef.current?.scrollToEnd({ animated: true }); }}
         ListHeaderComponent={hasMore
           ? <Button title={loadingEarlier ? 'Loading earlier messages…' : 'Load earlier messages'} variant="plain" disabled={loadingEarlier} onPress={() => { void loadEarlier(); }} />
