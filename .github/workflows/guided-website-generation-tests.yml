@@ -81,6 +81,11 @@ jobs:
         run: |
           php artisan test tests/Feature/Website/GeneratorAcceptanceTest.php --log-junit /tmp/generator-acceptance.xml
           php -r '$x = simplexml_load_file("/tmp/generator-acceptance.xml"); $n = count($x->xpath("//testcase")); $s = count($x->xpath("//testcase/skipped")); fwrite(STDOUT, "Discovered acceptance tests: $n (skipped: $s)\n"); if ($n !== 17 || $s !== 0) exit(1);'
+      - name: Run Slice 7 non-photo-booth niche acceptance and enforce discovery
+        shell: bash
+        run: |
+          php artisan test tests/Feature/Website/Acceptance/NonPhotoBoothNicheAcceptanceTest.php --log-junit /tmp/niche-acceptance.xml
+          php -r '$x = simplexml_load_file("/tmp/niche-acceptance.xml"); $n = count($x->xpath("//testcase")); $s = count($x->xpath("//testcase/skipped")); fwrite(STDOUT, "Discovered niche acceptance tests: $n (skipped: $s)\n"); if ($n !== 1 || $s !== 0) exit(1);'
       - name: Run guided generation and affected page-budget regressions
         run: >-
           php artisan test
