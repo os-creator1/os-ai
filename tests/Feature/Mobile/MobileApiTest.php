@@ -203,6 +203,27 @@ class MobileApiTest extends TestCase
 
     // ---- business selector -----------------------------------------------------------------------------------
 
+    public function test_forced_signout_or_password_reset_invalidates_an_existing_mobile_token_and_refresh(): void
+    {
+        $token = $this->login($this->a, 'install-revoked-001');
+        $this->as($token)->getJson($this->url('businesses'))->assertOk();
+
+        // Same persisted revocation mechanism as the web middleware, including
+        // its one-second precision: do not let an old device refresh the token.
+        $this->a[0]->user->forceFill(['password_changed_at' => now()->addSecond()])->save();
+        $this->app['auth']->forgetGuards();
+        $this->as($token)->getJson($this->url('businesses'))->assertStatus(401);
+        $this->app['auth']->forgetGuards();
+        $this->as($token)->postJson($this->url('auth/refresh'))->assertStatus(401);
+
+        // New sign-in after the revocation timestamp is authorized.
+        $this->travel(3)->seconds();
+        $this->app['auth']->forgetGuards();
+        $newToken = $this->login($this->a, 'install-revoked-001');
+        $this->app['auth']->forgetGuards();
+        $this->as($newToken)->getJson($this->url('businesses'))->assertOk();
+    }
+
     public function test_the_business_selector_lists_only_the_actors_own_businesses(): void
     {
         $res = $this->as($this->login($this->a))->getJson($this->url('businesses'))->assertOk();
@@ -212,6 +233,36 @@ class MobileApiTest extends TestCase
         $this->assertTrue($res->json('data.businesses.0.features.conversations'));
         $this->assertStringNotContainsString($this->b[1]->uid, $res->getContent());
         $this->assertStringNotContainsString('push_token', $res->getContent());
+    }
+
+    public function test_a_locked_or_elapsed_grace_workspace_cannot_be_read_through_mobile(): void
+    {
+        $box = $this->box($this->a, '15551110001', 'Private lead under locked account');
+        $token = $this->login($this->a, 'install-locked-001');
+        $this->as($token)->getJson($this->url($this->tenantPath($this->a, 'conversations')))->assertOk();
+
+        $this->lockWorkspace($this->a[2], ['locked_at' => now()]);
+        $this->app['auth']->forgetGuards();
+        $list = $this->as($token)->getJson($this->url('businesses'))->assertOk();
+        $this->assertNotContains($this->a[1]->uid, collect($list->json('data.businesses'))->pluck('business_uid')->all());
+
+        $this->app['auth']->forgetGuards();
+        $this->as($token)->getJson($this->url($this->tenantPath($this->a, 'conversations')))->assertNotFound();
+        $this->app['auth']->forgetGuards();
+        $this->as($token)->getJson($this->url($this->tenantPath($this->a, 'conversations/' . $box->uid)))->assertNotFound();
+        $this->app['auth']->forgetGuards();
+        $this->as($token)->getJson($this->url($this->tenantPath($this->a, 'calls/capability')))->assertNotFound();
+
+        // A missed background lock job must not leave an elapsed grace usable.
+        $this->lockWorkspace($this->a[2], ['locked_at' => null, 'grace_started_at' => now()->subDays(8)]);
+        $this->app['auth']->forgetGuards();
+        $this->as($token)->getJson($this->url($this->tenantPath($this->a, 'conversations')))->assertNotFound();
+    }
+
+    /** These writes affect only RefreshDatabase's disposable test rows. */
+    private function lockWorkspace(Workspace $workspace, array $attributes): void
+    {
+        DB::table('workspace_plan_assignments')->where('workspace_id', $workspace->id)->update($attributes);
     }
 
     public function test_owner_hidden_modules_block_mobile_reads_even_when_member_permissions_and_plan_allow_them(): void
