@@ -205,10 +205,8 @@ describe('composer', () => {
     await waitFor(() => screen.getByText(/Message accepted, but history could not refresh/));
     expect(api.retry).toHaveBeenCalledTimes(1);
 
-    // React Native renders RefreshControl as RCTRefreshControl on Android
-    // and strips its testID. Trigger the actual native refresh handler.
-    const refreshControl = lastRender.UNSAFE_root.findByType('RCTRefreshControl');
-    await act(async () => { await refreshControl.props.onRefresh(); });
+    // FlatList forwards onRefresh through the same handler used by pull-to-refresh.
+    await act(async () => { fireEvent(screen.getByTestId('conversation-messages'), 'refresh'); });
     await waitFor(() => screen.getByText('Carrier could not deliver.'));
     await waitFor(() => expect(screen.queryByText(/Message accepted, but history could not refresh/)).toBeNull());
     expect(screen.getByText('Retry')).toBeTruthy();
