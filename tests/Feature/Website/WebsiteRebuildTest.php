@@ -4,6 +4,7 @@ namespace Tests\Feature\Website;
 
 use App\Library\Website\WebsitePublisher;
 use App\Library\Website\WebsiteStarterDraftService;
+use App\Models\WebsiteArticle;
 use App\Models\WebsiteRevision;
 use App\Models\WebsiteTemplate;
 use Database\Seeders\WebsiteTemplateSeeder;
@@ -62,6 +63,34 @@ class WebsiteRebuildTest extends TestCase
         $this->assertNull($website->pages()->where('title', 'Original Home')->first());
         $this->assertTrue($website->pages()->where('is_home', true)->exists());
         $this->assertSame($template->key, $website->template_key);
+    }
+
+    public function test_rebuild_never_creates_a_blog_page_or_touches_existing_articles(): void
+    {
+        [$customer, $business] = $this->entitledTenant();
+        $website = $this->createWebsite($business);
+        $this->homePage($website, ['title' => 'Original Home']);
+        app(WebsitePublisher::class)->publish($website, $customer->user_id);
+
+        $make = fn (string $slug, string $status, ?string $publishedAt) => WebsiteArticle::forceCreate([
+            'uid' => (string) \Illuminate\Support\Str::uuid(), 'business_id' => $business->id, 'website_id' => $website->id,
+            'title' => "Article {$slug}", 'slug' => $slug, 'excerpt' => "Excerpt {$slug}", 'body' => "Body of {$slug}",
+            'status' => $status, 'published_at' => $publishedAt, 'source' => 'manual', 'noindex' => false,
+        ]);
+        $make('live-guide', 'published', now()->subDay()->toDateTimeString());
+        $make('draft-guide', 'draft', null);
+        $before = WebsiteArticle::query()->orderBy('id')->get()->map->getAttributes()->all();
+
+        $template = WebsiteTemplate::findActiveOrFail('photo_booth_modern');
+        $service = app(WebsiteStarterDraftService::class);
+        $service->rebuildFromTemplate($business, $website->fresh(), $template);
+        $service->rebuildFromTemplate($business, $website->fresh(), $template);   // and again
+
+        // Article content, slugs, status and publication time are byte-for-byte unchanged; nothing was added or published.
+        $this->assertSame($before, WebsiteArticle::query()->orderBy('id')->get()->map->getAttributes()->all());
+        $this->assertSame(2, WebsiteArticle::count());
+        $this->assertSame(0, $website->fresh()->pages()->where('slug', 'blog')->count(), 'no ordinary page is ever generated at the reserved blog slug');
+        $this->assertContains('blog', \App\Library\Website\WebsiteSlugRules::RESERVED, 'blog stays a reserved slug');
     }
 
     public function test_the_public_site_keeps_serving_the_old_content_until_the_owner_explicitly_republishes(): void
