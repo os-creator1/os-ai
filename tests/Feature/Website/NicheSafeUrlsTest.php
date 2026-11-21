@@ -182,4 +182,30 @@ class NicheSafeUrlsTest extends TestCase
         $this->assertSame(count($slugs), count(array_unique($slugs)));
         $this->assertSame($plan, WebsiteNicheVocabulary::apply($plan, 'photo_booth_service'), 'Photo Booth is untouched');
     }
+
+    public function test_guided_generation_leaves_existing_blog_articles_alone_and_makes_no_blog_page(): void
+    {
+        $articles = [];
+        [$website, $business] = $this->publishedSite('booth', true, true, false, [], function ($website, $business) use (&$articles) {
+            foreach ([['live-guide', 'published', now()->subDay()->toDateTimeString()], ['draft-guide', 'draft', null]] as [$slug, $status, $at]) {
+                $articles[$slug] = \App\Models\WebsiteArticle::forceCreate([
+                    'uid' => (string) \Illuminate\Support\Str::uuid(), 'business_id' => $business->id, 'website_id' => $website->id,
+                    'title' => "Article {$slug}", 'slug' => $slug, 'excerpt' => "Excerpt {$slug}", 'body' => "Body of {$slug}",
+                    'status' => $status, 'published_at' => $at, 'source' => 'manual', 'noindex' => false,
+                ])->id;
+            }
+        });
+
+        $this->assertCount(2, $articles, 'the seeding hook ran before generation');
+        $rows = \App\Models\WebsiteArticle::query()->orderBy('id')->get();
+        $this->assertSame(2, $rows->count(), 'generation created no article');
+        $this->assertSame(['published', 'draft'], $rows->map(fn ($a) => $a->status->value)->all(), 'nothing was published or unpublished');
+        $this->assertSame(['live-guide', 'draft-guide'], $rows->pluck('slug')->all());
+        $this->assertSame(['Body of live-guide', 'Body of draft-guide'], $rows->pluck('body')->all());
+        $this->assertSame(['Article live-guide', 'Article draft-guide'], $rows->pluck('title')->all());
+        $this->assertNull($rows->firstWhere('slug', 'draft-guide')->published_at, 'the draft was not given a publication time');
+
+        $this->assertGreaterThan(3, $website->pages()->count(), 'the site really was generated');
+        $this->assertSame(0, $website->pages()->where('slug', 'blog')->count(), 'no ordinary page at the reserved blog slug');
+    }
 }

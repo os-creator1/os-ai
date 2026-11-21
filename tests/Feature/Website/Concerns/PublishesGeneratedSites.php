@@ -22,7 +22,7 @@ trait PublishesGeneratedSites
 {
     /** A published, generated site: [Website, array<string, string> page slug => page_type]. */
     /** @param array<int, string> $differentiators owner-CONFIRMED facts (the knowledge profile's differentiators), confirmed before generation */
-    private function publishedSite(string $niche = 'booth', bool $withAreas = true, bool $withLocation = true, bool $publish = true, array $differentiators = []): array
+    private function publishedSite(string $niche = 'booth', bool $withAreas = true, bool $withLocation = true, bool $publish = true, array $differentiators = [], ?callable $beforeGeneration = null): array
     {
         [$customer, $business] = $this->entitledTenant(['name' => $niche === 'booth' ? 'Harbor Booths' : 'Petal Tutoring', 'industry' => $niche === 'booth' ? 'photo_booth_service' : 'professional_services']);
         $names = $niche === 'booth' ? ['Magic Mirror Photo Booth', 'Open-Air Photo Booth', '360 Video Booth'] : ['SAT Preparation', 'Algebra Tutoring', 'Reading Support'];
@@ -44,6 +44,9 @@ trait PublishesGeneratedSites
         $website = $this->createWebsite($business->fresh(), ['name' => 'Harbor', 'indexing_released_at' => now()]);
         $template = WebsiteTemplate::findActiveOrFail('photo_booth_modern');
         $this->fakeProvider();
+
+        // A test may seed records the generator must leave alone (e.g. blog articles) once the Website exists, before it runs.
+        $beforeGeneration && $beforeGeneration($website, $business->fresh());
 
         $attempt = app(GuidedGenerationCommitService::class)->generateFull($business->fresh(), $website, $template, $customer->user_id, 'idem-3b-' . $niche, null, null, null, null, $withAreas ? self::AREAS : null);
         $this->assertSame(WebsiteGuidedGenerationAttempt::STATUS_SUCCEEDED, $attempt->status, (string) $attempt->failure_reason);
