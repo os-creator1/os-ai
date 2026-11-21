@@ -112,16 +112,33 @@ concrete task through the ChatGPT→Claude review-gated workflow.
   `forbidden_scope` closes with *"Any future work requires separate, explicit
   human authorization"* — a per-task human instruction **is** that separate
   explicit authorization.
-- Claude commits and pushes; **Claude does not open the PR**. ChatGPT reviews
-  the pushed branch independently and opens it. The human alone merges.
+- Claude commits, pushes, creates or reuses the PR, and handles the bounded
+  CI/review correction cycle. For this explicitly human-authorized task,
+  Claude may merge its own PR after the exact-head verification gate below,
+  unless the task explicitly reserves merging for the human. A separate
+  prompt or approval solely to open or merge the PR is not required.
 - A manual lane does **not** activate, resume or bypass the autonomous loop,
   and does not change any field in the state file unless its own task says
   to.
 - Authorization is **per task and does not persist**. Finishing one lane
   grants no authority to start another, to widen scope, or to invent work.
 
-Neither route may merge, force-push, push to `main`, or bypass required
-tests. `merge_policy` stays `human_only` for both.
+**Route A (autonomous state loop)** remains paused and human-merge-only;
+its state file's `merge_policy: human_only` is unchanged. **Route B
+(explicitly authorized manual lane)** may merge its own task PR only after
+a complete verification gate: positive focused test counts for code changes,
+all applicable required GitHub CI checks passing on the final HEAD, required
+reviews satisfied, no unresolved actionable Codex/reviewer findings, a
+mergeable PR, and an expected-head SHA guard. Verify `merged: true` before
+reporting success. If code changes lack an applicable CI workflow, add a
+small focused verification gate; for documentation-only changes, report why
+tests were not applicable. Do not bypass protections or approve your own
+work in place of a required independent approval. Stop for a genuine external
+blocker rather than claim a merge. Neither route may force-push, push directly
+to `main`, bypass tests, deploy, or access production data/credentials.
+
+This authorization is **per concrete task**, not a standing authorization
+to choose new work or activate the paused autonomous loop.
 
 The reconciliation that produced this section, and the two PR #229 review
 comments that exposed the ambiguity, are recorded in
