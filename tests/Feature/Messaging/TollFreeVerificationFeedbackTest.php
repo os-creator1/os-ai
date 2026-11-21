@@ -239,6 +239,21 @@ class TollFreeVerificationFeedbackTest extends TestCase
         $this->assertNull($still->provider_status_reason);
     }
 
+    public function test_repeated_rejected_status_updates_the_customer_visible_reason(): void
+    {
+        $registration = $this->refresh($this->registration(), [
+            'data' => ['verificationStatus' => 'Rejected', 'reason' => 'Opt-in evidence missing.'],
+        ]);
+        $this->assertSame('Opt-in evidence missing.', $registration->rejection_reason);
+
+        $registration = $this->refresh($registration, [
+            'data' => ['verificationStatus' => 'Rejected', 'reason' => 'Correct the business website URL.'],
+        ]);
+        $this->assertSame('rejected', $registration->status->value);
+        $this->assertSame('Correct the business website URL.', $registration->rejection_reason);
+        $this->assertSame('Correct the business website URL.', $registration->provider_status_reason);
+    }
+
     public function test_the_background_sweep_uses_the_same_persistence(): void
     {
         $registration = $this->registration();
