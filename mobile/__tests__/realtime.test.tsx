@@ -223,6 +223,25 @@ describe('live conversation detail: window and focus', () => {
     for (const body of ['m1', 'm2', 'm3', 'm4', 'm5']) expect(screen.getAllByText(body)).toHaveLength(1);
   });
 
+  it('ignores a slower, older live response that finishes after a newer one (no stale overwrite)', async () => {
+    const deferred: Array<(v: any) => void> = [];
+    const conversation = jest.fn()
+      .mockResolvedValueOnce(detail([{ ...msg(1, 'm1'), direction: 'outbound', send_uid: 'su-1', status: 'sent' }]))
+      .mockImplementation(() => new Promise((r) => { deferred.push(r); }));
+    const api = fakeApi({ conversation });
+    const t = await open(api, nav());
+    await act(async () => { t.emit(ch, { type: 'status', business_uid: 'biz-aaaaaaaa', conversation_uid: 'c1' }); });
+    await act(async () => { t.emit(ch, { type: 'status', business_uid: 'biz-aaaaaaaa', conversation_uid: 'c1' }); });
+    await waitFor(() => expect(deferred).toHaveLength(2));
+    const delivered = detail([{ ...msg(1, 'm1'), direction: 'outbound', send_uid: 'su-1', status: 'delivered' }, msg(2, 'm2')]);
+    const stale = detail([{ ...msg(1, 'm1'), direction: 'outbound', send_uid: 'su-1', status: 'sent' }]);
+    await act(async () => { deferred[1](delivered); });   // the NEWER request answers first
+    await waitFor(() => screen.getByText(/✓✓ Delivered/));
+    await act(async () => { deferred[0](stale); });        // the OLDER one answers last
+    expect(screen.getByText(/✓✓ Delivered/)).toBeTruthy();
+    expect(screen.getByText('m2')).toBeTruthy();
+  });
+
   it('does not mark messages read, or suppress banners, while another screen covers the conversation', async () => {
     const navigation = nav();
     const api = fakeApi({ conversation: jest.fn().mockResolvedValueOnce(detail([msg(1, 'm1')])).mockResolvedValue(detail([msg(1, 'm1'), msg(2, 'm2')], true)) });

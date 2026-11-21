@@ -223,6 +223,34 @@ describe('composer', () => {
   });
 });
 
+describe('switching conversations', () => {
+  it('never carries a failed send, a draft or retry state into another conversation', async () => {
+    const { Login } = require('./helpers');
+    const reply = jest.fn(async (_s?: unknown, _u?: unknown, _b?: unknown, _k?: unknown) => { throw new ApiError(0, 'network', 'Could not reach the server.'); });
+    const api = fakeApi({ reply, conversation: jest.fn(async (_s: any, uid: string) => ({ conversation: { uid, unread: false }, contact_uid: null, has_more: false, messages: [{ ...inbound, body: uid === 'c1' ? 'Hello from A' : 'Hello from B' }] })) });
+    const tree = (uid: string) => (
+      <AuthProvider apiOverride={api}>
+        <Login api={api}><ConversationDetailScreen {...({ navigation: nav, route: { params: { uid, title: uid } } } as any)} /></Login>
+      </AuthProvider>
+    );
+    const view = await render(tree('c1'));
+    await waitFor(() => screen.getByText('Hello from A'));
+    await type('Private note for customer A');
+    await fireEvent.press(screen.getByLabelText('Send'));
+    await waitFor(() => screen.getByText(/No connection/));
+    await type('half-typed draft');
+
+    // A notification tap for conversation B reuses this route with new params.
+    await view.rerender(tree('c2'));
+    await waitFor(() => screen.getByText('Hello from B'));
+    expect(screen.queryByText('Private note for customer A')).toBeNull();
+    expect(screen.queryByText(/No connection/)).toBeNull();
+    expect(screen.queryByText('Retry')).toBeNull();
+    expect(screen.getByLabelText('Message').props.value).toBe('');
+    expect(reply).toHaveBeenCalledTimes(1); // nothing was ever sent to B
+  });
+});
+
 describe('unread handling', () => {
   it('marks an unread conversation read once when it is opened', async () => {
     const api = fakeApi({ conversation: jest.fn(async () => detail([inbound], true)) });

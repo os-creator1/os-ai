@@ -272,7 +272,8 @@ class MobileRealtimePushTest extends TestCase
 
         $operationId = (int) DB::table('business_messaging_operations')->where('business_id', $business->id)->orderByDesc('id')->value('id');
         $this->push->sent = [];
-        (new NotifyMobileOfInboundMessage())->handle(InboundMessageReceived::fromManagedOperation((int) $business->id, self::CUSTOMER, $operationId + 1000, (int) $first->id));
+        DB::table('mobile_push_deliveries')->delete();
+        (new NotifyMobileOfInboundMessage())->handle(InboundMessageReceived::fromManagedOperation((int) $business->id, self::CUSTOMER, $operationId, (int) $first->id));
 
         $this->assertSame($first->uid, $this->push->sent[0]['data']['c']);
         $this->assertNotSame($second->uid, $this->push->sent[0]['data']['c']);
@@ -281,7 +282,8 @@ class MobileRealtimePushTest extends TestCase
         [, $businessB] = $this->managedTenant('+14155550188');
         $foreign = ChatBox::query()->create(['user_id' => $businessB->customer_id, 'business_id' => $businessB->id, 'from' => '14155550188', 'to' => '14155552671', 'uid' => (string) Str::uuid()]);
         $this->push->sent = [];
-        (new NotifyMobileOfInboundMessage())->handle(InboundMessageReceived::fromManagedOperation((int) $business->id, self::CUSTOMER, $operationId + 2000, (int) $foreign->id));
+        DB::table('mobile_push_deliveries')->delete();
+        (new NotifyMobileOfInboundMessage())->handle(InboundMessageReceived::fromManagedOperation((int) $business->id, self::CUSTOMER, $operationId, (int) $foreign->id));
         $this->assertCount(0, $this->push->sent);
     }
 
@@ -330,17 +332,42 @@ class MobileRealtimePushTest extends TestCase
     public function test_a_locked_workspace_receives_nothing(): void
     {
         Event::fake([MobileConversationChanged::class]);
-        [$owner, $business, $workspace] = $this->managedTenant();
+        [$owner, $business, $workspace, $identity] = $this->managedTenant();
         $this->phone($owner, self::TOKEN_A);
-        $box = $this->conversation($business);
-        app(ConversationHistoryWriter::class)->recordManagedInbound($business, '14155550199', '14155552671', 'hello', [], 'plain');
+        $this->inbound($identity);                       // a real, fresh occurrence (this one is allowed to push)
+        $this->assertCount(1, $this->push->sent);
+        $box = ChatBox::query()->where('business_id', $business->id)->sole();
+        $operationId = (int) DB::table('business_messaging_operations')->where('business_id', $business->id)->orderByDesc('id')->value('id');
+        $this->push->sent = [];
+        DB::table('mobile_push_deliveries')->delete();
+        Event::fake([MobileConversationChanged::class]);
 
         app(EntitlementManager::class)->changePlanStatus($workspace, WorkspacePlanAssignmentStatus::Suspended, $this->platformAdminId(), 'Lock fixture.');
         // (The managed webhook itself refuses a locked account, so drive the listener the webhook would have queued.)
-        (new NotifyMobileOfInboundMessage())->handle(InboundMessageReceived::fromManagedOperation((int) $business->id, self::CUSTOMER, 1, (int) $box->id));
+        (new NotifyMobileOfInboundMessage())->handle(InboundMessageReceived::fromManagedOperation((int) $business->id, self::CUSTOMER, $operationId, (int) $box->id));
 
         $this->assertCount(0, $this->push->sent);
         $this->assertCount(0, $this->changedFor($owner->user));
+    }
+
+    public function test_a_stale_occurrence_never_pushes_even_when_the_thread_has_a_newer_message(): void
+    {
+        Event::fake([MobileConversationChanged::class]);
+        [$owner, $business, , $identity] = $this->managedTenant();
+        $this->phone($owner, self::TOKEN_A);
+        $this->inbound($identity);
+        $box = ChatBox::query()->where('business_id', $business->id)->sole();
+        $oldOperation = (int) DB::table('business_messaging_operations')->where('business_id', $business->id)->orderByDesc('id')->value('id');
+        // A backlog: that occurrence is an hour old, while a NEWER message exists in the very same conversation.
+        DB::table('business_messaging_operations')->where('id', $oldOperation)->update(['created_at' => now()->subHour()]);
+        $this->inbound($identity);
+        $this->push->sent = [];
+        DB::table('mobile_push_deliveries')->delete();
+
+        (new NotifyMobileOfInboundMessage())->handle(InboundMessageReceived::fromManagedOperation((int) $business->id, self::CUSTOMER, $oldOperation, (int) $box->id));
+
+        $this->assertCount(0, $this->push->sent, 'The old occurrence must not ring a phone.');
+        $this->assertCount(2, $this->changedFor($owner->user, 'received'), 'But the live refresh still happens.');
     }
 
     public function test_a_disabled_user_receives_nothing(): void

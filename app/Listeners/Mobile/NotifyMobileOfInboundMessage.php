@@ -7,8 +7,8 @@ use App\Events\Mobile\MobileConversationChanged;
 use App\Jobs\Mobile\SendMobilePush;
 use App\Library\Mobile\MobileConversationNotifier;
 use App\Models\ChatBox;
-use App\Models\ChatBoxMessage;
 use Illuminate\Contracts\Queue\ShouldQueue;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
 /**
@@ -37,10 +37,10 @@ class NotifyMobileOfInboundMessage implements ShouldQueue
 
         $users = app(MobileConversationNotifier::class)->changed($box, MobileConversationChanged::RECEIVED);
 
-        // Only a message that just arrived is "new": an import or backfill of old history must not ring phones.
-        $latest = ChatBoxMessage::query()->where('box_id', $box->id)->whereIn('direction', ['incoming', 'inbound'])->latest('id')->first();
-        $fresh = $latest !== null && $latest->created_at !== null
-            && $latest->created_at->gte(now()->subSeconds((int) config('mobile.fresh_message_seconds', 600)));
+        // Only an occurrence that just happened is "new": an import, a backfill, or a queue backlog clearing must not ring phones
+        // for old messages. Judged by THIS occurrence's own record, never by the thread's latest message (which a newer
+        // message would make look fresh for every old occurrence too).
+        $fresh = $this->occurredWithinFreshWindow($event->occurrenceKey);
 
         if (! $fresh) {
             return;
@@ -54,5 +54,19 @@ class NotifyMobileOfInboundMessage implements ShouldQueue
                 Log::warning('mobile_push_failed', ['exception' => $e::class]);
             }
         }
+    }
+
+    private function occurredWithinFreshWindow(string $occurrenceKey): bool
+    {
+        [$kind, $id] = array_pad(explode(':', $occurrenceKey, 2), 2, '');
+
+        $at = match ($kind) {
+            'operation' => ctype_digit($id) ? DB::table('business_messaging_operations')->where('id', (int) $id)->value('created_at') : null,
+            'report' => ctype_digit($id) ? DB::table('reports')->where('id', (int) $id)->value('created_at') : null,
+            default => null,
+        };
+
+        // Unknown or missing record: not provably fresh, so no push (the live event still goes out).
+        return $at !== null && \Illuminate\Support\Carbon::parse($at)->gte(now()->subSeconds((int) config('mobile.fresh_message_seconds', 600)));
     }
 }

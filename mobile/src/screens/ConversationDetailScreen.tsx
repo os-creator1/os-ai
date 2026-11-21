@@ -27,7 +27,16 @@ type Pending = {
 type Row = (Message & { pending?: false }) | { pending: true; key: string; body: string; state: Pending['state']; error?: string; canRetry: boolean; mode: Pending['mode'] };
 type RetryAttempt = { state: 'sending' | 'failed' | 'unconfirmed'; error?: string };
 
-export function ConversationDetailScreen({ route, navigation }: Props) {
+/**
+ * Keyed by conversation: opening another conversation (a notification tap while one is already open reuses the route and only
+ * changes its params) mounts a FRESH thread — draft, pending/failed sends, retry state and loaded history never carry over,
+ * so a failed message from one customer can never be retried into another's conversation.
+ */
+export function ConversationDetailScreen(props: Props) {
+  return <ConversationThread key={props.route.params.uid} {...props} />;
+}
+
+function ConversationThread({ route, navigation }: Props) {
   const { api, scope } = useAuth();
   const uid = route.params.uid;
   const [data, setData] = useState<ConversationDetail | null>(null);
@@ -45,6 +54,8 @@ export function ConversationDetailScreen({ route, navigation }: Props) {
   const stick = useRef(true);
   const readSent = useRef(false);
   const dataRef = useRef<ConversationDetail | null>(null);
+  // Live refreshes can overlap; only the most recently STARTED one may apply its result.
+  const liveSeq = useRef(0);
   // Is this screen the one the user is looking at? A screen kept mounted under another one (Contact profile) is not.
   const focused = useRef(true);
   const earlierInFlight = useRef(false);
@@ -54,6 +65,7 @@ export function ConversationDetailScreen({ route, navigation }: Props) {
   const load = useCallback(async (): Promise<boolean> => {
     if (!scope) return false;
     const version = ++threadGeneration.current;
+    liveSeq.current++;
     earlierInFlight.current = false;
     setLoadingEarlier(false);
     setError(null);
@@ -95,9 +107,10 @@ export function ConversationDetailScreen({ route, navigation }: Props) {
   const refreshLive = useCallback(async () => {
     if (!scope) return;
     const version = threadGeneration.current;
+    const mine = ++liveSeq.current;
     try {
       const d = await api.conversation(scope, uid);
-      if (version !== threadGeneration.current) return;
+      if (version !== threadGeneration.current || mine !== liveSeq.current) return;
       stick.current = true;
       // The server only returns the latest window. Messages that just slid out of it stay on screen: they are folded
       // into the loaded history, so a growing thread never opens a gap. `hasMore` is left as it was: the slid-out

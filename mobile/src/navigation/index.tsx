@@ -43,7 +43,7 @@ export function Navigation() {
         ) : (
           <>
             <Stack.Screen name="Conversations" component={ConversationsScreen} />
-            <Stack.Screen name="ConversationDetail" component={ConversationDetailScreen} options={({ route }) => ({ title: route.params.title })} />
+            <Stack.Screen name="ConversationDetail" component={ConversationDetailScreen} getId={({ params }) => params.uid} options={({ route }) => ({ title: route.params.title })} />
             <Stack.Screen name="ContactProfile" component={ContactProfileScreen} options={{ title: 'Contact' }} />
             <Stack.Screen name="Calls" component={CallsScreen} />
           </>
