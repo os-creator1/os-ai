@@ -9,6 +9,7 @@ use App\Models\Business;
 use App\Models\BusinessBlueprintComponentInstallation;
 use App\Models\BusinessKnowledgeProfile;
 use App\Models\BusinessLocation;
+use App\Models\NicheBlueprint;
 use App\Models\BusinessVertical;
 use App\Models\QuestionnaireDefinition;
 use App\Models\QuestionnaireResponse;
@@ -249,6 +250,40 @@ class PhotoBoothNicheAssignmentTest extends TestCase
         $this->assertSame(0, $this->records($kaleb));
         $this->assertNull($this->profileVertical($kaleb));
         $this->assertSame(0, BusinessVertical::query()->where('key', PhotoBoothBlueprintProvisioner::NICHE_KEY)->count());
+        $this->assertSame('photographer', $kaleb->fresh()->industry->value);
+    }
+
+    public function test_ambiguous_or_shadowed_blueprint_resolution_cannot_assign_the_niche(): void
+    {
+        $this->seedPhotoBoothBlueprintV2();
+        [, $kaleb] = $this->client('Kaleb Hill Photography', 'photographer', self::KALEB);
+        $this->wipe($kaleb);
+        $args = ['--business' => [self::KALEB], '--assign-photo-booth' => true, '--apply' => true];
+
+        // Another active, vertical-free Blueprint competes for this broad industry.
+        $duplicate = NicheBlueprint::create([
+            'key' => 'photo_booth_competing',
+            'display_name' => 'Competing Photo Booth',
+            'broad_industry' => PhotoBoothBlueprintProvisioner::NICHE_KEY,
+        ]);
+        $out = $this->ok($args);
+        $this->assertStringContainsString(PhotoBoothBlueprintProvisioner::BLOCKED_NO_PUBLISHED_BLUEPRINT, $out);
+        $this->assertNull($this->profileVertical($kaleb));
+        $this->assertSame(0, $this->records($kaleb));
+
+        // An active vertical-specific Blueprint takes precedence over the
+        // intended broad-industry Photo Booth template in the installer.
+        $duplicate->delete();
+        NicheBlueprint::create([
+            'key' => 'photo_booth_shadow',
+            'display_name' => 'Shadow Photo Booth',
+            'broad_industry' => PhotoBoothBlueprintProvisioner::NICHE_KEY,
+            'vertical_key' => PhotoBoothBlueprintProvisioner::NICHE_KEY,
+        ]);
+        $out = $this->ok($args);
+        $this->assertStringContainsString(PhotoBoothBlueprintProvisioner::BLOCKED_NO_PUBLISHED_BLUEPRINT, $out);
+        $this->assertNull($this->profileVertical($kaleb));
+        $this->assertSame(0, $this->records($kaleb));
         $this->assertSame('photographer', $kaleb->fresh()->industry->value);
     }
 
