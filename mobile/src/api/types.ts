@@ -17,7 +17,22 @@ export type ConversationSummary = {
   last_message: { direction: Direction; preview: string; at: string | null } | null;
   updated_at: string | null;
 };
-export type Message = { id: number; direction: Direction; type: string; body: string | null; media_url: string | null; created_at: string };
+export type SendStatus = 'sending' | 'sent' | 'delivered' | 'failed' | 'delivery_failed' | 'ambiguous';
+export type Message = {
+  id: number;
+  direction: Direction;
+  type: string;
+  body: string | null;
+  media_url: string | null;
+  send_uid: string | null;
+  /** Delivery state of a tracked outgoing message; null for inbound or untracked messages. */
+  status: SendStatus | null;
+  failure_reason: string | null;
+  status_message: string | null;
+  retryable: boolean;
+  created_at: string;
+};
+export type SendResult = { message: Partial<Message> & { send_uid: string; status: SendStatus } };
 export type ConversationDetail = { conversation: ConversationSummary; contact_uid: string | null; messages: Message[]; has_more: boolean };
 export type ContactProfile = {
   uid: string;

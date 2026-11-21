@@ -136,3 +136,32 @@ M2 (messaging), in order:
 M3 (calling): `POST …/calls/session` wrapping `BrowserCredentialProvisioner::loginSession` (→ JWT only); mobile wrappers
 over place / answer / decline / hangup / wrap-up; `isLaunchedFromPushNotification` guard; install the Telnyx SDK + config
 plugins; FCM/PushKit credentials held **server-side**; inbound call push-wake.
+
+
+## 9. Phase 2A — working SMS conversations (reply, retry, read)
+
+**One send path.** The desktop's private reply/retry logic moved, unchanged, into
+`App\Library\Conversations\ConversationSender`; `ChatBoxController` and the mobile API both call it. It still funnels into
+`CampaignRepository::quickSend()` and the managed dispatcher (wallet reservation, blacklist/STOP, readiness, per-operation
+idempotency, history writer). There is no second delivery engine. One behavioural addition, for **both** clients: a contact
+whose status is `unsubscribe` is refused even when no blacklist row mirrors it (import suppression, manual unsubscribe); that
+refusal creates no failed bubble, so no Retry is offered.
+
+| Endpoint | Behaviour |
+|---|---|
+| `POST …/conversations/{uid}/reply {body, idempotency_key(uuid)}` | Same tenancy chain as reads, then `ConversationSender::reply`. The key is the message's `send_uid`. A repeat of a key already recorded **never reaches the provider** and is never re-billed (answered from the stored bubble). 200 `{data:{message}}`; refusal 422 `{error:{code,message,retryable,send_uid}}`. |
+| `POST …/conversations/{uid}/retry {send_uid}` | Deliberate new attempt for a `failed`/`delivery_failed` bubble, fresh gates, same bubble, one provider call, claim-locked against double taps. |
+| `POST …/conversations/{uid}/read` | Sets `chat_boxes.notification = 0` — the same unread counter the desktop list, Home and the inbound writer use. Written without touching `updated_at`, so reading never re-sorts the inbox. `GET` conversation never clears unread. |
+
+Message objects now carry `status` (`sending|sent|delivered|failed|delivery_failed|ambiguous`, null when untracked), `send_uid`,
+`failure_reason`, `status_message`, `retryable`. Stored `direction` values `incoming|inbound|in` all mean inbound.
+
+Error codes: `insufficient_balance`, `messaging_not_ready`, `messaging_unavailable`, `delivery_failed`, `send_failed`,
+`byo_*`, `opted_out`, `send_refused` (desktop-worded refusal such as blacklist), `validation_failed`, `not_found`.
+Locked accounts remain a uniform 404 (no oracle), as for reads.
+
+**Replay safety:** Mobile reply requires a managed or selected BYO sender with durable operation idempotency; legacy non-managed SMS is refused before any provider call because repeating a timed-out legacy request can cause a duplicate SMS. The shared service passes `require_managed` for mobile to fail closed if the managed/BYO identity disappears between the preflight and dispatch. Desktop legacy sending remains unchanged. Mobile conversation reads reconcile stale managed `sending` claims via the same locked state machine as desktop; the provider is never called by a read.
+
+**Known limits (Phase 2B):** no push/real-time (refresh or reopen to see inbound and new delivery states), text only (no
+MMS upload), the desktop inbox clears its unread badge in the browser only, so a conversation read on the phone stays read
+on desktop but one opened on desktop is not persisted as read until the desktop adopts the same endpoint.

@@ -43,6 +43,8 @@ abstract class MobileController extends Controller
         // Gates and the Location ACL read Auth::user(); make the token's user the one they see.
         Auth::setUser($this->actor($request));
 
-        return app(MobileBusinessAccess::class)->resolve($this->actor($request), $workspaceUid, $businessUid, $feature, $permission);
+        $resolved = app(MobileBusinessAccess::class)->resolve($this->actor($request), $workspaceUid, $businessUid, $feature, $permission);
+
+        return $resolved;
     }
 }
