@@ -298,7 +298,9 @@ class MobileApiTest extends TestCase
         $this->assertSame($pushToken, MobileDevice::query()->where('user_id', $this->a[0]->user_id)->firstOrFail()->push_token);
 
         // The same phone signs in as another person: the previous owner no longer receives pushes there.
+        $this->app['auth']->forgetGuards();
         $tb = $this->login($this->b, 'install-shared-01');
+        $this->app['auth']->forgetGuards();
         $this->as($tb)->putJson($this->url('devices/current'), ['push_provider' => 'expo', 'push_token' => $pushToken])->assertOk();
         $this->assertNull(MobileDevice::query()->where('user_id', $this->a[0]->user_id)->first()?->push_token);
         $this->assertSame($pushToken, MobileDevice::query()->where('user_id', $this->b[0]->user_id)->firstOrFail()->push_token);
