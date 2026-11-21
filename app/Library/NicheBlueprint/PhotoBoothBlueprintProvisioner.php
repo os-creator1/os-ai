@@ -71,6 +71,9 @@ class PhotoBoothBlueprintProvisioner
     /** Its Knowledge Profile already names a different niche vertical; never overwritten. */
     public const BLOCKED_OTHER_VERTICAL = 'blocked_other_niche_vertical';
 
+    /** The catalog already reserves this niche key but cannot be used for a Photo Booth assignment. */
+    public const BLOCKED_NICHE_CATALOG = 'blocked_niche_catalog_unavailable';
+
     public const INSTALLED = 'installed';
 
     /** The niche key a Business is assigned to; names the vertical and the questionnaire/design niche. */
@@ -121,6 +124,15 @@ class PhotoBoothBlueprintProvisioner
 
         if ($explicit && is_string($profileVertical) && trim($profileVertical) !== '') {
             return $this->result(self::BLOCKED_OTHER_VERTICAL, "knowledge profile vertical_key='{$profileVertical}'; never overwritten");
+        }
+
+        if ($explicit) {
+            // firstOrCreate() cannot reactivate or repair an existing catalog row.
+            // Check BEFORE any write: the profile manager rejects an inactive key.
+            $catalog = BusinessVertical::query()->where('key', self::NICHE_KEY)->first();
+            if ($catalog !== null && (! $catalog->is_active || $catalog->broad_industry !== self::NICHE_KEY)) {
+                return $this->result(self::BLOCKED_NICHE_CATALOG, 'Photo Booth niche catalog row is inactive or belongs to another industry; resolve the catalog before assigning');
+            }
         }
 
         // An explicit assignment has no resolvable niche yet (that is what the assignment creates), so the
