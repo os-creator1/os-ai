@@ -265,6 +265,21 @@ class NicheBlueprintInstaller
             if ($byVertical !== null) {
                 return $byVertical;
             }
+
+            // A vertical may NAME a broad-industry niche (e.g. `photo_booth_service`) so a Business can be
+            // explicitly assigned that niche's Blueprint without changing its own `industry`. Only an
+            // unambiguous, vertical-free Blueprint for exactly that industry value matches; anything else
+            // falls through to the ordinary industry fallback below, exactly as before.
+            $byNamedIndustry = NicheBlueprint::query()
+                ->active()
+                ->where('broad_industry', $verticalKey)
+                ->whereNull('vertical_key')
+                ->orderBy('id')
+                ->get();
+
+            if ($byNamedIndustry->count() === 1) {
+                return $byNamedIndustry->first();
+            }
         }
 
         $industry = $business->industry;

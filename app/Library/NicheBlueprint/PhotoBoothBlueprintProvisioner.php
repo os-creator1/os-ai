@@ -3,7 +3,10 @@
 namespace App\Library\NicheBlueprint;
 
 use App\Enums\Business\BusinessIndustry;
+use App\Library\Business\BusinessKnowledgeProfileManager;
 use App\Models\Business;
+use App\Models\BusinessKnowledgeProfile;
+use App\Models\BusinessVertical;
 use App\Enums\NicheBlueprint\BlueprintComponentInstallationState;
 use App\Library\NicheBlueprint\Adapters\BlueprintComponentAdapterRegistry;
 use App\Library\NicheBlueprint\Adapters\TemplateOnlyComponent;
@@ -62,7 +65,16 @@ class PhotoBoothBlueprintProvisioner
     /** Required components remain undecided, failed or never attempted. Never reported as installed. */
     public const BLOCKED_INCOMPLETE = 'blocked_incomplete_installation';
 
+    /** Not a Photo Booth Business by industry; eligible ONLY because an operator explicitly selected it. */
+    public const ELIGIBLE_ASSIGNMENT = 'eligible_explicit_assignment';
+
+    /** Its Knowledge Profile already names a different niche vertical; never overwritten. */
+    public const BLOCKED_OTHER_VERTICAL = 'blocked_other_niche_vertical';
+
     public const INSTALLED = 'installed';
+
+    /** The niche key a Business is assigned to; names the vertical and the questionnaire/design niche. */
+    public const NICHE_KEY = 'photo_booth_service';
 
     /** The one recovery path for an incomplete run; it retries only undecided and failed components. */
     private const RECOVERY_COMMAND = 'php artisan blueprint:install-missing --business=';
@@ -71,6 +83,7 @@ class PhotoBoothBlueprintProvisioner
         private readonly NicheBlueprintInstaller $installer,
         private readonly WorkspacePlanAssignmentRepository $planAssignments,
         private readonly BlueprintComponentAdapterRegistry $adapters,
+        private readonly BusinessKnowledgeProfileManager $profiles,
     ) {
     }
 
@@ -79,13 +92,15 @@ class PhotoBoothBlueprintProvisioner
      *
      * @return array{status: string, detail: string}
      */
-    public function assess(Business $business): array
+    public function assess(Business $business, bool $assign = false): array
     {
         $industry = $business->industry;
         $industryValue = $industry instanceof BusinessIndustry ? $industry->value : (is_string($industry) ? $industry : null);
+        $profileVertical = BusinessKnowledgeProfile::query()->where('business_id', $business->id)->value('vertical_key');
+        $isPhotoBooth = $industryValue === BusinessIndustry::PhotoBoothService->value || $profileVertical === self::NICHE_KEY;
 
-        if ($industryValue !== BusinessIndustry::PhotoBoothService->value) {
-            return $this->result(self::NOT_PHOTO_BOOTH, 'industry='.($industryValue ?? 'null'));
+        if (! $isPhotoBooth && ! $assign) {
+            return $this->result(self::NOT_PHOTO_BOOTH, 'industry='.($industryValue ?? 'null').'; to assign Photo Booth to this one Business use --assign-photo-booth with --business');
         }
 
         $recordCount = BusinessBlueprintComponentInstallation::query()->where('business_id', $business->id)->count();
@@ -102,7 +117,15 @@ class PhotoBoothBlueprintProvisioner
             return $this->result(self::ALREADY_PROVISIONED, "installation records={$recordCount}; left untouched");
         }
 
-        $resolution = $this->installer->resolveBlueprint($business);
+        $explicit = ! $isPhotoBooth;
+
+        if ($explicit && is_string($profileVertical) && trim($profileVertical) !== '') {
+            return $this->result(self::BLOCKED_OTHER_VERTICAL, "knowledge profile vertical_key='{$profileVertical}'; never overwritten");
+        }
+
+        // An explicit assignment has no resolvable niche yet (that is what the assignment creates), so the
+        // target is the one active, vertical-free photo_booth Blueprint for exactly this niche.
+        $resolution = $explicit ? $this->assignableBlueprint() : $this->installer->resolveBlueprint($business);
 
         if (! $resolution instanceof NicheBlueprint) {
             return $this->result(self::BLOCKED_NO_PUBLISHED_BLUEPRINT, 'no active Blueprint resolves ('.$resolution->abortReason.'); run blueprint:seed-photo-booth first');
@@ -126,7 +149,21 @@ class PhotoBoothBlueprintProvisioner
             return $this->result(self::BLOCKED_PLAN_UNASSIGNED, 'no plan assignment yet; the first plan assignment will install it automatically');
         }
 
-        return $this->result(self::ELIGIBLE, 'would install the photo_booth Blueprint');
+        return $explicit
+            ? $this->result(self::ELIGIBLE_ASSIGNMENT, "would assign niche '".self::NICHE_KEY."' (Business.industry '".($industryValue ?? 'null')."' is not changed) and install the photo_booth Blueprint")
+            : $this->result(self::ELIGIBLE, 'would install the photo_booth Blueprint');
+    }
+
+    private function assignableBlueprint(): ?NicheBlueprint
+    {
+        $matches = NicheBlueprint::query()
+            ->active()
+            ->where('key', self::BLUEPRINT_KEY)
+            ->where('broad_industry', self::NICHE_KEY)
+            ->whereNull('vertical_key')
+            ->get();
+
+        return $matches->count() === 1 ? $matches->first() : null;
     }
 
     /**
@@ -135,18 +172,25 @@ class PhotoBoothBlueprintProvisioner
      *
      * @return array{status: string, detail: string}
      */
-    public function repair(Business $business): array
+    public function repair(Business $business, bool $assign = false): array
     {
-        $assessment = $this->assess($business);
+        $assessment = $this->assess($business, $assign);
 
-        if ($assessment['status'] !== self::ELIGIBLE) {
+        if (! in_array($assessment['status'], [self::ELIGIBLE, self::ELIGIBLE_ASSIGNMENT], true)) {
             return $assessment;
+        }
+
+        $assigned = false;
+
+        if ($assessment['status'] === self::ELIGIBLE_ASSIGNMENT) {
+            $this->assignNiche($business);
+            $assigned = true;
         }
 
         $run = $this->installer->installForBusiness($business);
 
         if ($run->wasAborted()) {
-            return $this->result(self::BLOCKED_ENGINE_ABORT, (string) $run->abortReason);
+            return $this->result(self::BLOCKED_ENGINE_ABORT, ($assigned ? 'niche assigned; ' : '').(string) $run->abortReason);
         }
 
         // An aborted run wrote nothing. A run that finished its loop can STILL be incomplete: an undecided
@@ -155,14 +199,31 @@ class PhotoBoothBlueprintProvisioner
         if ($run->undecided > 0 || $run->failed > 0) {
             return $this->result(
                 self::BLOCKED_INCOMPLETE,
-                "installed={$run->installed} undecided={$run->undecided} failed={$run->failed}; ".$this->recoveryInstruction($business),
+                ($assigned ? 'niche assigned; ' : '')."installed={$run->installed} undecided={$run->undecided} failed={$run->failed}; ".$this->recoveryInstruction($business),
             );
         }
 
         return $this->result(
             self::INSTALLED,
-            "installed={$run->installed} skipped_unentitled={$run->skippedUnentitled} skipped_unavailable={$run->skippedUnavailable} failed={$run->failed}",
+            ($assigned ? 'niche assigned; ' : '')."installed={$run->installed} skipped_unentitled={$run->skippedUnentitled} skipped_unavailable={$run->skippedUnavailable} failed={$run->failed}",
         );
+    }
+
+    /**
+     * The ONLY write besides the installer: ensures the niche's catalog row exists and names it in the
+     * Business's Knowledge Profile through the profile's one authorised write path, UNVERIFIED so the
+     * customer-confirmed question-pack resolution is unaffected. `Business.industry` is never touched.
+     */
+    private function assignNiche(Business $business): void
+    {
+        BusinessVertical::query()->firstOrCreate(
+            ['key' => self::NICHE_KEY],
+            ['display_name' => BusinessIndustry::PhotoBoothService->label(), 'broad_industry' => self::NICHE_KEY, 'is_active' => true],
+        );
+
+        $ownerUserId = (int) ($business->workspace()->value('owner_user_id') ?? 0);
+
+        $this->profiles->updateFields($business, ['vertical_key' => self::NICHE_KEY], 'manual_edit', $ownerUserId, false);
     }
 
     private function recoveryInstruction(Business $business): string
