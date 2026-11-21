@@ -227,7 +227,8 @@ class MobileConversationController extends MobileController
 
         return response()->json(['error' => [
             'code' => $optedOut ? 'opted_out' : ($reason?->value ?? 'send_refused'),
-            'message' => $reason?->customerMessage() ?? ($payload->message ?? 'This message could not be sent.'),
+            // The desktop's own refusal text (blacklist, coverage, balance…) is already customer-safe and specific: keep it.
+            'message' => ($payload->message ?? null) ?: ($reason?->customerMessage() ?? 'This message could not be sent.'),
             'retryable' => $bubble !== null && ManagedSendStateMachine::isRetryEligible($bubble->send_status),
             'send_uid' => $bubble?->send_uid,
         ]], 422)->header('Cache-Control', 'no-store');

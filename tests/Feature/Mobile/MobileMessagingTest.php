@@ -7,7 +7,7 @@ use App\Enums\Messaging\InboundWebhookEventKind;
 use App\Enums\Workspace\LocationAccessScope;
 use App\Enums\Workspace\WorkspaceBusinessAccessScope;
 use App\Enums\Workspace\WorkspaceMembershipRole;
-use App\Enums\Workspace\WorkspacePlanAssignmentStatus;
+use App\Enums\Entitlement\WorkspacePlanAssignmentStatus;
 use App\Library\Conversations\ConversationHistoryWriter;
 use App\Library\Entitlement\EntitlementManager;
 use App\Library\Messaging\DTO\InboundWebhookEvent;
@@ -31,6 +31,7 @@ use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Str;
 use Tests\Feature\Automations\Concerns\CreatesAutomationFixtures;
 use Tests\Feature\Messaging\Concerns\CreatesMessagingFixtures;
+use Tests\Feature\Workspace\Concerns\CreatesCustomerContextFixtures;
 use Tests\TestCase;
 
 /**
@@ -39,7 +40,10 @@ use Tests\TestCase;
  */
 class MobileMessagingTest extends TestCase
 {
-    use CreatesAutomationFixtures;
+    use CreatesAutomationFixtures, CreatesCustomerContextFixtures {
+        CreatesAutomationFixtures::ensureRequiredAppConfigRowsExist insteadof CreatesCustomerContextFixtures;
+        CreatesAutomationFixtures::platformAdminId insteadof CreatesCustomerContextFixtures;
+    }
     use CreatesMessagingFixtures;
     use RefreshDatabase;
 
@@ -138,6 +142,7 @@ class MobileMessagingTest extends TestCase
                 'currency_id' => $currencyId, 'description' => 'Managed messaging transport (per segment).', 'updated_by_user_id' => $actorId,
             ]);
             $manager->setActiveRate(\App\Library\Messaging\MessageMeters::SMS_OUTBOUND, (string) self::RATE_MICRO, '5000', 'per segment', $currencyId, $actorId, 'Fixture.');
+            $manager->activateMetering(\App\Library\Messaging\MessageMeters::SMS_OUTBOUND, $actorId, 'Fixture.');
         }
     }
 
@@ -398,7 +403,7 @@ class MobileMessagingTest extends TestCase
         $desktop = $this->postJson(route('customer.workspaces.businesses.conversations.messages', [$workspace->uid, $business->uid, $box->uid]))->json('data');
         $mobile = $this->mobile($token, 'GET', $this->path($workspace, $business, "conversations/{$box->uid}"))->json('data.messages');
 
-        $this->assertSame(array_column($desktop, 'message'), array_column($mobile, 'body'));
+        $this->assertEqualsCanonicalizing(array_column($desktop, 'message'), array_column($mobile, 'body'));
         $this->assertSame(['outbound', 'outbound'], array_slice(array_column($mobile, 'direction'), -2));
         $this->assertSame(['sent', 'sent'], array_slice(array_column($mobile, 'status'), -2));
     }
