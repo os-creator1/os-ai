@@ -21,6 +21,12 @@ final class WebsiteNicheVocabulary
     /** The niche values of a Photo Booth business: these keep the original generator addresses. */
     private const PHOTO_BOOTH_NICHES = ['photo_booth_service', 'photo_booth'];
 
+    /** True for a Photo Booth niche value (the niche whose generator composes its pages deterministically from the canonical records). */
+    public static function isPhotoBooth(?string $nicheKey): bool
+    {
+        return $nicheKey !== null && in_array($nicheKey, self::PHOTO_BOOTH_NICHES, true);
+    }
+
     /** The original generator addresses, by role. */
     private const DEFAULT_SLUGS = ['about' => 'photo-booth-about', 'faq' => 'photo-booth-faq', 'contact' => 'photo-booth-contact'];
 

@@ -1036,7 +1036,9 @@ class WebsiteController extends CustomerBaseController
 
             \App\Jobs\Website\RunGuidedWebsiteGenerationJob::dispatch(
                 (int) $website->id, (int) $business->id, (string) $template->key, (int) Auth::id(), $idempotencyKey, $mode, $leaseToken,
-                $customSection, $customerFaq, WizardPresentationAnswers::catalogSelection($completedResponse), WizardPresentationAnswers::serviceAreas($completedResponse), WizardPresentationAnswers::blueprintContext($completedResponse),
+                $customSection, $customerFaq, WizardPresentationAnswers::catalogSelection($completedResponse), WizardPresentationAnswers::serviceAreas($completedResponse),
+                // No completed guided setup (a migrated or older site): a Photo Booth business still gets the deterministic composition from its canonical records.
+                WizardPresentationAnswers::blueprintContext($completedResponse) ?? ($completedResponse === null ? WizardPresentationAnswers::canonicalBlueprintContext($business) : null),
             );
         } catch (\Throwable $e) {
             // Nothing was queued (or queuing failed): the lease must not stay held for a job that will never run.

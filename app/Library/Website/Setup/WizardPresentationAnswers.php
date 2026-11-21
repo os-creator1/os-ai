@@ -294,6 +294,50 @@ final class WizardPresentationAnswers
         ];
     }
 
+    /**
+     * The blueprint context for a Photo Booth business that has NO completed guided setup (a site migrated or built before the guided
+     * questionnaire, then rebuilt from Studio). The deterministic Photo Booth composition (booths, packages, events, gallery and
+     * backdrop previews, how booking works, benefits, reviews, FAQ, one closing call to action) reads the CANONICAL records —
+     * Services, Packages & Products, the Knowledge Profile, locations, backdrops and the website's own photos — and needs from the
+     * context only the owner's tone / booking action / pricing style, which the Knowledge Profile already carries. Without this such a
+     * rebuild fell to the AI-written path and produced a thin home page.
+     *
+     * Null for any other niche (those keep their own path) and when no confirmed fact would be reused is not a reason to refuse: the
+     * composition simply states less, and the content gaps are reported.
+     *
+     * @return ?array<string, mixed> same shape as blueprintContext()
+     */
+    public static function canonicalBlueprintContext(\App\Models\Business $business): ?array
+    {
+        if (! \App\Library\Website\WebsiteNicheVocabulary::isPhotoBooth(app(QuestionnaireResolver::class)->nicheKeyFor($business))) {
+            return null;
+        }
+
+        $profile = \App\Models\BusinessKnowledgeProfile::where('business_id', $business->id)->first();
+        $goal = $profile?->primary_conversion_goal?->value;
+        $method = $profile?->pricing_method?->value;
+
+        return [
+            'tone' => null,
+            'cta' => match ($goal) {
+                'call' => 'call',
+                'calendar_booking' => 'book_now',
+                default => 'quote_request',
+            },
+            'pricing' => match ($method) {
+                'fixed', 'package_tiers' => 'fixed_packages',
+                'quote_only' => 'custom_quote',
+                default => null,
+            },
+            'about' => null,
+            'customer_faq' => [],
+            'catalog_uids' => null,
+            'package_links' => [],
+            'niche' => 'photo_booth_service',
+            'answers' => [],
+        ];
+    }
+
     /** One of 'fixed_packages' | 'starting_from' | 'custom_quote'; null when the questionnaire never asked. */
     public static function pricingStrategy(?QuestionnaireResponse $response): ?string
     {

@@ -76,7 +76,27 @@ class WebsiteStudioController extends CustomerBaseController
             'forms' => route('customer.workspaces.businesses.website.forms.index', $params),
             'rebuild' => route('customer.workspaces.businesses.website.rebuild.form', $params),
             'answers' => route('customer.workspaces.businesses.website.edit-setup', $params),
+            'confirm_areas' => route('customer.workspaces.businesses.website.studio.confirm-areas', $params),
         ];
+    }
+
+    /**
+     * The owner confirms service areas their existing pages mention (SEO readiness). Only names that are still candidates are
+     * accepted, they are added after the Business's own and nothing is overwritten or removed. The site changes only on rebuild.
+     */
+    public function confirmAreas(\Illuminate\Http\Request $request, string $workspaceUid, string $businessUid): RedirectResponse
+    {
+        $this->authorize('website');
+        [, $business] = $this->resolveEntitledBusinessTenancy($workspaceUid, $businessUid, PlatformFeature::WebsiteGeneration->value);
+        $website = \App\Models\Website::where("business_id", $business->id)->first() ?? abort(404);
+
+        $data = $request->validate(['areas' => ['required', 'array', 'max:20'], 'areas.*' => ['string', 'max:60']]);
+        $added = \App\Library\Website\GuidedGeneration\ExistingPageFactCandidates::confirmAreas($business, $website, $data['areas']);
+
+        return redirect()->route('customer.workspaces.businesses.website.studio.show', [$workspaceUid, $businessUid])->with([
+            'status' => $added > 0 ? 'success' : 'error',
+            'message' => $added > 0 ? "{$added} service area(s) confirmed. Rebuild your pages from your answers to use them." : 'Those areas could not be added.',
+        ]);
     }
 
     /** The deep technical audit lives in the SEO module — linked only when this account can open it. */
