@@ -70,6 +70,9 @@ class BusinessMessagingRegistration extends Model
         'provider_campaign_id',
         'provider_registration_id',
         'rejection_reason',
+        'provider_status',
+        'provider_status_reason',
+        'provider_status_checked_at',
         'submitted_at',
         'approved_at',
         'rejected_at',
@@ -91,6 +94,7 @@ class BusinessMessagingRegistration extends Model
         'rejected_at' => 'datetime',
         'message_purposes' => 'array',
         'local_setup_started_at' => 'datetime',
+        'provider_status_checked_at' => 'datetime',
     ];
 
     public function business(): BelongsTo

@@ -22,6 +22,7 @@ class MessagingRegistrationPreflightException extends RuntimeException
         'use_case' => 'messaging type',
         'message_volume' => 'expected messages per month',
         'state' => 'state',
+        'business_registration_country' => 'business country (only the United States is supported for toll-free verification)',
         'contact_name' => 'contact first and last name',
         'opt_in_url' => 'opt-in link',
         'campaign_description' => 'campaign description (500 characters or fewer)',

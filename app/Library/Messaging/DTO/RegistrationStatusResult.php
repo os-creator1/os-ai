@@ -25,6 +25,10 @@ final readonly class RegistrationStatusResult
         public ?string $rejectionReason = null,
         /** False when the lookup itself failed (rate limit, timeout, server error): nothing was learned. */
         public bool $conclusive = true,
+        /** Toll-free only: the provider's own normalized state (e.g. waiting_for_telnyx); null for 10DLC. */
+        public ?string $providerStatus = null,
+        /** Toll-free only: sanitized provider reason for ANY state, including nonterminal ones. */
+        public ?string $providerReason = null,
     ) {
     }
 }

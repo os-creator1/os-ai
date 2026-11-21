@@ -106,17 +106,23 @@ class TelnyxProvisioningAdapterTest extends TestCase
         // docblock on MessagingTransport). meter_key is what
         // reserve()/TelnyxProvisioningAdapter actually key their lookup
         // by, and is exactly the adapter's own feature key.
-        app(UsageMeterRepository::class)->create([
-            'meter_key' => $featureKey,
-            'feature_key' => PlatformFeature::MessagingTransport->value,
-            'business_id' => null,
-            'currency_id' => $currencyId,
-            'description' => 'PR #295 Correction Round 1 fixture meter (test-only).',
-            'updated_by_user_id' => $actorId,
-        ]);
+        // A single test may exercise several carrier outcomes against different
+        // Businesses. Usage meters are global per meter key + currency, so
+        // initialize the shared test meter once; each Business still gets
+        // its own wallet and funding.
+        if (! DB::table('usage_meters')->where('meter_key', $featureKey)->where('currency_id', $currencyId)->exists()) {
+            app(UsageMeterRepository::class)->create([
+                'meter_key' => $featureKey,
+                'feature_key' => PlatformFeature::MessagingTransport->value,
+                'business_id' => null,
+                'currency_id' => $currencyId,
+                'description' => 'PR #295 Correction Round 1 fixture meter (test-only).',
+                'updated_by_user_id' => $actorId,
+            ]);
 
-        $wallet->setActiveRate($featureKey, '1000000', '500000', 'per action', $currencyId, $actorId, 'Test rate activation.');
-        $wallet->activateMetering($featureKey, $actorId, 'Test metering activation.');
+            $wallet->setActiveRate($featureKey, '1000000', '500000', 'per action', $currencyId, $actorId, 'Test rate activation.');
+            $wallet->activateMetering($featureKey, $actorId, 'Test metering activation.');
+        }
 
         DB::table('business_usage_wallets')->where('business_id', $business->id)->update(['available_balance_micro' => $availableMicro]);
 

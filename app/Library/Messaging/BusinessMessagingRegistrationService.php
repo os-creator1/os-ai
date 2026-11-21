@@ -193,6 +193,11 @@ class BusinessMessagingRegistrationService
 
             $attributes['provider_campaign_id'] = null;
             $attributes['provider_registration_id'] = null;
+            // A replacement request must never inherit the previous carrier
+            // verification's status, explanation, or last-check timestamp.
+            $attributes['provider_status'] = null;
+            $attributes['provider_status_reason'] = null;
+            $attributes['provider_status_checked_at'] = null;
         }
 
         $registration->update($attributes);
@@ -244,6 +249,9 @@ class BusinessMessagingRegistrationService
                     'provider_campaign_id' => null,
                     'provider_registration_id' => null,
                     'rejection_reason' => null,
+                    'provider_status' => null,
+                    'provider_status_reason' => null,
+                    'provider_status_checked_at' => null,
                     'campaign_issue' => null,
                     'campaign_issue_permanent' => false,
                 ]);
@@ -457,14 +465,47 @@ class BusinessMessagingRegistrationService
             $registration->forceFill(['campaign_status_checked_at' => CarbonImmutable::now()])->save();
         }
 
-        if ($result->status === $registration->status) {
+        // Toll-free: the provider's own state and reason are recorded on EVERY
+        // conclusive answer (a repeated Pending with a new reason is a real
+        // update), and the stored feedback is replaced only by this confirmed
+        // newer answer — never by an inconclusive one (returned above).
+        $feedback = [];
+
+        if ($result->providerStatus !== null) {
+            $feedback = [
+                'provider_status' => $result->providerStatus,
+                'provider_status_reason' => $result->providerReason,
+                'provider_status_checked_at' => CarbonImmutable::now(),
+            ];
+        }
+
+        // A confirmed approval is never walked back to pending by a refresh.
+        if ($registration->status === MessagingRegistrationStatus::Approved && $result->status === MessagingRegistrationStatus::Pending) {
             return $registration;
         }
 
-        $attributes = ['status' => $result->status->value];
+        if ($result->status === $registration->status) {
+            if ($feedback !== []) {
+                // A rejected toll-free request can receive a revised explanation
+                // without changing its top-level status. Keep the rejection notice
+                // in sync with the same conclusive provider response as the detail.
+                if ($result->status === MessagingRegistrationStatus::Rejected) {
+                    $feedback['rejection_reason'] = $result->rejectionReason;
+                }
+
+                $registration->forceFill($feedback)->save();
+
+                return $registration->fresh();
+            }
+
+            return $registration;
+        }
+
+        $attributes = ['status' => $result->status->value] + $feedback;
 
         if ($result->status === MessagingRegistrationStatus::Approved) {
             $attributes['approved_at'] = CarbonImmutable::now();
+            $attributes['rejection_reason'] = null;
         } elseif ($result->status === MessagingRegistrationStatus::Rejected) {
             $attributes['rejected_at'] = CarbonImmutable::now();
             // Review correction — the carrier-supplied reason, when the
@@ -472,6 +513,8 @@ class BusinessMessagingRegistrationService
             // did not, so the customer sees an explicit "no detailed
             // reason was supplied" message rather than nothing at all.
             $attributes['rejection_reason'] = $result->rejectionReason;
+        } else {
+            $attributes['rejection_reason'] = null;
         }
 
         $registration->update($attributes);
