@@ -205,6 +205,9 @@ class MobileMessagingTest extends TestCase
     public function test_mobile_rejects_legacy_non_managed_senders_before_any_provider_attempt(): void
     {
         [$owner, $business, $workspace] = $this->entitledTenant();
+        // The Business must be otherwise eligible to access Messaging; only
+        // its managed identity/BYO sender is intentionally absent here.
+        $this->sendableChannel($business);
         $owner->forceFill(['permissions' => json_encode(Customer::customerPermissions())])->save();
         $box = $this->conversation($business);
         $token = $this->tokenFor($owner);
