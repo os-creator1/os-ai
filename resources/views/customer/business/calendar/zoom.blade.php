@@ -94,7 +94,7 @@
                             <div class="zoom-actions">
                                 <form method="POST" action="{{ $connectUrl }}" data-role="zoom-connect-form" onsubmit="var b=this.querySelector('button');b.disabled=true;b.setAttribute('aria-busy','true');var h=document.getElementById('zoom-connect-helper');if(h){h.hidden=false;}">
                                     @csrf
-                                    <x-button type="submit" :variant="$mineActive ? 'secondary' : 'primary'" data-role="zoom-connect">{{ $mine ? 'Reconnect Zoom' : 'Connect Zoom' }}</x-button>
+                                    <x-button type="submit" :variant="$mineActive ? 'secondary' : 'primary'" data-role="zoom-connect">{{ ($mineActive || $mineBroken) ? 'Reconnect Zoom' : 'Connect Zoom' }}</x-button>
                                 </form>
                                 @if ($mineActive)
                                     <form method="POST" action="{{ $disconnectUrl($mine) }}" onsubmit="return confirm('Disconnect Zoom? Booking types that use your Zoom account will stop accepting bookings until it is reconnected.');">
