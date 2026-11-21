@@ -106,6 +106,14 @@ describe('signed-in screens', () => {
     expect(screen.getByText('Ann Lee')).toBeTruthy();
   });
 
+  it('keeps the search field mounted and focused while changing a query', async () => {
+    await signedIn(() => <ConversationsScreen {...({ navigation: nav, route: { params: undefined } } as any)} />);
+    await waitFor(() => screen.getByText('Ann Lee'));
+    fireEvent.changeText(screen.getByLabelText('Search'), 'ann');
+    // The input must remain in the tree even during the new request's loading state.
+    expect(screen.getByLabelText('Search').props.value).toBe('ann');
+  });
+
   it('shows an error state with retry when the API refuses (e.g. foreign business)', async () => {
     const api = fakeApi({ conversations: jest.fn(async () => { throw new ApiError(404, 'not_found', 'Not found.'); }) });
     await signedIn(() => <ConversationsScreen {...({ navigation: nav, route: { params: undefined } } as any)} />, api);
@@ -119,6 +127,22 @@ describe('signed-in screens', () => {
     expect(screen.getByText('Hi, how can I help?')).toBeTruthy();
     await fireEvent.press(screen.getByText('Contact profile'));
     expect(nav.navigate).toHaveBeenCalledWith('ContactProfile', { uid: 'k1' });
+  });
+
+  it('loads earlier messages using the oldest message id and keeps newer ones', async () => {
+    const conversation = jest.fn(async (_scope, _uid, beforeId?: number) => beforeId === 2
+      ? { conversation: {}, contact_uid: 'k1', messages: [
+          { id: 1, direction: 'inbound', type: 'plain', body: 'Original inquiry', media_url: null, created_at: '2026-01-01T09:00:00Z' },
+        ], has_more: false }
+      : { conversation: {}, contact_uid: 'k1', messages: [
+          { id: 2, direction: 'outbound', type: 'plain', body: 'Newest reply', media_url: null, created_at: '2026-01-01T10:00:00Z' },
+        ], has_more: true });
+    await signedIn(() => <ConversationDetailScreen {...({ navigation: nav, route: { params: { uid: 'c1', title: 'Ann' } } } as any)} />, fakeApi({ conversation }));
+    await waitFor(() => screen.getByText('Newest reply'));
+    fireEvent.press(screen.getByText('Load earlier messages'));
+    await waitFor(() => screen.getByText('Original inquiry'));
+    expect(screen.getByText('Newest reply')).toBeTruthy();
+    expect(conversation).toHaveBeenCalledWith({ workspaceUid: 'ws-1', businessUid: 'biz-1' }, 'c1', 2);
   });
 
   it('renders the contact profile fields and opt-out state', async () => {
