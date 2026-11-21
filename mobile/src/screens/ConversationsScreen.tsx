@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { FlatList, Pressable, RefreshControl, StyleSheet, Text, TextInput, View } from 'react-native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { ConversationSummary } from '../api/types';
@@ -17,19 +17,71 @@ export function ConversationsScreen({ navigation }: Props) {
   const [refreshing, setRefreshing] = useState(false);
   const [filter, setFilter] = useState<Filter>('all');
   const [search, setSearch] = useState('');
+  const [nextPage, setNextPage] = useState<number | null>(null);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [moreError, setMoreError] = useState<string | null>(null);
+  const generation = useRef(0);
+  const fetchingMore = useRef(false);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (preserveItems = false) => {
     if (!scope) return;
+    const current = ++generation.current;
+    fetchingMore.current = false;
+    setLoadingMore(false);
+    setMoreError(null);
     setError(null);
+    setNextPage(null);
+    if (!preserveItems) setItems(null);
+
     try {
-      const res = await api.conversations(scope, { filter, search: search.trim() || undefined });
+      const res = await api.conversations(scope, { filter, search: search.trim() || undefined, page: 1 });
+      if (generation.current !== current) return;
       setItems(res.data);
+      setNextPage(res.meta.next_page);
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Could not load conversations.');
+      if (generation.current === current) {
+        setError(e instanceof Error ? e.message : 'Could not load conversations.');
+      }
     }
   }, [api, scope, filter, search]);
 
-  useEffect(() => { void load(); }, [load]);
+  // Each Business, filter or search starts a fresh page sequence. A late reply
+  // from an earlier selection cannot replace or append to the new Business list.
+  useEffect(() => {
+    void load();
+    return () => { generation.current++; };
+  }, [load]);
+
+  const loadMore = useCallback(async () => {
+    if (!scope || nextPage === null || items === null || refreshing || fetchingMore.current) return;
+    fetchingMore.current = true;
+    setLoadingMore(true);
+    setMoreError(null);
+    const current = generation.current;
+    const page = nextPage;
+
+    try {
+      const res = await api.conversations(scope, { filter, search: search.trim() || undefined, page });
+      if (current !== generation.current) return;
+      setItems((previous) => {
+        if (previous === null) return res.data;
+        // A lead can move between pages when a new message arrives. Never
+        // display it twice while retaining all other older conversations.
+        const seen = new Set(previous.map((item) => item.uid));
+        return [...previous, ...res.data.filter((item) => !seen.has(item.uid))];
+      });
+      setNextPage(res.meta.next_page === page ? null : res.meta.next_page);
+    } catch (e) {
+      if (current === generation.current) {
+        setMoreError(e instanceof Error ? e.message : 'Could not load older conversations.');
+      }
+    } finally {
+      if (current === generation.current) {
+        fetchingMore.current = false;
+        setLoadingMore(false);
+      }
+    }
+  }, [api, scope, filter, search, nextPage, items, refreshing]);
 
   useEffect(() => {
     navigation.setOptions({ title: business?.name ?? 'Conversations' });
@@ -53,10 +105,20 @@ export function ConversationsScreen({ navigation }: Props) {
         <Button title="Calls" variant="plain" onPress={() => navigation.navigate('Calls')} />
       </View>
       <FlatList
+        testID="conversation-list"
         data={items}
         keyExtractor={(c) => c.uid}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={async () => { setRefreshing(true); await load(); setRefreshing(false); }} />}
+        onEndReached={() => { void loadMore(); }}
+        onEndReachedThreshold={0.3}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={async () => { setRefreshing(true); await load(true); setRefreshing(false); }} />}
         ListEmptyComponent={<Text style={s.empty}>No conversations yet.</Text>}
+        ListFooterComponent={nextPage !== null ? (
+          loadingMore ? <Text style={s.empty}>Loading older conversations…</Text>
+            : <View style={s.footer}>
+                {moreError ? <Text style={s.preview}>{moreError}</Text> : null}
+                <Button title={moreError ? 'Retry older leads' : 'Load older leads'} variant="plain" onPress={() => { void loadMore(); }} />
+              </View>
+        ) : null}
         renderItem={({ item }) => (
           <Pressable accessibilityRole="button" style={s.row} onPress={() => navigation.navigate('ConversationDetail', { uid: item.uid, title: item.display_name ?? item.phone ?? 'Conversation' })}>
             <View style={{ flex: 1 }}>
