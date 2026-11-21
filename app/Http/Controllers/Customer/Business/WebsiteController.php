@@ -1039,8 +1039,11 @@ class WebsiteController extends CustomerBaseController
             \App\Jobs\Website\RunGuidedWebsiteGenerationJob::dispatch(
                 (int) $website->id, (int) $business->id, (string) $template->key, (int) Auth::id(), $idempotencyKey, $mode, $leaseToken,
                 $customSection, $customerFaq, WizardPresentationAnswers::catalogSelection($completedResponse), WizardPresentationAnswers::serviceAreas($completedResponse),
-                // No completed guided setup (a migrated or older site): a Photo Booth business still gets the deterministic composition from its canonical records.
-                WizardPresentationAnswers::blueprintContext($completedResponse) ?? ($completedResponse === null ? WizardPresentationAnswers::canonicalBlueprintContext($business) : null),
+                // An ESTABLISHED site (published, released or generated before) with no completed guided setup — a migrated or older
+                // site rebuilt from Studio — still gets the deterministic Photo Booth composition from its canonical records. A first
+                // generation keeps the AI-written path, exactly as before.
+                WizardPresentationAnswers::blueprintContext($completedResponse)
+                    ?? ($completedResponse === null && app(\App\Library\Website\GuidedGeneration\DraftPageReconciler::class)->isEstablished($website) ? WizardPresentationAnswers::canonicalBlueprintContext($business) : null),
             );
         } catch (\Throwable $e) {
             // Nothing was queued (or queuing failed): the lease must not stay held for a job that will never run.

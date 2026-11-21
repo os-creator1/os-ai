@@ -242,7 +242,7 @@ final class WebsiteHealthChecker
         }
 
         $add(
-            'seo_readiness',
+            'content_readiness',
             $items === [] ? self::OK : self::WARN,
             'SEO readiness',
             $items === []

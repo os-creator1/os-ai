@@ -188,7 +188,7 @@ class GeneratorRecoveryAcceptanceTest extends TestCase
 
         // The Studio health list says generation is not the same as SEO-ready.
         $health = app(\App\Library\Website\WebsiteHealthChecker::class)->check($website->fresh(), ['answers' => '/answers', 'confirm_areas' => '/confirm']);
-        $readiness = collect($health['checks'])->firstWhere('key', 'seo_readiness');
+        $readiness = collect($health['checks'])->firstWhere('key', 'content_readiness');
         $this->assertSame('warn', $readiness['status']);
         $this->assertStringContainsString('Content gap: add the city', implode(' ', $readiness['items']));
     }
