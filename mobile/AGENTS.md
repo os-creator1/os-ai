@@ -25,9 +25,10 @@ Run lint and typecheck before declaring any task done.
 
 ## Navigation & Routing
 
-- Use **Expo Router** for all navigation. Routes live in `src/app/` — every file there is a screen, `_layout.tsx` files define navigators. Keep non-route code (components, hooks, utils) outside `src/app/`.
-- Import `Link`, `router`, and `useLocalSearchParams` from `expo-router`.
-- Docs: https://docs.expo.dev/router/introduction.md
+- **This established MotionGrove Phase 1 client deliberately uses React Navigation's native stack** in `src/navigation/`, with route types in `src/navigation/types.ts`. Keep screens in `src/screens/`. This matches the Phase 1 architecture and tested entry point.
+- Maintain typed route parameters and the current native-stack behavior for incremental lead-management work. Do not introduce two competing navigation frameworks.
+- Expo Router is an optional future navigation migration, **not a Phase 1 requirement**. If explicitly authorized, migrate the entry point, navigation tree, lockfile, routes, and tests together instead of half-converting the app.
+- Docs: https://reactnavigation.org/docs/getting-started/
 
 ## Building with EAS
 
