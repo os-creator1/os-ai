@@ -81,7 +81,13 @@ for ep in platform-subscriptions business-payments agency-subscriptions usage-bi
 done
 
 # Hardening: dotfiles and the env file are not served; debug pages are off.
-check "GET /.env is not served" 404 "$(code "$BASE/.env")"
+# Nginx denies dotfiles with 403 (deny all) or 404; both mean the file is not served. Anything else fails:
+# 200 serves it, a 3xx redirect is not a denial (redirects are not followed, so it is reported as-is), 000 is no answer.
+env_code="$(code "$BASE/.env")"
+case "$env_code" in
+    403|404) echo "ok    GET /.env is not served ($env_code)" ;;
+    *) echo "FAIL  GET /.env is not served (expected 403 or 404, got $env_code)"; fail=$((fail + 1)) ;;
+esac
 dbg="$(curl -sS --max-time 20 "$BASE/this-route-does-not-exist-$$" || true)"
 if printf '%s' "$dbg" | grep -qiE 'Whoops|Stack trace|Illuminate\\|APP_KEY'; then echo "FAIL  a 404 page leaks debug output (APP_DEBUG?)"; fail=$((fail + 1)); else echo "ok    404 page shows no debug output"; fi
 
