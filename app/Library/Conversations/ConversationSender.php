@@ -6,6 +6,8 @@ use App\Models\Business;
 use App\Models\Campaigns;
 use App\Models\ChatBox;
 use App\Models\ChatBoxMessage;
+use App\Models\Contacts;
+use App\Library\Business\Migration\ChatBoxBusinessBackfillV1;
 use App\Models\CustomerBasedSendingServer;
 use App\Models\PhoneNumbers;
 use App\Models\SpamWord;
@@ -350,11 +352,20 @@ class ConversationSender
             'business_id'  => $business->id,
         ];
 
-        // A contact who opted out (STOP, import suppression, manual unsubscribe) is never texted, even where no
-        // blacklist row mirrors it. Not a "failed send": nothing was attempted, so no bubble and no Retry.
-        $contact = $box->resolveDisplayContact($business);
+        // Opt-out is a recipient-level sending guard, NOT a display-name
+        // lookup. Several contacts in separate groups may share the same
+        // Business-scoped number; displayContact deliberately returns null
+        // in that case. Any unsubscribed matching contact still prevents SMS,
+        // even if another group lists that number as subscribed and no
+        // blacklist row exists. Initial refusals create no failed bubble.
+        $recipient = ChatBoxBusinessBackfillV1::normalizeCounterparty((string) $box->to);
+        $suppressed = $recipient !== '' && Contacts::query()
+            ->where('business_id', (int) $business->id)
+            ->where('phone', $recipient)
+            ->where('status', Contacts::STATUS_UNSUBSCRIBE)
+            ->exists();
 
-        if ($contact !== null && $contact->status === \App\Models\Contacts::STATUS_UNSUBSCRIBE) {
+        if ($suppressed) {
             return [$input, response()->json([
                 'status'  => 'error',
                 'message' => __('locale.conversations.contact_opted_out'),
