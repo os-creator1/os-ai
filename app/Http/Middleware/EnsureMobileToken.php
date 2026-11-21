@@ -22,6 +22,16 @@ final class EnsureMobileToken
             return response()->json(['error' => ['code' => 'unauthenticated', 'message' => 'Sign in again.']], 401);
         }
 
+        // Web sessions are revoked by users.password_changed_at. A Sanctum
+        // token must respect the same account-wide cutoff, including after
+        // password resets and "Sign out of all sessions". Compare database
+        // timestamps conservatively: a token minted in the same second as
+        // the revocation is also denied rather than allowing an old token.
+        if ($user->password_changed_at !== null
+            && ($token->created_at === null || $token->created_at->lessThanOrEqualTo($user->password_changed_at))) {
+            return response()->json(['error' => ['code' => 'unauthenticated', 'message' => 'Sign in again.']], 401);
+        }
+
         return $next($request);
     }
 }
