@@ -22,6 +22,12 @@ describe('api client', () => {
     expect((calls[0].init.headers as any).Authorization).toBe('Bearer tok');
   });
 
+  it('uses the before_id cursor when loading older conversation messages', async () => {
+    const { api, calls } = mk({ status: 200, body: { data: { conversation: {}, messages: [], has_more: false } } });
+    await api.conversation(scope, 'conversation-1', 42);
+    expect(calls[0].url).toBe('https://api.example.test/api/mobile/v1/workspaces/ws-1/businesses/biz-1/conversations/conversation-1?before_id=42');
+  });
+
   it('does not send a token on login and never stores or logs the password', async () => {
     const { api, calls } = mk({ status: 200, body: { data: { token: 't', token_type: 'Bearer', expires_at: 'x', user: {} } } }, 'stale');
     await api.login('a@b.test', 'pw', { installation_id: 'i', platform: 'ios' });
