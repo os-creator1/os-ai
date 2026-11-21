@@ -91,8 +91,10 @@ describe('composer', () => {
         : new Promise((resolve) => { resolveOlder = resolve; }));
     const api = fakeApi({ conversation });
     await open(api);
-    await fireEvent.press(screen.getByText('Load earlier messages'));
-    await fireEvent.press(screen.getByText('Loading earlier messages…'));
+    // The button's async onPress intentionally remains pending while the
+    // mocked network request is unresolved; don't await that press here.
+    fireEvent.press(screen.getByText('Load earlier messages'));
+    fireEvent.press(screen.getByText('Loading earlier messages…'));
     expect(conversation.mock.calls.filter((args: unknown[]) => args[2] === 1)).toHaveLength(1);
     resolveOlder({ ...detail([{ ...inbound, id: 0, body: 'Oldest inquiry' }]), has_more: false });
     await waitFor(() => screen.getByText('Oldest inquiry'));
