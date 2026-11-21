@@ -481,6 +481,13 @@ class BusinessMessagingRegistrationService
 
         if ($result->status === $registration->status) {
             if ($feedback !== []) {
+                // A rejected toll-free request can receive a revised explanation
+                // without changing its top-level status. Keep the rejection notice
+                // in sync with the same conclusive provider response as the detail.
+                if ($result->status === MessagingRegistrationStatus::Rejected) {
+                    $feedback['rejection_reason'] = $result->rejectionReason;
+                }
+
                 $registration->forceFill($feedback)->save();
 
                 return $registration->fresh();
