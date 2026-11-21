@@ -209,17 +209,27 @@ class PhotoBoothNicheAssignmentTest extends TestCase
         [, $unplanned] = $this->businessWithoutPlan('Unplanned Photographer');
         Business::query()->whereKey($unplanned->id)->update(['industry' => 'photographer']);
 
-        $out = $this->ok(['--business' => [(string) $dog->id, (string) $held->id, (string) $unplanned->id], '--assign-photo-booth' => true, '--apply' => true]);
+        // An existing catalog row with an inactive niche key cannot be reused.
+        // This must be assessed as blocked, not crash halfway through --apply.
+        [, $inactive] = $this->client('Inactive Photo Booth Niche', 'photographer');
+        $this->wipe($inactive);
+        BusinessVertical::create(['key' => PhotoBoothBlueprintProvisioner::NICHE_KEY, 'display_name' => 'Photo Booth', 'broad_industry' => 'photo_booth_service', 'is_active' => false]);
+
+        $out = $this->ok(['--business' => [(string) $dog->id, (string) $held->id, (string) $unplanned->id, (string) $inactive->id], '--assign-photo-booth' => true, '--apply' => true]);
 
         $this->assertStringContainsString(PhotoBoothBlueprintProvisioner::BLOCKED_OTHER_VERTICAL, $out);
         $this->assertStringContainsString(PhotoBoothBlueprintProvisioner::ALREADY_PROVISIONED, $out);
         $this->assertStringContainsString(PhotoBoothBlueprintProvisioner::BLOCKED_PLAN_UNASSIGNED, $out);
+        $this->assertStringContainsString(PhotoBoothBlueprintProvisioner::BLOCKED_NICHE_CATALOG, $out);
         $this->assertSame('dog_boarding', $this->profileVertical($dog));
         $this->assertSame(0, $this->records($dog));
         $this->assertSame($heldBefore, $this->snapshot($held));
         $this->assertNull($this->profileVertical($held));
         $this->assertSame(0, $this->records($unplanned));
         $this->assertNull($this->profileVertical($unplanned), 'a blocked Business is not assigned either');
+        $this->assertNull($this->profileVertical($inactive), 'an inactive niche catalog row must not be assigned');
+        $this->assertSame(0, $this->records($inactive));
+        $this->assertFalse((bool) BusinessVertical::query()->where('key', PhotoBoothBlueprintProvisioner::NICHE_KEY)->value('is_active'));
     }
 
     public function test_explicit_assignment_with_no_photo_booth_blueprint_fails_closed_without_writing(): void
