@@ -334,8 +334,9 @@ class MobileMessagingTest extends TestCase
         $token = $this->tokenFor($owner);
         app(EntitlementManager::class)->changePlanStatus($workspace, WorkspacePlanAssignmentStatus::Suspended, $this->platformAdminId(), 'Lock fixture.');
 
-        $this->reply($token, $workspace, $business, $box, 'Still there?')->assertStatus(403)->assertJsonPath('error.code', 'account_locked');
-        $this->mobile($token, 'POST', $this->path($workspace, $business, "conversations/{$box->uid}/read"))->assertStatus(403);
+        // Same contract as the read endpoints (MobileApiTest): a locked account is simply closed, never an oracle.
+        $this->reply($token, $workspace, $business, $box, 'Still there?')->assertStatus(404);
+        $this->mobile($token, 'POST', $this->path($workspace, $business, "conversations/{$box->uid}/read"))->assertStatus(404);
         $this->assertCount(0, $this->fakeAdapter->sentRequests);
         $this->assertSame(2, (int) DB::table('chat_boxes')->where('id', $box->id)->value('notification'));
     }
