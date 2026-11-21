@@ -48,6 +48,12 @@ class PhotoBoothBlueprintProvisioningRepairTest extends TestCase
         return BusinessBlueprintComponentInstallation::query()->where('business_id', $business->id)->orderBy('id')->get()->toArray();
     }
 
+    /** Real Businesses have a primary location; the booking-type component fails closed without one. */
+    private function addLocation(Business $business): void
+    {
+        \App\Models\BusinessLocation::create(['business_id' => $business->id, 'name' => 'Main studio', 'service_mode' => 'storefront', 'country_code' => 'US']);
+    }
+
     private function changeIndustry(Business $business, string $industry): void
     {
         Business::query()->whereKey($business->id)->update(['industry' => $industry]);
@@ -58,6 +64,7 @@ class PhotoBoothBlueprintProvisioningRepairTest extends TestCase
     {
         // The Business and its plan predate the Blueprint, as for every pre-existing client.
         [, $business] = $this->tenant(WorkspacePlanTier::Growth, 'Kaleb Hill Photography', 'Kaleb WS');
+        $this->addLocation($business);
         $this->seedPhotoBoothBlueprintV2();
 
         $this->assertSame(0, $this->records($business), 'seeding installs nothing for an existing Business');
@@ -111,7 +118,9 @@ class PhotoBoothBlueprintProvisioningRepairTest extends TestCase
     {
         $this->seedPhotoBoothBlueprintV2();
         [$customer, $business] = $this->tenant(WorkspacePlanTier::Growth, 'Customised Booth', 'Custom WS');
-        $this->assertGreaterThan(0, $this->records($business), 'already validly provisioned');
+        $this->assertGreaterThan(0, $this->records($business), 'already provisioned at creation');
+        $this->addLocation($business);
+        $this->artisan('blueprint:install-missing', ['--business' => (string) $business->id])->assertExitCode(0);
 
         $website = Website::create(['business_id' => $business->id, 'name' => 'Customised', 'template_key' => 'photo_booth_luxury']);
         $websiteBefore = $website->fresh()->toArray();
@@ -171,6 +180,71 @@ class PhotoBoothBlueprintProvisioningRepairTest extends TestCase
 
         $this->assertStringContainsString(PhotoBoothBlueprintProvisioner::BLOCKED_PLAN_UNASSIGNED, $out);
         $this->assertSame(0, $this->records($business));
+    }
+
+    public function test_an_incomplete_run_is_never_reported_installed_and_names_the_recovery_command(): void
+    {
+        [, $business] = $this->tenant(WorkspacePlanTier::Growth, 'Incomplete Booth', 'Incomplete WS');
+        $this->seedPhotoBoothBlueprintV2();
+        $this->assertSame(0, $this->records($business));
+
+        // A run that reached its loop but could not decide two components.
+        $real = app(\App\Library\NicheBlueprint\NicheBlueprintInstaller::class);
+        $installer = \Mockery::mock(\App\Library\NicheBlueprint\NicheBlueprintInstaller::class)->makePartial();
+        $installer->shouldReceive('installForBusiness')->once()->andReturn(
+            new \App\Library\NicheBlueprint\BlueprintInstallationRunResult(blueprintId: 1, versionNumber: 1, installed: 3, undecided: 2),
+        );
+        $this->app->instance(\App\Library\NicheBlueprint\NicheBlueprintInstaller::class, $installer);
+        unset($real);
+
+        $out = $this->repair(['--business' => (string) $business->id, '--apply' => true]);
+
+        $this->assertStringContainsString(PhotoBoothBlueprintProvisioner::BLOCKED_INCOMPLETE, $out);
+        $this->assertStringContainsString('undecided=2', $out);
+        $this->assertStringContainsString('php artisan blueprint:install-missing --business='.$business->id, $out);
+        $this->assertStringNotContainsString(PhotoBoothBlueprintProvisioner::INSTALLED.' ', $out, 'never reported as installed');
+        $this->assertStringContainsString('blocked_incomplete_installation=1', $out);
+    }
+
+    public function test_a_partially_installed_business_is_reported_incomplete_not_already_provisioned_and_the_named_command_completes_it(): void
+    {
+        [, $business] = $this->tenant(WorkspacePlanTier::Growth, 'Partial Booth', 'Partial WS');
+        $this->addLocation($business);
+        $this->seedPhotoBoothBlueprintV2();
+        $this->repair(['--business' => (string) $business->id, '--apply' => true]);
+        $complete = $this->snapshot($business);
+        $this->assertGreaterThan(1, count($complete));
+
+        // An undecided component persists no record: simulate by removing exactly one.
+        $removed = BusinessBlueprintComponentInstallation::query()->where('business_id', $business->id)->orderBy('id')->first();
+        $removed->delete();
+        $kept = $this->snapshot($business);
+
+        $out = $this->repair(['--business' => (string) $business->id, '--apply' => true]);
+
+        $this->assertStringContainsString(PhotoBoothBlueprintProvisioner::BLOCKED_INCOMPLETE, $out);
+        $this->assertStringNotContainsString(PhotoBoothBlueprintProvisioner::ALREADY_PROVISIONED, $out);
+        $this->assertStringContainsString('blueprint:install-missing --business='.$business->id, $out);
+        $this->assertSame($kept, $this->snapshot($business), 'the repair command itself writes nothing for an already-started Business');
+
+        $this->artisan('blueprint:install-missing', ['--business' => (string) $business->id])->assertExitCode(0);
+
+        $this->assertCount(count($complete), $this->snapshot($business));
+        $this->assertStringContainsString(PhotoBoothBlueprintProvisioner::ALREADY_PROVISIONED, $this->repair(['--business' => (string) $business->id]));
+    }
+
+    public function test_a_failed_component_from_a_business_without_a_location_is_reported_incomplete_with_the_recovery_command(): void
+    {
+        $this->seedPhotoBoothBlueprintV2();
+        [, $business] = $this->tenant(WorkspacePlanTier::Growth, 'No Location Booth', 'No Location WS');
+        $before = $this->snapshot($business);
+
+        $out = $this->repair(['--business' => (string) $business->id, '--apply' => true]);
+
+        $this->assertStringContainsString(PhotoBoothBlueprintProvisioner::BLOCKED_INCOMPLETE, $out);
+        $this->assertStringContainsString('failed=1', $out);
+        $this->assertStringContainsString('blueprint:install-missing --business='.$business->id, $out);
+        $this->assertSame($before, $this->snapshot($business));
     }
 
     public function test_the_owner_sees_the_photo_booth_questionnaire_and_designs_after_the_repair(): void

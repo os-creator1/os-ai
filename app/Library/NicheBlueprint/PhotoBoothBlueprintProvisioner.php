@@ -4,7 +4,12 @@ namespace App\Library\NicheBlueprint;
 
 use App\Enums\Business\BusinessIndustry;
 use App\Models\Business;
+use App\Enums\NicheBlueprint\BlueprintComponentInstallationState;
+use App\Library\NicheBlueprint\Adapters\BlueprintComponentAdapterRegistry;
+use App\Library\NicheBlueprint\Adapters\TemplateOnlyComponent;
 use App\Models\BusinessBlueprintComponentInstallation;
+use App\Models\NicheBlueprintComponent;
+use App\Models\NicheBlueprintVersion;
 use App\Models\NicheBlueprint;
 use App\Models\Workspace;
 use App\Repositories\Contracts\WorkspacePlanAssignmentRepository;
@@ -54,11 +59,18 @@ class PhotoBoothBlueprintProvisioner
 
     public const BLOCKED_ENGINE_ABORT = 'blocked_engine_abort';
 
+    /** Required components remain undecided, failed or never attempted. Never reported as installed. */
+    public const BLOCKED_INCOMPLETE = 'blocked_incomplete_installation';
+
     public const INSTALLED = 'installed';
+
+    /** The one recovery path for an incomplete run; it retries only undecided and failed components. */
+    private const RECOVERY_COMMAND = 'php artisan blueprint:install-missing --business=';
 
     public function __construct(
         private readonly NicheBlueprintInstaller $installer,
         private readonly WorkspacePlanAssignmentRepository $planAssignments,
+        private readonly BlueprintComponentAdapterRegistry $adapters,
     ) {
     }
 
@@ -79,6 +91,14 @@ class PhotoBoothBlueprintProvisioner
         $recordCount = BusinessBlueprintComponentInstallation::query()->where('business_id', $business->id)->count();
 
         if ($recordCount > 0) {
+            // Some records are NOT proof of a complete installation: a run that stopped part-way leaves
+            // records for the components it reached. Surface that instead of calling it provisioned.
+            $gap = $this->incompleteness($business);
+
+            if ($gap !== null) {
+                return $this->result(self::BLOCKED_INCOMPLETE, $gap.'; '.$this->recoveryInstruction($business));
+            }
+
             return $this->result(self::ALREADY_PROVISIONED, "installation records={$recordCount}; left untouched");
         }
 
@@ -129,10 +149,74 @@ class PhotoBoothBlueprintProvisioner
             return $this->result(self::BLOCKED_ENGINE_ABORT, (string) $run->abortReason);
         }
 
+        // An aborted run wrote nothing. A run that finished its loop can STILL be incomplete: an undecided
+        // component persists no record at all, and a failed one is recorded `failed`. Neither may be called
+        // installed, and neither is retried by this command (that is install-missing's job).
+        if ($run->undecided > 0 || $run->failed > 0) {
+            return $this->result(
+                self::BLOCKED_INCOMPLETE,
+                "installed={$run->installed} undecided={$run->undecided} failed={$run->failed}; ".$this->recoveryInstruction($business),
+            );
+        }
+
         return $this->result(
             self::INSTALLED,
             "installed={$run->installed} skipped_unentitled={$run->skippedUnentitled} skipped_unavailable={$run->skippedUnavailable} failed={$run->failed}",
         );
+    }
+
+    private function recoveryInstruction(Business $business): string
+    {
+        return 'run `'.self::RECOVERY_COMMAND.$business->id.'` to retry the remaining components';
+    }
+
+    /**
+     * Describes what a Business's own pinned Blueprint version still lacks, or null when complete.
+     * Template-only components never have records and are not counted.
+     */
+    private function incompleteness(Business $business): ?string
+    {
+        $records = BusinessBlueprintComponentInstallation::query()->where('business_id', $business->id)->get();
+        $blueprintIds = $records->pluck('blueprint_id')->unique();
+
+        if ($blueprintIds->count() !== 1) {
+            return null; // another Blueprint or an ambiguous identity is not this command's concern
+        }
+
+        $blueprint = NicheBlueprint::query()->whereKey((int) $blueprintIds->first())->first();
+
+        if ($blueprint === null || $blueprint->key !== self::BLUEPRINT_KEY) {
+            return null;
+        }
+
+        $version = NicheBlueprintVersion::query()
+            ->where('blueprint_id', $blueprint->id)
+            ->where('version_number', (int) $records->max('installed_from_version'))
+            ->first();
+
+        if ($version === null) {
+            return null;
+        }
+
+        $recorded = $records->pluck('component_key')->all();
+        $failed = $records->filter(fn ($r) => $r->state === BlueprintComponentInstallationState::Failed)->count();
+        $missing = 0;
+
+        foreach (NicheBlueprintComponent::query()->where('blueprint_version_id', $version->id)->get() as $component) {
+            try {
+                if ($this->adapters->adapterFor((string) $component->component_type) instanceof TemplateOnlyComponent) {
+                    continue;
+                }
+            } catch (\Throwable) {
+                // An unregistered type is counted like any other component without a record.
+            }
+
+            if (! in_array((string) $component->component_key, $recorded, true)) {
+                $missing++;
+            }
+        }
+
+        return ($failed + $missing) > 0 ? "incomplete: undecided_or_unattempted={$missing} failed={$failed}" : null;
     }
 
     /** @return array{status: string, detail: string} */

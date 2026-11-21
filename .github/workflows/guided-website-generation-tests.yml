@@ -102,7 +102,7 @@ jobs:
         shell: bash
         run: |
           php artisan test tests/Feature/NicheBlueprint/V2/PhotoBoothBlueprintProvisioningRepairTest.php --log-junit /tmp/pb-provisioning.xml
-          php -r '$x = simplexml_load_file("/tmp/pb-provisioning.xml"); $n = count($x->xpath("//testcase")); $s = count($x->xpath("//testcase/skipped")); fwrite(STDOUT, "Discovered Photo Booth provisioning tests: $n (skipped: $s)\n"); if ($n !== 8 || $s !== 0) exit(1);'
+          php -r '$x = simplexml_load_file("/tmp/pb-provisioning.xml"); $n = count($x->xpath("//testcase")); $s = count($x->xpath("//testcase/skipped")); fwrite(STDOUT, "Discovered Photo Booth provisioning tests: $n (skipped: $s)\n"); if ($n !== 11 || $s !== 0) exit(1);'
       - name: Run guided generation and affected page-budget regressions
         run: >-
           php artisan test
