@@ -206,9 +206,10 @@ class OutreachImportGroupTest extends TestCase
         $this->assertDatabaseMissing('contacts', ['business_id' => $a['business']->id, 'phone' => '12133000002']);
         $this->assertSame(AgencyProspectStatus::Stopped, $stopped->refresh()->status);
 
-        // Direct (backfill-style) materialisation of a batch that contains them also skips them.
+        // The stored completion report records the skips; a direct retry returns it untouched rather than reprocessing the rows.
         $report = app(ProspectGroupMaterializer::class)->materialize($ws, $a['business'], $batch->fresh(), 'Safe list');
-        $this->assertSame(0, $report['created']);
+        $this->assertTrue($report['already_materialized']);
+        $this->assertSame([1, 1], [$report['skipped']['stop'], $report['skipped']['client']]);
         $this->assertSame(2, Contacts::where('group_id', $group->id)->count());
     }
 
@@ -567,5 +568,83 @@ class OutreachImportGroupTest extends TestCase
         $html = $this->get($this->outreachRoute('analytics.index', $a['workspace']) . '?cf=lead_tier&cfv=' . $gold . '&period=all')->assertOk()->getContent();
         $this->assertStringContainsString('<option value="' . $gold . '" selected>Gold plan</option>', preg_replace('/\s+/', ' ', $html));
         $this->assertStringContainsString('data-cfv-select="lead_tier"', $html);
+    }
+
+    // ------------------------------------------------------------------ review round 2 (PR #695)
+
+    public function test_a_matched_contact_at_an_inaccessible_location_is_never_modified_and_nothing_is_partially_imported(): void
+    {
+        $a = $this->outreachAgency('Loc', ['enrolled' => false]);
+        $a['business']->update(['country_code' => 'US']);
+        $this->authenticateAs($a['customer']);
+        $location = \App\Models\BusinessLocation::create(['business_id' => $a['business']->id, 'service_mode' => 'storefront', 'country_code' => 'US']);
+        $old = ContactGroups::create(['customer_id' => $a['business']->customer_id, 'business_id' => $a['business']->id, 'name' => 'Old list', 'status' => true]);
+        $existing = Contacts::create(['customer_id' => $a['business']->customer_id, 'business_id' => $a['business']->id, 'group_id' => $old->id, 'phone' => '12133000001', 'status' => 'subscribe']);
+        $existing->forceFill(['location_id' => $location->id])->save();
+        $values = app(CustomFieldValueService::class);
+        $before = \App\Models\CustomFieldValue::count();
+        $batch = $this->upload($a, $this->csv(3));
+
+        // The user holds the import/CRM permissions but cannot reach that Contact's Location.
+        $this->mock(\App\Library\Workspace\LocationAccessGuard::class, fn ($m) => $m->shouldReceive('userCanAccessLocation')->andReturn(false));
+
+        $this->commit($a, $batch, 'Loc list')->assertSessionHas('flash_error');
+
+        $this->assertSame('analyzed', $batch->refresh()->status, 'the import is refused as a whole');
+        $this->assertSame(0, AgencyProspect::where('workspace_id', $a['workspace']->id)->count(), 'no prospects');
+        $this->assertSame(0, $this->bizGroups($a)->where('name', 'Loc list')->count(), 'no group');
+        $this->assertSame(1, Contacts::where('business_id', $a['business']->id)->count(), 'no new contacts');
+        $this->assertSame($before, \App\Models\CustomFieldValue::count(), 'no custom field values written on the protected Contact or any other');
+        $this->assertSame(0, CustomFieldDefinition::where('business_id', $a['business']->id)->count(), 'no definitions created');
+        $this->assertSame(0, AgencyProspectGroupLink::where('workspace_id', $a['workspace']->id)->count());
+        $this->assertSame((int) $old->id, (int) $existing->refresh()->group_id);
+    }
+
+    public function test_a_retry_of_a_completed_import_returns_the_stored_result_and_leaves_crm_data_alone(): void
+    {
+        $a = $this->outreachAgency('Retry', ['enrolled' => false]);
+        $this->authenticateAs($a['customer']);
+        $batch = $this->upload($a, $this->csv(4));
+        $this->commit($a, $batch, 'Retry list')->assertRedirect();
+        $group = $this->bizGroups($a)->where('name', 'Retry list')->firstOrFail();
+        $storedReport = $batch->refresh()->group_report;
+        $this->assertSame(4, Contacts::where('group_id', $group->id)->count());
+
+        // The owner later edits the CRM: deletes a Contact, clears a Custom Field value, removes a link.
+        $deleted = Contacts::where('group_id', $group->id)->orderBy('id')->firstOrFail();
+        $deleted->delete();
+        $cleared = Contacts::where('group_id', $group->id)->orderBy('id')->firstOrFail();
+        \App\Models\CustomFieldValue::where('contact_id', $cleared->id)->delete();
+        AgencyProspectGroupLink::where('contact_group_id', $group->id)->orderByDesc('id')->firstOrFail()->delete();
+        $snapshot = fn () => [
+            Contacts::where('business_id', $a['business']->id)->count(),
+            \App\Models\CustomFieldValue::count(),
+            AgencyProspectGroupLink::where('contact_group_id', $group->id)->count(),
+            $this->bizGroups($a)->count(),
+        ];
+        $after = $snapshot();
+
+        $result = app(\App\Library\AgencyOutreach\Import\ProspectImporter::class)->commitWithGroup($a['workspace'], $a['business'], $batch->fresh(), 'Retry list', null, (int) $a['customer']->user->id);
+        $this->commit($a, $batch->fresh(), 'Retry list');
+
+        $this->assertSame($after, $snapshot(), 'a retry recreates nothing, refills nothing and relinks nothing');
+        $this->assertSame($storedReport, $batch->refresh()->group_report, 'the original completion report is not overwritten');
+        $this->assertSame($group->id, $result['group']['group_id']);
+        $this->assertTrue($result['group']['already_materialized']);
+    }
+
+    public function test_a_historical_imported_batch_without_a_group_still_materializes_once(): void
+    {
+        $a = $this->outreachAgency('Hist', ['enrolled' => false]);
+        $this->authenticateAs($a['customer']);
+        $batch = $this->upload($a, $this->csv(3));
+        app(\App\Library\AgencyOutreach\Import\ProspectImporter::class)->commitProspects($a['workspace'], $batch, null);
+        $this->assertSame('imported', $batch->refresh()->status);
+        $this->assertNull($batch->contact_group_id);
+
+        $report = app(ProspectGroupMaterializer::class)->materialize($a['workspace'], $a['business'], $batch, 'Historical');
+
+        $this->assertSame(3, $report['created']);
+        $this->assertNotNull($batch->refresh()->contact_group_id);
     }
 }

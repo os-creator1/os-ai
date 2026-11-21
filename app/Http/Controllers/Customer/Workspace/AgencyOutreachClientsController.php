@@ -301,7 +301,11 @@ class AgencyOutreachClientsController extends CustomerBaseController
             }
         }
 
-        $r = $this->importer->commitWithGroup($workspace, $business, $b, $groupName, $request->input('campaign_uid'));
+        try {
+            $r = $this->importer->commitWithGroup($workspace, $business, $b, $groupName, $request->input('campaign_uid'), (int) Auth::id());
+        } catch (\Illuminate\Auth\Access\AuthorizationException $e) {
+            return back()->with('flash_error', $e->getMessage() . ' Nothing was imported.');
+        }
 
         if (! empty($r['name_conflict'])) {
             return back()->withInput()->withErrors(['group_name' => 'A contact group with this name already exists. Choose a different name. Nothing was imported.']);

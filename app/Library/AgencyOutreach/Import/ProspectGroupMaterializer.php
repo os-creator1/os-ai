@@ -21,6 +21,8 @@ use App\Models\ContactsCustomField;
 use App\Models\CustomFieldDefinition;
 use App\Models\CustomFieldValue;
 use App\Models\Workspace;
+use App\Library\Workspace\LocationAccessGuard;
+use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Support\Facades\DB;
 
 /**
@@ -141,9 +143,16 @@ final class ProspectGroupMaterializer
      *
      * @return array<string, mixed> report
      */
-    public function materialize(Workspace $workspace, Business $business, AgencyProspectImportBatch $batch, string $groupName, bool $apply = true): array
+    public function materialize(Workspace $workspace, Business $business, AgencyProspectImportBatch $batch, string $groupName, bool $apply = true, ?int $actorId = null): array
     {
         abort_unless((int) $batch->workspace_id === (int) $workspace->id, 404);
+
+        // A finished import that already has its group is never reprocessed: a retry would recreate deleted Contacts, refill
+        // Custom Fields the owner cleared, rewrite links and overwrite the original completion report. Return what was stored.
+        // (A historical imported batch WITHOUT a group still materializes once.)
+        if ($apply && $batch->status === 'imported' && $batch->contact_group_id !== null) {
+            return ((array) $batch->group_report) + ['group_id' => $batch->contact_group_id, 'applied' => false, 'already_materialized' => true];
+        }
 
         $report = ['group' => $groupName, 'group_id' => $batch->contact_group_id, 'group_uid' => null, 'created' => 0, 'existing_in_group' => 0, 'referenced' => 0,
             'skipped' => ['stop' => 0, 'client' => 0, 'blacklisted' => 0, 'no_prospect' => 0], 'values_saved' => 0, 'values_skipped' => 0,
@@ -169,7 +178,7 @@ final class ProspectGroupMaterializer
             return $report;
         }
 
-        DB::transaction(function () use ($workspace, $business, $batch, $groupName, $existingGroup, $rows, $plan, &$report) {
+        DB::transaction(function () use ($workspace, $business, $batch, $groupName, $existingGroup, $rows, $plan, $actorId, &$report) {
             $locked = AgencyProspectImportBatch::query()->whereKey($batch->id)->lockForUpdate()->first();
             $group = $existingGroup ?? ($locked->contact_group_id !== null
                 ? ContactGroups::query()->where('id', $locked->contact_group_id)->where('business_id', $business->id)->first() : null);
@@ -184,11 +193,11 @@ final class ProspectGroupMaterializer
             $report['group_uid'] = $group->uid;
             $extra = (array) $locked->extra_fields;
 
-            $rows->chunkById(200, function ($chunk) use ($workspace, $business, $batch, $group, $fields, $defs, $extra, &$report) {
+            $rows->chunkById(200, function ($chunk) use ($workspace, $business, $batch, $group, $fields, $defs, $extra, $actorId, &$report) {
                 $blocked = $this->blacklisted($business, $chunk->pluck('phone')->filter()->all());
 
                 foreach ($chunk as $row) {
-                    $this->writeRow($workspace, $business, $batch, $group, $fields, $defs, $extra, $row, $blocked, $report);
+                    $this->writeRow($workspace, $business, $batch, $group, $fields, $defs, $extra, $row, $blocked, $report, $actorId);
                 }
             });
 
@@ -201,7 +210,7 @@ final class ProspectGroupMaterializer
     // ------------------------------------------------------------------------------------------------
 
     /** @param array<string, ContactGroupFields> $fields @param array<string, array{def: CustomFieldDefinition, type: string}> $defs */
-    private function writeRow(Workspace $workspace, Business $business, AgencyProspectImportBatch $batch, ContactGroups $group, array $fields, array $defs, array $extra, AgencyProspectImportRow $row, array $blocked, array &$report): void
+    private function writeRow(Workspace $workspace, Business $business, AgencyProspectImportBatch $batch, ContactGroups $group, array $fields, array $defs, array $extra, AgencyProspectImportRow $row, array $blocked, array &$report, ?int $actorId = null): void
     {
         // Lock the canonical prospect: serialises concurrent imports of the same number.
         $prospect = AgencyProspect::query()->where('workspace_id', $workspace->id)->whereKey($row->prospect_id)->lockForUpdate()->first();
@@ -236,6 +245,16 @@ final class ProspectGroupMaterializer
         // reused, so an unsubscribed Contact can never be bypassed by a freshly created subscribed duplicate.
         $contact ??= $this->contactForPhone($business, (string) $prospect->phone);
         $inGroup = true;
+
+        // Same Location rule as the normal CRM edit path: a matched Contact at a Location the actor cannot reach is never modified.
+        // The whole import is refused (and rolled back) rather than silently half-applied.
+        if ($contact !== null && $actorId !== null && $contact->location_id !== null) {
+            $location = $contact->location;
+
+            if ($location === null || ! app(LocationAccessGuard::class)->userCanAccessLocation($actorId, $location)) {
+                throw new AuthorizationException('This import matches a contact at a location you do not have access to.');
+            }
+        }
 
         if ($contact === null) {
             $contact = Contacts::create([
