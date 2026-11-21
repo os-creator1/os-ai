@@ -51,11 +51,21 @@ final class MobileBusinessAccess
     {
         $workspace = $this->workspaces->findByUid($workspaceUid);
 
-        if ($workspace === null || ! $workspace->is_active || ! $this->accountUsable($workspace)) {
+        if ($workspace === null || ! $workspace->is_active) {
             return null;
         }
 
         $business = $this->workspaces->businessesForWorkspace($workspace)->firstWhere('uid', $businessUid);
+
+        if (! $this->accountUsable($workspace)) {
+            // Only someone who could open this Business is told WHY it is closed to them; anyone else gets the same
+            // indistinguishable "not found" as for a Business that does not exist.
+            if ($business !== null && $this->routeAccess->actorMayUseBusinessRoute($actor, $workspace, $business)) {
+                throw new HttpResponseException(response()->json(['error' => ['code' => 'account_locked', 'message' => 'This account is locked. Sign in on the web to resolve it.']], 403)->header('Cache-Control', 'no-store'));
+            }
+
+            return null;
+        }
 
         if ($business === null || ! $this->routeAccess->actorMayUseBusinessRoute($actor, $workspace, $business)) {
             return null;
