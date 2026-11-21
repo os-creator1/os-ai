@@ -216,6 +216,12 @@ class MobileConversationController extends MobileController
             return $this->fail('validation_failed', 'Missing message.', 422);
         }
 
+        // A demo can contain historical tracked failed bubbles. It must not
+        // send or charge through a Retry when new replies are disabled.
+        if (config('app.stage') === 'demo') {
+            return $this->fail('unavailable', 'Sending is not available in demo mode.', 422);
+        }
+
         $box->setRelation('business', $resolved[1]);
         $response = app(ConversationSender::class)->retry($box, $key);
 
