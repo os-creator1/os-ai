@@ -320,7 +320,9 @@ final class WizardPresentationAnswers
         // The ACTIVE packages the composition will list (the same selection PhotoBoothBlueprint makes when no explicit choice exists).
         $packages = app(\App\Library\Website\WebsitePageStrategy::class)->selectedCatalogItems($business, null)
             ->filter(fn ($item) => $item->type->value === 'package')->values();
-        $priced = $packages->contains(fn ($item) => (int) $item->price_minor > 0);
+        // The renderer shows a price only for a package with an amount AND a currency (WebsiteCatalogReferences); every other package
+        // reads "Contact for pricing". The wording below must agree with that, package by package.
+        $priced = $packages->filter(fn ($item) => $item->price_minor !== null && $item->currency_code)->values();
 
         // A booking button exists only when the Calendar is really bookable (WebsiteCtaResolver), so "Book Now" is never promised otherwise.
         $cta = match ($goal) {
@@ -329,12 +331,20 @@ final class WizardPresentationAnswers
             default => 'quote_request',
         };
 
-        // Pricing is stated only as far as the active packages and the owner's pricing method support it.
+        // Pricing is stated only as far as the owner's pricing method and the packages' ACTUAL published prices support it:
+        // every active package priced -> prices are listed; only some priced -> "from" the lowest price, the others ask for a quote;
+        // none priced (or no package) -> custom quotes. A quote-only owner stays quote-only.
         $pricing = match (true) {
             $method === 'quote_only' => 'custom_quote',
-            in_array($method, ['fixed', 'package_tiers'], true) => $packages->isNotEmpty() ? 'fixed_packages' : null,
-            default => $priced ? 'fixed_packages' : null,
+            $packages->isEmpty() || $priced->isEmpty() => null,
+            $priced->count() === $packages->count() => 'fixed_packages',
+            default => 'starting_from',
         };
+
+        // "Starting from" needs one comparable amount: the lowest price, only when every priced package shares a currency.
+        $lowest = $pricing === 'starting_from' && $priced->pluck('currency_code')->unique()->count() === 1
+            ? \App\Library\Catalog\CatalogMoney::format((int) $priced->min('price_minor'), (string) $priced->first()->currency_code)
+            : null;
 
         return [
             'tone' => null,
@@ -351,6 +361,7 @@ final class WizardPresentationAnswers
                 'primary_cta' => $cta,
                 'pricing_strategy' => $pricing,
                 'packages' => $pricing === 'custom_quote' ? null : $packages->map(fn ($item) => ['uid' => $item->uid])->all(),
+                'lowest_package_price' => $lowest,
             ], fn ($value) => $value !== null),
         ];
     }

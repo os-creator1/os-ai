@@ -346,4 +346,55 @@ class GeneratorRecoveryAcceptanceTest extends TestCase
         $this->assertSame([], ExistingPageFactCandidates::forWebsite($website->fresh())['testimonials']);
         $this->assertStringNotContainsString('review(s)', implode(' ', $readiness()['items'] ?? []));
     }
+
+    /** @return array{faq: string, items: array<int, array<string, mixed>>} the written cost answer and the package cards the home page lists */
+    private function costAnswerAndPackageCards(Website $website): array
+    {
+        $draft = $website->fresh()->pages()->get();
+        $faq = collect($draft->firstWhere('slug', 'photo-booth-faq')->sections)->firstWhere('type', 'faq');
+        $answer = collect($faq['data']['items'])->first(fn ($item) => str_contains(strtolower($item['question']), 'cost'))['answer'];
+        $packages = collect($draft->firstWhere('is_home', true)->sections)->first(fn ($section) => ($section['data']['heading'] ?? '') === 'Packages');
+
+        return ['faq' => $answer, 'items' => $packages['data']['items'] ?? []];
+    }
+
+    public function test_the_faq_cost_answer_matches_what_the_package_cards_will_show_fully_partly_or_not_priced(): void
+    {
+        [$website, $business] = $this->publishedSite('booth', true, true, true, []);
+        $customer = Customer::query()->where('user_id', $business->customer_id)->firstOrFail();
+        $workspace = Workspace::query()->findOrFail($business->workspace_id);
+        $this->authenticateAsCustomer($customer);
+        $urls = $this->rebuildUrls($business, $workspace);
+        app(\App\Library\Business\BusinessKnowledgeProfileManager::class)->updateFields($business, ['pricing_method' => 'fixed', 'primary_conversion_goal' => 'call'], 'manual_edit', (int) $customer->user_id, true);
+        $make = fn (string $name, ?int $price) => CatalogItem::create(['business_id' => $business->id, 'type' => 'package', 'name' => $name, 'description' => "{$name} with an attendant.", 'price_minor' => $price, 'currency_code' => $price === null ? null : 'USD', 'position' => 0, 'created_by_user_id' => $customer->user_id]);
+
+        // 1. No package has a published price: the cards read "Contact for pricing", so the FAQ says quotes, never that prices are listed.
+        $make('Mirror Basic', null);
+        $make('Mirror Plus', null);
+        $this->rebuildWithoutAi($website, $urls);
+        $unpriced = $this->costAnswerAndPackageCards($website);
+        $this->assertStringContainsString('custom quotes', $unpriced['faq']);
+        $this->assertStringNotContainsString('listed with their prices', $unpriced['faq']);
+        $this->assertSame(['Contact for pricing', 'Contact for pricing'], array_column($unpriced['items'], 'quote_label'));
+        $this->assertSame([], array_filter(array_column($unpriced['items'], 'price_prefix')), 'no "From" without a price');
+
+        // 2. Some packages are priced: the priced card reads "From $X", the other asks for a quote, and the FAQ says exactly that.
+        \App\Models\CatalogItem::where('business_id', $business->id)->where('name', 'Mirror Plus')->update(['price_minor' => 129900, 'currency_code' => 'USD']);
+        \App\Models\CatalogItem::where('business_id', $business->id)->where('name', 'Mirror Basic')->update(['price_minor' => null, 'currency_code' => null]);
+        $this->rebuildWithoutAi($website, $urls);
+        $partly = $this->costAnswerAndPackageCards($website);
+        $this->assertStringContainsString('Pricing starts from', $partly['faq']);
+        $this->assertStringContainsString('USD 1,299.00', $partly['faq']);
+        $this->assertStringNotContainsString('listed with their prices', $partly['faq']);
+        $this->assertStringNotContainsString('custom quotes', $partly['faq'], 'a business with published prices is not described as quote-only');
+        $this->assertSame(['From'], array_values(array_unique(array_filter(array_column($partly['items'], 'price_prefix')))));
+
+        // 3. Every active package is priced: prices are listed, and the FAQ says so.
+        \App\Models\CatalogItem::where('business_id', $business->id)->where('name', 'Mirror Basic')->update(['price_minor' => 79900, 'currency_code' => 'USD']);
+        $this->rebuildWithoutAi($website, $urls);
+        $fully = $this->costAnswerAndPackageCards($website);
+        $this->assertStringContainsString('listed with their prices', $fully['faq']);
+        $this->assertStringNotContainsString('custom quotes', $fully['faq']);
+        $this->assertSame([], array_filter(array_column($fully['items'], 'price_prefix')), 'listed prices carry no "From"');
+    }
 }
