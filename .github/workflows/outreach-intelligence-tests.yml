@@ -25,6 +25,7 @@ on:
       - 'tests/Feature/AgencyOutreach/OutreachExistingClientsTest.php'
       - 'tests/Feature/AgencyOutreach/OutreachSmartImportTest.php'
       - 'tests/Feature/AgencyOutreach/OutreachImportGroupTest.php'
+      - 'tests/Feature/AgencyOutreach/OutreachImportGroupReviewTest.php'
       - 'tests/Feature/AgencyOutreach/OutreachSingleHeadingTest.php'
       - '.github/workflows/outreach-intelligence-tests.yml'
 
@@ -79,4 +80,4 @@ jobs:
       - name: Install dependencies
         run: composer install --no-interaction --prefer-dist --no-progress
       - name: Test Outreach analytics, exclusions, import and single-heading regressions
-        run: php artisan test tests/Feature/AgencyOutreach/OutreachAnalyticsTest.php tests/Feature/AgencyOutreach/OutreachExistingClientsTest.php tests/Feature/AgencyOutreach/OutreachSmartImportTest.php tests/Feature/AgencyOutreach/OutreachImportGroupTest.php tests/Feature/AgencyOutreach/OutreachSingleHeadingTest.php tests/Feature/AgencyOutreach/OutreachRedesignRenderTest.php tests/Feature/AgencyOutreach/OutreachSendPacingTest.php tests/Feature/AgencyOutreach/OutreachReplyTimingTest.php tests/Feature/AgencyOutreach/OutreachEngineTest.php tests/Feature/AgencyOutreach/CampaignContactGroupTest.php --stop-on-failure
+        run: php artisan test tests/Feature/AgencyOutreach/OutreachAnalyticsTest.php tests/Feature/AgencyOutreach/OutreachExistingClientsTest.php tests/Feature/AgencyOutreach/OutreachSmartImportTest.php tests/Feature/AgencyOutreach/OutreachImportGroupTest.php tests/Feature/AgencyOutreach/OutreachImportGroupReviewTest.php tests/Feature/AgencyOutreach/OutreachSingleHeadingTest.php tests/Feature/AgencyOutreach/OutreachRedesignRenderTest.php tests/Feature/AgencyOutreach/OutreachSendPacingTest.php tests/Feature/AgencyOutreach/OutreachReplyTimingTest.php tests/Feature/AgencyOutreach/OutreachEngineTest.php tests/Feature/AgencyOutreach/CampaignContactGroupTest.php --stop-on-failure

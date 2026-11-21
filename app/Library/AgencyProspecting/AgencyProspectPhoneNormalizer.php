@@ -107,4 +107,14 @@ final class AgencyProspectPhoneNormalizer
             return null;
         }
     }
+
+    /**
+     * A phone as a CRM Contact stores it. Anything that already carries a country calling code normalises exactly as before;
+     * only when that fails is the Business's own region (never a guess) used, so a historical national-format number such as
+     * "2025550142" in a US Business resolves to the same canonical identity as "+1 202 555 0142".
+     */
+    public static function normalizeStored(?string $raw, ?string $region): ?string
+    {
+        return self::normalize($raw) ?? self::normalizeForRegion($raw, $region);
+    }
 }
