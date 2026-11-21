@@ -39,7 +39,16 @@ class RepairPhotoBoothBlueprintCommand extends Command
     {
         $apply = (bool) $this->option('apply');
         $assign = (bool) $this->option('assign-photo-booth');
-        $selectors = array_values(array_filter(array_map(static fn ($v): string => trim((string) $v), Arr::wrap($this->option('business'))), static fn (string $v): bool => $v !== ''));
+        $rawSelectors = Arr::wrap($this->option('business'));
+        $selectors = array_map(static fn ($v): string => trim((string) $v), $rawSelectors);
+
+        // A supplied but blank selector must NEVER be treated like no selector.
+        // Otherwise --business="$UNSET" --apply unexpectedly becomes a global sweep.
+        if (in_array('', $selectors, true)) {
+            $this->error('An explicitly provided --business selector is empty. Nothing was changed.');
+
+            return self::FAILURE;
+        }
 
         if ($assign && $selectors === []) {
             $this->error('--assign-photo-booth only ever applies to Businesses you name: pass --business=<id|uid> (repeatable). Nothing was changed.');
