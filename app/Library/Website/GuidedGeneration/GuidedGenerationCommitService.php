@@ -579,6 +579,7 @@ final class GuidedGenerationCommitService
 
         foreach ($batches as $batchIndex => $batchPlan) {
             $batchPages = null;
+            $rejections = [];
             $batchKeys = array_column($batchPlan, 'page_key');
             $detail = $multi ? ['batch' => $batchIndex + 1, 'batches' => count($batches)] : [];
 
@@ -595,7 +596,7 @@ final class GuidedGenerationCommitService
                 // Each request is its own provider call with its own key: the attempt's base key, the batch (multi-batch only,
                 // so a single-batch generation keeps its historical key) and the retry number — never a duplicate of another call.
                 $key = $idempotencyKey . ($multi ? ':b' . ($batchIndex + 1) : '') . ':retry' . $try;
-                $pages = $this->client->generate($business, $batchPlan, null, $key, $multi ? $aiPlan : null, array_values(array_filter(array_column($accepted, 'seo_title'), 'is_string')), $contentFacts);
+                $pages = $this->client->generate($business, $batchPlan, null, $key, $multi ? $aiPlan : null, array_values(array_filter(array_column($accepted, 'seo_title'), 'is_string')), $contentFacts, $rejections);
 
                 if ($pages === null) {
                     // Customer message stays generic; the stage is recorded for the operator only.
@@ -603,6 +604,11 @@ final class GuidedGenerationCommitService
                     $stage = (string) ($diagnostic['stage'] ?? GenerationBatchDiagnostics::STAGE_PROVIDER_NO_CONTENT);
                     unset($diagnostic['stage']);
                     GenerationBatchDiagnostics::log($websiteId, $attemptId, $try, $stage, count($batchPlan), $diagnostic + $detail);
+
+                    // An unusable response (not JSON, usually cut off) is retried with that said, not asked identically.
+                    $rejections = in_array($stage, [GenerationBatchDiagnostics::STAGE_RESPONSE_NOT_JSON, GenerationBatchDiagnostics::STAGE_RESPONSE_MISSING_PAGES], true)
+                        ? ['Your previous response was not a complete JSON object with a "pages" array (it may have been cut off). Return one complete JSON object and keep every page concise.']
+                        : [];
 
                     if ($this->client->lastCallWasBudgetExhausted() || $this->client->lastCallWasUnavailable()) {
                         // A retry cannot help and must not spend.
@@ -622,6 +628,14 @@ final class GuidedGenerationCommitService
                             || ! in_array($page['page_key'], $siteKeys, true)));
                     }
 
+                    // Mistakes whose repair cannot change meaning (a section type the page does not allow, an over-long SEO title) are
+                    // repaired here; everything else (missing pages, duplicates, weak content) still fails and is retried with its reasons.
+                    $normalized = GuidedOutputNormalizer::normalize($pages, $batchPlan);
+                    $pages = $normalized['pages'];
+                    if ($normalized['notes'] !== []) {
+                        GenerationBatchDiagnostics::log($websiteId, $attemptId, $try, GenerationBatchDiagnostics::STAGE_OUTPUT_NORMALIZED, count($batchPlan), ['repairs' => count($normalized['notes'])] + $detail);
+                    }
+
                     // Generic aliases ("/contact") become the real path of a planned page of the WHOLE site; unresolvable ones are rejected below.
                     $pages = InternalLinkResolver::correct($pages, $aiPlan);
                     $this->validator->validate($pages, $batchPlan, $prohibitedClaims, $aiPlan, $enforceQuality ? $contentFacts : null);
@@ -635,7 +649,9 @@ final class GuidedGenerationCommitService
                     break;
                 } catch (ValidationException $e) {
                     GenerationBatchDiagnostics::log($websiteId, $attemptId, $try, GenerationBatchDiagnostics::STAGE_VALIDATION_FAILED, count($batchPlan), ['returned_pages' => count($pages)] + $detail, array_keys($e->errors()));
+                    $rejections = GuidedWebsiteGenerationClient::rejectionNotes($e->errors(), $batchKeys);
                 } catch (Throwable $e) {
+                    $rejections = [];
                     // Catches more than ValidationException on purpose — a provider that returns a well-formed JSON envelope with
                     // an unexpected inner shape must still fall through to the bounded retry/failure path, never an uncaught
                     // TypeError or an attempt stuck `pending`.

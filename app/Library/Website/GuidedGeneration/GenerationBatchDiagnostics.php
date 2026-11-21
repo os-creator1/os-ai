@@ -28,6 +28,7 @@ final class GenerationBatchDiagnostics
     public const STAGE_REQUEST_LIMIT_REACHED = 'request_limit_reached';
     public const STAGE_COMPLETE_SITE_INVALID = 'complete_site_invalid';
     public const STAGE_PLAN_OVER_BUDGET = 'plan_over_budget';
+    public const STAGE_OUTPUT_NORMALIZED = 'output_normalized';
 
     private const MAX_PATHS = 20;
 
