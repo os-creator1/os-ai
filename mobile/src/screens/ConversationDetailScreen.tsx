@@ -182,7 +182,7 @@ export function ConversationDetailScreen({ route, navigation }: Props) {
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={async () => { setRefreshing(true); await load(); setRefreshing(false); }} />}
         onContentSizeChange={() => { if (stick.current) listRef.current?.scrollToEnd({ animated: true }); }}
         ListHeaderComponent={hasMore
-          ? <Button title={loadingEarlier ? 'Loading earlier messages…' : 'Load earlier messages'} variant="plain" disabled={loadingEarlier} onPress={loadEarlier} />
+          ? <Button title={loadingEarlier ? 'Loading earlier messages…' : 'Load earlier messages'} variant="plain" disabled={loadingEarlier} onPress={() => { void loadEarlier(); }} />
           : undefined}
         renderItem={({ item }) => <Bubble
           item={item}
