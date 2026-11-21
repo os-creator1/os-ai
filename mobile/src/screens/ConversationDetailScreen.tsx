@@ -23,6 +23,7 @@ type Pending = {
   canRetry: boolean;
 };
 type Row = (Message & { pending?: false }) | { pending: true; key: string; body: string; state: Pending['state']; error?: string; canRetry: boolean; mode: Pending['mode'] };
+type RetryAttempt = { state: 'sending' | 'failed'; error?: string };
 
 export function ConversationDetailScreen({ route, navigation }: Props) {
   const { api, scope } = useAuth();
@@ -34,6 +35,9 @@ export function ConversationDetailScreen({ route, navigation }: Props) {
   const [refreshing, setRefreshing] = useState(false);
   const [text, setText] = useState('');
   const [pending, setPending] = useState<Pending[]>([]);
+  // An older failed bubble is already in server history, not in pending.
+  // Keep its attempted retry/error state separately so refusals are visible.
+  const [retryAttempts, setRetryAttempts] = useState<Record<string, RetryAttempt>>({});
   const inflight = useRef(new Set<string>());
   const listRef = useRef<FlatList<Row>>(null);
   const stick = useRef(true);
@@ -74,6 +78,9 @@ export function ConversationDetailScreen({ route, navigation }: Props) {
   const dispatch = useCallback(async (key: string, body: string, mode: Pending['mode']) => {
     if (!scope || inflight.current.has(key)) return; // a second tap on the same message is a no-op
     inflight.current.add(key);
+    if (mode === 'retry') {
+      setRetryAttempts((p) => ({ ...p, [key]: { state: 'sending' } }));
+    }
     setPending((p) => p.map((x) => (x.key === key ? { ...x, state: 'sending', error: undefined } : x)));
     try {
       if (mode === 'retry') await api.retry(scope, uid, key);
@@ -81,14 +88,23 @@ export function ConversationDetailScreen({ route, navigation }: Props) {
       stick.current = true;
       await load();
       setPending((p) => p.filter((x) => x.key !== key));
+      setRetryAttempts((p) => {
+        const next = { ...p };
+        delete next[key];
+        return next;
+      });
     } catch (e) {
       const err = e instanceof ApiError ? e : null;
       // Network error: the server may or may not have it — resending the SAME key is safe either way.
       const network = err?.status === 0;
+      const failure = network ? 'No connection. Your message was not confirmed.' : (err?.message ?? 'Could not send.');
+      if (mode === 'retry') {
+        setRetryAttempts((p) => ({ ...p, [key]: { state: 'failed', error: failure } }));
+      }
       setPending((p) => p.map((x) => (x.key === key ? {
         ...x,
         state: 'failed',
-        error: network ? 'No connection. Your message was not confirmed.' : (err?.message ?? 'Could not send.'),
+        error: failure,
         mode: err?.retryable ? 'retry' : 'reply',
         canRetry: network || err?.retryable === true,
       } : x)));
@@ -130,7 +146,11 @@ export function ConversationDetailScreen({ route, navigation }: Props) {
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={async () => { setRefreshing(true); await load(); setRefreshing(false); }} />}
         onContentSizeChange={() => { if (stick.current) listRef.current?.scrollToEnd({ animated: true }); }}
         ListHeaderComponent={hasMore ? <Button title="Load earlier messages" variant="plain" onPress={loadEarlier} /> : undefined}
-        renderItem={({ item }) => <Bubble item={item} onRetry={dispatch} />}
+        renderItem={({ item }) => <Bubble
+          item={item}
+          retryAttempt={'pending' in item && item.pending ? undefined : retryAttempts[(item as Message).send_uid ?? '']}
+          onRetry={dispatch}
+        />}
       />
       <View style={s.composer}>
         <TextInput
@@ -151,7 +171,11 @@ export function ConversationDetailScreen({ route, navigation }: Props) {
   );
 }
 
-function Bubble({ item, onRetry }: { item: Row; onRetry: (key: string, body: string, mode: Pending['mode']) => void }) {
+function Bubble({ item, retryAttempt, onRetry }: {
+  item: Row;
+  retryAttempt?: RetryAttempt;
+  onRetry: (key: string, body: string, mode: Pending['mode']) => void;
+}) {
   if ('pending' in item && item.pending) {
     const failed = item.state === 'failed';
     return (
@@ -172,7 +196,11 @@ function Bubble({ item, onRetry }: { item: Row; onRetry: (key: string, body: str
       {out && isFailed(m.status) ? (
         <>
           {m.status_message ? <Text style={s.errorText}>{m.status_message}</Text> : null}
-          {m.retryable && m.send_uid ? <Pressable accessibilityRole="button" onPress={() => onRetry(m.send_uid!, m.body ?? '', 'retry')}><Text style={s.retry}>Retry</Text></Pressable> : null}
+          {retryAttempt?.state === 'failed' && retryAttempt.error ? <Text style={s.errorText}>{retryAttempt.error}</Text> : null}
+          {retryAttempt?.state === 'sending' ? <Text style={s.meta}>Retrying…</Text> : null}
+          {m.retryable && m.send_uid && retryAttempt?.state !== 'sending'
+            ? <Pressable accessibilityRole="button" onPress={() => onRetry(m.send_uid!, m.body ?? '', 'retry')}><Text style={s.retry}>Retry</Text></Pressable>
+            : null}
         </>
       ) : null}
     </View>
