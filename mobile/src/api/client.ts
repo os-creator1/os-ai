@@ -1,9 +1,16 @@
 import type {
-  CallingCapability, ContactProfile, ConversationDetail, ConversationSummary, LoginResult, Me, Scope,
+  CallingCapability, ContactProfile, ConversationDetail, ConversationSummary, LoginResult, Me, Scope, SendResult,
 } from './types';
 
 export class ApiError extends Error {
-  constructor(public status: number, public code: string, message: string) {
+  constructor(
+    public status: number,
+    public code: string,
+    message: string,
+    /** Server says a deliberate Retry is meaningful (a failed message that was recorded). */
+    public retryable: boolean = false,
+    public sendUid: string | null = null,
+  ) {
     super(message);
   }
 }
@@ -35,7 +42,7 @@ export function createApi({ baseUrl, getToken, onUnauthorized, fetchImpl }: Deps
       const json = await res.json().catch(() => ({}));
       if (!res.ok) {
         if (res.status === 401 && auth) onUnauthorized();
-        throw new ApiError(res.status, json?.error?.code ?? 'error', json?.error?.message ?? 'Request failed');
+        throw new ApiError(res.status, json?.error?.code ?? 'error', json?.error?.message ?? 'Request failed', json?.error?.retryable === true, json?.error?.send_uid ?? null);
       }
       return raw || json.data === undefined ? json : json.data;
     } catch (e) {
@@ -64,6 +71,12 @@ export function createApi({ baseUrl, getToken, onUnauthorized, fetchImpl }: Deps
       return call<{ data: ConversationSummary[]; meta: { page: number; next_page: number | null } }>('GET', `${base(s)}/conversations?${p}`, undefined, true, true);
     },
     conversation: (s: Scope, uid: string, beforeId?: number) => call<ConversationDetail>('GET', `${base(s)}/conversations/${encodeURIComponent(uid)}${beforeId === undefined ? '' : `?before_id=${beforeId}`}`),
+    markRead: (s: Scope, uid: string) => call<{ uid: string; unread: boolean }>('POST', `${base(s)}/conversations/${encodeURIComponent(uid)}/read`),
+    /** `idempotencyKey` identifies ONE logical message: resending the same key can never produce a second SMS. */
+    reply: (s: Scope, uid: string, body: string, idempotencyKey: string) =>
+      call<SendResult>('POST', `${base(s)}/conversations/${encodeURIComponent(uid)}/reply`, { body, idempotency_key: idempotencyKey }),
+    retry: (s: Scope, uid: string, sendUid: string) =>
+      call<SendResult>('POST', `${base(s)}/conversations/${encodeURIComponent(uid)}/retry`, { send_uid: sendUid }),
     contact: (s: Scope, uid: string) => call<ContactProfile>('GET', `${base(s)}/contacts/${encodeURIComponent(uid)}`),
     callingCapability: (s: Scope) => call<CallingCapability>('GET', `${base(s)}/calls/capability`),
   };

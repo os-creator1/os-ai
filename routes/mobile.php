@@ -31,6 +31,9 @@ Route::middleware(['auth:sanctum', EnsureMobileToken::class])->group(function ()
     Route::prefix('workspaces/{workspaceUid}/businesses/{businessUid}')->middleware('throttle:120,1')->group(function () {
         Route::get('conversations', [MobileConversationController::class, 'index'])->name('conversations.index');
         Route::get('conversations/{uid}', [MobileConversationController::class, 'show'])->name('conversations.show');
+        Route::post('conversations/{uid}/read', [MobileConversationController::class, 'read'])->name('conversations.read');
+        Route::post('conversations/{uid}/reply', [MobileConversationController::class, 'reply'])->middleware('throttle:30,1')->name('conversations.reply');
+        Route::post('conversations/{uid}/retry', [MobileConversationController::class, 'retry'])->middleware('throttle:30,1')->name('conversations.retry');
         Route::get('contacts/{uid}', [MobileContactController::class, 'show'])->name('contacts.show');
         Route::get('calls/capability', [MobileCallingController::class, 'capability'])->name('calls.capability');
     });

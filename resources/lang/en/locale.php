@@ -1923,6 +1923,7 @@
             'list_empty_filtered'   => 'No conversations in this view.',
             'list_empty_search'     => 'No conversations match your search.',
             'retry_in_progress'     => 'A retry for this message is already in progress.',
+            'contact_opted_out'     => 'This contact has opted out of text messages, so nothing was sent.',
             'retry_refused_ambiguous' => 'This message\'s delivery status could not be confirmed, so it cannot be retried automatically.',
         ],
 

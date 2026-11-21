@@ -43,6 +43,14 @@ abstract class MobileController extends Controller
         // Gates and the Location ACL read Auth::user(); make the token's user the one they see.
         Auth::setUser($this->actor($request));
 
-        return app(MobileBusinessAccess::class)->resolve($this->actor($request), $workspaceUid, $businessUid, $feature, $permission);
+        $resolved = app(MobileBusinessAccess::class)->resolve($this->actor($request), $workspaceUid, $businessUid, $feature, $permission);
+
+        // A locked account (billing/suspension) is refused exactly as the web gate refuses it — after tenancy, so a
+        // foreign Business is still an indistinguishable 404 and only the owner of a locked Business learns it is locked.
+        if ($resolved !== null && app(\App\Library\Entitlement\CustomerAccountAccessGuard::class)->decisionForBusiness($resolved[1])->isLocked()) {
+            throw new \Illuminate\Http\Exceptions\HttpResponseException($this->fail('account_locked', 'This account is locked. Sign in on the web to resolve it.', 403));
+        }
+
+        return $resolved;
     }
 }
