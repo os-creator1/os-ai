@@ -192,6 +192,7 @@ case "$url" in http://*) code=301; body="" ;; *)
     /login) code=200; body="login" ;;
     /register) code=200; body='<div data-role="signup-closed"></div>' ;;
     /register/account) code=419; body="" ;;
+    /.env) code="${STUB_ENV_CODE:-404}"; body="" ;;
     /robots.txt) code="${STUB_ROBOTS_CODE:-200}"; body=$'User-agent: *\nDisallow:\n' ;;
     /stripe/webhook/*) code=400; body="" ;;
     /sites/*) code=404; body="" ;;
@@ -209,6 +210,11 @@ expect_refuse "post-deploy: homepage without a pricing link fails" "no link to /
 expect_pass "post-deploy: marketing disabled expects the original 302 to /login" env STUB_HOME_CODE=302 STUB_HOME_BODY="" PATH="$TMP/fakecurl:$PATH" bash "$PDC" https://getmotiongrove.com closed disabled
 expect_refuse "post-deploy: marketing disabled fails if / still answers 200" "marketing disabled" env PATH="$TMP/fakecurl:$PATH" bash "$PDC" https://getmotiongrove.com closed disabled
 expect_refuse "post-deploy: robots.txt 404 still fails" "/robots.txt answered 404" env STUB_ROBOTS_CODE=404 PATH="$TMP/fakecurl:$PATH" bash "$PDC" https://getmotiongrove.com closed
+expect_pass "post-deploy: /.env denied with 404 passes" env STUB_ENV_CODE=404 PATH="$TMP/fakecurl:$PATH" bash "$PDC" https://getmotiongrove.com closed
+expect_pass "post-deploy: /.env denied with 403 passes" env STUB_ENV_CODE=403 PATH="$TMP/fakecurl:$PATH" bash "$PDC" https://getmotiongrove.com closed
+for envcode in 200 301 302 401 500 000; do
+    expect_refuse "post-deploy: /.env answering $envcode fails" "GET /.env is not served (expected 403 or 404, got $envcode)" env STUB_ENV_CODE=$envcode PATH="$TMP/fakecurl:$PATH" bash "$PDC" https://getmotiongrove.com closed
+done
 expect_refuse "post-deploy: bad third argument" "third argument" env PATH="$TMP/fakecurl:$PATH" bash "$PDC" https://getmotiongrove.com closed sometimes
 
 echo
