@@ -1,5 +1,5 @@
 import React from 'react';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react-native';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react-native';
 import { AuthProvider } from '../src/auth/AuthContext';
 import { ApiError } from '../src/api/client';
 import { ConversationDetailScreen } from '../src/screens/ConversationDetailScreen';
@@ -204,7 +204,10 @@ describe('composer', () => {
     await waitFor(() => screen.getByText(/Message accepted, but history could not refresh/));
     expect(api.retry).toHaveBeenCalledTimes(1);
 
-    fireEvent(screen.getByTestId('message-refresh'), 'refresh');
+    // React Native renders RefreshControl as RCTRefreshControl on Android
+    // and strips its testID. Trigger the actual native refresh handler.
+    const refreshControl = screen.UNSAFE_getByType('RCTRefreshControl' as any);
+    await act(async () => { await refreshControl.props.onRefresh(); });
     await waitFor(() => screen.getByText('Carrier could not deliver.'));
     await waitFor(() => expect(screen.queryByText(/Message accepted, but history could not refresh/)).toBeNull());
     expect(screen.getByText('Retry')).toBeTruthy();
