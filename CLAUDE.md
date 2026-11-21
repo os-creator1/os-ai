@@ -49,11 +49,16 @@ takes all four from its own task contract.
      finishing one lane grants none to start another or to invent work;
    - never activates, resumes or bypasses the paused autonomous loop.
 
-Across all three routes, without exception: **Claude never creates the pull
-request and never merges it** — ChatGPT reviews the pushed branch and opens
-the PR, and the human alone merges. **No production-looking database, no real
-data, and no production-looking credential or deployment target is ever
-permitted**, on any route.
+**PR authority depends on the route.** *(routes 1 and 2)* Claude never creates
+or merges a PR; the autonomous state loop remains paused and its
+`merge_policy: human_only` remains unchanged. *(route 3)* The human's
+explicitly authorized task also authorizes Claude to create and, after the
+verification gates below, merge that task's PR without a second approval,
+unless the task expressly reserves the merge for the owner. This permission
+does not authorize a new task or any standing autonomous loop.
+
+**No production-looking database, no real data, and no production-looking
+credential or deployment target is ever permitted**, on any route.
 
 ### State labels — **routes 1 and 2 only**
 
@@ -80,8 +85,29 @@ everywhere but its *mechanism* differs, both mechanisms are stated.
   or `master`. *(routes 1 and 2)* Work exclusively on the pull request branch
   named in the automation state. *(route 3)* Work exclusively on the branch
   its own task contract names.
-- **Never merge a pull request, and never open one.** *(all routes)* ChatGPT
-  reviews the pushed branch and opens the PR; the human alone merges.
+- **PR creation and merge gate.** *(routes 1 and 2)* Claude never opens or
+  merges a PR; the human-only merge policy still applies. *(route 3)* Claude
+  owns the full branch-to-merge lifecycle for the single task the human
+  authorized: commit and push its own branch, create or reuse its PR, run
+  focused tests, inspect applicable GitHub CI and independent review, fix
+  actionable findings, and repeat verification on the **exact final HEAD**.
+  Merge only when the PR is mergeable, all applicable required CI checks have
+  passed, required reviews are satisfied, and no unresolved actionable review
+  findings remain. Use the exact expected head SHA when merging and verify
+  that GitHub reports `merged: true`; never report an unmerged PR as done.
+  If code changes have no applicable CI gate, add or arrange a focused,
+  positive-test-count verification gate instead of assuming silence means
+  green. Documentation-only changes may have no applicable tests; state that
+  plainly. Do not bypass branch protection, dismiss findings without
+  verification, fabricate test results, or force-push. If provider access,
+  repository rules, or an unresolved issue prevents a safe merge, stop and
+  report the exact blocker rather than claiming success. Task-specific
+  instructions to leave a PR open take precedence.
+- **One completion report.** *(route 3)* Continue through normal test,
+  CI, and review correction rounds without seeking repeated approval or
+  sending timer-only progress reports. Finish with one concise report:
+  PR link, final HEAD, merge SHA, real tests/CI and review results, or the
+  concrete external blocker. Never begin another task automatically.
 - **No metered model credentials.** *(all routes)* Do not call OpenAI,
   Anthropic Console, or another paid model API from repository workflows or
   scripts.
