@@ -8,9 +8,10 @@ use App\Models\BusinessMessagingRegistration;
 /**
  * What the customer is told about a toll-free verification, derived only from
  * the saved provider state and reason. A submitted (pending) request is never
- * presented as unsubmitted or rejected: a nonterminal provider state with a
- * reason is a correction request on an existing request, and nothing here ever
- * suggests creating a second one.
+ * presented as unsubmitted or rejected. A correction is actionable only while
+ * Telnyx's current state is waiting_for_customer; a retained reason beside a
+ * waiting-for-review state is history, not an active issue. Nothing here ever
+ * suggests creating a second request.
  *
  * Correction path: Telnyx documents a PATCH for amending a request, but which
  * states accept it (and which path) is not confirmable without live calls, and
@@ -21,6 +22,9 @@ use App\Models\BusinessMessagingRegistration;
  */
 final class TollFreeVerificationFeedback
 {
+    // Stored reasons are kept as history (provider_status_reason) but are only displayed while the
+    // provider state is waiting_for_customer; see for().
+
     private const MISSING_INFO = '/\b(?:missing|required|not provided|isv ?reseller|reseller|registration (?:country|number|type)|business (?:registration|address|name))\b/i';
 
     private const SUBMITTED = 'Your request has already been submitted, so please do not submit it again.';
@@ -52,7 +56,12 @@ final class TollFreeVerificationFeedback
             return self::make('not_submitted', 'Not submitted', 'Not submitted yet', '', '', null, null);
         }
 
-        if ($reason !== null || $provider === 'waiting_for_customer') {
+        // The CURRENT provider state decides whether anything is actionable. Telnyx keeps the last
+        // change-request text on a request after the customer has fixed and resubmitted it, so a
+        // reason next to waiting_for_telnyx / waiting_for_vendor / in_progress is historical and is
+        // neither shown as an active issue nor given a correction action. Only waiting_for_customer
+        // means Telnyx is waiting on the customer.
+        if ($provider === 'waiting_for_customer') {
             $missing = $reason !== null && preg_match(self::MISSING_INFO, $reason) === 1;
             $lead = $reason === null
                 ? 'Telnyx is waiting for information from you but did not say what.'
