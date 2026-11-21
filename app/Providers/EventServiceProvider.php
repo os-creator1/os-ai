@@ -38,6 +38,7 @@ use App\Listeners\Outreach\HandleOutreachInboundMessage;
 use App\Listeners\Coo\InvalidateCooInsights;
 use App\Listeners\Seo\QueueSeoAuditOnWebsitePublished;
 use App\Listeners\NicheBlueprint\InstallBlueprintOnBusinessCreated;
+use App\Listeners\NicheBlueprint\InstallBlueprintOnBusinessIndustryChanged;
 use App\Listeners\NicheBlueprint\InstallBlueprintOnFirstPlanAssigned;
 use App\Listeners\Coo\TriggerCooInsightOnWorkFinished;
 use App\Listeners\Opportunity\TriggerBusinessAdvisorProducer;
@@ -141,6 +142,9 @@ class EventServiceProvider extends ServiceProvider
         // OpportunityProducerTrigger, so with the engine disabled these
         // mappings are inert.
         BusinessUpdated::class => [
+            // A client Business receives its real industry after creation; the Blueprint it resolves to
+            // could not exist at creation. Same idempotent entry point as the §9.1 triggers.
+            InstallBlueprintOnBusinessIndustryChanged::class,
             TriggerBusinessAdvisorProducer::class.'@handleBusinessUpdated',
             // AI-3 §9.3 — a cached COO insight described the old profile.
             InvalidateCooInsights::class.'@handleBusinessUpdated',
