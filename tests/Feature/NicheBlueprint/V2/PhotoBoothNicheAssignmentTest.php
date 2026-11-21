@@ -177,6 +177,16 @@ class PhotoBoothNicheAssignmentTest extends TestCase
         $this->assertSame(1, $code);
         $this->assertSame(0, $this->records($kaleb), 'the valid selector is not applied when another selector is unknown');
         $this->assertNull($this->profileVertical($kaleb));
+
+        // A blank explicit selector must not become a global --apply sweep.
+        // Include a native Photo Booth Business that a sweep WOULD install.
+        [, $native] = $this->client('Untouched Photo Booth', 'photo_booth_service');
+        $this->wipe($native);
+        [$blankCode, $blankOut] = $this->repairRaw(['--business' => ['   '], '--apply' => true]);
+        $this->assertSame(1, $blankCode);
+        $this->assertStringContainsString('selector is empty', $blankOut);
+        $this->assertSame(0, $this->records($native), 'blank selector must never install the native Photo Booth Business');
+        $this->assertSame(0, $this->records($kaleb));
     }
 
     public function test_assignment_never_overwrites_another_niche_an_existing_blueprint_or_skips_the_plan_check(): void
