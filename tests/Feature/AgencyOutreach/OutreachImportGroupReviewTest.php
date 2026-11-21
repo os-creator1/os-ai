@@ -18,6 +18,10 @@ use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Bus;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Queue;
+use App\Enums\Workspace\LocationAccessScope;
+use App\Enums\Workspace\WorkspaceMembershipRole;
+use App\Models\BusinessLocation;
+use App\Repositories\Contracts\WorkspaceMembershipLocationRepository;
 use Tests\Feature\AgencyOutreach\Concerns\CreatesOutreachUiFixtures;
 use Tests\TestCase;
 
@@ -331,5 +335,97 @@ class OutreachImportGroupReviewTest extends TestCase
         $this->assertSame(1, $rows['Photo booth']['n'], 'one logical prospect, not one per Contact copy');
         $this->assertSame(1, $rows['Photo booth']['replied']);
         $this->assertSame(1, $an->kpis()['contacted']);
+    }
+
+    // ---------------------------------------------------------------- third review round
+
+    public function test_an_import_cannot_touch_a_contact_at_a_location_the_actor_cannot_access(): void
+    {
+        $a = $this->outreachAgency('Loc', ['enrolled' => false]);
+        $a['business']->forceFill(['country_code' => 'US'])->save();
+        $biz = $a['business'];
+        $mine = BusinessLocation::create(['business_id' => $biz->id, 'name' => 'Mine', 'service_mode' => 'storefront', 'country_code' => 'US']);
+        $other = BusinessLocation::create(['business_id' => $biz->id, 'name' => 'Other', 'service_mode' => 'storefront', 'country_code' => 'US']);
+
+        // An Admin who reaches the Business but holds a grant for ONE Location only.
+        $admin = $this->createCustomer();
+        $membership = $this->member($a['workspace'], $admin->user, WorkspaceMembershipRole::Admin);
+        $membership->forceFill(['location_access_scope' => LocationAccessScope::Selected])->save();
+        app(WorkspaceMembershipLocationRepository::class)->assign($membership, $mine);
+
+        // The number already belongs to a Contact pinned to the location the Admin cannot see, in a CRM group.
+        $old = ContactGroups::create(['customer_id' => $biz->customer_id, 'business_id' => $biz->id, 'name' => 'Other site', 'status' => true]);
+        $protected = Contacts::create(['customer_id' => $biz->customer_id, 'business_id' => $biz->id, 'group_id' => $old->id, 'location_id' => $other->id, 'phone' => '12133000001', 'status' => 'subscribe']);
+        $open = Contacts::create(['customer_id' => $biz->customer_id, 'business_id' => $biz->id, 'group_id' => $old->id, 'location_id' => $mine->id, 'phone' => '12133000002', 'status' => 'subscribe']);
+
+        $this->authenticateAs($admin);
+        $batch = $this->upload($a, $this->csv(4));
+        $before = [AgencyProspect::where('workspace_id', $a['workspace']->id)->count(), $this->bizGroups($a)->count(), Contacts::where('business_id', $biz->id)->count(),
+            DB::table('custom_field_values')->count(), CustomFieldDefinition::where('business_id', $biz->id)->count(), AgencyProspectGroupLink::count()];
+        $this->commit($a, $batch, 'Admin import')->assertRedirect()->assertSessionHas('flash_error');
+
+        // Fail closed and atomic: nothing was imported, including for the rows the Admin COULD have handled.
+        $this->assertSame($before, [AgencyProspect::where('workspace_id', $a['workspace']->id)->count(), $this->bizGroups($a)->count(), Contacts::where('business_id', $biz->id)->count(),
+            DB::table('custom_field_values')->count(), CustomFieldDefinition::where('business_id', $biz->id)->count(), AgencyProspectGroupLink::count()]);
+        $this->assertSame(0, DB::table('custom_field_values')->where('contact_id', $protected->id)->count(), 'no custom field written onto an inaccessible Contact');
+        $this->assertSame(0, DB::table('custom_field_values')->where('contact_id', $open->id)->count());
+        $this->assertSame(1, Contacts::where('business_id', $biz->id)->whereIn('phone', ['12133000001', '2133000001'])->count(), 'no subscribed twin as a workaround');
+        $this->assertSame((int) $old->id, (int) $protected->refresh()->group_id);
+        $this->assertSame('analyzed', $batch->refresh()->status);
+        $message = (string) session('flash_error');
+        $this->assertStringNotContainsString('Other', $message, 'the protected Location is not named');
+        $this->assertStringNotContainsString('12133000001', $message, 'nor the Contact or number');
+
+        // The Workspace owner (full access) imports the same file: unchanged behaviour, and the Contact is enriched.
+        $this->authenticateAs($a['customer']);
+        $this->commit($a, $this->upload($a, $this->csv(2), 'o.csv'), 'Owner import')->assertRedirect();
+        $this->assertGreaterThan(0, DB::table('custom_field_values')->where('contact_id', $protected->id)->count(), 'a fully authorised actor may enrich it');
+    }
+
+    public function test_a_repeated_submission_of_a_completed_import_writes_nothing(): void
+    {
+        $a = $this->outreachAgency('Idem', ['enrolled' => false]);
+        $this->authenticateAs($a['customer']);
+        $biz = $a['business'];
+        $batch = $this->upload($a, $this->csv(4));
+        $this->commit($a, $batch, 'Done once')->assertRedirect();
+        $group = $this->bizGroups($a)->where('name', 'Done once')->firstOrFail();
+        $reportBefore = $batch->fresh()->group_report;
+        $summaryBefore = $batch->fresh()->summary;
+
+        // The CRM is edited by hand afterwards: delete one contact, clear one value, move one to another group.
+        $elsewhere = ContactGroups::create(['customer_id' => $biz->customer_id, 'business_id' => $biz->id, 'name' => 'Elsewhere', 'status' => true]);
+        $deleted = Contacts::where('group_id', $group->id)->where('phone', '12133000000')->firstOrFail();
+        $deleted->delete();
+        $cleared = Contacts::where('group_id', $group->id)->where('phone', '12133000001')->firstOrFail();
+        $def = CustomFieldDefinition::where('business_id', $biz->id)->where('label', 'Business type')->firstOrFail();
+        app(CustomFieldValueService::class)->clear($biz, $cleared, $def);
+        $moved = Contacts::where('group_id', $group->id)->where('phone', '12133000002')->firstOrFail();
+        $moved->update(['group_id' => $elsewhere->id]);
+        $linksBefore = AgencyProspectGroupLink::where('contact_group_id', $group->id)->orderBy('prospect_id')->get(['prospect_id', 'contact_id', 'contact_in_group'])->toArray();
+        $contactCount = Contacts::where('business_id', $biz->id)->count();
+        $valueCount = DB::table('custom_field_values')->count();
+        $groupCount = $this->bizGroups($a)->count();
+
+        // The same request is submitted again (double click, retry, back button), even with a different name.
+        $this->commit($a, $batch, 'Done once')->assertRedirect($this->outreachRoute('prospects.import.done', $a['workspace'], [$batch->uid]));
+        $this->commit($a, $batch->fresh(), 'A different name')->assertRedirect();
+
+        $this->assertSame($contactCount, Contacts::where('business_id', $biz->id)->count(), 'a deleted contact is not recreated');
+        $this->assertSame(0, Contacts::where('business_id', $biz->id)->where('phone', '12133000000')->count());
+        $this->assertSame(0, DB::table('custom_field_values')->where('contact_id', $cleared->id)->where('definition_id', $def->id)->count(), 'a cleared value is not restored');
+        $this->assertSame($valueCount, DB::table('custom_field_values')->count());
+        $this->assertSame((int) $elsewhere->id, (int) $moved->refresh()->group_id, 'a moved contact stays moved');
+        $this->assertSame($linksBefore, AgencyProspectGroupLink::where('contact_group_id', $group->id)->orderBy('prospect_id')->get(['prospect_id', 'contact_id', 'contact_in_group'])->toArray(), 'group references are not rewritten');
+        $this->assertSame($groupCount, $this->bizGroups($a)->count());
+        $this->assertEquals($reportBefore, $batch->fresh()->group_report, 'the original completion report is kept');
+        $this->assertEquals($summaryBefore, $batch->fresh()->summary);
+
+        // The explicit repair workflow is separate and untouched: a batch WITHOUT a group can still be materialised.
+        $legacy = $this->upload($a, $this->csv(2, 3000100), 'legacy.csv');
+        app(\App\Library\AgencyOutreach\Import\ProspectImporter::class)->commitProspects($a['workspace'], $legacy);
+        $this->artisan('outreach:backfill-import-groups', ['--workspace' => $a['workspace']->uid, '--apply' => true])->assertSuccessful();
+        $this->assertNotNull($legacy->fresh()->contact_group_id);
+        $this->assertSame($contactCount + 2, Contacts::where('business_id', $biz->id)->count());
     }
 }
