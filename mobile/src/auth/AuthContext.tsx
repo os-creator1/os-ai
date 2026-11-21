@@ -9,6 +9,9 @@ import * as store from './storage';
 
 type State = {
   ready: boolean;
+  restoreError: string | null;
+  retryRestore: () => Promise<void>;
+  discardStoredSession: () => Promise<void>;
   signedIn: boolean;
   me: Me | null;
   scope: Scope | null;
@@ -30,6 +33,7 @@ export const useAuth = () => {
 export function AuthProvider({ children, apiOverride }: { children: React.ReactNode; apiOverride?: Api }) {
   const tokenRef = useRef<string | null>(null);
   const [ready, setReady] = useState(false);
+  const [restoreError, setRestoreError] = useState<string | null>(null);
   const [me, setMe] = useState<Me | null>(null);
   const [scope, setScope] = useState<Scope | null>(null);
 
@@ -37,6 +41,7 @@ export function AuthProvider({ children, apiOverride }: { children: React.ReactN
     tokenRef.current = null;
     setMe(null);
     setScope(null);
+    setRestoreError(null);
     await store.clearSession();
   }, []);
 
@@ -55,22 +60,39 @@ export function AuthProvider({ children, apiOverride }: { children: React.ReactN
     void registerForPush(api, Constants.expoConfig?.version).catch(() => undefined);
   }, [api]);
 
-  useEffect(() => {
-    (async () => {
-      try {
-        if (!apiOverride) assertSecureOrigin(apiBaseUrl());
-        const s = await store.loadSession();
-        if (s) {
-          tokenRef.current = s.token;
-          await hydrate();
-        }
-      } catch {
-        await wipe();
-      } finally {
-        setReady(true);
+  const retryRestore = useCallback(async () => {
+    setRestoreError(null);
+
+    try {
+      if (!apiOverride) assertSecureOrigin(apiBaseUrl());
+      const saved = await store.loadSession();
+
+      if (saved) {
+        tokenRef.current = saved.token;
+        await hydrate();
+      } else {
+        tokenRef.current = null;
+        setScope(null);
+        setMe(null);
       }
-    })();
+    } catch (error) {
+      // The API's 401 handler also clears the token. Keep that behavior for
+      // genuine revocations/expired credentials, including test API overrides.
+      if (error instanceof Error && 'status' in error && error.status === 401) {
+        await wipe();
+      } else {
+        // A timeout, offline startup, or server 5xx is NOT a logout. Keep
+        // SecureStore untouched and show a retry state instead of Login.
+        setRestoreError('Could not connect to MotionGrove. Check your connection and try again.');
+      }
+    } finally {
+      setReady(true);
+    }
   }, [apiOverride, hydrate, wipe]);
+
+  useEffect(() => {
+    void retryRestore();
+  }, [retryRestore]);
 
   const signIn = useCallback(async (email: string, password: string) => {
     const res = await api.login(email.trim(), password, {
@@ -99,6 +121,9 @@ export function AuthProvider({ children, apiOverride }: { children: React.ReactN
 
   const business = me?.businesses.find((b) => scope && b.business_uid === scope.businessUid && b.workspace_uid === scope.workspaceUid) ?? null;
 
-  const value: State = { ready, signedIn: me !== null, me, scope, business, api, signIn, signOut, selectBusiness, clearBusiness };
+  const value: State = {
+    ready, restoreError, retryRestore, discardStoredSession: wipe,
+    signedIn: me !== null, me, scope, business, api, signIn, signOut, selectBusiness, clearBusiness,
+  };
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
