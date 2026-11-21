@@ -19,11 +19,12 @@ type Props = {
 export function NotificationRouter({ openConversation, onRejected }: Props) {
   const { signedIn, scope, selectBusiness, refreshAccess } = useAuth();
   const [pending, setPending] = useState<NotificationTarget | null>(null);
-  const [selected, setSelected] = useState(false);
+  // The target whose access was confirmed and whose Business was selected. Tied to ONE target object, so a newer tap
+  // can never inherit an older tap's validation.
+  const [validated, setValidated] = useState<NotificationTarget | null>(null);
   const handled = useRef(new Set<string>());
-  const busy = useRef(false);
 
-  // 1. Capture taps (while running) and the tap that launched the app.
+  // 1. Capture taps (while running) and the tap that launched the app. A newer tap replaces the pending one.
   useEffect(() => {
     const accept = (resp: Notifications.NotificationResponse | null | undefined) => {
       if (!resp) return;
@@ -32,7 +33,7 @@ export function NotificationRouter({ openConversation, onRejected }: Props) {
       const target = parseNotificationTarget(resp.notification.request.content.data);
       if (!target) return;
       handled.current.add(id);
-      setSelected(false);
+      setValidated(null);
       setPending(target);
     };
     const sub = typeof Notifications.addNotificationResponseReceivedListener === 'function'
@@ -44,29 +45,36 @@ export function NotificationRouter({ openConversation, onRejected }: Props) {
   }, []);
 
   // 2. A signed-out session never opens anything and keeps no stale target.
-  useEffect(() => { if (!signedIn) { setPending(null); setSelected(false); } }, [signedIn]);
+  useEffect(() => { if (!signedIn) { setPending(null); setValidated(null); } }, [signedIn]);
 
-  // 3. Re-validate access with the server, then select the Business.
+  // 3. Re-validate access with the server, then select the Business — for THIS pending target only. If another tap
+  //    supersedes it mid-flight, this attempt is cancelled and its result discarded; the new target validates itself.
+  const scopeRef = useRef(scope);
+  scopeRef.current = scope;
   useEffect(() => {
-    if (!pending || !signedIn || selected || busy.current) return;
-    busy.current = true;
+    if (!pending || !signedIn || validated === pending) return;
+    let cancelled = false;
     (async () => {
       const fresh = await refreshAccess();
+      if (cancelled) return;
       const biz = fresh?.businesses.find((b) => b.business_uid === pending.businessUid && b.features.conversations);
       if (!biz) { setPending(null); onRejected?.(); return; }
-      if (scope?.businessUid !== biz.business_uid || scope?.workspaceUid !== biz.workspace_uid) await selectBusiness(biz);
-      setSelected(true);
-    })().finally(() => { busy.current = false; });
-  }, [pending, signedIn, selected, scope, refreshAccess, selectBusiness, onRejected]);
+      const cur = scopeRef.current;
+      if (cur?.businessUid !== biz.business_uid || cur?.workspaceUid !== biz.workspace_uid) await selectBusiness(biz);
+      if (cancelled) return;
+      setValidated(pending);
+    })();
+    return () => { cancelled = true; };
+  }, [pending, validated, signedIn, refreshAccess, selectBusiness, onRejected]);
 
-  // 4. Once the selected Business is the active scope, open the conversation.
+  // 4. Once the validated target's Business is the active scope, open the conversation.
   useEffect(() => {
-    if (pending && selected && scope?.businessUid === pending.businessUid) {
+    if (pending && validated === pending && scope?.businessUid === pending.businessUid) {
       openConversation(pending.conversationUid);
       setPending(null);
-      setSelected(false);
+      setValidated(null);
     }
-  }, [pending, selected, scope, openConversation]);
+  }, [pending, validated, scope, openConversation]);
 
   return null;
 }

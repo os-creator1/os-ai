@@ -111,7 +111,7 @@ function ConversationThread({ route, navigation }: Props) {
     try {
       const d = await api.conversation(scope, uid);
       if (version !== threadGeneration.current || mine !== liveSeq.current) return;
-      stick.current = true;
+      // Scroll intent is NOT touched here: a background update keeps the user where they are (see onScroll).
       // The server only returns the latest window. Messages that just slid out of it stay on screen: they are folded
       // into the loaded history, so a growing thread never opens a gap. `hasMore` is left as it was: the slid-out
       // messages are contiguous with the old window, so what lies before the loaded history is unchanged.
@@ -262,6 +262,12 @@ function ConversationThread({ route, navigation }: Props) {
         contentContainerStyle={{ padding: space.md }}
         refreshing={refreshing}
         onRefresh={async () => { setRefreshing(true); await load(); setRefreshing(false); }}
+        scrollEventThrottle={100}
+        // Follow new messages only while the user is at (or near) the bottom; scrolling up to read history stops the following.
+        onScroll={(e) => {
+          const { contentOffset, contentSize, layoutMeasurement } = e.nativeEvent;
+          stick.current = contentOffset.y + layoutMeasurement.height >= contentSize.height - 80;
+        }}
         onContentSizeChange={() => { if (stick.current) listRef.current?.scrollToEnd({ animated: true }); }}
         ListHeaderComponent={hasMore
           ? <Button title={loadingEarlier ? 'Loading earlier messages…' : 'Load earlier messages'} variant="plain" disabled={loadingEarlier} onPress={() => { void loadEarlier(); }} />

@@ -224,6 +224,27 @@ describe('live conversation detail: window and focus', () => {
     for (const body of ['m1', 'm2', 'm3', 'm4', 'm5']) expect(screen.getAllByText(body)).toHaveLength(1);
   });
 
+  it('does not yank the user to the bottom on a live update after they scrolled up to read history', async () => {
+    const FlatList = require('react-native').FlatList;
+    const spy = jest.spyOn(FlatList.prototype, 'scrollToEnd').mockImplementation(() => undefined);
+    const api = fakeApi({ conversation: jest.fn().mockResolvedValueOnce(detail([msg(1, 'm1')], false, true)).mockResolvedValue(detail([msg(1, 'm1'), msg(2, 'm2')])) });
+    const t = await open(api, nav());
+    const list = screen.getByTestId('conversation-messages');
+    // The user scrolls up (far from the bottom).
+    await act(async () => { fireEvent.scroll(list, { nativeEvent: { contentOffset: { y: 0 }, contentSize: { height: 2000 }, layoutMeasurement: { height: 600 } } }); });
+    spy.mockClear();
+    await act(async () => { t.emit(ch, evt); });
+    await waitFor(() => screen.getByText('m2'));
+    await act(async () => { fireEvent(list, 'contentSizeChange', 100, 2100); });
+    expect(spy).not.toHaveBeenCalled();
+
+    // Back at the bottom: following resumes.
+    await act(async () => { fireEvent.scroll(list, { nativeEvent: { contentOffset: { y: 1500 }, contentSize: { height: 2100 }, layoutMeasurement: { height: 600 } } }); });
+    await act(async () => { fireEvent(list, 'contentSizeChange', 100, 2300); });
+    expect(spy).toHaveBeenCalled();
+    spy.mockRestore();
+  });
+
   it('ignores a slower, older live response that finishes after a newer one (no stale overwrite)', async () => {
     const deferred: Array<(v: any) => void> = [];
     const conversation = jest.fn()

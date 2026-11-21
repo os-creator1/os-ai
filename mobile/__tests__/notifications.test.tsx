@@ -129,4 +129,26 @@ describe('NotificationRouter', () => {
     await t.tap(response('n7', payload('biz-aaaaaaaa', 'conv-uid-0001')));
     expect(t.open).not.toHaveBeenCalled();
   });
+
+  it('a newer tap supersedes an older one whose validation is still in flight (no deadlock, only the newest opens)', async () => {
+    let releaseFirst: (v: any) => void = () => undefined;
+    let hold = false;
+    let held = false;
+    const t = setup([bizA, bizB], async () => {
+      // After sign-in, the FIRST re-validation (tap A's) is held open; every other call answers immediately.
+      if (hold && !held) { held = true; return new Promise((r) => { releaseFirst = r; }); }
+      return { user, businesses: [bizA, bizB] };
+    });
+    await render(t.ui);
+    await waitFor(() => screen.getByText(/^in:/));
+    hold = true;
+    await t.tap(response('a1', payload('biz-aaaaaaaa', 'conv-for-A-0001')));
+    await waitFor(() => expect(held).toBe(true));
+    await t.tap(response('b1', payload('biz-bbbbbbbb', 'conv-for-B-0001')));   // while A is still validating
+    await waitFor(() => expect(t.open).toHaveBeenCalledWith('conv-for-B-0001'));
+    await act(async () => { releaseFirst({ user, businesses: [bizA, bizB] }); });   // A's stale validation finally returns
+    expect(t.open).toHaveBeenCalledTimes(1);
+    expect(t.open).not.toHaveBeenCalledWith('conv-for-A-0001');
+    expect(screen.getByText('in:biz-bbbbbbbb')).toBeTruthy();
+  });
 });
