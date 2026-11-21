@@ -390,9 +390,12 @@ class TollFreeVerificationFeedbackTest extends TestCase
 
         $this->assertStringContainsString('Telnyx has requested a change to your SMS verification.', $html);
         $this->assertStringContainsString('Change use case to Mixed.', $html);
-        $this->assertStringContainsString('Needs attention', $html);
-        $this->assertStringContainsString('Review verification details', $html);
+        $this->assertStringContainsString('Correction requested', $html);
+        $this->assertStringContainsString('View submitted details', $html);
+        $this->assertStringNotContainsString('Review verification details', $html);
         $this->assertStringContainsString('Contact support', $html);
+        $this->assertStringContainsString('Verification submitted — correction requested', $html);
+        $this->assertStringContainsString('data-role="resolve-verification-issue"', $html);
         $this->assertStringNotContainsString('typically reviewed within a few business days', $html);
         $this->assertStringNotContainsString('id="registration-form"', $html);
     }
@@ -408,13 +411,117 @@ class TollFreeVerificationFeedbackTest extends TestCase
     public function test_page_shows_waiting_for_vendor_and_for_telnyx_without_a_reason_as_no_problem(): void
     {
         $vendor = $this->page(['provider_status' => 'waiting_for_vendor']);
-        $this->assertStringContainsString('Under carrier review', $vendor);
-        $this->assertStringContainsString('Your verification has been submitted to the carriers. No action is currently required.', $vendor);
+        $this->assertStringContainsString('Verification submitted — under carrier review', $vendor);
+        $this->assertStringContainsString('No action is currently required', $vendor);
         $this->assertStringNotContainsString('Needs attention', $vendor);
 
         $telnyx = $this->page(['provider_status' => 'waiting_for_telnyx']);
-        $this->assertStringContainsString('Telnyx is reviewing your verification request.', $telnyx);
+        $this->assertStringContainsString('Verification submitted — awaiting Telnyx review', $telnyx);
+        $this->assertStringContainsString('Telnyx is reviewing it', $telnyx);
         $this->assertStringNotContainsString('Needs attention', $telnyx);
+    }
+
+    public function test_a_submitted_registration_never_shows_initial_submission_instructions(): void
+    {
+        foreach ([
+            ['provider_status' => 'waiting_for_telnyx'],
+            ['provider_status' => 'waiting_for_vendor'],
+            ['provider_status' => 'waiting_for_telnyx', 'provider_status_reason' => 'change use case to Mixed.'],
+            ['provider_status' => 'waiting_for_customer'],
+            [],
+        ] as $state) {
+            $html = $this->page($state);
+
+            $this->assertStringContainsString('has been submitted to Telnyx and is being tracked', $html);
+            $this->assertStringNotContainsString('nothing is sent until you submit', $html);
+            $this->assertStringNotContainsString('One more step before this number', $html);
+            $this->assertStringNotContainsString('id="registration-form"', $html);
+            $this->assertStringNotContainsString('Rejected', $html);
+            $this->assertStringContainsString('data-role="registration-tracker"', $html);
+        }
+    }
+
+    public function test_a_correction_request_has_a_functional_support_action_with_only_safe_context(): void
+    {
+        $html = $this->page(['provider_status' => 'waiting_for_telnyx', 'provider_status_reason' => 'change use case to Mixed.', 'provider_registration_id' => 'tfv_secret_id']);
+
+        $this->assertMatchesRegularExpression('#data-role="resolve-verification-issue"#', $html);
+        preg_match('#href="(mailto:[^"]+)"[^>]*data-role="resolve-verification-issue"|data-role="resolve-verification-issue"[^>]*href="(mailto:[^"]+)"#', $html, $m);
+        $mailto = html_entity_decode($m[1] ?: $m[2]);
+        $this->assertStringStartsWith('mailto:support@getmotiongrove.com?subject=', $mailto);
+        $body = rawurldecode(substr($mailto, strpos($mailto, '&body=') + 6));
+        $this->assertStringContainsString('Harbor Lane Studios LLC', $body);
+        $this->assertStringContainsString('Number: +1888555', $body);
+        $this->assertStringContainsString('Change use case to Mixed.', $body);
+        $this->assertStringContainsString('Do not create a new request', $body);
+        $this->assertStringNotContainsString('tfv_secret_id', $html);
+        $this->assertStringNotContainsString('fixture_api_key_not_a_real_credential', $html);
+        // The tracker marks the review stage as needing attention, not as plain "in review".
+        $this->assertStringContainsString('Correction requested', $html);
+    }
+
+    public function test_no_resolve_action_without_a_correction_and_no_dead_end_link(): void
+    {
+        foreach ([['provider_status' => 'waiting_for_telnyx'], ['provider_status' => 'waiting_for_vendor']] as $state) {
+            $html = $this->page($state);
+            $this->assertStringNotContainsString('resolve-verification-issue', $html);
+            $this->assertStringNotContainsString('Review verification details', $html);
+            $this->assertStringContainsString('View submitted details', $html);
+            $this->assertStringContainsString('toll-free-submitted-details', $html);
+        }
+    }
+
+    public function test_rejected_is_distinct_from_a_pending_correction_and_verified_has_no_warning(): void
+    {
+        $rejected = $this->page(['status' => 'rejected', 'rejection_reason' => 'Opt-in evidence unreachable.', 'provider_status' => 'rejected']);
+        $this->assertStringContainsString('Telnyx rejected the submitted verification', $rejected);
+        $this->assertStringNotContainsString('correction requested', $rejected);
+        $this->assertStringNotContainsString('data-role="resolve-verification-issue"', $rejected);
+
+        $row = $this->registration(['status' => 'approved', 'provider_status' => 'verified', 'provider_status_reason' => 'stale']);
+        $feedback = \App\Library\Messaging\Registration\TollFreeVerificationFeedback::for($row);
+        $this->assertSame('verified', $feedback['key']);
+        $this->assertNull($feedback['reason']);
+        $this->assertFalse($feedback['correction']);
+
+        $pending = \App\Library\Messaging\Registration\TollFreeVerificationFeedback::for($this->registration(['provider_status' => 'waiting_for_telnyx']));
+        $this->assertSame('Verification submitted — awaiting Telnyx review', $pending['headline']);
+        $this->assertSame('not_submitted', \App\Library\Messaging\Registration\TollFreeVerificationFeedback::for($this->registration(['status' => 'not_started']))['key']);
+    }
+
+    public function test_refreshing_from_the_page_changes_only_provider_feedback_and_never_submits_again(): void
+    {
+        [$customer, $business, $workspace] = $this->tenant(WorkspacePlanTier::Growth);
+        $number = $this->attachNumber($this->attachIdentity($business), '+1888555' . random_int(1000, 9999));
+        $number->update(['number_type' => 'toll_free']);
+        $registration = $this->registration(['provider_status' => 'waiting_for_telnyx'], $business);
+        $this->authenticateAs($customer);
+        $before = $registration->fresh()->only(['status', 'use_case', 'campaign_description', 'consent_confirmations', 'provider_registration_id', 'submitted_at', 'legal_business_name']);
+        $numberBefore = $number->fresh()->only(['phone_number', 'status', 'is_primary', 'number_type', 'business_messaging_identity_id']);
+
+        $this->fakeStatus(['data' => ['verificationStatus' => 'Waiting For Telnyx', 'reason' => 'change use case to Mixed.']]);
+        $show = route('customer.workspaces.businesses.text-messaging.show', [$workspace->uid, $business->uid]);
+
+        $this->post(route('customer.workspaces.businesses.text-messaging.registration.refresh', [$workspace->uid, $business->uid]))->assertRedirect();
+        $html = str_replace('&#039;', "'", $this->get($show)->assertOk()->getContent());
+
+        // Telnyx's change is shown accurately...
+        $this->assertStringContainsString('Change use case to Mixed.', $html);
+        $this->assertStringContainsString('Verification submitted — correction requested', $html);
+        // ...and then a later confirmed state replaces it.
+        $this->fakeStatus(['data' => ['verificationStatus' => 'Waiting For Vendor']]);
+        BusinessMessagingRegistration::query()->update(['provider_status_checked_at' => now()->subMinutes(5)]);
+        $this->post(route('customer.workspaces.businesses.text-messaging.registration.refresh', [$workspace->uid, $business->uid]))->assertRedirect();
+        $html = str_replace('&#039;', "'", $this->get($show)->assertOk()->getContent());
+        $this->assertStringNotContainsString('Change use case to Mixed.', $html);
+        $this->assertStringContainsString('under carrier review', $html);
+
+        // Only GET status calls: no submission, PATCH or POST to Telnyx, and nothing else altered.
+        Http::assertSent(fn ($request) => $request->method() === 'GET');
+        Http::assertNotSent(fn ($request) => $request->method() !== 'GET');
+        $this->assertSame($before, $registration->fresh()->only(array_keys($before)));
+        $this->assertSame($numberBefore, $number->fresh()->only(array_keys($numberBefore)));
+        $this->assertSame(1, BusinessMessagingRegistration::query()->count());
     }
 
     public function test_page_shows_verified_without_stale_warnings_and_rejected_with_the_real_reason_or_the_fallback(): void
@@ -424,6 +531,7 @@ class TollFreeVerificationFeedbackTest extends TestCase
 
         $rejected = $this->page(['status' => 'rejected', 'rejection_reason' => 'Opt-in evidence unreachable.', 'provider_status' => 'rejected']);
         $this->assertStringContainsString('Opt-in evidence unreachable.', $rejected);
+        $this->assertStringContainsString('Verification rejected', $rejected);
         $this->assertStringContainsString('Needs attention', $rejected);
 
         $bare = $this->page(['status' => 'rejected', 'provider_status' => 'rejected']);
