@@ -1,5 +1,5 @@
 import React from 'react';
-import { NavigationContainer } from '@react-navigation/native';
+import { NavigationContainer, createNavigationContainerRef } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { useAuth } from '../auth/AuthContext';
 import { BusinessSelectorScreen } from '../screens/BusinessSelectorScreen';
@@ -10,9 +10,15 @@ import { ConversationsScreen } from '../screens/ConversationsScreen';
 import { LoginScreen } from '../screens/LoginScreen';
 import { Button, ErrorState, Loading } from '../screens/ui';
 import { View } from 'react-native';
+import { NotificationRouter } from './NotificationRouter';
 import type { RootStack } from './types';
 
 const Stack = createNativeStackNavigator<RootStack>();
+const navRef = createNavigationContainerRef<RootStack>();
+
+function openConversation(uid: string) {
+  if (navRef.isReady()) navRef.navigate('ConversationDetail', { uid, title: 'Conversation' });
+}
 
 export function Navigation() {
   const { ready, restoreError, retryRestore, discardStoredSession, signedIn, scope } = useAuth();
@@ -27,7 +33,8 @@ export function Navigation() {
   }
 
   return (
-    <NavigationContainer>
+    <NavigationContainer ref={navRef}>
+      <NotificationRouter openConversation={openConversation} />
       <Stack.Navigator>
         {!signedIn ? (
           <Stack.Screen name="Login" component={LoginScreen} options={{ headerShown: false }} />

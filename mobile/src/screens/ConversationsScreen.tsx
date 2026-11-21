@@ -3,6 +3,8 @@ import { FlatList, Pressable, RefreshControl, StyleSheet, Text, TextInput, View 
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { ConversationSummary } from '../api/types';
 import { useAuth } from '../auth/AuthContext';
+import { NotificationBanner } from '../notifications/NotificationBanner';
+import { useRealtime } from '../realtime/RealtimeProvider';
 import { colors, space } from '../theme';
 import type { RootStack } from '../navigation/types';
 import { Button, ErrorState, Loading } from './ui';
@@ -52,6 +54,36 @@ export function ConversationsScreen({ navigation }: Props) {
     return () => { generation.current++; };
   }, [load]);
 
+  /**
+   * Live update: fold page 1 into what is already on screen. Conversations that moved or changed (new message, unread,
+   * delivery state) jump to the top in server order; older pages the user loaded stay; nothing is shown twice.
+   * Under the Unread filter a read/unread change can add or remove rows, so that view simply reloads.
+   */
+  const refreshTop = useCallback(async () => {
+    if (!scope) return;
+    if (filter !== 'all' || search.trim() !== '') { void load(true); return; }
+    const current = generation.current;
+    try {
+      const res = await api.conversations(scope, { filter, page: 1 });
+      if (generation.current !== current) return;
+      setItems((previous) => {
+        if (previous === null) return res.data;
+        const fresh = new Set(res.data.map((c) => c.uid));
+        return [...res.data, ...previous.filter((c) => !fresh.has(c.uid))];
+      });
+      setNextPage((n) => n ?? res.meta.next_page);
+    } catch { /* silent: the next event or pull-to-refresh retries */ }
+  }, [api, scope, filter, search, load]);
+
+  const debounce = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useRealtime((e) => {
+    if (e.kind === 'change' || e.kind === 'resync') {
+      if (debounce.current) clearTimeout(debounce.current);
+      debounce.current = setTimeout(() => { void refreshTop(); }, 250);
+    }
+  });
+  useEffect(() => () => { if (debounce.current) clearTimeout(debounce.current); }, []);
+
   const loadMore = useCallback(async () => {
     if (!scope || nextPage === null || items === null || refreshing || fetchingMore.current) return;
     fetchingMore.current = true;
@@ -93,6 +125,7 @@ export function ConversationsScreen({ navigation }: Props) {
   // replacing the entire screen here would blur the TextInput on every key.
   return (
     <View style={s.wrap}>
+      <NotificationBanner />
       <TextInput style={s.search} placeholder="Search name or number" accessibilityLabel="Search" value={search}
         onChangeText={setSearch} autoCapitalize="none" returnKeyType="search" />
       <View style={s.tabs}>

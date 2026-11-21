@@ -21,6 +21,8 @@ type State = {
   signOut: () => Promise<void>;
   selectBusiness: (b: Business) => Promise<void>;
   clearBusiness: () => Promise<void>;
+  /** Re-asks the SERVER which Businesses this person may open right now (used before honouring a notification tap). */
+  refreshAccess: () => Promise<Me | null>;
 };
 
 const Ctx = createContext<State | null>(null);
@@ -119,11 +121,23 @@ export function AuthProvider({ children, apiOverride }: { children: React.ReactN
 
   const clearBusiness = useCallback(async () => { setScope(null); }, []);
 
+  const refreshAccess = useCallback(async (): Promise<Me | null> => {
+    try {
+      const next = await api.me();
+      setMe(next);
+      // A Business that is no longer listed must stop being the active scope immediately.
+      setScope((cur) => (cur && next.businesses.some((b) => b.business_uid === cur.businessUid && b.workspace_uid === cur.workspaceUid) ? cur : null));
+      return next;
+    } catch {
+      return null;
+    }
+  }, [api]);
+
   const business = me?.businesses.find((b) => scope && b.business_uid === scope.businessUid && b.workspace_uid === scope.workspaceUid) ?? null;
 
   const value: State = {
     ready, restoreError, retryRestore, discardStoredSession: wipe,
-    signedIn: me !== null, me, scope, business, api, signIn, signOut, selectBusiness, clearBusiness,
+    signedIn: me !== null, me, scope, business, api, signIn, signOut, selectBusiness, clearBusiness, refreshAccess,
   };
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

@@ -129,6 +129,9 @@
             // cached here ever survives past the request/test that wrote it.
             $this->app->singleton(\App\Library\Support\RequestScopedCache::class);
 
+            // MotionGrove Mobile push: Expo in production; every test rebinds a fake.
+            $this->app->bind(\App\Library\Mobile\Push\MobilePushTransport::class, \App\Library\Mobile\Push\ExpoPushTransport::class);
+
             // SEO Keyword Rank Tracking V1 — the paid SERP provider boundary and
             // the Search Console seam. Tests rebind SeoRankProvider to
             // FakeSeoRankProvider; nothing else depends on a vendor class.

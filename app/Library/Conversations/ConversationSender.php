@@ -100,6 +100,17 @@ class ConversationSender
      */
     public function retry(ChatBox $box, string $sendUid): ?JsonResponse
     {
+        $response = $this->performRetry($box, $sendUid);
+
+        if ($response !== null) {
+            app(\App\Library\Mobile\MobileConversationNotifier::class)->changed($box, \App\Events\Mobile\MobileConversationChanged::OUTBOUND);
+        }
+
+        return $response;
+    }
+
+    private function performRetry(ChatBox $box, string $sendUid): ?JsonResponse
+    {
         $business = $box->business;
 
         $message = ChatBoxMessage::where('box_id', $box->id)->where('send_uid', $sendUid)->first();

@@ -3,6 +3,7 @@
 use App\Http\Controllers\Mobile\MobileAuthController;
 use App\Http\Controllers\Mobile\MobileBusinessController;
 use App\Http\Controllers\Mobile\MobileCallingController;
+use App\Http\Controllers\Mobile\MobileRealtimeController;
 use App\Http\Controllers\Mobile\MobileContactController;
 use App\Http\Controllers\Mobile\MobileConversationController;
 use App\Http\Controllers\Mobile\MobileDeviceController;
@@ -24,6 +25,9 @@ Route::middleware(['auth:sanctum', EnsureMobileToken::class])->group(function ()
     Route::post('auth/refresh', [MobileAuthController::class, 'refresh'])->middleware('throttle:10,1')->name('auth.refresh');
 
     Route::get('businesses', [MobileBusinessController::class, 'index'])->middleware('throttle:60,1')->name('businesses.index');
+
+    Route::get('realtime/config', [MobileRealtimeController::class, 'config'])->middleware('throttle:60,1')->name('realtime.config');
+    Route::post('broadcasting/auth', [MobileRealtimeController::class, 'auth'])->middleware('throttle:120,1')->name('realtime.auth');
 
     Route::put('devices/current', [MobileDeviceController::class, 'register'])->middleware('throttle:20,1')->name('devices.register');
     Route::delete('devices/current', [MobileDeviceController::class, 'unregister'])->name('devices.unregister');

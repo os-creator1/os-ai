@@ -489,6 +489,15 @@ class InboundWebhookAttributionResolver
                 $this->history->markManagedOutboundDeliveryFailed((int) $locked->id);
             }
 
+            // Phase 2B — the carrier confirmed delivery: the bubble that showed Sent shows Delivered, and phones are told.
+            if ($target === MessagingOperationStatus::Delivered) {
+                $this->history->markManagedOutboundDelivered((int) $locked->id);
+            }
+
+            if ($target === MessagingOperationStatus::Failed || $target === MessagingOperationStatus::Delivered) {
+                event(new \App\Events\Conversation\OutboundDeliveryStateChanged((int) $locked->id));
+            }
+
             return self::TRANSITION_APPLIED;
         });
 

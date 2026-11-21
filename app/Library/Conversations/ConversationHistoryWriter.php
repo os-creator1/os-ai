@@ -557,6 +557,18 @@ final class ConversationHistoryWriter
     }
 
     /**
+     * ONLY 'sent' -> 'delivered', on the carrier's delivery receipt for the operation that still owns the bubble. Anything else
+     * (a bubble that already failed, or moved to a later attempt) is left exactly as it is.
+     */
+    public function markManagedOutboundDelivered(int $operationId): void
+    {
+        ChatBoxMessage::query()
+            ->where('business_messaging_operation_id', $operationId)
+            ->where('send_status', ManagedSendStateMachine::SENT)
+            ->update(['send_status' => ManagedSendStateMachine::DELIVERED]);
+    }
+
+    /**
      * Correction round 6, item 2 — the conversation a managed outbound
      * write actually belongs to. For a tracked retry ($conversationBoxId
      * given), this is the ORIGINAL logical bubble's own ChatBox, verified

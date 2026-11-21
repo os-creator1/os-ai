@@ -161,10 +161,14 @@ class EventServiceProvider extends ServiceProvider
         // Automations V2-F — an authoritatively attributed inbound message.
         // Queued: the webhook's provider is not kept waiting on enrollment.
         InboundMessageReceived::class => [
+            \App\Listeners\Mobile\NotifyMobileOfInboundMessage::class,
             EnrollFromInboundMessage::class,
             // Agency Outreach V1 (contract §9) — prospect replies. Queued; matches the Agency's own
             // Business + the sender's number and ignores everything else.
             HandleOutreachInboundMessage::class,
+        ],
+        \App\Events\Conversation\OutboundDeliveryStateChanged::class => [
+            \App\Listeners\Mobile\NotifyMobileOfOutboundStatus::class,
         ],
         // Automations V2 — CRM sales opportunity facts (App\Events\Crm, never the
         // Advisor's App\Events\Opportunity). The CRM emits after commit; this

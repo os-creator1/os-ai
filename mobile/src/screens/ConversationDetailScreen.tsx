@@ -6,6 +6,8 @@ import type { ConversationDetail, Message } from '../api/types';
 import { useAuth } from '../auth/AuthContext';
 import { isFailed, statusLabel } from '../conversations/status';
 import { uuidv4 } from '../conversations/uuid';
+import { setActiveConversation } from '../notifications/target';
+import { useRealtime } from '../realtime/RealtimeProvider';
 import type { RootStack } from '../navigation/types';
 import { colors, space } from '../theme';
 import { Button, ErrorState, Loading } from './ui';
@@ -80,6 +82,38 @@ export function ConversationDetailScreen({ route, navigation }: Props) {
       return false;
     }
   }, [api, scope, uid]);
+
+  /**
+   * Live update (realtime event, reconnect, app resume): re-read the latest window WITHOUT discarding older pages the
+   * user already loaded, never overwriting a newer full load, and never flashing a spinner. Messages are de-duplicated
+   * by id when rendered, so an event racing a send's own refresh cannot create a second bubble.
+   */
+  const refreshLive = useCallback(async () => {
+    if (!scope) return;
+    const version = threadGeneration.current;
+    try {
+      const d = await api.conversation(scope, uid);
+      if (version !== threadGeneration.current) return;
+      stick.current = true;
+      setData(d);
+      const confirmed = new Set(d.messages.map((m) => m.send_uid).filter((key): key is string => !!key));
+      setPending((attempts) => attempts.filter((attempt) => !confirmed.has(attempt.key)));
+      setRetryAttempts((attempts) => Object.fromEntries(
+        Object.entries(attempts).filter(([key, attempt]) => attempt.state !== 'unconfirmed' || !confirmed.has(key)),
+      ));
+      // A message that arrives while the conversation is open is read the moment it is seen.
+      if (d.conversation.unread) api.markRead(scope, uid).catch(() => undefined);
+    } catch { /* a failed live refresh is silent; the next event or pull-to-refresh retries */ }
+  }, [api, scope, uid]);
+
+  useRealtime((e) => {
+    if (e.kind === 'resync' || (e.kind === 'change' && e.conversation_uid === uid)) void refreshLive();
+  });
+
+  useEffect(() => {
+    setActiveConversation(uid);
+    return () => setActiveConversation(null);
+  }, [uid]);
 
   useEffect(() => { void load(); }, [load]);
 
@@ -169,7 +203,10 @@ export function ConversationDetailScreen({ route, navigation }: Props) {
   }, [text, dispatch]);
 
   const rows = useMemo<Row[]>(() => {
-    const server = [...older, ...(data?.messages ?? [])];
+    // De-duplicated by id: a live refresh and an earlier page can overlap.
+    const byId = new Map<number, Message>();
+    for (const m of [...older, ...(data?.messages ?? [])]) byId.set(m.id, m);
+    const server = [...byId.values()].sort((a, b) => a.id - b.id);
     const known = new Set(server.map((m) => m.send_uid).filter(Boolean));
     const extra: Row[] = pending.filter((p) => !known.has(p.key)).map((p) => ({ pending: true, ...p }));
     return [...server, ...extra];

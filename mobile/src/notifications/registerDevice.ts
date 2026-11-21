@@ -10,7 +10,7 @@ import type { Api } from '../api/client';
  * PUT /devices/current. The token is an address, not a secret credential; the server stores it per device row
  * and drops it on logout. Returns the registered token or null (simulator, permission denied, no EAS project).
  */
-export async function registerForPush(api: Api, appVersion?: string): Promise<string | null> {
+export async function registerForPush(api: Api, appVersion?: string, opts: { ask?: boolean } = {}): Promise<string | null> {
   if (!Device.isDevice) return null;
 
   if (Platform.OS === 'android') {
@@ -18,7 +18,8 @@ export async function registerForPush(api: Api, appVersion?: string): Promise<st
   }
 
   let { status } = await Notifications.getPermissionsAsync();
-  if (status !== 'granted') status = (await Notifications.requestPermissionsAsync()).status;
+  // Never prompt out of the blue at launch: asking is the user's explicit choice (see NotificationBanner).
+  if (status !== 'granted' && opts.ask) status = (await Notifications.requestPermissionsAsync()).status;
   if (status !== 'granted') return null;
 
   const projectId = Constants.expoConfig?.extra?.eas?.projectId ?? Constants.easConfig?.projectId;
