@@ -94,11 +94,16 @@ describe('composer', () => {
     // The button's async onPress intentionally remains pending while the
     // mocked network request is unresolved; don't await that press here.
     fireEvent.press(screen.getByText('Load earlier messages'));
+    // Wait for React Native to apply the header's in-flight state before
+    // issuing a second tap; the cursor request itself remains unresolved.
+    await waitFor(() => expect(conversation.mock.calls.filter((args: unknown[]) => args[2] === 1)).toHaveLength(1));
+    await waitFor(() => screen.getByText('Loading earlier messages…'));
     fireEvent.press(screen.getByText('Loading earlier messages…'));
     expect(conversation.mock.calls.filter((args: unknown[]) => args[2] === 1)).toHaveLength(1);
-    resolveOlder({ ...detail([{ ...inbound, id: 0, body: 'Oldest inquiry' }]), has_more: false });
+    resolveOlder({ ...detail([{ ...inbound, id: 0, body: 'Oldest inquiry' }, inbound]), has_more: false });
     await waitFor(() => screen.getByText('Oldest inquiry'));
     expect(screen.getAllByText('Oldest inquiry')).toHaveLength(1);
+    expect(screen.getAllByText('Hello there')).toHaveLength(1);
   });
 
   it('does not send an empty message', async () => {
