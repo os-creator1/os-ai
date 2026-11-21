@@ -132,6 +132,30 @@ class FaqAndGuideLinksTest extends TestCase
         $this->assertStringNotContainsString('data-testid="related-articles"', $this->body(self::HOST . '/photo-booth-about'));
     }
 
+    public function test_a_published_slug_change_updates_service_page_guide_links_and_the_old_address_redirects(): void
+    {
+        [, $business] = $this->photoBoothContentTenant();
+        $article = $this->guide($business, 'Wedding booth timing guide', 'wedding booth timing guide', ['supports_page_uid' => self::PAGE_WEDDING]);
+        $old = $article->slug;
+        $service = self::HOST . '/service-wedding-photo-booth-rental';
+        $oldHref = 'href="https://' . self::DOMAIN . '/blog/' . $old . '"';
+
+        $this->assertStringContainsString($oldHref, $this->body($service));
+
+        $this->manager()->update((int) $business->customer_id, $business, $article, ['slug' => 'wedding-booth-schedule']);
+        $this->manager()->publish((int) $business->customer_id, $business, $article->fresh());
+        app('cache')->flush();
+
+        $page = $this->body($service);
+        $this->assertStringContainsString('<a href="https://' . self::DOMAIN . '/blog/wedding-booth-schedule">Wedding booth timing guide</a>', $page);
+        $this->assertStringNotContainsString($oldHref, $page, 'the service page never emits the stale address');
+        $this->assertStringNotContainsString('/blog/' . $old . '"', $page);
+
+        // The old address 301s once to the current one; the current one renders (no loop).
+        $this->get(self::HOST . '/blog/' . $old)->assertStatus(301)->assertRedirect('https://' . self::DOMAIN . '/blog/wedding-booth-schedule');
+        $this->get(self::HOST . '/blog/wedding-booth-schedule')->assertOk();
+    }
+
     public function test_guide_links_use_the_address_of_the_surface_they_are_rendered_on(): void
     {
         [, $business, , $website] = $this->photoBoothContentTenant(withDomain: false);
