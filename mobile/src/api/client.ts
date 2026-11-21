@@ -63,7 +63,7 @@ export function createApi({ baseUrl, getToken, onUnauthorized, fetchImpl }: Deps
       if (q.page) p.set('page', String(q.page));
       return call<{ data: ConversationSummary[]; meta: { page: number; next_page: number | null } }>('GET', `${base(s)}/conversations?${p}`, undefined, true, true);
     },
-    conversation: (s: Scope, uid: string) => call<ConversationDetail>('GET', `${base(s)}/conversations/${encodeURIComponent(uid)}`),
+    conversation: (s: Scope, uid: string, beforeId?: number) => call<ConversationDetail>('GET', `${base(s)}/conversations/${encodeURIComponent(uid)}${beforeId === undefined ? '' : `?before_id=${beforeId}`}`),
     contact: (s: Scope, uid: string) => call<ContactProfile>('GET', `${base(s)}/contacts/${encodeURIComponent(uid)}`),
     callingCapability: (s: Scope) => call<CallingCapability>('GET', `${base(s)}/calls/capability`),
   };
