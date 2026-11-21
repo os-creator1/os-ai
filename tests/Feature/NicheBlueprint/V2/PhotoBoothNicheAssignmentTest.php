@@ -274,6 +274,13 @@ class PhotoBoothNicheAssignmentTest extends TestCase
         // An active vertical-specific Blueprint takes precedence over the
         // intended broad-industry Photo Booth template in the installer.
         $duplicate->delete();
+        // The vertical-specific Blueprint FK requires a real catalog key.
+        BusinessVertical::create([
+            'key' => PhotoBoothBlueprintProvisioner::NICHE_KEY,
+            'display_name' => 'Photo Booth',
+            'broad_industry' => PhotoBoothBlueprintProvisioner::NICHE_KEY,
+            'is_active' => true,
+        ]);
         NicheBlueprint::create([
             'key' => 'photo_booth_shadow',
             'display_name' => 'Shadow Photo Booth',
