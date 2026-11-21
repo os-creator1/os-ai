@@ -4,10 +4,12 @@ namespace App\Library\Mobile;
 
 use App\Enums\Business\BusinessStatus;
 use App\Enums\Entitlement\PlatformFeature;
+use App\Enums\Workspace\WorkspaceMemberModule;
 use App\Exceptions\Workspace\BusinessWorkspaceMismatchException;
 use App\Exceptions\Workspace\WorkspaceBusinessNotFoundException;
 use App\Library\Entitlement\EntitlementManager;
 use App\Library\Workspace\BusinessRouteAccess;
+use App\Library\Workspace\MemberModuleVisibility;
 use App\Library\Workspace\WorkspaceManager;
 use App\Models\Business;
 use App\Models\User;
@@ -34,6 +36,7 @@ final class MobileBusinessAccess
         private readonly WorkspaceManager $workspaceManager,
         private readonly BusinessRouteAccess $routeAccess,
         private readonly EntitlementManager $entitlements,
+        private readonly MemberModuleVisibility $moduleVisibility,
     ) {
     }
 
@@ -51,6 +54,13 @@ final class MobileBusinessAccess
         $business = $this->workspaces->businessesForWorkspace($workspace)->firstWhere('uid', $businessUid);
 
         if ($business === null || ! $this->routeAccess->actorMayUseBusinessRoute($actor, $workspace, $business)) {
+            return null;
+        }
+
+        // The web middleware narrows these modules per Workspace membership.
+        // Mobile routes do not execute that web middleware, so enforce the same
+        // owner-selected visibility here before reading any module data.
+        if (! $this->moduleVisible($actor, $workspace, $feature, $permission)) {
             return null;
         }
 
@@ -89,6 +99,19 @@ final class MobileBusinessAccess
         }
 
         return $out;
+    }
+
+    public function moduleVisible(User $actor, Workspace $workspace, string $feature, ?string $permission): bool
+    {
+        // Contacts is an independently hideable module despite using the CRM
+        // entitlement. Conversations is independently hideable too.
+        $module = match (true) {
+            $permission === 'view_contact' => WorkspaceMemberModule::Contacts,
+            $permission === 'chat_box', $feature === self::FEATURE_CONVERSATIONS => WorkspaceMemberModule::Conversations,
+            default => WorkspaceMemberModule::Crm,
+        };
+
+        return ! $this->moduleVisibility->isHidden((int) $actor->id, (int) $workspace->id, $module);
     }
 
     public function entitled(User $actor, Workspace $workspace, Business $business, string $feature): bool
