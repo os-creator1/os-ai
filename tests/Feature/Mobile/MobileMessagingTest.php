@@ -285,6 +285,42 @@ class MobileMessagingTest extends TestCase
         $this->assertSame(0, $this->outbound()->count(), 'Nothing was attempted, so there is no failed bubble to retry.');
     }
 
+    public function test_duplicate_contact_groups_cannot_bypass_recipient_opt_out_on_mobile_or_desktop(): void
+    {
+        [$owner, $business, $workspace] = $this->managedTenant();
+        $box = $this->conversation($business);
+        $token = $this->tokenFor($owner);
+
+        // The same Business can contain this phone twice, in different
+        // groups. An ambiguous display contact is not permission to send.
+        foreach (['Lead list A' => 'subscribe', 'Lead list B' => 'unsubscribe'] as $name => $status) {
+            $groupId = DB::table('contact_groups')->insertGetId([
+                'uid' => (string) Str::uuid(), 'customer_id' => $business->customer_id,
+                'business_id' => $business->id, 'name' => $name,
+                'created_at' => now(), 'updated_at' => now(),
+            ]);
+            DB::table('contacts')->insert([
+                'uid' => (string) Str::uuid(), 'customer_id' => $business->customer_id,
+                'business_id' => $business->id, 'group_id' => $groupId,
+                'phone' => (int) self::PERSON, 'status' => $status,
+                'created_at' => now(), 'updated_at' => now(),
+            ]);
+        }
+
+        $this->assertNull($box->resolveDisplayContact($business));
+        $this->reply($token, $workspace, $business, $box, 'Do not text a suppressed number')
+            ->assertStatus(422)->assertJsonPath('error.code', 'opted_out');
+
+        $this->app['auth']->forgetGuards();
+        $this->actingAs($owner->user)->withSession(['permissions' => collect(['access_backend', 'chat_box'])]);
+        $this->postJson(route('customer.workspaces.businesses.conversations.reply', [$workspace->uid, $business->uid, $box->uid]), [
+            'message' => 'Also do not text from desktop', 'idempotency_token' => (string) Str::uuid(),
+        ])->assertOk()->assertJsonPath('reason', 'opted_out');
+
+        $this->assertSame(0, DB::table('chat_box_messages')->where('box_id', $box->id)->count());
+        $this->assertCount(0, $this->fakeAdapter->sentRequests);
+    }
+
     // ---- sender / balance ---------------------------------------------------------------------------------------
 
     public function test_a_business_without_a_usable_sender_is_refused_safely_and_retryable_once_fixed(): void
