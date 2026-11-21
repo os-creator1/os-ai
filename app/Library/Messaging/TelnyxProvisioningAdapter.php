@@ -24,6 +24,7 @@ use App\Library\Messaging\DTO\NumberSearchCriteria;
 use App\Library\Messaging\DTO\ProvisionedNumberResult;
 use App\Library\Messaging\DTO\RegistrationStatusQuery;
 use App\Library\Messaging\DTO\RegistrationStatusResult;
+use App\Library\Messaging\Registration\ProviderReasonSanitizer;
 use App\Library\Messaging\DTO\BrandStatusResult;
 use App\Library\Messaging\DTO\RegistrationSubmissionResult;
 use App\Library\Messaging\Exceptions\MessagingFundingUnavailableException;
@@ -1733,10 +1734,21 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
         $tollFreeUseCase = CarrierRegistrationOptions::TOLL_FREE_USE_CASES[$submission->useCase] ?? null;
 
         if ($submission->existingVerificationId === null) {
+            // Platform configuration (never the customer's): when this Telnyx account is
+            // an ISV/reseller account the reseller name is mandatory and centrally
+            // configured. Refused before any request, never guessed or filled with the
+            // client's name.
+            if ($this->tollFreeIsvResellerRequired() && $this->tollFreeIsvReseller() === null) {
+                throw new \App\Library\Messaging\Exceptions\MessagingRegistrationPlatformConfigurationException(['MESSAGING_TOLL_FREE_ISV_RESELLER']);
+            }
+
             $failed = array_keys(array_filter([
                 'use_case' => $tollFreeUseCase === null,
                 'message_volume' => ! isset(CarrierRegistrationOptions::MESSAGE_VOLUMES[(string) $submission->messageVolume]),
                 'state' => CarrierRegistrationOptions::stateName($submission->region) === null,
+                // Telnyx requires the registration country; only the supported (US) country
+                // is accepted and it is the Business's own saved country, never assumed.
+                'business_registration_country' => strtoupper(trim($submission->countryCode)) !== 'US',
                 'contact_name' => trim((string) $submission->contactFirstName) === '' || trim((string) $submission->contactLastName) === '',
                 // Telnyx maximums, measured on the exact values that are sent (whitespace
                 // included); nothing is ever trimmed to fit.
@@ -1804,7 +1816,8 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
                 'additionalInformation' => $this->tollFreeAdditionalInformation($submission),
                 'businessRegistrationNumber' => $submission->entityType === MessagingEntityType::Ein ? $submission->ein : null,
                 'businessRegistrationType' => $submission->entityType === MessagingEntityType::Ein ? 'EIN' : null,
-                'businessRegistrationCountry' => $submission->entityType === MessagingEntityType::Ein ? 'US' : null,
+                // Required for every entity type (preflight above guarantees it is present).
+                'businessRegistrationCountry' => strtoupper(trim($submission->countryCode)),
                 'entityType' => $submission->entityType === MessagingEntityType::Ein ? 'PRIVATE_PROFIT' : 'SOLE_PROPRIETOR',
                 'privacyPolicyURL' => $submission->privacyPolicyUrl,
                 'termsAndConditionURL' => $submission->termsUrl,
@@ -1859,6 +1872,12 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
         $dba = trim((string) $submission->doingBusinessAs);
 
         return $dba !== '' && strcasecmp($dba, trim((string) $submission->legalBusinessName)) !== 0 ? $dba : null;
+    }
+
+    /** True only when the platform declares its Telnyx account an ISV/reseller account. */
+    private function tollFreeIsvResellerRequired(): bool
+    {
+        return (bool) config('messaging.toll_free_isv_reseller_required', false);
     }
 
     private function tollFreeIsvReseller(): ?string
@@ -1981,34 +2000,36 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
             return new RegistrationStatusResult(MessagingRegistrationStatus::Pending, null, false);
         }
 
-        $status = strtolower($this->providerValue($response, ['verificationStatus', 'data.verificationStatus', 'data.status']));
+        $rawStatus = $this->providerValue($response, ['verificationStatus', 'data.verificationStatus', 'data.status']);
 
         // A body with no status at all is a malformed answer, not a verdict.
-        if ($status === '') {
+        if (trim($rawStatus) === '') {
             return new RegistrationStatusResult(MessagingRegistrationStatus::Pending, null, false);
         }
 
-        if ($status === 'verified') {
-            return new RegistrationStatusResult(MessagingRegistrationStatus::Approved);
+        // "Waiting For Telnyx" -> waiting_for_telnyx. Unrecognised shapes are kept
+        // only if they are a short plain token; they never become Approved.
+        $normalized = trim((string) preg_replace('/[^a-z0-9]+/', '_', strtolower($rawStatus)), '_');
+        $providerStatus = $normalized !== '' && strlen($normalized) <= 64 ? $normalized : 'unknown';
+
+        // The reason is read for EVERY state: Telnyx attaches change requests
+        // ("change use case to Mixed.") to nonterminal Waiting states too.
+        $reason = ProviderReasonSanitizer::clean($this->extractReason($response, [
+            'reason', 'data.reason', 'declineReason', 'data.declineReason', 'data.rejectionReason',
+        ]));
+
+        if ($providerStatus === 'verified') {
+            // A verified request carries no feedback: stale warnings are never kept.
+            return new RegistrationStatusResult(MessagingRegistrationStatus::Approved, null, true, 'verified', null);
         }
 
-        if (str_contains($status, 'reject') || str_contains($status, 'declin') || str_contains($status, 'fail')) {
-            // Field name not independently confirmable in this environment
-            // (egress-limited, same constraint this class's own docblock
-            // already documents elsewhere) — support materials repeatedly
-            // call this a "decline reason", so `declineReason` is tried
-            // first, then the more generic names every other regime here
-            // already tries.
-            return new RegistrationStatusResult(
-                MessagingRegistrationStatus::Rejected,
-                $this->extractReason($response, ['reason', 'declineReason', 'data.declineReason', 'data.rejectionReason', 'data.reason']),
-            );
+        if (str_contains($providerStatus, 'reject') || str_contains($providerStatus, 'declin') || str_contains($providerStatus, 'fail')) {
+            return new RegistrationStatusResult(MessagingRegistrationStatus::Rejected, $reason, true, $providerStatus, $reason);
         }
 
-        // Covers the confirmed documented pending states ("Waiting for
-        // Telnyx", "Waiting For Customer") and any other value this
-        // platform has not seen before — never guessed Approved.
-        return new RegistrationStatusResult(MessagingRegistrationStatus::Pending);
+        // Waiting For Telnyx / Customer / Vendor, In Progress and any value not seen
+        // before: still pending, with the actual state and reason preserved.
+        return new RegistrationStatusResult(MessagingRegistrationStatus::Pending, null, true, $providerStatus, $reason);
     }
 
     /**

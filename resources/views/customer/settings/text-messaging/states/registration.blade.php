@@ -61,7 +61,11 @@
     @endif
 
     @php
+        $tollFreeFeedback = $registration->number_type === \App\Enums\Messaging\PhoneNumberType::TollFree && in_array($status, ['pending', 'rejected', 'approved'], true)
+            ? \App\Library\Messaging\Registration\TollFreeVerificationFeedback::for($registration)
+            : null;
         $statusChip = match (true) {
+            $tollFreeFeedback !== null => [$tollFreeFeedback['label'], match ($tollFreeFeedback['variant']) { 'danger' => 'danger', 'success' => 'success', default => 'warn' }],
             $status === 'approved' => ['Approved', 'success'],
             $status === 'pending' => ['Pending review', 'warn'],
             $status === 'rejected' => ['Needs attention', 'danger'],
@@ -92,7 +96,30 @@
     <div class="mb-3">
         @switch($status)
             @case('pending')
+                @if($tollFreeFeedback !== null)
+                    <x-alert variant="{{ $tollFreeFeedback['variant'] }}" icon="{{ $tollFreeFeedback['variant'] === 'danger' ? 'alert-circle' : 'clock' }}" class="mt-2 mb-0" data-role="toll-free-verification-feedback" data-feedback="{{ $tollFreeFeedback['key'] }}">
+                        <strong class="d-block">{{ $tollFreeFeedback['label'] }}</strong>
+                        {{ $tollFreeFeedback['message'] }}
+                        @if($tollFreeFeedback['reason'])
+                            <span class="d-block mt-1" data-role="provider-reason">{{ $tollFreeFeedback['reason'] }}</span>
+                        @endif
+                        @if($tollFreeFeedback['show_details'])
+                            <a class="d-block mt-1" href="#toll-free-submitted-details" data-role="review-verification-details">Review verification details</a>
+                        @endif
+                    </x-alert>
+                    @if($tollFreeFeedback['show_details'])
+                        <div id="toll-free-submitted-details"><x-card title="Submitted verification details" :padded="true">
+                            <dl class="row mb-0" data-role="toll-free-submitted-details">
+                                <dt class="col-sm-4">Legal business name</dt><dd class="col-sm-8">{{ $registration->legal_business_name }}</dd>
+                                <dt class="col-sm-4">Messaging type</dt><dd class="col-sm-8">{{ $registration->use_case }}</dd>
+                                <dt class="col-sm-4">Country</dt><dd class="col-sm-8">{{ $registration->country_code }}</dd>
+                                <dt class="col-sm-4">Website</dt><dd class="col-sm-8">{{ $registration->website_url }}</dd>
+                            </dl>
+                        </x-card></div>
+                    @endif
+                @else
                 @unless($progressActive)<p class="text-caption text-muted mt-2 mb-0">We've submitted your business details for messaging registration. This is typically reviewed within a few business days — nothing else to do right now.</p>@endunless
+                @endif
                 @break
             @case('rejected')
                 @unless($progressActive)
@@ -103,7 +130,9 @@
                          carried one; otherwise an EXPLICIT statement that
                          none was supplied, never a message that reads as
                          if a real reason were being paraphrased. --}}
-                    @if($registration->rejection_reason)
+                    @if($tollFreeFeedback !== null && $tollFreeFeedback['reason'])
+                        <span data-role="provider-reason">{{ $tollFreeFeedback['reason'] }}</span>
+                    @elseif($registration->rejection_reason)
                         {{ $registration->rejection_reason }}
                     @else
                         The carrier did not supply a detailed reason for this rejection. Please review the details below and try again.

@@ -174,6 +174,16 @@ return [
     */
     'toll_free_isv_reseller' => env('MESSAGING_TOLL_FREE_ISV_RESELLER') ?: null,
 
+    /*
+    | Set MESSAGING_TOLL_FREE_ISV_RESELLER_REQUIRED=true when the platform's Telnyx account
+    | is an ISV/reseller account (its account domain differs from the client businesses'
+    | websites/emails, which makes Telnyx hold requests at "Waiting For Customer" until an
+    | `isvReseller` name is supplied). With it on, a toll-free submission is refused before
+    | any provider request unless MESSAGING_TOLL_FREE_ISV_RESELLER holds the operating
+    | company's legal name. Default false: a direct account omits the field.
+    */
+    'toll_free_isv_reseller_required' => (bool) env('MESSAGING_TOLL_FREE_ISV_RESELLER_REQUIRED', false),
+
     'default_provider' => 'telnyx',
 
     'webhook_rejection_retention_days' => env('MESSAGING_WEBHOOK_REJECTION_RETENTION_DAYS', 30),

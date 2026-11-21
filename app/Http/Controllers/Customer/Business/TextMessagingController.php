@@ -637,6 +637,13 @@ class TextMessagingController extends CustomerBaseController
                 : 'Registration pricing hasn\'t been set up on our side yet, so this can\'t be submitted right now. Nothing was charged and your balance is not the issue. Please contact support and we\'ll finish setup.');
         } catch (MessagingInsufficientFundsException $e) {
             return $this->textMessagingError($workspaceUid, $businessUid, $this->fundingRefusalMessage($e, 'to submit this registration'));
+        } catch (\App\Library\Messaging\Exceptions\MessagingRegistrationPlatformConfigurationException $e) {
+            \Illuminate\Support\Facades\Log::warning('Messaging registration refused: platform configuration incomplete.', [
+                'business_id' => (int) $business->id,
+                'settings' => $e->settings,
+            ]);
+
+            return $this->textMessagingError($workspaceUid, $businessUid, 'Toll-free verification can\'t be submitted yet because of a setup step on our side, not a problem with your details. Nothing was sent to the carrier and nothing was charged. Your details are saved; please contact support.');
         } catch (\App\Library\Messaging\Exceptions\MessagingRegistrationPreflightException $e) {
             // Our own check refused it before any carrier request: nothing was sent or charged.
             \Illuminate\Support\Facades\Log::warning('Messaging registration preflight refused.', [
@@ -726,12 +733,13 @@ class TextMessagingController extends CustomerBaseController
 
         $last = $registration->brand_status_checked_at;
         $last = trim((string) $registration->provider_campaign_id) !== '' ? $registration->campaign_status_checked_at : $last;
+        $last = $registration->number_type === PhoneNumberType::TollFree ? $registration->provider_status_checked_at : $last;
 
         if ($last !== null && $last->gt(now()->subSeconds(60))) {
             return $back->with(['status' => 'info', 'message' => 'Status was checked moments ago. Please try again in a minute.']);
         }
 
-        $before = [(string) $registration->brand_status_checked_at, (string) $registration->campaign_status_checked_at];
+        $before = [(string) $registration->brand_status_checked_at, (string) $registration->campaign_status_checked_at, (string) $registration->provider_status_checked_at];
 
         try {
             $registration = $this->registrations->refreshStatus($registration);
@@ -744,7 +752,7 @@ class TextMessagingController extends CustomerBaseController
         // Only a conclusive carrier answer stamps a check time; anything else
         // (outage, rate limit, unreadable answer) changed nothing.
         $registration = $registration->fresh();
-        $answered = (string) $registration->brand_status_checked_at !== $before[0] || (string) $registration->campaign_status_checked_at !== $before[1];
+        $answered = (string) $registration->brand_status_checked_at !== $before[0] || (string) $registration->campaign_status_checked_at !== $before[1] || (string) $registration->provider_status_checked_at !== $before[2];
 
         return $answered
             ? $back->with(['status' => 'success', 'message' => 'Checked with the carrier just now. The status below is current.'])
