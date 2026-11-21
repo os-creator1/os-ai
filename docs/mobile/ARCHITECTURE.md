@@ -160,6 +160,8 @@ Error codes: `insufficient_balance`, `messaging_not_ready`, `messaging_unavailab
 `byo_*`, `opted_out`, `send_refused` (desktop-worded refusal such as blacklist), `validation_failed`, `not_found`.
 Locked accounts remain a uniform 404 (no oracle), as for reads.
 
+**Replay safety:** Mobile reply requires a managed or selected BYO sender with durable operation idempotency; legacy non-managed SMS is refused before any provider call because repeating a timed-out legacy request can cause a duplicate SMS. The shared service passes `require_managed` for mobile to fail closed if the managed/BYO identity disappears between the preflight and dispatch. Desktop legacy sending remains unchanged. Mobile conversation reads reconcile stale managed `sending` claims via the same locked state machine as desktop; the provider is never called by a read.
+
 **Known limits (Phase 2B):** no push/real-time (refresh or reopen to see inbound and new delivery states), text only (no
 MMS upload), the desktop inbox clears its unread badge in the browser only, so a conversation read on the phone stays read
 on desktop but one opened on desktop is not persisted as read until the desktop adopts the same endpoint.
