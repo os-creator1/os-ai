@@ -254,6 +254,27 @@ class TollFreeVerificationFeedbackTest extends TestCase
         $this->assertSame('Correct the business website URL.', $registration->provider_status_reason);
     }
 
+    public function test_editing_a_rejected_request_clears_old_provider_feedback_before_replacement(): void
+    {
+        $registration = $this->refresh($this->registration(), [
+            'data' => ['verificationStatus' => 'Rejected', 'reason' => 'Please fix your opt-in evidence.'],
+        ]);
+        $this->assertSame('rejected', $registration->status->value);
+        $this->assertNotNull($registration->provider_status_checked_at);
+
+        $edited = app(BusinessMessagingRegistrationService::class)->captureDetails(
+            $registration->business,
+            ['campaign_description' => 'Updated service messaging description.'],
+        );
+
+        $this->assertSame('not_started', $edited->status->value);
+        $this->assertNull($edited->provider_registration_id);
+        $this->assertNull($edited->rejection_reason);
+        $this->assertNull($edited->provider_status);
+        $this->assertNull($edited->provider_status_reason);
+        $this->assertNull($edited->provider_status_checked_at);
+    }
+
     public function test_the_background_sweep_uses_the_same_persistence(): void
     {
         $registration = $this->registration();
