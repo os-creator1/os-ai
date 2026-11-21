@@ -1,0 +1,117 @@
+import React from 'react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react-native';
+import { AuthProvider } from '../src/auth/AuthContext';
+import { ApiError } from '../src/api/client';
+import { LoginScreen } from '../src/screens/LoginScreen';
+import { BusinessSelectorScreen } from '../src/screens/BusinessSelectorScreen';
+import { CallsScreen } from '../src/screens/CallsScreen';
+import { ContactProfileScreen } from '../src/screens/ContactProfileScreen';
+import { ConversationDetailScreen } from '../src/screens/ConversationDetailScreen';
+import { ConversationsScreen } from '../src/screens/ConversationsScreen';
+
+jest.mock('expo-secure-store', () => {
+  const m = new Map<string, string>();
+  return {
+    getItemAsync: async (k: string) => m.get(k) ?? null,
+    setItemAsync: async (k: string, v: string) => { m.set(k, v); },
+    deleteItemAsync: async (k: string) => { m.delete(k); },
+  };
+});
+jest.mock('expo-notifications', () => ({}));
+jest.mock('expo-device', () => ({ isDevice: false }));
+jest.mock('expo-constants', () => ({ __esModule: true, default: { expoConfig: { version: '0.1.0', extra: {} }, deviceName: 'Test phone' } }));
+
+const business = { workspace_uid: 'ws-1', workspace_name: 'Alpha WS', business_uid: 'biz-1', name: 'Alpha Studio', features: { conversations: true, contacts: true } };
+const me = { user: { uid: 'u1', name: 'Pat', email: 'pat@example.test' }, businesses: [business] };
+
+function fakeApi(over: Record<string, any> = {}): any {
+  return {
+    login: jest.fn(async () => ({ token: 't', token_type: 'Bearer', expires_at: new Date(Date.now() + 1e9).toISOString(), user: me.user })),
+    logout: jest.fn(async () => ({ signed_out: true })),
+    me: jest.fn(async () => me),
+    registerPush: jest.fn(),
+    conversations: jest.fn(async () => ({ data: [
+      { uid: 'c1', display_name: 'Ann Lee', phone: '+15551110001', unread: true, pinned: false, last_message: { direction: 'inbound', preview: 'Need a quote', at: null }, updated_at: null },
+    ], meta: { page: 1, next_page: null } })),
+    conversation: jest.fn(async () => ({ conversation: {}, contact_uid: 'k1', has_more: false, messages: [
+      { id: 1, direction: 'inbound', type: 'plain', body: 'Hello there', media_url: null, created_at: '2026-01-01T10:00:00Z' },
+      { id: 2, direction: 'outbound', type: 'plain', body: 'Hi, how can I help?', media_url: null, created_at: '2026-01-01T10:01:00Z' },
+    ] })),
+    contact: jest.fn(async () => ({ uid: 'k1', display_name: 'Ann Lee', phone: '+15551110001', email: 'ann@example.test', subscribed: false, fields: [{ tag: 'CITY', label: 'City', value: 'Austin' }], created_at: null })),
+    callingCapability: jest.fn(async () => ({ available: false, reason: 'Telnyx is not in live mode on this platform.', phase: 'capability-only' })),
+    ...over,
+  };
+}
+
+const nav: any = { navigate: jest.fn(), setOptions: jest.fn() };
+
+/** Renders a screen already signed in to the business, through the real AuthProvider. */
+async function signedIn(ui: (api: any) => React.ReactElement, api = fakeApi()) {
+  const { Login } = require('./helpers');
+  const view = await render(<AuthProvider apiOverride={api}><Login api={api}>{ui(api)}</Login></AuthProvider>);
+  await waitFor(() => expect(screen.queryByText('ready')).toBeTruthy());
+  return { api, view };
+}
+
+describe('LoginScreen', () => {
+  it('signs in and shows server refusals without exposing detail', async () => {
+    const api = fakeApi({ login: jest.fn(async () => { throw new ApiError(401, 'invalid_credentials', 'These credentials do not match.'); }) });
+    await render(<AuthProvider apiOverride={api}><LoginScreen /></AuthProvider>);
+    await waitFor(() => screen.getByLabelText('Email'));
+    await fireEvent.changeText(screen.getByLabelText('Email'), 'pat@example.test');
+    await fireEvent.changeText(screen.getByLabelText('Password'), 'wrong-pass');
+    await fireEvent.press(screen.getByText('Sign in'));
+    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('These credentials do not match.'));
+    expect(api.me).not.toHaveBeenCalled();
+  });
+
+  it('keeps Sign in disabled until both fields are filled', async () => {
+    await render(<AuthProvider apiOverride={fakeApi()}><LoginScreen /></AuthProvider>);
+    await waitFor(() => screen.getByLabelText('Email'));
+    expect(screen.getByRole('button', { name: 'Sign in' })).toBeDisabled();
+  });
+});
+
+describe('signed-in screens', () => {
+  it('lists the business selector from the server list only', async () => {
+    await signedIn(() => <BusinessSelectorScreen />);
+    expect(screen.getByText('Alpha Studio')).toBeTruthy();
+  });
+
+  it('loads conversations for the selected business scope and shows unread state', async () => {
+    const { api } = await signedIn(() => <ConversationsScreen {...({ navigation: nav, route: { params: undefined } } as any)} />);
+    await waitFor(() => screen.getByText('Ann Lee'));
+    expect(api.conversations).toHaveBeenCalledWith({ workspaceUid: 'ws-1', businessUid: 'biz-1' }, expect.objectContaining({ filter: 'all' }));
+    expect(screen.getByLabelText('Unread')).toBeTruthy();
+    await fireEvent.press(screen.getByText('Ann Lee'));
+    expect(nav.navigate).toHaveBeenCalledWith('ConversationDetail', { uid: 'c1', title: 'Ann Lee' });
+  });
+
+  it('shows an error state with retry when the API refuses (e.g. foreign business)', async () => {
+    const api = fakeApi({ conversations: jest.fn(async () => { throw new ApiError(404, 'not_found', 'Not found.'); }) });
+    await signedIn(() => <ConversationsScreen {...({ navigation: nav, route: { params: undefined } } as any)} />, api);
+    await waitFor(() => screen.getByText('Not found.'));
+    expect(screen.getByText('Try again')).toBeTruthy();
+  });
+
+  it('renders the thread with direction and links to the contact profile', async () => {
+    await signedIn(() => <ConversationDetailScreen {...({ navigation: nav, route: { params: { uid: 'c1', title: 'Ann' } } } as any)} />);
+    await waitFor(() => screen.getByText('Hello there'));
+    expect(screen.getByText('Hi, how can I help?')).toBeTruthy();
+    await fireEvent.press(screen.getByText('Contact profile'));
+    expect(nav.navigate).toHaveBeenCalledWith('ContactProfile', { uid: 'k1' });
+  });
+
+  it('renders the contact profile fields and opt-out state', async () => {
+    await signedIn(() => <ContactProfileScreen {...({ navigation: nav, route: { params: { uid: 'k1' } } } as any)} />);
+    await waitFor(() => screen.getByText('ann@example.test'));
+    expect(screen.getByText('Austin')).toBeTruthy();
+    expect(screen.getByText('Opted out of messages')).toBeTruthy();
+  });
+
+  it('shows calls as a placeholder and the server-reported reason', async () => {
+    await signedIn(() => <CallsScreen />);
+    await waitFor(() => screen.getByText(/Not available yet/));
+    expect(screen.getByText('Voice calling is coming in the next milestone.')).toBeTruthy();
+  });
+});

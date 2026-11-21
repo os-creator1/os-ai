@@ -1,0 +1,14 @@
+node_modules/
+.expo/
+dist/
+web-build/
+# Expo Continuous Native Generation: recreate with `npx expo prebuild`
+/android
+/ios
+*.apk
+*.aab
+*.ipa
+.env*
+!.env.example
+google-services.json
+GoogleService-Info.plist
