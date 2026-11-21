@@ -45,18 +45,20 @@ class InboundMessageReceived implements ShouldDispatchAfterCommit
         public readonly string $senderPhone,
         public readonly string $occurrenceKey,
         public readonly ?int $inboundReportId = null,
+        /** The exact conversation (chat_boxes.id) the message was filed under, when the emitting path knows it. */
+        public readonly ?int $conversationBoxId = null,
     ) {
     }
 
     /** From the legacy path, keyed by the inbound Reports row it just wrote. */
-    public static function fromLegacyReport(int $businessId, string $senderPhone, int $reportId): self
+    public static function fromLegacyReport(int $businessId, string $senderPhone, int $reportId, ?int $conversationBoxId = null): self
     {
-        return new self($businessId, $senderPhone, 'report:' . $reportId, $reportId);
+        return new self($businessId, $senderPhone, 'report:' . $reportId, $reportId, $conversationBoxId);
     }
 
     /** From the managed path, keyed by the operation row it just wrote. */
-    public static function fromManagedOperation(int $businessId, string $senderPhone, int $operationId): self
+    public static function fromManagedOperation(int $businessId, string $senderPhone, int $operationId, ?int $conversationBoxId = null): self
     {
-        return new self($businessId, $senderPhone, 'operation:' . $operationId);
+        return new self($businessId, $senderPhone, 'operation:' . $operationId, null, $conversationBoxId);
     }
 }

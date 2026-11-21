@@ -3,9 +3,9 @@
 namespace App\Library\Mobile;
 
 use App\Events\Mobile\MobileConversationChanged;
-use App\Library\Mobile\Push\MobilePushSender;
 use App\Models\Business;
 use App\Models\ChatBox;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Log;
 
 /**
@@ -14,31 +14,41 @@ use Illuminate\Support\Facades\Log;
  */
 final class MobileConversationNotifier
 {
-    public function __construct(private readonly MobileRecipients $recipients, private readonly MobilePushSender $push)
+    public function __construct(private readonly MobileRecipients $recipients)
     {
     }
 
     /**
-     * @param  string|null  $pushDedupeKey  non-null => also push (inbound only). The occurrence key that makes it exactly-once per device.
+     * Tells every eligible user's phones that the conversation changed (live event). Push is NOT sent from here: it is
+     * a separate queued, retryable job (SendMobilePush) so a provider outage can be retried without re-sending events.
+     *
+     * @return Collection<int, \App\Models\User> the users that were notified (empty on any failure)
      */
-    public function changed(ChatBox $box, string $type, ?string $pushDedupeKey = null): void
+    public function changed(ChatBox $box, string $type): Collection
     {
         try {
             $business = Business::query()->find($box->business_id);
 
             if ($business === null) {
-                return;
+                return collect();
             }
 
-            foreach ($this->recipients->users($business, $box) as $user) {
-                event(new MobileConversationChanged((string) $user->uid, (string) $business->uid, (string) $box->uid, $type));
+            $users = $this->recipients->users($business, $box);
 
-                if ($pushDedupeKey !== null) {
-                    $this->push->sendNewMessage($this->recipients->pushDevicesFor($user), $pushDedupeKey, (string) $business->uid, (string) $box->uid);
+            foreach ($users as $user) {
+                try {
+                    event(new MobileConversationChanged((string) $user->uid, (string) $business->uid, (string) $box->uid, $type));
+                } catch (\Throwable $e) {
+                    // One recipient's broadcast problem must not skip the others.
+                    Log::warning('mobile_broadcast_failed', ['type' => $type, 'exception' => $e::class]);
                 }
             }
+
+            return $users;
         } catch (\Throwable $e) {
             Log::warning('mobile_notify_failed', ['type' => $type, 'exception' => $e::class]);
+
+            return collect();
         }
     }
 }

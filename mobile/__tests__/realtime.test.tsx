@@ -6,6 +6,7 @@ import { RealtimeProvider } from '../src/realtime/RealtimeProvider';
 import { channelFor, parseChange } from '../src/realtime/types';
 import { ConversationDetailScreen } from '../src/screens/ConversationDetailScreen';
 import { ConversationsScreen } from '../src/screens/ConversationsScreen';
+import { isActiveConversation } from '../src/notifications/target';
 
 jest.mock('expo-secure-store', () => {
   const m = new Map<string, string>();
@@ -186,6 +187,58 @@ describe('live conversation detail', () => {
     await act(async () => { appHandler('active'); });
     await waitFor(() => screen.getByText('Sent while backgrounded'));
     jest.restoreAllMocks();
+  });
+});
+
+describe('live conversation detail: window and focus', () => {
+  const msg = (id: number, body: string) => ({ id, direction: 'inbound', type: 'plain', body, media_url: null, send_uid: null, status: null, failure_reason: null, status_message: null, retryable: false, created_at: '2026-01-01T10:00:00Z' });
+  const detail = (messages: any[], unread = false, hasMore = false) => ({ conversation: { uid: 'c1', unread }, contact_uid: null, has_more: hasMore, messages });
+  const ch = channelFor('biz-aaaaaaaa', 'user-uid-0001');
+  const evt = { type: 'received', business_uid: 'biz-aaaaaaaa', conversation_uid: 'c1' };
+
+  function nav() {
+    const handlers: Record<string, () => void> = {};
+    return {
+      handlers,
+      navigate: jest.fn(), setOptions: jest.fn(),
+      isFocused: jest.fn(() => true),
+      addListener: jest.fn((name: string, cb: () => void) => { handlers[name] = cb; return () => { delete handlers[name]; }; }),
+    };
+  }
+  async function open(api: any, navigation: any) {
+    const { factory, created } = fakeTransports();
+    await mount(api, factory, <ConversationDetailScreen {...({ navigation, route: { params: { uid: 'c1', title: 'Ann' } } } as any)} />);
+    await waitFor(() => screen.getByText('m1'));
+    await waitFor(() => expect(created).toHaveLength(1));
+    return created[0];
+  }
+
+  it('keeps messages that slide out of the latest window (no gap as a thread grows)', async () => {
+    const api = fakeApi({ conversation: jest.fn()
+      .mockResolvedValueOnce(detail([msg(1, 'm1'), msg(2, 'm2'), msg(3, 'm3')]))
+      .mockResolvedValue(detail([msg(3, 'm3'), msg(4, 'm4'), msg(5, 'm5')])) });
+    const t = await open(api, nav());
+    await act(async () => { t.emit(ch, evt); });
+    await waitFor(() => screen.getByText('m5'));
+    for (const body of ['m1', 'm2', 'm3', 'm4', 'm5']) expect(screen.getAllByText(body)).toHaveLength(1);
+  });
+
+  it('does not mark messages read, or suppress banners, while another screen covers the conversation', async () => {
+    const navigation = nav();
+    const api = fakeApi({ conversation: jest.fn().mockResolvedValueOnce(detail([msg(1, 'm1')])).mockResolvedValue(detail([msg(1, 'm1'), msg(2, 'm2')], true)) });
+    const t = await open(api, navigation);
+    expect(isActiveConversation('c1')).toBe(true);
+
+    await act(async () => { navigation.handlers.blur(); });
+    expect(isActiveConversation('c1')).toBe(false);
+    await act(async () => { t.emit(ch, evt); });
+    await waitFor(() => screen.getByText('m2')); // the data stays fresh underneath
+    expect(api.markRead).not.toHaveBeenCalled();
+
+    // Coming back to the conversation reads it once.
+    await act(async () => { navigation.handlers.focus(); });
+    expect(isActiveConversation('c1')).toBe(true);
+    await waitFor(() => expect(api.markRead).toHaveBeenCalledTimes(1));
   });
 });
 

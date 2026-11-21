@@ -623,9 +623,10 @@ class InboundWebhookAttributionResolver
         $now = Carbon::now();
         $messageType = $event->mediaUrls === [] ? 'sms' : 'mms';
         $operationId = null;
+        $conversationBoxId = null;
 
         try {
-            DB::transaction(function () use ($identityId, $mode, $channel, $event, $businessId, $destinationNumber, $messageType, $now, &$operationId): void {
+            DB::transaction(function () use ($identityId, $mode, $channel, $event, $businessId, $destinationNumber, $messageType, $now, &$operationId, &$conversationBoxId): void {
                 $operationId = DB::table(ManagedMessageDispatcher::TABLE)->insertGetId([
                     'business_id' => $businessId,
                     'business_messaging_identity_id' => $identityId,
@@ -665,7 +666,7 @@ class InboundWebhookAttributionResolver
                 // write happens exactly once per real inbound message, same
                 // as the operation row and the domain event below.
                 if ($business instanceof Business && $event->fromNumber !== null && trim($event->fromNumber) !== '') {
-                    $this->bridgeToCanonicalConversation(
+                    $conversationBoxId = $this->bridgeToCanonicalConversation(
                         $business,
                         $destinationNumber,
                         $event->fromNumber,
@@ -696,6 +697,7 @@ class InboundWebhookAttributionResolver
                 $businessId,
                 $event->fromNumber,
                 (int) $operationId,
+                $conversationBoxId,
             ));
         }
 
@@ -743,11 +745,11 @@ class InboundWebhookAttributionResolver
         ?string $body,
         array $mediaUrls,
         string $messageType,
-    ): void {
+    ): ?int {
         // The conversation identity and the inbound write now live in the one
         // canonical writer, which managed OUTBOUND history shares — so a reply
         // and the message it answers can never key two different threads.
-        $this->history->recordManagedInbound($business, $businessNumber, $contactNumber, $body, $mediaUrls, $messageType);
+        return $this->history->recordManagedInbound($business, $businessNumber, $contactNumber, $body, $mediaUrls, $messageType);
     }
 
     /**

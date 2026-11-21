@@ -1120,6 +1120,7 @@ $chatBox->touch();
                             $conversationBusinessId,
                             (string) $to,
                             (int) $inboundReport->id,
+                            $chatBox->id !== null ? (int) $chatBox->id : null,
                         ));
                     }
 

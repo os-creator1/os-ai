@@ -191,8 +191,9 @@ class MobileRealtimePushTest extends TestCase
 
         // The queue runs the very same job again (a timeout/worker restart): same occurrence key.
         $operationId = (int) DB::table('business_messaging_operations')->where('business_id', $business->id)->orderByDesc('id')->value('id');
-        (new NotifyMobileOfInboundMessage())->handle(InboundMessageReceived::fromManagedOperation((int) $business->id, self::CUSTOMER, $operationId));
-        (new NotifyMobileOfInboundMessage())->handle(InboundMessageReceived::fromManagedOperation((int) $business->id, self::CUSTOMER, $operationId));
+        $boxId = (int) ChatBox::query()->where('business_id', $business->id)->value('id');
+        (new NotifyMobileOfInboundMessage())->handle(InboundMessageReceived::fromManagedOperation((int) $business->id, self::CUSTOMER, $operationId, $boxId));
+        (new NotifyMobileOfInboundMessage())->handle(InboundMessageReceived::fromManagedOperation((int) $business->id, self::CUSTOMER, $operationId, $boxId));
 
         $this->assertCount(1, $this->push->sent);
         $this->assertSame(1, DB::table('mobile_push_deliveries')->count());
@@ -234,6 +235,54 @@ class MobileRealtimePushTest extends TestCase
         $this->assertSame(1, DB::table('chat_box_messages')->whereIn('direction', ['incoming', 'inbound'])->count());
         $this->assertSame(1, (int) ChatBox::query()->where('business_id', $business->id)->value('notification'));
         $this->assertSame(0, DB::table('mobile_push_deliveries')->count(), 'The failed attempt released its claim so it can be retried.');
+    }
+
+    public function test_a_failed_push_is_retried_by_the_queue_and_still_sends_exactly_once(): void
+    {
+        Event::fake([MobileConversationChanged::class]);
+        $this->push->throw = true;
+        [$owner, $business, , $identity] = $this->managedTenant();
+        $this->phone($owner, self::TOKEN_A);
+        $this->inbound($identity);
+        $this->assertCount(0, $this->push->sent);
+        $this->assertCount(1, $this->changedFor($owner->user, 'received'), 'The live event is independent of the push outage.');
+
+        // The queue retries the SAME job once the provider is back.
+        $this->push->throw = false;
+        $box = ChatBox::query()->where('business_id', $business->id)->sole();
+        $key = 'operation:' . DB::table('business_messaging_operations')->where('business_id', $business->id)->orderByDesc('id')->value('id');
+        $job = new \App\Jobs\Mobile\SendMobilePush((int) $owner->user_id, (int) $box->id, $key);
+        app()->call([$job, 'handle']);
+        app()->call([$job, 'handle']);
+
+        $this->assertCount(1, $this->push->sent, 'Retried, and never duplicated.');
+    }
+
+    public function test_the_event_targets_the_exact_conversation_even_when_another_thread_with_that_customer_is_newer(): void
+    {
+        Event::fake([MobileConversationChanged::class]);
+        [$owner, $business, , $identity] = $this->managedTenant();
+        $this->phone($owner, self::TOKEN_A);
+        // The same customer also talks to the Business's SECOND number, and that thread is touched after our message arrives.
+        $this->inbound($identity);
+        $first = ChatBox::query()->where('business_id', $business->id)->where('from', '14155550199')->sole();
+        $second = app(ConversationHistoryWriter::class)->conversationFor($business, '14155550177', '14155552671');
+        $second->save();
+        DB::table('chat_boxes')->where('id', $second->id)->update(['updated_at' => now()->addMinute()]);
+
+        $operationId = (int) DB::table('business_messaging_operations')->where('business_id', $business->id)->orderByDesc('id')->value('id');
+        $this->push->sent = [];
+        (new NotifyMobileOfInboundMessage())->handle(InboundMessageReceived::fromManagedOperation((int) $business->id, self::CUSTOMER, $operationId + 1000, (int) $first->id));
+
+        $this->assertSame($first->uid, $this->push->sent[0]['data']['c']);
+        $this->assertNotSame($second->uid, $this->push->sent[0]['data']['c']);
+
+        // An id that does not belong to the event's Business is ignored, never trusted.
+        [, $businessB] = $this->managedTenant('+14155550188');
+        $foreign = ChatBox::query()->create(['user_id' => $businessB->customer_id, 'business_id' => $businessB->id, 'from' => '14155550188', 'to' => '14155552671', 'uid' => (string) Str::uuid()]);
+        $this->push->sent = [];
+        (new NotifyMobileOfInboundMessage())->handle(InboundMessageReceived::fromManagedOperation((int) $business->id, self::CUSTOMER, $operationId + 2000, (int) $foreign->id));
+        $this->assertCount(0, $this->push->sent);
     }
 
     // ---- eligibility --------------------------------------------------------------------------------------------
@@ -288,7 +337,7 @@ class MobileRealtimePushTest extends TestCase
 
         app(EntitlementManager::class)->changePlanStatus($workspace, WorkspacePlanAssignmentStatus::Suspended, $this->platformAdminId(), 'Lock fixture.');
         // (The managed webhook itself refuses a locked account, so drive the listener the webhook would have queued.)
-        (new NotifyMobileOfInboundMessage())->handle(InboundMessageReceived::fromManagedOperation((int) $business->id, self::CUSTOMER, 1));
+        (new NotifyMobileOfInboundMessage())->handle(InboundMessageReceived::fromManagedOperation((int) $business->id, self::CUSTOMER, 1, (int) $box->id));
 
         $this->assertCount(0, $this->push->sent);
         $this->assertCount(0, $this->changedFor($owner->user));

@@ -44,6 +44,9 @@ export function ConversationDetailScreen({ route, navigation }: Props) {
   const listRef = useRef<FlatList<Row>>(null);
   const stick = useRef(true);
   const readSent = useRef(false);
+  const dataRef = useRef<ConversationDetail | null>(null);
+  // Is this screen the one the user is looking at? A screen kept mounted under another one (Contact profile) is not.
+  const focused = useRef(true);
   const earlierInFlight = useRef(false);
   const [loadingEarlier, setLoadingEarlier] = useState(false);
   const threadGeneration = useRef(0);
@@ -58,6 +61,7 @@ export function ConversationDetailScreen({ route, navigation }: Props) {
       const d = await api.conversation(scope, uid);
       if (version !== threadGeneration.current) return false;
       setData(d);
+      dataRef.current = d;
       setHasMore(d.has_more);
       setOlder([]);
       // Only the actual server history proves a previously unconfirmed
@@ -95,14 +99,22 @@ export function ConversationDetailScreen({ route, navigation }: Props) {
       const d = await api.conversation(scope, uid);
       if (version !== threadGeneration.current) return;
       stick.current = true;
+      // The server only returns the latest window. Messages that just slid out of it stay on screen: they are folded
+      // into the loaded history, so a growing thread never opens a gap. `hasMore` is left as it was: the slid-out
+      // messages are contiguous with the old window, so what lies before the loaded history is unchanged.
+      const prev = dataRef.current?.messages ?? [];
+      const firstNew = d.messages[0]?.id ?? Number.POSITIVE_INFINITY;
+      const slid = prev.filter((m) => m.id < firstNew);
+      if (slid.length > 0) setOlder((o) => [...o, ...slid]);
       setData(d);
+      dataRef.current = d;
       const confirmed = new Set(d.messages.map((m) => m.send_uid).filter((key): key is string => !!key));
       setPending((attempts) => attempts.filter((attempt) => !confirmed.has(attempt.key)));
       setRetryAttempts((attempts) => Object.fromEntries(
         Object.entries(attempts).filter(([key, attempt]) => attempt.state !== 'unconfirmed' || !confirmed.has(key)),
       ));
-      // A message that arrives while the conversation is open is read the moment it is seen.
-      if (d.conversation.unread) api.markRead(scope, uid).catch(() => undefined);
+      // Marked read only when the user can actually see it: a hidden (covered) screen never clears unread.
+      if (d.conversation.unread && focused.current) api.markRead(scope, uid).catch(() => undefined);
     } catch { /* a failed live refresh is silent; the next event or pull-to-refresh retries */ }
   }, [api, scope, uid]);
 
@@ -110,10 +122,19 @@ export function ConversationDetailScreen({ route, navigation }: Props) {
     if (e.kind === 'resync' || (e.kind === 'change' && e.conversation_uid === uid)) void refreshLive();
   });
 
+  // Focus, not mount: when another screen is pushed on top, this conversation is no longer "being viewed", so it neither
+  // marks new messages read nor suppresses their notification banner. Coming back refreshes (and marks read) once.
   useEffect(() => {
-    setActiveConversation(uid);
-    return () => setActiveConversation(null);
-  }, [uid]);
+    const nav: any = navigation;
+    const apply = (isFocused: boolean) => {
+      focused.current = isFocused;
+      setActiveConversation(isFocused ? uid : null);
+    };
+    apply(typeof nav.isFocused === 'function' ? nav.isFocused() : true);
+    const offFocus = typeof nav.addListener === 'function' ? nav.addListener('focus', () => { apply(true); void refreshLive(); }) : null;
+    const offBlur = typeof nav.addListener === 'function' ? nav.addListener('blur', () => apply(false)) : null;
+    return () => { offFocus?.(); offBlur?.(); setActiveConversation(null); };
+  }, [navigation, uid, refreshLive]);
 
   useEffect(() => { void load(); }, [load]);
 

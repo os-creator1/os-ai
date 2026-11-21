@@ -138,6 +138,7 @@ final class ConversationHistoryWriter
      * already answered" flag is reset. The caller holds the transaction.
      *
      * @param  list<string>  $mediaUrls
+     * @return int|null the conversation (chat_boxes.id) the message was filed under
      */
     public function recordManagedInbound(
         Business $business,
@@ -146,11 +147,11 @@ final class ConversationHistoryWriter
         ?string $body,
         array $mediaUrls,
         string $messageType,
-    ): void {
+    ): ?int {
         $conversation = $this->conversationFor($business, $businessNumber, $contactNumber);
 
         if ($conversation === null) {
-            return;
+            return null;
         }
 
         $conversation->reply_by_customer = true;
@@ -176,6 +177,9 @@ final class ConversationHistoryWriter
             'sms_type' => $messageType,
             'direction' => Reports::DIRECTION_INCOMING,
         ]);
+
+        // The exact thread this message landed in — carried on the domain event so listeners never have to guess it.
+        return (int) $conversation->id;
     }
 
     /**
