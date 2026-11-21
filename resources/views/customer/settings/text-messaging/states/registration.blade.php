@@ -11,6 +11,9 @@
     // Once a brand or campaign exists at the carrier, the customer is tracking
     // real progress: no "back to number choices", no "nothing was charged".
     $progressActive = $formNumberType === \App\Enums\Messaging\PhoneNumberType::Local && $progress['committed'];
+    $tollFreeFeedback = $registration->number_type === \App\Enums\Messaging\PhoneNumberType::TollFree && in_array($status, ['pending', 'rejected', 'approved'], true)
+        ? \App\Library\Messaging\Registration\TollFreeVerificationFeedback::for($registration, $phoneNumber, $businessUid)
+        : null;
     $progressChip = match ($progress['campaign']['key']) {
         'approved' => ['Approved', 'success'],
         'under_review' => ['Carrier review', 'warn'],
@@ -37,9 +40,9 @@
     @include('customer.settings._sr-header', [
         'backUrl' => route('customer.workspaces.businesses.settings.show', [$workspaceUid, $businessUid]),
         'title' => 'Text messaging',
-        'description' => $progressActive ? $progressDescription : 'One more step before this number is ready to send and receive texts.',
-        'chip' => $progressActive ? $progressChip[0] : null,
-        'chipVariant' => $progressActive ? $progressChip[1] : '',
+        'description' => $progressActive ? $progressDescription : ($tollFreeFeedback !== null ? $tollFreeFeedback['headline'] : 'One more step before this number is ready to send and receive texts.'),
+        'chip' => $progressActive ? $progressChip[0] : ($tollFreeFeedback !== null ? $tollFreeFeedback['label'] : null),
+        'chipVariant' => $progressActive ? $progressChip[1] : ($tollFreeFeedback !== null ? match ($tollFreeFeedback['variant']) { 'danger' => 'danger', 'success' => 'success', default => 'warn' } : ''),
     ])
 
     @if($phoneNumber === null && $formNumberType === \App\Enums\Messaging\PhoneNumberType::Local && ! $progressActive)
@@ -61,9 +64,6 @@
     @endif
 
     @php
-        $tollFreeFeedback = $registration->number_type === \App\Enums\Messaging\PhoneNumberType::TollFree && in_array($status, ['pending', 'rejected', 'approved'], true)
-            ? \App\Library\Messaging\Registration\TollFreeVerificationFeedback::for($registration)
-            : null;
         $statusChip = match (true) {
             $tollFreeFeedback !== null => [$tollFreeFeedback['label'], match ($tollFreeFeedback['variant']) { 'danger' => 'danger', 'success' => 'success', default => 'warn' }],
             $status === 'approved' => ['Approved', 'success'],
@@ -80,13 +80,21 @@
             <div class="pm-numbercard__number @if($phoneNumber === null) pm-numbercard__number--empty @endif" data-role="phone-number">{{ $phoneNumber ?? 'Not yet chosen — you\'ll pick this once your verification is approved.' }}</div>
         </div>
         <span class="sr-chip sr-chip--{{ $statusChip[1] }}" data-role="registration-status-chip">{{ $statusChip[0] }}</span>
-        <p class="pm-numbercard__text">Carriers need a few details about this Business before texts can be delivered reliably. It is a one-time step, and nothing is sent until you submit.</p>
+        @if($tollFreeFeedback !== null && $status === 'pending')
+            <p class="pm-numbercard__text" data-role="submitted-note">Your verification has been submitted to Telnyx and is being tracked. It does not need to be submitted again.</p>
+        @elseif($tollFreeFeedback !== null && $status === 'approved')
+            <p class="pm-numbercard__text" data-role="submitted-note">Your verification is complete.</p>
+        @elseif($tollFreeFeedback !== null && $status === 'rejected')
+            <p class="pm-numbercard__text" data-role="submitted-note">Telnyx rejected the submitted verification. Correct the details below and submit again.</p>
+        @else
+            <p class="pm-numbercard__text">Carriers need a few details about this Business before texts can be delivered reliably. It is a one-time step, and nothing is sent until you submit.</p>
+        @endif
         <div class="pm-numbercard__links">
             <a href="{{ route('customer.workspaces.businesses.usage-billing.show', [$workspaceUid, $businessUid]) }}">Usage &amp; billing</a>
         </div>
     </div>
 
-    @include('customer.settings.text-messaging._registration-tracker', ['phoneNumber' => $phoneNumber, 'status' => $status, 'campaignAssignmentStatus' => $campaignAssignmentStatus ?? null])
+    @include('customer.settings.text-messaging._registration-tracker', ['phoneNumber' => $phoneNumber, 'status' => $status, 'campaignAssignmentStatus' => $campaignAssignmentStatus ?? null, 'correctionRequested' => $tollFreeFeedback !== null && $tollFreeFeedback['correction'] && $status === 'pending'])
 
     @if($progressActive)
         @include('customer.settings.text-messaging._registration-progress', ['progress' => $progress, 'registration' => $registration, 'phoneNumber' => $phoneNumber, 'campaignAssignmentStatus' => $campaignAssignmentStatus ?? null])
@@ -98,19 +106,35 @@
             @case('pending')
                 @if($tollFreeFeedback !== null)
                     <x-alert variant="{{ $tollFreeFeedback['variant'] }}" icon="{{ $tollFreeFeedback['variant'] === 'danger' ? 'alert-circle' : 'clock' }}" class="mt-2 mb-0" data-role="toll-free-verification-feedback" data-feedback="{{ $tollFreeFeedback['key'] }}">
-                        <strong class="d-block">{{ $tollFreeFeedback['label'] }}</strong>
+                        <strong class="d-block" data-role="feedback-headline">{{ $tollFreeFeedback['headline'] }}</strong>
                         {{ $tollFreeFeedback['message'] }}
                         @if($tollFreeFeedback['reason'])
                             <span class="d-block mt-1" data-role="provider-reason">{{ $tollFreeFeedback['reason'] }}</span>
                         @endif
-                        @if($tollFreeFeedback['show_details'])
-                            <a class="d-block mt-1" href="#toll-free-submitted-details" data-role="review-verification-details">Review verification details</a>
-                        @endif
+                        <span class="d-flex flex-wrap align-items-center gap-2 mt-2">
+                            @if($tollFreeFeedback['correction'] && $tollFreeFeedback['resolve_url'])
+                                <a class="btn btn-primary btn-sm" href="{{ $tollFreeFeedback['resolve_url'] }}" data-role="resolve-verification-issue">Resolve verification issue</a>
+                            @endif
+                            @if($tollFreeFeedback['show_details'])
+                                <a href="#toll-free-submitted-details" data-role="view-submitted-details">View submitted details</a>
+                            @endif
+                        </span>
                     </x-alert>
+                    <div class="d-flex flex-wrap align-items-center gap-2 mt-2" data-role="toll-free-refresh">
+                        <form method="post" action="{{ route('customer.workspaces.businesses.text-messaging.registration.refresh', [$workspaceUid, $businessUid]) }}" class="m-0">
+                            @csrf
+                            <button type="submit" class="btn btn-sm btn-outline-secondary" data-role="refresh-status">Refresh status</button>
+                        </form>
+                        <span class="text-caption text-muted" data-role="last-checked">
+                            @if($registration->provider_status_checked_at) Last checked {{ $registration->provider_status_checked_at->diffForHumans() }}. @else Not checked with Telnyx yet; we check automatically. @endif
+                            Refreshing only reads the status; it never submits anything.
+                        </span>
+                    </div>
                     @if($tollFreeFeedback['show_details'])
                         <div id="toll-free-submitted-details"><x-card title="Submitted verification details" :padded="true">
                             <dl class="row mb-0" data-role="toll-free-submitted-details">
                                 <dt class="col-sm-4">Legal business name</dt><dd class="col-sm-8">{{ $registration->legal_business_name }}</dd>
+                                <dt class="col-sm-4">Number</dt><dd class="col-sm-8">{{ $phoneNumber }}</dd>
                                 <dt class="col-sm-4">Messaging type</dt><dd class="col-sm-8">{{ $registration->use_case }}</dd>
                                 <dt class="col-sm-4">Country</dt><dd class="col-sm-8">{{ $registration->country_code }}</dd>
                                 <dt class="col-sm-4">Website</dt><dd class="col-sm-8">{{ $registration->website_url }}</dd>

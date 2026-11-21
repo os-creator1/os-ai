@@ -3,10 +3,11 @@
     every state is derived from values the page already has (the owned number, the
     saved registration status and the carrier-assignment status). No state is
     invented and nothing here changes a registration.
-    Inputs: $phoneNumber, $status, $campaignAssignmentStatus (optional).
+    Inputs: $phoneNumber, $status, $campaignAssignmentStatus (optional), $correctionRequested (optional: a submitted toll-free request the provider asked to change).
 --}}
 @php
     $assignment = $campaignAssignmentStatus ?? null;
+    $correction = (bool) ($correctionRequested ?? false);
     $hasNumber = filled($phoneNumber);
     $submitted = in_array($status, ['pending', 'approved'], true);
     $rejected = $status === 'rejected';
@@ -15,7 +16,7 @@
     $trackerSteps = [
         ['title' => 'Number ready', 'sub' => $hasNumber ? 'Number purchased' : 'Choose a number', 'state' => $hasNumber ? 'done' : 'current'],
         ['title' => 'Registration', 'sub' => $submitted ? 'Submitted' : ($rejected ? 'Needs correction' : 'Your details'), 'state' => $submitted ? 'done' : ($rejected ? 'problem' : ($hasNumber ? 'current' : 'idle'))],
-        ['title' => 'Carrier review', 'sub' => $status === 'approved' ? 'Approved' : ($status === 'pending' ? 'In review' : ($rejected ? 'Not approved' : 'Not started')), 'state' => $status === 'approved' ? 'done' : ($status === 'pending' ? 'current' : ($rejected ? 'problem' : 'idle'))],
+        ['title' => 'Carrier review', 'sub' => $status === 'approved' ? 'Approved' : ($status === 'pending' ? ($correction ? 'Correction requested' : 'In review') : ($rejected ? 'Not approved' : 'Not started')), 'state' => $status === 'approved' ? 'done' : ($status === 'pending' ? ($correction ? 'problem' : 'current') : ($rejected ? 'problem' : 'idle'))],
         ['title' => 'Ready to text', 'sub' => $texting ? 'Texting enabled' : ($status === 'approved' && $assignment === 'failed' ? 'Needs our help' : ($status === 'approved' && $hasNumber ? 'Finishing setup' : 'Not yet')), 'state' => $texting ? 'done' : ($status === 'approved' && $hasNumber ? 'current' : 'idle')],
     ];
 @endphp
