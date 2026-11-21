@@ -2,6 +2,7 @@
 
 namespace Tests\Feature\Mobile;
 
+use App\Enums\Workspace\WorkspaceMembershipRole;
 use App\Models\Business;
 use App\Models\ChatBox;
 use App\Models\Customer;
@@ -211,6 +212,50 @@ class MobileApiTest extends TestCase
         $this->assertTrue($res->json('data.businesses.0.features.conversations'));
         $this->assertStringNotContainsString($this->b[1]->uid, $res->getContent());
         $this->assertStringNotContainsString('push_token', $res->getContent());
+    }
+
+    public function test_owner_hidden_modules_block_mobile_reads_even_when_member_permissions_and_plan_allow_them(): void
+    {
+        $member = $this->createCustomer();
+        $member->forceFill(['permissions' => json_encode($this->allCustomerPermissions())])->save();
+        $member->user->forceFill(['password' => Hash::make(self::PASSWORD)])->save();
+        $membership = $this->member($this->a[2], $member->user, WorkspaceMembershipRole::Staff);
+        $token = $this->login([$member, $this->a[1], $this->a[2]], 'install-hidden-001');
+
+        // The owner hides these modules AFTER the phone signs in; a token
+        // cannot continue reading a module the owner has switched off.
+        $membership->forceFill(['hidden_modules' => ['conversations', 'contacts']])->save();
+
+        $box = $this->box($this->a, '15551110001', 'Private lead conversation');
+        $uid = (string) Str::uuid();
+        $group = DB::table('contact_groups')->insertGetId([
+            'uid' => (string) Str::uuid(), 'customer_id' => $this->a[1]->customer_id,
+            'business_id' => $this->a[1]->id, 'name' => 'Mobile hidden test',
+            'created_at' => now(), 'updated_at' => now(),
+        ]);
+        DB::table('contacts')->insert([
+            'uid' => $uid, 'customer_id' => $this->a[1]->customer_id,
+            'business_id' => $this->a[1]->id, 'group_id' => $group,
+            'phone' => 15554445555, 'status' => 'subscribe',
+            'created_at' => now(), 'updated_at' => now(),
+        ]);
+
+        $this->app['auth']->forgetGuards();
+        $list = $this->as($token)->getJson($this->url('businesses'))->assertOk();
+        $this->assertFalse($list->json('data.businesses.0.features.conversations'));
+        $this->assertFalse($list->json('data.businesses.0.features.contacts'));
+        $this->app['auth']->forgetGuards();
+        $this->as($token)->getJson($this->url($this->tenantPath($this->a, 'conversations')))->assertNotFound();
+        $this->app['auth']->forgetGuards();
+        $this->as($token)->getJson($this->url($this->tenantPath($this->a, 'conversations/' . $box->uid)))->assertNotFound();
+        $this->app['auth']->forgetGuards();
+        $this->as($token)->getJson($this->url($this->tenantPath($this->a, 'contacts/' . $uid)))->assertNotFound();
+
+        // Hiding a module for this member never hides it for the owner.
+        $this->app['auth']->forgetGuards();
+        $ownerToken = $this->login($this->a, 'install-owner-002');
+        $this->app['auth']->forgetGuards();
+        $this->as($ownerToken)->getJson($this->url($this->tenantPath($this->a, 'conversations')))->assertOk();
     }
 
     // ---- tenant isolation ------------------------------------------------------------------------------------
