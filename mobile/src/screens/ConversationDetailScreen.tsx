@@ -58,6 +58,15 @@ export function ConversationDetailScreen({ route, navigation }: Props) {
       setData(d);
       setHasMore(d.has_more);
       setOlder([]);
+      // Only the actual server history proves a previously unconfirmed
+      // send/retry now has a persisted bubble. Once its send_uid appears,
+      // remove the stale warning so a later delivery_failed state can
+      // offer a legitimate new Retry.
+      const confirmed = new Set(d.messages.map((m) => m.send_uid).filter((key): key is string => !!key));
+      setRetryAttempts((attempts) => Object.fromEntries(
+        Object.entries(attempts).filter(([key, attempt]) => attempt.state !== 'unconfirmed' || !confirmed.has(key)),
+      ));
+      setPending((attempts) => attempts.filter((attempt) => !confirmed.has(attempt.key)));
       // Opening is what marks it read: fetching alone never does. Once per screen visit.
       if (d.conversation.unread && !readSent.current) {
         readSent.current = true;
@@ -179,7 +188,7 @@ export function ConversationDetailScreen({ route, navigation }: Props) {
         data={rows}
         keyExtractor={(r) => ('pending' in r && r.pending ? `p-${r.key}` : `m-${(r as Message).id}`)}
         contentContainerStyle={{ padding: space.md }}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={async () => { setRefreshing(true); await load(); setRefreshing(false); }} />}
+        refreshControl={<RefreshControl testID="message-refresh" refreshing={refreshing} onRefresh={async () => { setRefreshing(true); await load(); setRefreshing(false); }} />}
         onContentSizeChange={() => { if (stick.current) listRef.current?.scrollToEnd({ animated: true }); }}
         ListHeaderComponent={hasMore
           ? <Button title={loadingEarlier ? 'Loading earlier messages…' : 'Load earlier messages'} variant="plain" disabled={loadingEarlier} onPress={() => { void loadEarlier(); }} />
