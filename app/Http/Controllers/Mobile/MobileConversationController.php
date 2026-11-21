@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Mobile;
 use App\Library\Conversations\ConversationSendFailureReason;
 use App\Library\Conversations\ConversationSender;
 use App\Library\Conversations\ManagedSendStateMachine;
+use App\Library\Messaging\ManagedDispatchDelegate;
 use App\Library\Crm\CrmLocationScope;
 use App\Library\Mobile\MobileBusinessAccess;
 use App\Library\Workspace\LocationAccessGuard;
@@ -92,6 +93,24 @@ class MobileConversationController extends MobileController
             return $this->notFound();
         }
 
+        // The desktop timeline reconciles crashed/stale 'sending' claims
+        // under a row lock before rendering them. Keep mobile's projection
+        // consistent so recoverable failures do not remain stuck forever.
+        $sendingIds = ChatBoxMessage::query()
+            ->where('box_id', $box->id)
+            ->where('send_status', ManagedSendStateMachine::SENDING)
+            ->pluck('id');
+
+        foreach ($sendingIds as $sendingId) {
+            DB::transaction(function () use ($sendingId, $business): void {
+                $locked = ChatBoxMessage::query()->whereKey($sendingId)->lockForUpdate()->first();
+
+                if ($locked !== null) {
+                    ManagedSendStateMachine::reconcileSendingRow($locked, (int) $business->id);
+                }
+            });
+        }
+
         $limit = min(self::MESSAGE_LIMIT, max(1, (int) $request->query('limit', 50)));
         $before = $request->query('before_id');
 
@@ -159,6 +178,14 @@ class MobileConversationController extends MobileController
             return $this->fail('unavailable', 'Sending is not available in demo mode.', 422);
         }
 
+        // Legacy (non-managed) transport has no persisted conversation
+        // idempotency result. Replaying a timed-out request could send and
+        // bill twice, so it is unsupported from mobile until it has a
+        // durable send ledger. BYO selected channels count as managed here.
+        if (! ManagedDispatchDelegate::isManaged((int) $resolved[1]->id)) {
+            return $this->fail('messaging_unavailable', 'Mobile replies require a connected managed or BYO messaging sender.', 422);
+        }
+
         $box->setRelation('business', $resolved[1]);
         $key = strtolower((string) $request->input('idempotency_key'));
         $existing = ChatBoxMessage::query()->where('box_id', $box->id)->where('send_uid', $key)->first();
@@ -168,7 +195,7 @@ class MobileConversationController extends MobileController
             return $this->outcome($existing->send_status === null ? null : $existing, $key, null);
         }
 
-        $response = app(ConversationSender::class)->reply($box, $body, null, $key);
+        $response = app(ConversationSender::class)->reply($box, $body, null, $key, true);
 
         return $this->outcome(ChatBoxMessage::query()->where('box_id', $box->id)->where('send_uid', $key)->first(), $key, $response);
     }
