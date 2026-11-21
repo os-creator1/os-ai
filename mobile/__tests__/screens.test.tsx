@@ -109,9 +109,9 @@ describe('signed-in screens', () => {
   it('keeps the search field mounted and focused while changing a query', async () => {
     await signedIn(() => <ConversationsScreen {...({ navigation: nav, route: { params: undefined } } as any)} />);
     await waitFor(() => screen.getByText('Ann Lee'));
-    fireEvent.changeText(screen.getByLabelText('Search'), 'ann');
+    await fireEvent.changeText(screen.getByLabelText('Search'), 'ann');
     // The input must remain in the tree even during the new request's loading state.
-    expect(screen.getByLabelText('Search').props.value).toBe('ann');
+    await waitFor(() => expect(screen.getByLabelText('Search').props.value).toBe('ann'));
   });
 
   it('shows an error state with retry when the API refuses (e.g. foreign business)', async () => {
