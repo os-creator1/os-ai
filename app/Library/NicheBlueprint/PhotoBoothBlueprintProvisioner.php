@@ -126,15 +126,6 @@ class PhotoBoothBlueprintProvisioner
             return $this->result(self::BLOCKED_OTHER_VERTICAL, "knowledge profile vertical_key='{$profileVertical}'; never overwritten");
         }
 
-        if ($explicit) {
-            // firstOrCreate() cannot reactivate or repair an existing catalog row.
-            // Check BEFORE any write: the profile manager rejects an inactive key.
-            $catalog = BusinessVertical::query()->where('key', self::NICHE_KEY)->first();
-            if ($catalog !== null && (! $catalog->is_active || $catalog->broad_industry !== self::NICHE_KEY)) {
-                return $this->result(self::BLOCKED_NICHE_CATALOG, 'Photo Booth niche catalog row is inactive or belongs to another industry; resolve the catalog before assigning');
-            }
-        }
-
         // An explicit assignment has no resolvable niche yet (that is what the assignment creates), so the
         // target is the one active, vertical-free photo_booth Blueprint for exactly this niche.
         $resolution = $explicit ? $this->assignableBlueprint() : $this->installer->resolveBlueprint($business);
@@ -163,6 +154,15 @@ class PhotoBoothBlueprintProvisioner
 
         if ($this->planAssignments->findByWorkspaceId((int) $workspace->id) === null) {
             return $this->result(self::BLOCKED_PLAN_UNASSIGNED, 'no plan assignment yet; the first plan assignment will install it automatically');
+        }
+
+        if ($explicit) {
+            // firstOrCreate() cannot reactivate or repair an existing catalog row.
+            // Check BEFORE any write: the profile manager rejects an inactive key.
+            $catalog = BusinessVertical::query()->where('key', self::NICHE_KEY)->first();
+            if ($catalog !== null && (! $catalog->is_active || $catalog->broad_industry !== self::NICHE_KEY)) {
+                return $this->result(self::BLOCKED_NICHE_CATALOG, 'Photo Booth niche catalog row is inactive or belongs to another industry; resolve the catalog before assigning');
+            }
         }
 
         return $explicit
