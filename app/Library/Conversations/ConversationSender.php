@@ -247,7 +247,11 @@ class ConversationSender
             // already proven the identity current and usable, but
             // stating it explicitly closes the same bug class
             // structurally rather than relying solely on that ordering.
-            $this->recordPreparationFailureIfManaged($box, $refusal, $sendUid, $input, true);
+            // A retry has ALREADY claimed an existing bubble as 'sending'.
+            // Even an opted-out / client-input refusal must release that
+            // claim. The initial-send path still skips creating a new bubble
+            // for opt-out, but this path updates the SAME existing send_uid.
+            $this->recordManagedSendFailure($box, $input, $sendUid, ConversationSendFailureReason::SendFailed);
 
             return $refusal;
         }
