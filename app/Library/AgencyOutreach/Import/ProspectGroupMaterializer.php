@@ -321,7 +321,14 @@ final class ProspectGroupMaterializer
             }
 
             $result = $this->values->applyAnswer($business, $contact, $def, $raw);
-            $result === CustomFieldValueService::APPLIED ? $report['values_saved']++ : $report['values_skipped']++;
+            if ($result === CustomFieldValueService::APPLIED) {
+                // The initial $have snapshot is stale after this write. Two source columns can map
+                // to the same definition, but only the first nonblank successful value may fill it.
+                $have[$def->id] = true;
+                $report['values_saved']++;
+            } else {
+                $report['values_skipped']++;
+            }
         }
     }
 
