@@ -8,6 +8,7 @@ use App\Enums\Workspace\WorkspaceMemberModule;
 use App\Exceptions\Workspace\BusinessWorkspaceMismatchException;
 use App\Exceptions\Workspace\WorkspaceBusinessNotFoundException;
 use App\Library\Entitlement\EntitlementManager;
+use App\Library\Entitlement\CustomerAccountAccessResolver;
 use App\Library\Workspace\BusinessRouteAccess;
 use App\Library\Workspace\MemberModuleVisibility;
 use App\Library\Workspace\WorkspaceManager;
@@ -36,6 +37,7 @@ final class MobileBusinessAccess
         private readonly WorkspaceManager $workspaceManager,
         private readonly BusinessRouteAccess $routeAccess,
         private readonly EntitlementManager $entitlements,
+        private readonly CustomerAccountAccessResolver $accountAccess,
         private readonly MemberModuleVisibility $moduleVisibility,
     ) {
     }
@@ -47,7 +49,7 @@ final class MobileBusinessAccess
     {
         $workspace = $this->workspaces->findByUid($workspaceUid);
 
-        if ($workspace === null || ! $workspace->is_active) {
+        if ($workspace === null || ! $workspace->is_active || ! $this->accountUsable($workspace)) {
             return null;
         }
 
@@ -85,7 +87,7 @@ final class MobileBusinessAccess
         $out = [];
 
         foreach ($this->workspaces->allForUser((int) $actor->id) as $workspace) {
-            if (! $workspace->is_active) {
+            if (! $workspace->is_active || ! $this->accountUsable($workspace)) {
                 continue;
             }
 
@@ -99,6 +101,14 @@ final class MobileBusinessAccess
         }
 
         return $out;
+    }
+
+    /** The same effective account lifecycle authority used by the web gate.
+     * Includes managing Agency locks and elapsed grace periods.
+     */
+    public function accountUsable(Workspace $workspace): bool
+    {
+        return ! $this->accountAccess->resolve($workspace)->isLocked();
     }
 
     public function moduleVisible(User $actor, Workspace $workspace, string $feature, ?string $permission): bool
