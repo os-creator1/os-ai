@@ -118,7 +118,7 @@ export function ConversationsScreen({ navigation }: Props) {
                 {moreError ? <Text style={s.preview}>{moreError}</Text> : null}
                 <Button title={moreError ? 'Retry older leads' : 'Load older leads'} variant="plain" onPress={() => { void loadMore(); }} />
               </View>
-        ) : null}
+        ) : undefined}
         renderItem={({ item }) => (
           <Pressable accessibilityRole="button" style={s.row} onPress={() => navigation.navigate('ConversationDetail', { uid: item.uid, title: item.display_name ?? item.phone ?? 'Conversation' })}>
             <View style={{ flex: 1 }}>
