@@ -207,7 +207,7 @@ describe('composer', () => {
 
     // React Native renders RefreshControl as RCTRefreshControl on Android
     // and strips its testID. Trigger the actual native refresh handler.
-    const refreshControl = lastRender.UNSAFE_getByType('RCTRefreshControl' as any);
+    const refreshControl = lastRender.UNSAFE_root.findByType('RCTRefreshControl');
     await act(async () => { await refreshControl.props.onRefresh(); });
     await waitFor(() => screen.getByText('Carrier could not deliver.'));
     await waitFor(() => expect(screen.queryByText(/Message accepted, but history could not refresh/)).toBeNull());
