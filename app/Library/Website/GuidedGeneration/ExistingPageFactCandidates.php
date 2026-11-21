@@ -25,6 +25,9 @@ final class ExistingPageFactCandidates
 
     private const NOT_A_PLACE = ['areas', 'area', 'we serve', 'serving', 'contact', 'contact us', 'call', 'book', 'booking', 'availability', 'check availability', 'home', 'and', 'more', 'surrounding areas', 'nearby'];
 
+    /** A word that makes a line a call to action or a sentence, never a place name. */
+    private const NOT_PLACE_WORDS = ['call', 'today', 'contact', 'email', 'text', 'book', 'now', 'us', 'we', 'our', 'free', 'quote', 'get', 'click', 'here', 'visit', 'phone', 'serve', 'serving', 'serves', 'located', 'near', 'within', 'miles', 'mile', 'available', 'availability'];
+
     private const MAX_AREAS = 20;
 
     private const MAX_REVIEWS = 5;
@@ -125,6 +128,7 @@ final class ExistingPageFactCandidates
                 if ($token === '' || mb_strlen($token) < 3 || mb_strlen($token) > 40 || str_word_count($token) > 4
                     || preg_match('/^[\p{L}][\p{L}\s\'’\-\.]*$/u', $token) !== 1
                     || in_array(mb_strtolower($token), self::NOT_A_PLACE, true)
+                    || array_intersect(preg_split('/[\s\.]+/u', mb_strtolower($token), -1, PREG_SPLIT_NO_EMPTY) ?: [], self::NOT_PLACE_WORDS) !== []
                     || ! preg_match('/^[\p{Lu}]/u', $token)) {
                     continue;
                 }

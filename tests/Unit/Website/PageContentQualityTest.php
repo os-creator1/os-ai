@@ -74,7 +74,7 @@ class PageContentQualityTest extends TestCase
                 ['name' => '360 Video Booth', 'description' => 'Slow-motion spins.', 'price_label' => null],
             ]]],
             $this->text('What every rental includes', 'Unlimited prints with custom digital overlays, a friendly attendant and online sharing for guests.'),
-            $this->text('Where we work', 'We bring the booth from Petal to Hattiesburg, Laurel and Biloxi.'),
+            $this->text('Where we work', 'We bring the booth from Petal to Hattiesburg, Laurel and Biloxi for weddings, corporate events and parties.'),
         ]);
     }
 
@@ -113,6 +113,15 @@ class PageContentQualityTest extends TestCase
     public function test_a_homepage_that_names_the_service_market_services_areas_and_a_booking_path_passes(): void
     {
         $this->assertSame([], $this->problems($this->richHome(), $this->home()));
+    }
+
+    public function test_a_homepage_must_say_which_events_the_owner_described_when_there_are_any(): void
+    {
+        $page = $this->richHome();
+        $page['sections'][3]['data']['body'] = 'We bring the booth from Petal to Hattiesburg, Laurel and Biloxi.';
+
+        $this->assertStringContainsString('which kinds of events', implode(' | ', $this->problems($page, $this->home())));
+        $this->assertSame([], $this->problems($page, $this->home(), $this->facts(['events' => []])), 'with no described event type there is nothing to require');
     }
 
     public function test_metadata_keywords_do_not_replace_visible_service_area_and_differentiator_copy(): void

@@ -895,7 +895,8 @@ class WebsiteController extends CustomerBaseController
 
             $summary = 'rewrite ' . count($report['rewrite']) . ', create ' . count($report['create']) . ', keep ' . count($report['preserve']) . ' untouched'
                 . (count($report['remove']) > 0 ? ', replace ' . count($report['remove']) . ' starter page(s)' : '') . '.'
-                . (count($report['preserve']) > 0 ? ' Kept as they are: ' . implode(', ', array_column($report['preserve'], 'title')) . '.' : '');
+                . (count($report['preserve']) > 0 ? ' Kept as they are: ' . implode(', ', array_column($report['preserve'], 'title')) . '.' : '')
+                . ($report['duplicate_intent'] !== [] ? ' Review: ' . implode('; ', array_map(fn ($d) => "the new /{$d['planned']} targets the same thing as your existing /{$d['existing']}", array_slice($report['duplicate_intent'], 0, 5))) . '. Nothing is deleted or redirected automatically.' : '');
 
             return [
                 'summary' => $summary,
@@ -905,6 +906,7 @@ class WebsiteController extends CustomerBaseController
                 'remove' => count($report['remove']),
                 'blockers' => $report['blockers'],
                 'preserved_titles' => array_column($report['preserve'], 'title'),
+                'duplicate_intent' => $report['duplicate_intent'],
             ];
         } catch (\Throwable) {
             return null;
