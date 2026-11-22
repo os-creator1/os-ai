@@ -145,6 +145,28 @@ class WebsiteDesignSystemTest extends TestCase
         }
     }
 
+    public function test_gallery_and_backdrops_are_two_separate_clickable_destinations(): void
+    {
+        $pages = [['uid' => 'home', 'title' => 'Kaleb Hill Photo Booth', 'is_home' => true, 'slug' => null, 'url' => '/']];
+        foreach (['gallery' => 'Gallery', 'backdrops' => 'Backdrops', 'services' => 'Services Overview', 'photo-booth-contact' => 'Contact'] as $slug => $title) {
+            $pages[] = ['uid' => $slug, 'title' => $title, 'is_home' => false, 'slug' => $slug, 'url' => '/' . $slug];
+        }
+
+        $nav = (new WebsiteNavigationBuilder())->build($pages, 'backdrops');
+        $primary = collect($nav['primary'])->keyBy('title');
+
+        foreach (['Gallery' => '/gallery', 'Backdrops' => '/backdrops'] as $label => $url) {
+            $this->assertSame($url, $primary[$label]['url'], "{$label} is a normal clickable page");
+            $this->assertSame([], $primary[$label]['children'], "{$label} owns no dropdown and is nobody else's dropdown");
+        }
+        $this->assertTrue($primary['Backdrops']['current']);
+        $this->assertFalse($primary['Gallery']['current'], 'visiting Backdrops does not highlight Gallery');
+
+        // Backdrops alone (no Gallery page) is still its own normal item.
+        $alone = (new WebsiteNavigationBuilder())->build(array_values(array_filter($pages, fn ($p) => $p['slug'] !== 'gallery')));
+        $this->assertSame('/backdrops', collect($alone['primary'])->firstWhere('title', 'Backdrops')['url']);
+    }
+
     public function test_a_single_page_site_has_no_navigation_to_show(): void
     {
         $nav = (new WebsiteNavigationBuilder())->build([['uid' => 'home', 'title' => 'X', 'is_home' => true, 'slug' => null, 'url' => '/']]);

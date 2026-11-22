@@ -7,6 +7,8 @@ on:
       - 'app/Library/Website/**'
       - 'tests/Feature/Website/**'
       - 'tests/Feature/Seo/Content/PublicBlogTest.php'
+      - 'app/Http/Controllers/Customer/Business/WebsiteController.php'
+      - 'app/Http/Controllers/Customer/Business/WebsiteStudioController.php'
       - 'database/seeders/WebsiteTemplateSeeder.php'
       - 'database/seeders/TutoringWebsiteSetupQuestionnaireSeeder.php'
       - 'app/Console/Commands/SeedNicheBlueprintCommand.php'
@@ -103,6 +105,11 @@ jobs:
         run: |
           php artisan test tests/Feature/NicheBlueprint/V2/PhotoBoothBlueprintProvisioningRepairTest.php --log-junit /tmp/pb-provisioning.xml
           php -r '$x = simplexml_load_file("/tmp/pb-provisioning.xml"); $n = count($x->xpath("//testcase")); $s = count($x->xpath("//testcase/skipped")); fwrite(STDOUT, "Discovered Photo Booth provisioning tests: $n (skipped: $s)\n"); if ($n !== 11 || $s !== 0) exit(1);'
+      - name: Run generator recovery acceptance and enforce discovery
+        shell: bash
+        run: |
+          php artisan test tests/Feature/Website/Acceptance/GeneratorRecoveryAcceptanceTest.php --log-junit /tmp/generator-recovery.xml
+          php -r '$x = simplexml_load_file("/tmp/generator-recovery.xml"); $n = count($x->xpath("//testcase")); $s = count($x->xpath("//testcase/skipped")); fwrite(STDOUT, "Discovered generator recovery tests: $n (skipped: $s)\n"); if ($n !== 8 || $s !== 0) exit(1);'
       - name: Run guided generation and affected page-budget regressions
         run: >-
           php artisan test

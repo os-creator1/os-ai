@@ -2242,6 +2242,8 @@
             });
 
             Route::prefix('studio')->name('studio.')->group(function () {
+                // Declared BEFORE the {tab?} catch-all so "confirm-areas" is never read as a tab.
+                Route::post('/confirm-areas', 'Business\WebsiteStudioController@confirmAreas')->middleware('throttle:20,1')->name('confirm-areas');
                 Route::get('/{tab?}', 'Business\WebsiteStudioController@show')->name('show');
             });
 

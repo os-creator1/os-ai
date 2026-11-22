@@ -895,7 +895,8 @@ class WebsiteController extends CustomerBaseController
 
             $summary = 'rewrite ' . count($report['rewrite']) . ', create ' . count($report['create']) . ', keep ' . count($report['preserve']) . ' untouched'
                 . (count($report['remove']) > 0 ? ', replace ' . count($report['remove']) . ' starter page(s)' : '') . '.'
-                . (count($report['preserve']) > 0 ? ' Kept as they are: ' . implode(', ', array_column($report['preserve'], 'title')) . '.' : '');
+                . (count($report['preserve']) > 0 ? ' Kept as they are: ' . implode(', ', array_column($report['preserve'], 'title')) . '.' : '')
+                . ($report['duplicate_intent'] !== [] ? ' Review: ' . implode('; ', array_map(fn ($d) => "the new /{$d['planned']} targets the same thing as your existing /{$d['existing']}", array_slice($report['duplicate_intent'], 0, 5))) . '. Nothing is deleted or redirected automatically.' : '');
 
             return [
                 'summary' => $summary,
@@ -905,6 +906,7 @@ class WebsiteController extends CustomerBaseController
                 'remove' => count($report['remove']),
                 'blockers' => $report['blockers'],
                 'preserved_titles' => array_column($report['preserve'], 'title'),
+                'duplicate_intent' => $report['duplicate_intent'],
             ];
         } catch (\Throwable) {
             return null;
@@ -1036,7 +1038,12 @@ class WebsiteController extends CustomerBaseController
 
             \App\Jobs\Website\RunGuidedWebsiteGenerationJob::dispatch(
                 (int) $website->id, (int) $business->id, (string) $template->key, (int) Auth::id(), $idempotencyKey, $mode, $leaseToken,
-                $customSection, $customerFaq, WizardPresentationAnswers::catalogSelection($completedResponse), WizardPresentationAnswers::serviceAreas($completedResponse), WizardPresentationAnswers::blueprintContext($completedResponse),
+                $customSection, $customerFaq, WizardPresentationAnswers::catalogSelection($completedResponse), WizardPresentationAnswers::serviceAreas($completedResponse),
+                // An ESTABLISHED site (published, released or generated before) with no completed guided setup — a migrated or older
+                // site rebuilt from Studio — still gets the deterministic Photo Booth composition from its canonical records. A first
+                // generation keeps the AI-written path, exactly as before.
+                WizardPresentationAnswers::blueprintContext($completedResponse)
+                    ?? ($completedResponse === null && app(\App\Library\Website\GuidedGeneration\DraftPageReconciler::class)->isEstablished($website) ? WizardPresentationAnswers::canonicalBlueprintContext($business) : null),
             );
         } catch (\Throwable $e) {
             // Nothing was queued (or queuing failed): the lease must not stay held for a job that will never run.

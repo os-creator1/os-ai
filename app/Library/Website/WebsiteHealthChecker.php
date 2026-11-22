@@ -193,6 +193,12 @@ final class WebsiteHealthChecker
             );
         }
 
+        // 15b. SEO readiness: a generation can SUCCEED and still be thin because facts are missing. Say which, never claim the benchmark.
+        $readinessExtras = $this->seoReadinessCheck($add, $website, $business, $links);
+        if ($readinessExtras !== null) {
+            $checks[array_key_last($checks)] += $readinessExtras;
+        }
+
         // 16. Search-quality review (owner's judgement, never a block): competing pages, repeated copy, pages with no links on,
         // repeated photo descriptions, cut-off descriptions, no proof. Reported only when found, naming the page.
         foreach (app(\App\Library\Website\Seo\WebsiteSeoReview::class)->review($website, $pages, $business, $links) as $review) {
@@ -202,6 +208,53 @@ final class WebsiteHealthChecker
         $counts = array_count_values(array_column($checks, 'status'));
 
         return ['checks' => $checks, 'summary' => ['ok' => $counts[self::OK] ?? 0, 'warn' => $counts[self::WARN] ?? 0, 'fail' => $counts[self::FAIL] ?? 0]];
+    }
+
+    /**
+     * "Generation succeeded" is not "SEO-ready". This lists, from the same confirmed facts the generator reads, what is still
+     * missing (so pages say less than they could), the lead form's state, and facts the site's own existing pages state but the
+     * Business records do not (offered for the owner to confirm; never used until then). Nothing is invented or written here.
+     *
+     * @param  array<string, string>  $links
+     * @return ?array{area_candidates: array<int, string>, confirm_areas_url: string}
+     */
+    private function seoReadinessCheck(callable $add, Website $website, $business, array $links): ?array
+    {
+        if ($business === null) {
+            return null;
+        }
+
+        $facts = app(\App\Library\Website\GuidedGeneration\GuidedWebsiteGenerationClient::class)->contentFacts($business);
+        $items = \App\Library\Website\GuidedGeneration\SeoContentFacts::gaps($facts);
+
+        $lead = app(\App\Library\Website\Forms\WebsiteLeadFormResolver::class)->inspect($business);
+        if ($lead['state'] === \App\Library\Website\Forms\WebsiteLeadFormResolver::STATE_NEEDS_SETUP) {
+            $items[] = $lead['message'];
+        }
+
+        $candidates = \App\Library\Website\GuidedGeneration\ExistingPageFactCandidates::forWebsite($website);
+        $areaNames = array_column($candidates['service_areas'], 'name');
+        if ($areaNames !== []) {
+            $items[] = 'Your existing pages mention possible service areas: ' . implode(', ', array_slice($areaNames, 0, 10)) . '. They are not used until you confirm them.';
+        }
+        if ($candidates['testimonials'] !== []) {
+            $items[] = count($candidates['testimonials']) . ' review(s) on your existing pages could be added as testimonials once you confirm you have permission to show them (add them under your business profile).';
+        }
+
+        $add(
+            'content_readiness',
+            $items === [] ? self::OK : self::WARN,
+            'SEO readiness',
+            $items === []
+                ? 'The business facts your pages are written from are complete. This does not predict rankings.'
+                : 'Your website was generated, but it can only say what is confirmed. ' . count($items) . ' thing(s) would let it say more:',
+            $items === [] ? null : 'Update your answers',
+            $items === [] ? null : ($links['answers'] ?? null),
+            $items,
+        );
+
+        // The areas the owner may confirm, for the Studio's confirm form (the confirm action re-derives and re-checks them).
+        return $areaNames !== [] && isset($links['confirm_areas']) ? ['area_candidates' => array_slice($areaNames, 0, 20), 'confirm_areas_url' => $links['confirm_areas']] : null;
     }
 
     /**
