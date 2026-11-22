@@ -3,6 +3,7 @@
 namespace App\Library\AgencyOutreach;
 
 use App\Models\AgencyProspectCampaignMember;
+use App\Models\AgencyProspectingSetting;
 use App\Models\AgencyProspectMessage;
 use App\Models\Business;
 use Illuminate\Support\Carbon;
@@ -70,7 +71,7 @@ final class OutreachSendBudget
             // timestamps (which could precede a deferred send by days). Count only
             // genuinely in-flight reservations alongside those deliveries. This is
             // per sending-number slot, rather than a workspace-wide pooled cap.
-            if ($opener && ($cap = (int) config('outreach.send_pacing.opener_daily_cap', 50)) > 0) {
+            if ($opener && ($cap = $this->openerCap($row)) > 0) {
                 $windowStart = $now->copy()->subDay();
                 $scope = AgencyProspectMessage::query()
                     ->where('workspace_id', $row->workspace_id)
@@ -134,6 +135,14 @@ final class OutreachSendBudget
         $campaign = AgencyProspectCampaignMember::query()->whereKey($row->campaign_member_id)->first()?->campaign?->min_send_interval_seconds;
 
         return max($interval, (int) $perSender, (int) $provider, (int) $campaign);
+    }
+
+    /** The workspace's saved limit, else the configured default (0 there = unlimited). Read fresh on every check. */
+    private function openerCap(AgencyProspectMessage $row): int
+    {
+        $saved = AgencyProspectingSetting::query()->where('workspace_id', $row->workspace_id)->value('opener_daily_cap');
+
+        return $saved !== null ? (int) $saved : (int) config('outreach.send_pacing.opener_daily_cap', 50);
     }
 
     private function higherPriorityWaiting(AgencyProspectMessage $row, int $slotId): bool

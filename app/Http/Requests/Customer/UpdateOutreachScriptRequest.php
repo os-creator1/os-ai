@@ -66,6 +66,9 @@ class UpdateOutreachScriptRequest extends FormRequest
             'reply_delay' => ['nullable', 'array'],
             'reply_delay.*.min' => ['nullable', 'integer', 'min:0', 'max:30'],
             'reply_delay.*.max' => ['nullable', 'integer', 'min:0', 'max:30'],
+
+            // New conversations per rolling 24h (whole number; blank = keep the default).
+            'opener_daily_cap' => ['nullable', 'integer', 'min:1', 'max:500'],
         ];
     }
 }

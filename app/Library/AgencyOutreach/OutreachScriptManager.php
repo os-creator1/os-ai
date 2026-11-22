@@ -90,6 +90,22 @@ final class OutreachScriptManager
             }
         }
 
+        if (array_key_exists('opener_daily_cap', $fields)) {
+            $raw = is_string($fields['opener_daily_cap']) ? trim($fields['opener_daily_cap']) : $fields['opener_daily_cap'];
+
+            if ($raw === null || $raw === '') {
+                $changes['opener_daily_cap'] = null;   // back to the configured default
+            } else {
+                $cap = is_bool($raw) ? false : filter_var($raw, FILTER_VALIDATE_INT);
+
+                if ($cap === false || $cap < 1 || $cap > 500) {
+                    $errors['opener_daily_cap'] = 'Choose a whole number from 1 to 500.';
+                } else {
+                    $changes['opener_daily_cap'] = $cap;
+                }
+            }
+        }
+
         if (array_key_exists('reply_delay', $fields)) {
             [$windows, $delayErrors] = self::replyDelay($fields['reply_delay']);
 

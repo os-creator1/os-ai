@@ -163,6 +163,16 @@
                     </div>
                 </section>
 
+                <section class="sec" id="sc-opener-cap" data-role="opener-daily-cap" aria-labelledby="h-opener-cap">
+                    <div class="sec-h"><span class="num">6</span><div><b id="h-opener-cap">New conversations per 24 hours</b><span class="d">Maximum new conversations started by your sending number in any rolling 24-hour period. Applies across all campaigns. Extra first messages wait automatically. Replies and follow-ups are not limited by this setting.</span></div></div>
+                    <div>
+                        <label class="lbl" for="opener_daily_cap">New conversations per 24 hours</label>
+                        <input type="number" inputmode="numeric" min="1" max="500" step="1" id="opener_daily_cap" name="opener_daily_cap" value="{{ old('opener_daily_cap', $openerDailyCap) }}" aria-describedby="opener-cap-help">
+                        <small id="opener-cap-help" class="mut">Choose 1 to 500. The default is 50. A higher limit does not guarantee deliverability or compliance.</small>
+                        @error('opener_daily_cap')<span class="err" role="alert">{{ $message }}</span>@enderror
+                    </div>
+                </section>
+
                 <div class="savebar" id="savebar" data-role="savebar">
                     <span class="dot" aria-hidden="true"></span>
                     <span class="st" role="status" aria-live="polite" id="savebar-text">All changes saved</span>

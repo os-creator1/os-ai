@@ -608,4 +608,99 @@ class OutreachSendPacingTest extends TestCase
 
         $this->assertFalse(OutreachSendBudget::enabled());
     }
+
+    // ---- the Agency's adjustable opener limit ---------------------------------------------------------------------------------
+
+    private function setCap(Workspace $workspace, ?int $cap): void
+    {
+        \App\Models\AgencyProspectingSetting::query()->where('workspace_id', $workspace->id)->update(['opener_daily_cap' => $cap]);
+    }
+
+    /** @param list<AgencyProspectCampaignMember> $members */
+    private function sendOpeners(array $members): void
+    {
+        foreach ($members as $m) {
+            $this->opener($m);
+            $this->travel(10)->seconds();
+        }
+    }
+
+    public function test_an_agency_without_a_saved_limit_defaults_to_fifty(): void
+    {
+        [$workspace, , $c1] = $this->agencyWithCampaign();
+        $this->saveScript($workspace);
+        $this->assertNull(\App\Models\AgencyProspectingSetting::where('workspace_id', $workspace->id)->value('opener_daily_cap'));
+
+        $members = [];
+        foreach (range(1, 51) as $i) {
+            $members[] = $this->member($workspace, $c1, '1202556' . str_pad((string) $i, 4, '0', STR_PAD_LEFT));
+        }
+        $this->sendOpeners($members);
+
+        $this->assertCount(50, $this->sentBodies(), 'Exactly 50 openers fit by default.');
+        $this->assertSame('opener_daily_cap', $this->outboundRow($members[50])->failure_reason);
+    }
+
+    public function test_a_saved_limit_of_25_and_of_100_is_used_with_an_exact_boundary(): void
+    {
+        [$workspace, , $c1] = $this->agencyWithCampaign();
+        $this->setCap($workspace, 25);
+
+        $members = [];
+        foreach (range(1, 26) as $i) {
+            $members[] = $this->member($workspace, $c1, '1202557' . str_pad((string) $i, 4, '0', STR_PAD_LEFT));
+        }
+        $this->sendOpeners($members);
+        $this->assertCount(25, $this->sentBodies(), 'The 25th is sent, the 26th waits.');
+        $this->assertSame('paused', $this->outboundRow($members[25])->status);
+
+        // Raised to 100 (no restart, no resend): the waiting opener goes out on its deferred retry, once.
+        $this->setCap($workspace, 100);
+        $row = $this->outboundRow($members[25]);
+        $this->travel(10)->seconds();
+        $this->runDeferred($row);
+        $this->runDeferred($row->fresh());                                               // a duplicate run
+        $this->assertCount(26, $this->sentBodies(), 'Sent exactly once, no duplicates, nothing else resent.');
+        $this->assertSame('sent', $row->fresh()->status);
+    }
+
+    public function test_lowering_the_limit_applies_to_the_next_check_and_the_cap_is_shared_by_campaigns(): void
+    {
+        [$workspace, , $c1] = $this->agencyWithCampaign();
+        $c2 = $this->managedCampaign($workspace, ['name' => 'Second']);
+        $this->setCap($workspace, 2);
+
+        $a = $this->member($workspace, $c1, self::P1);
+        $b = $this->member($workspace, $c2, self::P2);
+        $c = $this->member($workspace, $c2, self::P3);
+        $this->sendOpeners([$a, $b, $c]);
+
+        $this->assertCount(2, $this->sentBodies(), 'Two campaigns, one shared cap on the number.');
+        $this->assertSame('opener_daily_cap', $this->outboundRow($c)->failure_reason);
+    }
+
+    public function test_the_saved_limit_never_blocks_replies(): void
+    {
+        [$workspace, $business, $c1] = $this->agencyWithCampaign();
+        $this->setCap($workspace, 1);
+        $first = $this->member($workspace, $c1, self::P1);
+        $existing = $this->member($workspace, $c1, self::P2);
+
+        $this->sendOpeners([$first]);
+        $this->reply($business, $existing, self::P2);
+
+        $this->assertCount(2, $this->sentBodies());
+    }
+
+    public function test_another_workspaces_limit_does_not_apply(): void
+    {
+        [$workspace, , $c1] = $this->agencyWithCampaign();
+        [$other] = $this->agencyWithCampaign();
+        $this->setCap($other, 1);
+
+        $members = [$this->member($workspace, $c1, self::P1), $this->member($workspace, $c1, self::P2)];
+        $this->sendOpeners($members);
+
+        $this->assertCount(2, $this->sentBodies(), 'The other Agency\'s limit of 1 does not touch this one.');
+    }
 }
