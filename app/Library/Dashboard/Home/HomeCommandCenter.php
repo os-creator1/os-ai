@@ -125,7 +125,7 @@ final class HomeCommandCenter
         // Promote its explicit setup task ahead of routine opportunities, but never over an
         // urgent attention item or a verified broken enquiry/booking path. The action uses
         // the existing authorised Website route; Home does not create or publish pages.
-        if ($context->frameWorkspace()?->tier === \\App\\Enums\\Entitlement\\WorkspacePlanTier::Growth) {
+        if ($context->frameWorkspace()?->tier === \App\Enums\Entitlement\WorkspacePlanTier::Growth) {
             $websiteMove = $this->websiteFirstMove($business, $status, $journey, $primary, $nbm, $growth);
 
             if ($websiteMove !== null) {
@@ -766,12 +766,12 @@ final class HomeCommandCenter
             $uid = is_array($nbm) ? ($nbm['move']['subjectUid'] ?? null) : null;
 
             if ($uid !== null && ($head?->uid ?? null) === $uid) {
-                $category = \\App\\Library\\Growth\\GrowthRuleRegistry::find((string) ($head->type ?? ''))?->definition()->category;
+                $category = \App\Library\Growth\GrowthRuleRegistry::find((string) ($head->type ?? ''))?->definition()->category;
 
                 if (in_array($category, [
-                    \\App\\Enums\\Growth\\GrowthCategory::LeadResponse,
-                    \\App\\Enums\\Growth\\GrowthCategory::Bookings,
-                    \\App\\Enums\\Growth\\GrowthCategory::Forms,
+                    \App\Enums\Growth\GrowthCategory::LeadResponse,
+                    \App\Enums\Growth\GrowthCategory::Bookings,
+                    \App\Enums\Growth\GrowthCategory::Forms,
                 ], true)) {
                     return null;
                 }
