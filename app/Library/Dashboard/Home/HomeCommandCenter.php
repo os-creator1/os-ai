@@ -121,6 +121,20 @@ final class HomeCommandCenter
             }
         }
 
+        // A usable customer-facing website is a prerequisite for useful SEO and review work.
+        // Promote its explicit setup task ahead of routine opportunities, but never over an
+        // urgent attention item or a verified broken enquiry/booking path. The action uses
+        // the existing authorised Website route; Home does not create or publish pages.
+        if ($context->frameWorkspace()?->tier === \\App\\Enums\\Entitlement\\WorkspacePlanTier::Growth) {
+            $websiteMove = $this->websiteFirstMove($business, $status, $journey, $primary, $nbm, $growth);
+
+            if ($websiteMove !== null) {
+                $primary = $websiteMove;
+                $primaryUid = null;
+                $primaryAttentionType = null;
+            }
+        }
+
         // Growth Home only: with nothing urgent and no better-supported opportunity, getting Google keyword visibility started comes first.
         $google = $this->googleVisibility($business, $context, $user, $entitlements, $scoped);
         $activation = ($journey !== null && ($journey['essentialIncomplete'] ?? false))
@@ -714,6 +728,116 @@ final class HomeCommandCenter
     private function currentWork(?array $growth): array
     {
         return array_slice(array_values(array_filter($this->handling([], $growth), fn (array $r): bool => $r['at'] === null)), 0, 3);
+    }
+
+    /**
+     * Growth Home: no hosted or connected external website is a concrete setup task,
+     * not a reason to show an unrelated keyword or review warning as the main move.
+     * Only the already-authorised website journey step can supply an action.
+     *
+     * The absence of a hosted site is not evidence that an existing external site
+     * does not exist: a saved URL is treated as a site to connect/review, not as
+     * a reason to generate a competing one. Nothing here makes a write.
+     *
+     * @param  array<string, mixed>|null  $journey
+     * @param  array<string, mixed>|null  $primary
+     * @return array<string, mixed>|null
+     */
+    private function websiteFirstMove(
+        Business $business,
+        ?BusinessStatusRow $status,
+        ?array $journey,
+        ?array $primary,
+        mixed $nbm,
+        ?array $growth,
+    ): ?array {
+        if ($status === null || ! $status->known || $journey === null || $this->websiteUsable($business, $status)) {
+            return null;
+        }
+
+        // A waiting customer, a broken connection or another attention issue is
+        // already more time-sensitive. Also preserve a supported lead/booking fix.
+        if ($primary !== null && in_array($primary['kind'], [NextBestMove::KIND_ATTENTION, 'setup'], true)) {
+            return null;
+        }
+
+        if ($primary !== null && $primary['kind'] === NextBestMove::KIND_OPPORTUNITY && is_array($growth)) {
+            $head = $growth['head'] ?? null;
+            $uid = is_array($nbm) ? ($nbm['move']['subjectUid'] ?? null) : null;
+
+            if ($uid !== null && ($head?->uid ?? null) === $uid) {
+                $category = \\App\\Library\\Growth\\GrowthRuleRegistry::find((string) ($head->type ?? ''))?->definition()->category;
+
+                if (in_array($category, [
+                    \\App\\Enums\\Growth\\GrowthCategory::LeadResponse,
+                    \\App\\Enums\\Growth\\GrowthCategory::Bookings,
+                    \\App\\Enums\\Growth\\GrowthCategory::Forms,
+                ], true)) {
+                    return null;
+                }
+            }
+        }
+
+        $step = null;
+
+        foreach ($journey['steps'] ?? [] as $candidate) {
+            if (($candidate['key'] ?? null) === 'website' && ! ($candidate['done'] ?? true)
+                && filled($candidate['action']['url'] ?? null)) {
+                $step = $candidate;
+                break;
+            }
+        }
+
+        if ($step === null) {
+            return null; // No authorised website action, or the account has no Website module.
+        }
+
+        $draft = $status->websiteStatus === 'draft';
+        $archived = $status->websiteStatus === 'archived';
+        $hasExistingUrl = filled($business->website_url) && $status->websiteStatus === null;
+
+        [$title, $summary, $label] = match (true) {
+            $draft => [
+                'Finish your website draft so customers can find you',
+                'The website is still a draft. Review it and publish only when you approve the content.',
+                'Review website draft',
+            ],
+            $archived => [
+                'Restore your website so customers can reach you',
+                'The hosted website is archived. Review it before choosing to republish.',
+                'Review archived website',
+            ],
+            $hasExistingUrl => [
+                'Connect your existing website to MotionGrove',
+                'A website address is saved, but it is not connected as a usable website yet. Review the existing site instead of creating a duplicate.',
+                'Review existing website',
+            ],
+            default => [
+                'Set up your website so customers can find and contact you',
+                'No published website or connected external site is recorded. Start from your saved business details; nothing goes live until you publish.',
+                'Set up website',
+            ],
+        };
+
+        return [
+            'kind' => 'setup',
+            'key' => 'website_setup',
+            'headline' => $title,
+            'summary' => $summary,
+            'why' => ['The website setup status is not complete for this business.'],
+            'evidence' => [],
+            'impact' => null,
+            'confidence' => null,
+            'severity' => null,
+            'status' => 'ready',
+            'statusLabel' => 'Ready to act on',
+            'needsMoreInfo' => false,
+            'action' => ['label' => $label, 'url' => $step['action']['url'], 'drawer' => null, 'drawerUrl' => null],
+            'detailUrl' => null,
+            'explanation' => null,
+            'metric' => null,
+            'aiAction' => null,
+        ];
     }
 
     /**
