@@ -193,7 +193,7 @@
                 @php($toneKey = ($type === 'services' && collect($section['data']['items'] ?? [])->contains(fn ($item) => ! empty($item['catalog_item_uid']))) ? 'packages' : $type)
                 @php($sectionRole = $design->roleTones !== [] ? \App\Library\Website\Design\SectionRole::of($section) : null)
                 @if (\Illuminate\Support\Facades\View::exists($componentView))
-                    <div class="wd-band wd-tone-{{ $design->toneFor($toneKey, $sectionRole) }} wd-band-{{ $toneKey }} @if ($sectionRole) wd-band-role-{{ $sectionRole }} @endif" data-section="{{ $toneKey }}" @if ($sectionRole) data-role="{{ $sectionRole }}" @endif>
+                    <div class="wd-band wd-tone-{{ $design->toneFor($toneKey, $sectionRole) }} wd-band-{{ $toneKey }}@if ($sectionRole) wd-band-role-{{ $sectionRole }}@endif" data-section="{{ $toneKey }}"@if ($sectionRole) data-role="{{ $sectionRole }}"@endif>
                         @if ($type === 'hero')
                             @include($componentView, ['data' => $section['data'] ?? [], 'website' => $website, 'assetsByUid' => $assetsByUid ?? [], 'formsByUid' => $formsByUid ?? [], 'isPreview' => $isPreview ?? false, 'pageUid' => $page->uid ?? null, 'servicePageUrls' => $servicePageUrls, 'placePageUrls' => $placePageUrls, 'heroImageFallback' => $heroImageFallback])
                         @else

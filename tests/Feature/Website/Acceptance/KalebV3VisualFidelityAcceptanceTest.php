@@ -87,7 +87,8 @@ class KalebV3VisualFidelityAcceptanceTest extends TestCase
 
         $args = [$workspace->uid, $business->uid];
         $this->post(route('customer.workspaces.businesses.website.rebuild', $args), ['template_key' => $templateKey, 'confirm_rebuild' => '1'])->assertRedirect();
-        $this->post(route('customer.workspaces.businesses.website.publish', $args))->assertRedirect();
+        $publishUrl = route('customer.workspaces.businesses.website.publish', $args);
+        $this->post($publishUrl)->assertRedirect();
         app('cache')->flush();
 
         $html = $this->get('http://' . self::DOMAIN . '/')->assertOk()->getContent();
@@ -99,7 +100,7 @@ class KalebV3VisualFidelityAcceptanceTest extends TestCase
             }
         }
 
-        return [$website, $html, $business, $workspace];
+        return [$website, $html, $business, $workspace, $publishUrl];
     }
 
     public function test_the_emerald_design_is_opt_in_and_the_four_canonical_designs_are_unchanged(): void
@@ -222,5 +223,29 @@ class KalebV3VisualFidelityAcceptanceTest extends TestCase
         app('cache')->flush();
 
         $this->get('http://' . self::DOMAIN . '/')->assertOk()->assertSee('wd-emerald', false)->assertDontSee('wd-editorial', false);
+    }
+
+    public function test_a_compact_footer_folds_extra_pages_into_more_and_never_drops_them_and_inner_heroes_stay_single_column(): void
+    {
+        [$website, , , , $publishUrl] = $this->publishWithTemplate('photo_booth_emerald', true, 'emerald-more');
+
+        // Eight owner-created pages beyond the standard ones: each stays reachable from the footer.
+        foreach (range(1, 8) as $n) {
+            $website->pages()->create(['uid' => (string) \Illuminate\Support\Str::uuid(), 'title' => "Special Offer {$n}", 'slug' => "special-offer-{$n}", 'is_home' => false, 'sort_order' => 100 + $n, 'sections' => [['type' => 'text', 'data' => ['heading' => "Offer {$n}", 'body' => "Details of offer {$n}."]]]]);
+        }
+        $this->post($publishUrl)->assertRedirect();
+        app('cache')->flush();
+
+        $page = $this->get('http://' . self::DOMAIN . '/')->assertOk()->getContent();
+        preg_match('#<footer class="wd-footer.*?</footer>#s', $page, $footer);
+        $this->assertStringContainsString('<li class="wd-footer-more">', $footer[0]);
+        foreach (range(1, 8) as $n) {
+            $this->assertStringContainsString("Special Offer {$n}", $footer[0], "page {$n} keeps a footer link");
+        }
+
+        // The two-column split is for the home hero only; an inner page's hero is a single column (the stylesheet says so explicitly).
+        $css = (string) file_get_contents(public_path('css/website-design.css'));
+        $this->assertStringContainsString('.wd-emerald .wd-hero-editorial-split:not(.wd-hero-inner-page) .wd-hero-grid { grid-template-columns: 52% 48%; }', $css);
+        $this->assertMatchesRegularExpression('#class="wd-hero wd-hero-editorial-split[^"]*wd-hero-inner-page#', $this->get('http://' . self::DOMAIN . '/gallery')->getContent());
     }
 }
