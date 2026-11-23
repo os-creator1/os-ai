@@ -38,6 +38,7 @@ class GrowthHomeSeoActivationTest extends TestCase
     {
         [$customer, $business, $workspace] = $this->tenant(WorkspacePlanTier::Growth, 'Seo First Venue', 'Seo First Account');
         $this->reviewLink($business);
+        $this->website($business, 'published'); // This test isolates SEO activation after a usable website exists.
         $this->authenticateAs($customer);
 
         $html = $this->html();
@@ -90,6 +91,7 @@ class GrowthHomeSeoActivationTest extends TestCase
         [$customer, $business] = $this->tenant(WorkspacePlanTier::Growth, 'Perm Seo Venue', 'Perm Seo Account');
         $this->reviewLink($business);
 
+        $this->website($business, 'published');
         $this->authenticateAs($customer, ['view_seo']);
         $this->assertStringNotContainsString('seo_keyword_activation', $this->html(), 'Viewing is not enough to start tracking.');
 
@@ -137,6 +139,7 @@ class GrowthHomeSeoActivationTest extends TestCase
     {
         [$customer, $business] = $this->tenant(WorkspacePlanTier::Growth, 'Unknown Venue', 'Unknown Account');
         $this->reviewLink($business);
+        $this->website($business, 'published');
         $this->authenticateAs($customer);
 
         $html = $this->html();
