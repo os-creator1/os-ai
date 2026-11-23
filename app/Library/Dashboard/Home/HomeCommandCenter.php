@@ -755,6 +755,13 @@ final class HomeCommandCenter
             return null;
         }
 
+        // Missing essential location/service or Calendar setup comes first. A new
+        // Business cannot usefully launch a website before its foundation exists.
+        // Legacy journeys omit foundationComplete: their essential steps still win.
+        if (($journey['essentialIncomplete'] ?? false) && ! ($journey['foundationComplete'] ?? false)) {
+            return null;
+        }
+
         // A waiting customer, a broken connection or another attention issue is
         // already more time-sensitive. Also preserve a supported lead/booking fix.
         if ($primary !== null && in_array($primary['kind'], [NextBestMove::KIND_ATTENTION, 'setup'], true)) {
@@ -766,6 +773,12 @@ final class HomeCommandCenter
             $uid = is_array($nbm) ? ($nbm['move']['subjectUid'] ?? null) : null;
 
             if ($uid !== null && ($head?->uid ?? null) === $uid) {
+                // The existing actionable "Finish your website" recommendation
+                // already wins over SEO/reviews and has an exact scoped route.
+                if (($head->type ?? null) === 'website.not_published:v1') {
+                    return null;
+                }
+
                 $category = \App\Library\Growth\GrowthRuleRegistry::find((string) ($head->type ?? ''))?->definition()->category;
 
                 if (in_array($category, [
