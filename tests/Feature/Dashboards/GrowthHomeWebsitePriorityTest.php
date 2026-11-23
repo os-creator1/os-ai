@@ -101,6 +101,20 @@ class GrowthHomeWebsitePriorityTest extends TestCase
         $this->assertSame('conversations_awaiting_reply', $this->primary($customer)['key']);
     }
 
+    public function test_a_verified_ads_delivery_issue_stays_ahead_of_site_setup(): void
+    {
+        [$customer, $business] = $this->tenant(WorkspacePlanTier::Growth, 'Ads Running Booth', 'Ads Running WS');
+        $this->recommendation($business, [
+            'worker_key' => 'ads',
+            'type' => 'ads.delivery_issue:v1',
+            'title' => 'An ad is not delivering properly',
+            'priority_score' => 98,
+        ]);
+        $this->authenticateAs($customer);
+
+        $this->assertNotSame('website_setup', $this->primary($customer)['key']);
+    }
+
     public function test_a_verified_booking_problem_stays_ahead_of_site_setup(): void
     {
         [$customer, $business] = $this->tenant(WorkspacePlanTier::Growth, 'Booking Site Booth', 'Booking Site WS');
