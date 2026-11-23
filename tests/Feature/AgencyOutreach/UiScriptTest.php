@@ -155,6 +155,19 @@ class UiScriptTest extends TestCase
         $this->assertSame(['{{bogus.x}}'], $json['unknown']);
     }
 
+    public function test_the_preview_recognises_company_name_and_contact_company_as_the_prospects_company(): void
+    {
+        $a = $this->outreachAgency('Alpha');
+        $this->authenticateAs($a['customer']);
+
+        $json = $this->postJson($this->outreachRoute('script.preview', $a['workspace']), [
+            'text' => 'Hi {{company_name}}, {{ contact.company }} from {{agency_name}}',
+        ])->assertOk()->json();
+
+        $this->assertSame('Hi Example Company, Example Company from Alpha Agency', $json['preview']);
+        $this->assertSame([], $json['unknown']);
+    }
+
     public function test_the_booking_type_picker_lists_only_active_booking_types_of_the_agencys_own_business(): void
     {
         $a = $this->outreachAgency('Alpha');

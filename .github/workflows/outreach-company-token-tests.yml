@@ -1,0 +1,71 @@
+name: Outreach Company Token
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'app/Library/AgencyOutreach/OutreachCompanyName.php'
+      - 'app/Library/AgencyOutreach/OutreachScriptRenderer.php'
+      - 'app/Library/AgencyOutreach/OutreachScriptTokens.php'
+      - 'app/Library/AgencyProspecting/AgencyProspectMessageTemplate.php'
+      - 'tests/Feature/AgencyOutreach/OutreachCompanyTokenTest.php'
+      - 'tests/Feature/AgencyOutreach/OutreachScriptTest.php'
+      - 'tests/Feature/AgencyOutreach/UiScriptTest.php'
+      - '.github/workflows/outreach-company-token-tests.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: outreach-company-token-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  company-token:
+    name: Prospect company token (PHP + MySQL)
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      APP_ENV: testing
+      APP_KEY: base64:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+      DB_CONNECTION: mysql
+      DB_HOST: 127.0.0.1
+      DB_PORT: '3306'
+      DB_DATABASE: ultimatesms_testing
+      DB_USERNAME: ultimatesms_test
+      DB_PASSWORD: Choose-A-Local-Test-Password
+      EXPECTED_TEST_DATABASE: ultimatesms_testing
+      QUEUE_CONNECTION: sync
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_DATABASE: ultimatesms_testing
+          MYSQL_USER: ultimatesms_test
+          MYSQL_PASSWORD: Choose-A-Local-Test-Password
+          MYSQL_ROOT_PASSWORD: root
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=10
+    steps:
+      - name: Check out PR
+        uses: actions/checkout@v4
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.2'
+          extensions: bcmath, curl, dom, exif, fileinfo, gd, intl, mbstring, pdo_mysql, zip
+          coverage: none
+          tools: composer:v2
+      - name: Install dependencies
+        run: composer install --no-interaction --prefer-dist --no-progress
+      - name: Test company token resolution, preview and outbound parity
+        run: |
+          set -o pipefail
+          php artisan test tests/Feature/AgencyOutreach/OutreachCompanyTokenTest.php tests/Feature/AgencyOutreach/OutreachScriptTest.php tests/Feature/AgencyOutreach/UiScriptTest.php tests/Feature/AgencyOutreach/OutreachFollowUpAndBillingTest.php --stop-on-failure | tee test-output.txt
+          # A zero-test success is a failure.
+          grep -Eq 'Tests:[[:space:]]+.*[1-9][0-9]* passed' test-output.txt

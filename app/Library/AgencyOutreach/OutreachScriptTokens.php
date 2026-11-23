@@ -9,21 +9,24 @@ namespace App\Library\AgencyOutreach;
  * has to know product aliases exist.
  *
  * Tolerant of inner spaces and case (`{{ Agency_Name }}`), and deliberately
- * limited to the three aliases the contract names: any other token is left for
+ * limited to the aliases listed below: any other token is left for
  * the engine, which renders an unknown one blank and the editor flags.
  */
 final class OutreachScriptTokens
 {
+    // `company_name` and `contact.company` both mean the PROSPECT's company (never the sender's Business).
     private const ALIASES = [
         'agency_name' => '{{agency.name}}',
         'website' => '{{agency.website}}',
         'calendar_link' => '{{agency.calendar_link}}',
+        'company_name' => '{{prospect.company}}',
+        'contact.company' => '{{prospect.company}}',
     ];
 
     public static function canonicalise(string $text): string
     {
         return preg_replace_callback(
-            '/\{\{\s*(agency_name|website|calendar_link)\s*\}\}/i',
+            '/\{\{\s*(agency_name|website|calendar_link|company_name|contact\.company)\s*\}\}/i',
             static fn (array $m): string => self::ALIASES[strtolower($m[1])],
             $text,
         ) ?? $text;
