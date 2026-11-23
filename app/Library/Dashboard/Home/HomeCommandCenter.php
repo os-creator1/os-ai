@@ -126,6 +126,15 @@ final class HomeCommandCenter
         // urgent attention item or a verified broken enquiry/booking path. The action uses
         // the existing authorised Website route; Home does not create or publish pages.
         if ($context->frameWorkspace()?->tier === \App\Enums\Entitlement\WorkspacePlanTier::Growth) {
+            // First-use location/service setup is the concrete next action. Do
+            // not let a routine review/keyword alert hide that setup step.
+            if (($journey['essentialIncomplete'] ?? false) && ! ($journey['foundationComplete'] ?? false)
+                && $this->isRoutineMarketingOpportunity($primary, $nbm, $growth)) {
+                $primary = null;
+                $primaryUid = null;
+                $primaryAttentionType = null;
+            }
+
             $websiteMove = $this->websiteFirstMove($business, $status, $journey, $primary, $nbm, $growth);
 
             if ($websiteMove !== null) {
@@ -731,6 +740,34 @@ final class HomeCommandCenter
     }
 
     /**
+     * True only for a routine marketing/measurement Opportunity backed by the
+     * currently selected persisted Growth head. Unknown categories fail closed
+     * to keep the selector's original, potentially urgent recommendation.
+     */
+    private function isRoutineMarketingOpportunity(?array $primary, mixed $nbm, ?array $growth): bool
+    {
+        if ($primary === null || ($primary['kind'] ?? null) !== NextBestMove::KIND_OPPORTUNITY || ! is_array($growth)) {
+            return false;
+        }
+
+        $head = $growth['head'] ?? null;
+        $uid = is_array($nbm) ? ($nbm['move']['subjectUid'] ?? null) : null;
+
+        if ($uid === null || ($head?->uid ?? null) !== $uid) {
+            return false;
+        }
+
+        $category = \App\Library\Growth\GrowthRuleRegistry::find((string) ($head->type ?? ''))?->definition()->category;
+
+        return in_array($category, [
+            \App\Enums\Growth\GrowthCategory::Seo,
+            \App\Enums\Growth\GrowthCategory::Reviews,
+            \App\Enums\Growth\GrowthCategory::LocalPresence,
+            \App\Enums\Growth\GrowthCategory::Connections,
+        ], true);
+    }
+
+    /**
      * Growth Home: no hosted or connected external website is a concrete setup task,
      * not a reason to show an unrelated keyword or review warning as the main move.
      * Only the already-authorised website journey step can supply an action.
@@ -768,25 +805,12 @@ final class HomeCommandCenter
             return null;
         }
 
-        if ($primary !== null && $primary['kind'] === NextBestMove::KIND_OPPORTUNITY && is_array($growth)) {
-            $head = $growth['head'] ?? null;
-            $uid = is_array($nbm) ? ($nbm['move']['subjectUid'] ?? null) : null;
-
-            if ($uid !== null && ($head?->uid ?? null) === $uid) {
-                $category = \App\Library\Growth\GrowthRuleRegistry::find((string) ($head->type ?? ''))?->definition()->category;
-
-                // Only replace routine marketing/measurement work. A website
-                // recommendation already has a specific owner action; booking,
-                // sales, form, operational Ads and payments work must keep it.
-                if (! in_array($category, [
-                    \App\Enums\Growth\GrowthCategory::Seo,
-                    \App\Enums\Growth\GrowthCategory::Reviews,
-                    \App\Enums\Growth\GrowthCategory::LocalPresence,
-                    \App\Enums\Growth\GrowthCategory::Connections,
-                ], true)) {
-                    return null;
-                }
-            }
+        // The only lower-value opportunities this website step may replace
+        // are routine marketing/measurement prompts. Keep a specific website
+        // action, operational Ads problem, booking fix or sales task intact.
+        if ($primary !== null && $primary['kind'] === NextBestMove::KIND_OPPORTUNITY
+            && ! $this->isRoutineMarketingOpportunity($primary, $nbm, $growth)) {
+            return null;
         }
 
         $step = null;
