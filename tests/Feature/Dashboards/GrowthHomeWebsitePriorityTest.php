@@ -31,6 +31,26 @@ class GrowthHomeWebsitePriorityTest extends TestCase
         return $this->dashboardFor($customer->user)->band(DashboardSnapshot::BAND_COMMAND)['primary'];
     }
 
+    public function test_missing_primary_service_shows_the_actionable_setup_step_instead_of_a_review_alert(): void
+    {
+        [$customer, $business] = $this->tenant(WorkspacePlanTier::Growth, 'Incomplete Booth', 'Incomplete WS');
+        $this->adoptSeoFirstPolicy($business);
+        DB::table('business_services')->where('business_id', $business->id)->delete();
+        $this->recommendation($business, [
+            'worker_key' => 'reputation',
+            'type' => 'reviews.no_review_link:v1',
+            'title' => 'No review link is saved for this location',
+            'priority_score' => 95,
+        ]);
+        $this->authenticateAs($customer);
+
+        $html = $this->get(route('user.home'))->assertOk()->getContent();
+        $this->assertStringContainsString('data-role="setup-step"', $html);
+        $this->assertStringContainsString('Add your primary service', $html);
+        $this->assertStringNotContainsString('data-move="website_setup"', $html);
+        $this->assertStringNotContainsString('data-move="seo_keyword_activation"', $html);
+    }
+
     public function test_missing_website_outranks_a_review_task_and_opens_the_authorised_website_screen(): void
     {
         [$customer, $business, $workspace] = $this->tenant(WorkspacePlanTier::Growth, 'Site Missing Booth', 'Site Missing WS');
