@@ -720,3 +720,232 @@ body.wd h1, body.wd h2, body.wd h3, body.wd h4 { font-family: var(--wd-font-head
 .wd-guide-excerpt { margin: 0; color: var(--wd-t-muted); font-size: 0.95rem; line-height: 1.55; }
 .wd-guide-more { margin-top: auto; padding-top: 0.25rem; font-size: 0.8rem; font-weight: 800; letter-spacing: 0.06em; text-transform: uppercase; color: var(--wd-a); text-decoration: none; }
 .wd-guide-more:hover, .wd-guide-more:focus-visible { text-decoration: underline; text-underline-offset: 0.2em; }
+
+/* =====================================================================================================================
+   Emerald Gold (opt-in Photo Booth design, template photo_booth_emerald). Everything below is scoped to `.wd-emerald`, so no
+   other design changes. The visual grammar follows the approved Kaleb Hill v3 reference: a deep-green split hero with large
+   editorial serif type, muted gold on charcoal and cream, photo event cards, a dark numbered booking band, an area grid, quiet
+   quote cards, a hairline FAQ, gold closing band and a compact multicolumn footer. Fonts are the reference's families with
+   system fallbacks (no third-party request). No copy, image or fact is taken from the reference: every block renders the
+   site's own validated sections, and a block with no data is simply absent.
+   ===================================================================================================================== */
+
+.wd-emerald {
+    --wd-font-head: "Playfair Display", Georgia, "Times New Roman", serif;
+    --wd-font-body: "DM Sans", "Segoe UI", system-ui, -apple-system, Arial, sans-serif;
+    --wd-head-weight: 500;
+    --wd-head-transform: none;
+    --wd-head-track: -0.018em;
+    --wd-head-leading: 1.16;
+    --wd-radius: 4px;
+    --wd-btn-radius: 3px;
+    --wd-max: 1160px;
+    --wd-accent: #b89457;
+    --wd-accent-ink: #13150f;
+    --wd-accent-text: #725324;
+    --wd-accent-glow: #d3b679;
+    --wd-ink: #141514;
+    --wd-muted: #51574e;
+    --wd-line: #dcd9d0;
+    --wd-light: #f8f6f1;
+    --wd-dark: #18251f;
+    --wd-dark-2: #14251f;
+    --wd-dark-muted: #c5cbc3;
+    --wd-dark-line: #3d4a43;
+    --wd-tint: #eae5db;
+    --wd-card-light: #fffefa;
+    --wd-header-bg: #fffefa;
+    --wd-header-ink: #141514;
+    --wd-header-line: #e8e5df;
+    --wd-announce-bg: #151916;
+    --wd-announce-ink: #eee9df;
+    --wd-footer-bg: #131915;
+    --wd-page-bg: #f8f6f1;
+}
+.wd-emerald .wd-container { padding-top: clamp(3.5rem, 6.5vw, 5.6rem); padding-bottom: clamp(3.5rem, 6.5vw, 5.6rem); }
+.wd-emerald .wd-section-title { font-size: clamp(2rem, 3.1vw, 3.05rem); text-align: left; margin-bottom: 0.5em; }
+.wd-emerald .website-cta h2, .wd-emerald .website-testimonials .wd-section-title, .wd-emerald .website-faq .wd-section-title { text-align: left; }
+.wd-emerald .wd-btn { border-radius: 3px; box-shadow: none; font-size: 0.75rem; letter-spacing: 0.075em; padding: 1rem 1.4rem; transition: background-color 0.18s ease, color 0.18s ease, border-color 0.18s ease, transform 0.18s ease; }
+.wd-emerald .wd-btn-primary:hover { background: #d3b277; border-color: #d3b277; color: #161613; filter: none; transform: translateY(-1px); }
+.wd-emerald .wd-btn-secondary { color: inherit; border-color: #a69a7b; }
+.wd-emerald .wd-btn-secondary:hover { background: #fff; color: #171d18; border-color: #fff; }
+
+/* Announcement bar + header */
+.wd-emerald .wd-announce { font-size: 0.7rem; letter-spacing: 0.16em; }
+.wd-emerald .wd-header { position: sticky; top: 0; box-shadow: 0 2px 16px rgba(0, 0, 0, 0.03); }
+.wd-emerald .wd-header-inner { max-width: var(--wd-max); padding: 0 1.25rem; min-height: 78px; gap: 2rem; }
+.wd-emerald .wd-wordmark { font-family: var(--wd-font-head); font-weight: 600; font-size: 1.5rem; letter-spacing: 0.01em; }
+.wd-emerald .wd-nav-link { font-size: 0.75rem; letter-spacing: 0.02em; text-transform: none; font-weight: 700; padding: 0.65rem 0.7rem; }
+.wd-emerald .wd-nav-link:hover, .wd-emerald .wd-current > .wd-nav-link { color: var(--wd-accent-text); }
+.wd-emerald .wd-nav-cta .wd-btn { font-size: 0.65rem; padding: 0.85rem 1.05rem; min-height: 42px; }
+
+/* Hero: deep-green split, copy left, photo right */
+.wd-emerald .wd-hero-editorial-split { background: #18251f; color: #fff; text-align: left; }
+.wd-emerald .wd-hero-editorial-split .website-container { max-width: none; padding: 0; }
+.wd-emerald .wd-hero-editorial-split .wd-hero-grid { gap: 0; align-items: stretch; min-height: 560px; grid-template-columns: minmax(0, 1fr); }
+.wd-emerald .wd-hero-editorial-split .wd-hero-copy { padding: clamp(3.5rem, 6vw, 5.8rem) clamp(1.25rem, 4vw, 3.75rem); align-self: center; }
+.wd-emerald .wd-hero-eyebrow { color: var(--wd-accent-glow); font: 700 0.7rem/1.4 var(--wd-font-body); letter-spacing: 0.22em; text-transform: uppercase; margin: 0 0 1.2rem; }
+.wd-emerald .wd-hero-editorial-split .wd-hero-title { font-size: clamp(2.5rem, 4.1vw, 4.2rem); max-width: 14em; margin: 0 0 1.35rem; color: #fff; }
+.wd-emerald .wd-hero-editorial-split .wd-hero-sub { color: #d8dcd4; font-size: 1rem; line-height: 1.85; max-width: 33.5rem; margin: 0 0 1.9rem; opacity: 1; }
+.wd-emerald .wd-hero-editorial-split .wd-hero-ctas { justify-content: flex-start; gap: 0.7rem; }
+.wd-emerald .wd-hero-editorial-split .wd-btn-secondary { border-color: #a69a7b; color: #fff; }
+.wd-emerald .wd-hero-media { position: relative; min-height: 340px; background: linear-gradient(140deg, #24382e, #14251f); overflow: hidden; }
+.wd-emerald .wd-hero-media img { position: absolute; inset: 0; width: 100%; height: 100%; max-height: none; aspect-ratio: auto; border-radius: 0; object-fit: cover; filter: saturate(0.88) contrast(1.04); }
+.wd-emerald .wd-hero-media::after { content: ""; position: absolute; inset: 0; pointer-events: none; background: linear-gradient(90deg, rgba(19, 27, 22, 0.35), transparent 40%), linear-gradient(0deg, rgba(9, 15, 10, 0.16), transparent 40%); }
+.wd-emerald .wd-hero-media-plate::before { content: ""; position: absolute; inset: 0; background: radial-gradient(circle at 50% 28%, rgba(212, 184, 125, 0.33), transparent 32%); }
+.wd-emerald .wd-hero-inner-page.wd-hero-editorial-split .wd-hero-grid { min-height: 0; }
+.wd-emerald .wd-hero-inner-page.wd-hero-editorial-split .wd-hero-media { display: none; }
+.wd-emerald .wd-hero-inner-page.wd-hero-editorial-split .wd-hero-copy { padding-top: clamp(2.5rem, 5vw, 3.8rem); padding-bottom: clamp(2.5rem, 5vw, 3.8rem); }
+.wd-emerald .wd-hero-inner-page .wd-hero-title { font-size: clamp(2.1rem, 3.8vw, 3.5rem); }
+@media (min-width: 900px) {
+    .wd-emerald .wd-hero-editorial-split .wd-hero-grid { grid-template-columns: 52% 48%; }
+    .wd-emerald .wd-hero-editorial-split .wd-hero-copy { padding-left: max(2rem, calc((100vw - var(--wd-max)) / 2)); padding-right: 3.75rem; }
+    .wd-emerald .wd-hero-media { min-height: 540px; }
+}
+@media (max-width: 899px) { .wd-emerald .wd-hero-media { height: 340px; } }
+
+/* Proof bar (trust strip) */
+.wd-emerald .wd-band-trust_strip { background: #e6e0d4; border-bottom: 1px solid #d9d3c6; }
+.wd-emerald .wd-band-trust_strip > .wd-container { padding-top: 0.9rem; padding-bottom: 0.9rem; }
+.wd-emerald .wd-trust-list { grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr)); }
+.wd-emerald .wd-trust-list li { font-size: 0.7rem; letter-spacing: 0.07em; gap: 0.6rem; align-items: center; }
+.wd-emerald .wd-trust-list li::before { content: "\2726"; color: var(--wd-accent-text); }
+
+/* Services family: photo cards */
+.wd-emerald .wd-card { background: var(--wd-card-light); color: var(--wd-ink); border: 1px solid var(--wd-line); border-radius: 4px; padding: 0; gap: 0; overflow: hidden; box-shadow: none; transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease; }
+.wd-emerald .wd-card:hover { border-color: var(--wd-accent); box-shadow: 0 14px 30px rgba(20, 21, 20, 0.07); }
+.wd-emerald .wd-card img { aspect-ratio: 16 / 10; margin: 0; border-radius: 0; transition: transform 0.4s ease; }
+.wd-emerald .wd-card:hover img { transform: scale(1.035); }
+.wd-emerald .wd-card h3 { font-size: 1.55rem; line-height: 1.2; margin: 0; padding: 1.5rem 1.75rem 0.5rem; text-transform: none; letter-spacing: -0.01em; }
+.wd-emerald .wd-card p { padding: 0 1.75rem; font-size: 0.9rem; color: #65675f; margin: 0 0 1.1rem; }
+.wd-emerald .wd-card > :last-child { margin-bottom: 1.6rem; }
+.wd-emerald .wd-services .wd-grid { grid-template-columns: repeat(auto-fit, minmax(min(100%, 230px), 1fr)); gap: 1.3rem; }
+.wd-emerald .wd-card-linked::after { content: "Explore \2192"; display: block; margin: auto 0 0; padding: 0.4rem 1.75rem 1.6rem; color: var(--wd-accent-text); font: 700 0.72rem/1 var(--wd-font-body); letter-spacing: 0.08em; text-transform: uppercase; }
+.wd-emerald .website-service-price { padding: 0 1.75rem; font-size: 1.15rem; }
+.wd-emerald .website-service-features { padding: 0 1.75rem; }
+.wd-emerald .wd-packages .wd-card p, .wd-emerald .wd-packages .wd-card h3, .wd-emerald .wd-packages .website-service-price { text-align: left; }
+.wd-emerald .wd-card-cta { margin: 0.4rem 1.75rem 1.6rem; width: auto; }
+.wd-emerald .wd-badge { top: 0.9rem; right: 0.9rem; border-radius: 3px; }
+
+/* Event cards: exactly three across on desktop, a composed plate when there is no photo of that event type */
+.wd-emerald .wd-role-events .wd-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.wd-emerald .wd-card-plate { display: grid; place-items: center; height: 11rem; background: radial-gradient(circle at 50% 20%, rgba(212, 184, 125, 0.33), transparent 36%), linear-gradient(140deg, #24382e, #14251f); color: #d7b77c; font: 500 2.6rem/1 var(--wd-font-head); transition: filter 0.3s ease; }
+.wd-emerald .wd-card:hover .wd-card-plate { filter: brightness(1.15); }
+
+/* Booth feature: the first booth with a photo becomes a premium image / text feature */
+.wd-emerald .wd-role-booths .wd-card-feature { grid-column: 1 / -1; display: grid; grid-template-columns: minmax(0, 1fr); border: 0; background: transparent; align-items: center; }
+.wd-emerald .wd-role-booths .wd-card-feature:hover { box-shadow: none; }
+.wd-emerald .wd-role-booths .wd-card-feature img { aspect-ratio: 4 / 3; max-height: 500px; width: 100%; height: 100%; }
+.wd-emerald .wd-role-booths .wd-card-feature h3 { font-size: clamp(1.9rem, 3vw, 2.7rem); padding: 1.5rem 0 0.6rem; }
+.wd-emerald .wd-role-booths .wd-card-feature p, .wd-emerald .wd-role-booths .wd-card-feature .website-service-features, .wd-emerald .wd-role-booths .wd-card-feature .website-service-price { padding-left: 0; padding-right: 0; }
+.wd-emerald .wd-role-booths .wd-card-feature p { font-size: 1rem; color: var(--wd-muted); }
+.wd-emerald .wd-role-booths .wd-card-feature .website-service-features li::before { content: "\2726"; }
+.wd-emerald .wd-role-booths .wd-card-feature.wd-card-linked::after { content: "Meet the booth \2192"; padding-left: 0; padding-bottom: 0; }
+@media (min-width: 860px) {
+    .wd-emerald .wd-role-booths .wd-card-feature { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); column-gap: clamp(2rem, 5vw, 4.5rem); }
+    .wd-emerald .wd-role-booths .wd-card-feature img { grid-row: 1 / span 8; }
+    .wd-emerald .wd-role-booths .wd-card-feature > :not(img) { grid-column: 2; }
+}
+.wd-emerald .wd-band-role-booths { --wd-t-bg: #eee9df; }
+
+/* Booking process: dark numbered band, four across on desktop */
+.wd-emerald .wd-band-role-process { background: #141a18; color: #fff; }
+.wd-emerald .wd-role-process .wd-section-title { color: #fff; }
+.wd-emerald .wd-role-process .wd-grid { grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr)); gap: 1.6rem; }
+@media (min-width: 960px) { .wd-emerald .wd-role-process .wd-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); } .wd-emerald .wd-role-process .wd-grid:has(> :nth-child(3):last-child) { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+.wd-emerald .wd-role-process .wd-card { background: transparent; border: 0; border-top: 1px solid #5a645b; border-radius: 0; padding-top: 1.4rem; color: #fff; }
+.wd-emerald .wd-role-process .wd-card:hover { box-shadow: none; border-top-color: var(--wd-accent-glow); }
+.wd-emerald .wd-step-num { font: 500 2rem/1 var(--wd-font-head); color: #d7b77c; }
+.wd-emerald .wd-role-process .wd-card h3 { padding: 0.9rem 0 0.5rem; font-size: 1.4rem; color: #fff; }
+.wd-emerald .wd-role-process .wd-card p { padding: 0; color: #c5cbc3; }
+
+/* Advantages: a quiet four-up list */
+.wd-emerald .wd-role-advantages .wd-grid { grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr)); }
+.wd-emerald .wd-role-advantages .wd-card { background: transparent; border: 0; border-top: 2px solid var(--wd-accent); border-radius: 0; }
+.wd-emerald .wd-role-advantages .wd-card h3 { padding-left: 0; padding-right: 0; font-size: 1.3rem; }
+.wd-emerald .wd-role-advantages .wd-card p { padding-left: 0; padding-right: 0; }
+.wd-emerald .wd-role-advantages .wd-card:hover { box-shadow: none; }
+
+/* Service areas: a tidy grid of link tiles */
+.wd-emerald .wd-role-areas .wd-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0.75rem; }
+@media (max-width: 959px) { .wd-emerald .wd-role-areas .wd-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.wd-emerald .wd-role-areas .wd-card { flex-direction: row; flex-wrap: wrap; align-items: center; justify-content: space-between; padding: 1.15rem 1.1rem; background: #fffefa; }
+.wd-emerald .wd-role-areas .wd-card h3 { padding: 0; font: 700 0.85rem/1.3 var(--wd-font-body); }
+.wd-emerald .wd-role-areas .wd-card p { padding: 0; margin: 0.3rem 0 0; flex-basis: 100%; font-size: 0.78rem; }
+.wd-emerald .wd-role-areas .wd-card-linked::after { content: "\2197"; display: inline; margin: 0; padding: 0; font-size: 1rem; }
+.wd-emerald .wd-role-areas .wd-card > :last-child { margin-bottom: 0; }
+
+/* Testimonials: quiet quote cards */
+.wd-emerald .website-testimonials-grid { grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr)); gap: 1.2rem; }
+.wd-emerald .website-testimonial-card { background: #f0eadf; border-left: 3px solid var(--wd-accent); padding: 1.9rem 1.8rem; border-radius: 0; color: var(--wd-ink); }
+.wd-emerald .website-testimonial-card p { font: 400 1.35rem/1.45 var(--wd-font-head); font-style: normal; color: var(--wd-ink); }
+.wd-emerald .website-testimonial-card footer { color: var(--wd-muted); font-size: 0.78rem; letter-spacing: 0.06em; }
+.wd-emerald .website-testimonial-card strong { color: var(--wd-accent-text); }
+
+/* FAQ: hairline list */
+.wd-emerald .website-faq-list { max-width: 920px; margin: 1.6rem 0 0; border-top: 1px solid #d4d0c7; }
+.wd-emerald .website-faq-item { border: 0; border-bottom: 1px solid #d4d0c7; border-radius: 0; margin: 0; padding: 0.2rem 0; }
+.wd-emerald .website-faq-item summary { font: 700 1rem/1.4 var(--wd-font-body); padding: 1.2rem 2.4rem 1.2rem 0; }
+.wd-emerald .website-faq-item summary:hover { color: var(--wd-accent-text); }
+.wd-emerald .website-faq-more { text-align: left; }
+
+/* Gallery, image/text, backdrops */
+.wd-emerald .website-gallery-item img { aspect-ratio: 4 / 5; border-radius: 0; transition: transform 0.25s ease; }
+.wd-emerald .website-gallery-item:hover img { transform: scale(1.025); }
+.wd-emerald .website-gallery-item { overflow: hidden; }
+.wd-emerald .website-image-text-media img { border-radius: 0; box-shadow: none; max-height: 500px; }
+.wd-emerald .website-backdrop-card { border: 1px solid var(--wd-line); box-shadow: none; background: #fffefa; }
+
+/* Blog / guide cards (rendered only when this site has published, relevant articles) */
+.wd-emerald .wd-guides { grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr)); }
+.wd-emerald .wd-guide { background: #fffefa; border: 1px solid var(--wd-line); box-shadow: none; border-radius: 4px; padding: 1.7rem; transition: border-color 0.2s ease; }
+.wd-emerald .wd-guide:hover { border-color: var(--wd-accent); }
+.wd-emerald .wd-guide-title { font-family: var(--wd-font-head); font-size: 1.4rem; }
+
+/* Closing call to action: gold band, charcoal ink, copy left and button right on desktop */
+.wd-emerald .wd-band-cta { --wd-t-bg: #b89457; --wd-t-ink: #151a14; --wd-t-muted: #2a2a1f; --wd-btn-bg: #141a18; --wd-btn-ink: #fff; }
+.wd-emerald .wd-band-cta > .wd-container { padding-top: 3.6rem; padding-bottom: 3.6rem; }
+.wd-emerald .website-cta { max-width: none; margin: 0; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 1.5rem 2rem; text-align: left; }
+.wd-emerald .website-cta > * { margin: 0; }
+.wd-emerald .website-cta h2 { font-size: clamp(2rem, 3.4vw, 2.6rem); flex: 1 1 22rem; margin: 0; }
+.wd-emerald .website-cta p { flex: 1 1 100%; order: 2; margin-top: -0.6rem; }
+.wd-emerald .website-cta-buttons { margin: 0; justify-content: flex-start; }
+.wd-emerald .website-cta .wd-btn-primary:hover { background: #323b33; border-color: #323b33; color: #fff; }
+
+/* Contact details band */
+.wd-emerald .wd-band-contact_details { background: #18251f; }
+
+/* Footer: compact, four columns */
+.wd-emerald .wd-footer-compact { background: #131915; border-top: 0; font-size: 0.82rem; }
+.wd-emerald .wd-footer-compact .wd-footer-grid { padding-top: 3.4rem; padding-bottom: 1.6rem; gap: 2.2rem; }
+@media (min-width: 1000px) { .wd-emerald .wd-footer-compact .wd-footer-grid { grid-template-columns: 1.6fr 1fr 1fr 1.2fr; } }
+.wd-emerald .wd-footer-compact .wd-footer-heading { color: #fff; font: 600 1.05rem/1.2 var(--wd-font-body); letter-spacing: 0; text-transform: none; margin-bottom: 1rem; }
+.wd-emerald .wd-footer-compact ul { gap: 0.45rem; }
+.wd-emerald .wd-footer-compact a { color: #b7bdb6; }
+.wd-emerald .wd-footer-compact a:hover { color: #e3c58b; }
+.wd-emerald .wd-footer-compact .wd-footer-brand .wd-wordmark { color: #fff; font-size: 1.5rem; }
+.wd-emerald .wd-footer-compact a.wd-btn-primary { color: var(--wd-accent-ink); }
+.wd-emerald .wd-footer-compact .wd-footer-legal { border-top-color: #38423c; color: #9ca8a0; font-size: 0.72rem; }
+
+/* Phones */
+@media (max-width: 899px) {
+    .wd-emerald .wd-card h3 { font-size: 1.35rem; }
+}
+@media (max-width: 599px) {
+    .wd-emerald .wd-role-events .wd-grid { grid-template-columns: minmax(0, 1fr); }
+    .wd-emerald .wd-role-areas .wd-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .wd-emerald .wd-hero-editorial-split .wd-hero-title { font-size: 2.4rem; }
+    .wd-emerald .website-cta { flex-direction: column; align-items: flex-start; }
+    .wd-emerald .website-cta h2, .wd-emerald .website-cta p { flex: 0 0 auto; }
+    .wd-emerald .website-cta p { order: 0; margin-top: 0; }
+    .wd-emerald .website-cta .wd-btn { width: 100%; }
+    .wd-emerald .wd-footer-compact .wd-footer-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .wd-emerald .wd-footer-compact .wd-footer-brand { grid-column: 1 / -1; }
+}
+.wd-emerald .website-contact-details .wd-section-title { text-align: center; }
+@media (min-width: 860px) {
+    .wd-emerald .wd-role-booths .wd-grid:has(> .wd-card-feature) { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+    .wd-emerald .wd-role-booths .wd-grid:has(> .wd-card-feature) > .wd-card:not(.wd-card-feature) { grid-column: span 2; }
+    .wd-emerald .wd-role-booths .wd-grid:has(> .wd-card-feature):has(> :nth-child(3):last-child) > .wd-card:not(.wd-card-feature) { grid-column: span 3; }
+    .wd-emerald .wd-role-booths .wd-grid:has(> .wd-card-feature):has(> :nth-child(2):last-child) > .wd-card:not(.wd-card-feature) { grid-column: 1 / -1; }
+}
