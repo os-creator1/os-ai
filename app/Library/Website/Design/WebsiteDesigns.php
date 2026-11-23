@@ -35,7 +35,7 @@ final class WebsiteDesigns
 
     public static function forTemplateKey(?string $templateKey): ?WebsiteDesign
     {
-        return $templateKey === null ? null : (self::all()[$templateKey] ?? self::nicheDesigns()[$templateKey] ?? null);
+        return $templateKey === null ? null : (self::all()[$templateKey] ?? self::optInDesigns()[$templateKey] ?? self::nicheDesigns()[$templateKey] ?? null);
     }
 
     /**
@@ -59,7 +59,52 @@ final class WebsiteDesigns
             }
         }
 
+        foreach (self::optInDesigns() as $design) {
+            if ($design->key === $variant) {
+                return $design;
+            }
+        }
+
         return self::forTemplateKey($templateKey);
+    }
+
+    /** @var array<string, WebsiteDesign>|null */
+    private static ?array $optIn = null;
+
+    /**
+     * Opt-in Photo Booth designs. They are NOT part of all() (the four canonical designs every existing site and test
+     * enumerates) — a site only gets one when its owner picks that template, so Classic Gold & co. never change.
+     * Their CSS is scoped to the design's own `key` (`.wd-emerald`).
+     *
+     * @return array<string, WebsiteDesign>
+     */
+    public static function optInDesigns(): array
+    {
+        return self::$optIn ??= [
+            'photo_booth_emerald' => new WebsiteDesign(
+                key: 'emerald',
+                templateKey: 'photo_booth_emerald',
+                number: 5,
+                label: 'Emerald Gold',
+                tagline: 'Deep green split hero with editorial serif headlines, muted gold, charcoal and cream. Photo cards, a numbered booking process and a compact footer.',
+                bestFor: 'Photo booth businesses with several event types, service areas and real reviews who want a premium editorial look.',
+                variants: [
+                    'header' => 'split',
+                    'hero' => 'editorial-split',
+                    'services' => 'photo-cards',
+                    'packages' => 'photo-cards',
+                    'testimonials' => 'quotes',
+                    'gallery' => 'grid',
+                    'footer' => 'compact',
+                    'accent' => 'none',
+                ],
+                tones: ['hero' => 'dark', 'trust_strip' => 'tint', 'services' => 'light', 'packages' => 'tint', 'gallery' => 'light', 'image_text' => 'tint', 'text' => 'light', 'testimonials' => 'light', 'cta' => 'accent', 'faq' => 'light', 'contact_details' => 'dark', 'form' => 'light', 'backdrops' => 'tint', 'custom_section' => 'tint'],
+                homeOrder: ['hero', 'trust_strip', 'services', 'image_text', 'text', 'gallery', 'backdrops', 'testimonials', 'faq', 'cta', 'contact_details'],
+                swatch: ['#18251f', '#b89457'],
+                announcementBar: true,
+                roleTones: ['events' => 'light', 'booths' => 'tint', 'process' => 'dark', 'advantages' => 'light', 'areas' => 'light'],
+            ),
+        ];
     }
 
     /**

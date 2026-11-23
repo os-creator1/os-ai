@@ -10,6 +10,8 @@ on:
       - 'app/Http/Controllers/Customer/Business/WebsiteController.php'
       - 'app/Http/Controllers/Customer/Business/WebsiteStudioController.php'
       - 'database/seeders/WebsiteTemplateSeeder.php'
+      - 'public/css/website-design.css'
+      - 'resources/views/public/website/**'
       - 'database/seeders/TutoringWebsiteSetupQuestionnaireSeeder.php'
       - 'app/Console/Commands/SeedNicheBlueprintCommand.php'
       - 'app/Console/Commands/RepairPhotoBoothBlueprintCommand.php'
@@ -110,6 +112,11 @@ jobs:
         run: |
           php artisan test tests/Feature/Website/Acceptance/GeneratorRecoveryAcceptanceTest.php --log-junit /tmp/generator-recovery.xml
           php -r '$x = simplexml_load_file("/tmp/generator-recovery.xml"); $n = count($x->xpath("//testcase")); $s = count($x->xpath("//testcase/skipped")); fwrite(STDOUT, "Discovered generator recovery tests: $n (skipped: $s)\n"); if ($n !== 8 || $s !== 0) exit(1);'
+      - name: Run Kaleb v3 visual-fidelity (Emerald Gold) acceptance and enforce discovery
+        shell: bash
+        run: |
+          php artisan test tests/Feature/Website/Acceptance/KalebV3VisualFidelityAcceptanceTest.php --log-junit /tmp/kv3-fidelity.xml
+          php -r '$x = simplexml_load_file("/tmp/kv3-fidelity.xml"); $n = count($x->xpath("//testcase")); $s = count($x->xpath("//testcase/skipped")); fwrite(STDOUT, "Discovered Emerald Gold acceptance tests: $n (skipped: $s)\n"); if ($n !== 7 || $s !== 0) exit(1);'
       - name: Run guided generation and affected page-budget regressions
         run: >-
           php artisan test

@@ -26,6 +26,7 @@ final class WebsiteDesign
      * @param  array<string, string>  $tones  band tone per section type (light|dark|accent|tint)
      * @param  array<int, string>  $homeOrder  preferred home-page section order
      * @param  array{0: string, 1: string}  $swatch  preview/picker colours (background, accent)
+     * @param  array<string, string>  $roleTones  band tone per semantic services role (events|process|advantages|areas), when a design tones them apart
      */
     public function __construct(
         public readonly string $key,
@@ -39,6 +40,7 @@ final class WebsiteDesign
         public readonly array $homeOrder,
         public readonly array $swatch,
         public readonly bool $announcementBar,
+        public readonly array $roleTones = [],
     ) {}
 
     public function variant(string $surface): string
@@ -46,8 +48,12 @@ final class WebsiteDesign
         return $this->variants[$surface] ?? 'default';
     }
 
-    public function toneFor(string $sectionType): string
+    public function toneFor(string $sectionType, ?string $role = null): string
     {
+        if ($role !== null && isset($this->roleTones[$role])) {
+            return $this->roleTones[$role];
+        }
+
         // A trust strip is a slim band under the hero: the template's tint tone sets it apart from both the hero and the sections below.
         return $this->tones[$sectionType] ?? ($sectionType === 'trust_strip' ? 'tint' : 'light');
     }

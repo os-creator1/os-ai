@@ -215,6 +215,24 @@ class WebsiteTemplateSeeder extends Seeder
                 'manifest_version' => 1,
                 'is_active' => true,
             ],
+            [
+                'key' => 'photo_booth_emerald',
+                'niche_key' => 'photo_booth_service',
+                'display_name' => 'Emerald Gold',
+                'description' => 'Deep green split hero with editorial serif headlines, muted gold and cream, photo event cards, a numbered booking process and a compact footer.',
+                'theme' => [
+                    'font' => 'serif',
+                    'primary_color' => '#b89457',
+                    'secondary_color' => '#18251f',
+                    'button_style' => 'solid',
+                    'content_width' => '1160px',
+                    'header_variant' => 'emerald',
+                    'footer_variant' => 'emerald',
+                ],
+                'page_manifest' => $manifest,
+                'manifest_version' => 1,
+                'is_active' => true,
+            ],
         ];
     }
 
