@@ -773,18 +773,16 @@ final class HomeCommandCenter
             $uid = is_array($nbm) ? ($nbm['move']['subjectUid'] ?? null) : null;
 
             if ($uid !== null && ($head?->uid ?? null) === $uid) {
-                // The existing actionable "Finish your website" recommendation
-                // already wins over SEO/reviews and has an exact scoped route.
-                if (($head->type ?? null) === 'website.not_published:v1') {
-                    return null;
-                }
-
                 $category = \App\Library\Growth\GrowthRuleRegistry::find((string) ($head->type ?? ''))?->definition()->category;
 
-                if (in_array($category, [
-                    \App\Enums\Growth\GrowthCategory::LeadResponse,
-                    \App\Enums\Growth\GrowthCategory::Bookings,
-                    \App\Enums\Growth\GrowthCategory::Forms,
+                // Only replace routine marketing/measurement work. A website
+                // recommendation already has a specific owner action; booking,
+                // sales, form, operational Ads and payments work must keep it.
+                if (! in_array($category, [
+                    \App\Enums\Growth\GrowthCategory::Seo,
+                    \App\Enums\Growth\GrowthCategory::Reviews,
+                    \App\Enums\Growth\GrowthCategory::LocalPresence,
+                    \App\Enums\Growth\GrowthCategory::Connections,
                 ], true)) {
                     return null;
                 }
