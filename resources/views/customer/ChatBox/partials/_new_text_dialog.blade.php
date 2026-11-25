@@ -104,7 +104,7 @@
     }
 </style>
 
-<div class="modal fade nt-modal" id="new-text-dialog" tabindex="-1" aria-labelledby="new-text-title" aria-hidden="true" data-role="new-text-dialog">
+<div class="modal fade nt-modal" id="new-text-dialog" tabindex="-1" aria-labelledby="new-text-title" aria-hidden="true" data-bs-backdrop="static" data-role="new-text-dialog">
     <div class="modal-dialog nt-dialog">
         <div class="modal-content nt-card">
             <div class="nt-head">
@@ -408,11 +408,20 @@
             .then(function (res) {
                 if (res.ok && res.body && res.body.status === 'success') {
                     // Navigate to the stored conversation: it is read back from the server, so the message appears exactly once.
-                    window.location.href = res.body.conversation_uid ? urls.inbox + (urls.inbox.indexOf('?') === -1 ? '?' : '&') + 'open=' + encodeURIComponent(res.body.conversation_uid) : urls.inbox;
+                    if (!res.body.conversation_uid) {
+                        // Sent, but the stored thread could not be identified: say so, then show the inbox.
+                        showError('Your text was sent. It will appear in Conversations.');
+                        setTimeout(function () { window.location.href = urls.inbox; }, 1500);
+                        return;
+                    }
+                    window.location.href = urls.inbox + (urls.inbox.indexOf('?') === -1 ? '?' : '&') + 'open=' + encodeURIComponent(res.body.conversation_uid);
                     return;
                 }
                 // Failed: keep the dialog and the draft. The same token is reused only when the server holds an open reservation for it.
-                state.token = (res.body && res.body.retry_token) || uuid();
+                // Only a definite refusal (4xx other than 419/429, with a JSON body) lets a retry use a new token;
+                // an ambiguous outcome (5xx, 419, 429, unreadable body) keeps the SAME token so a retry cannot double-send.
+                var definite = res.body && res.status >= 400 && res.status < 500 && res.status !== 419 && res.status !== 429;
+                state.token = (res.body && res.body.retry_token) || (definite ? uuid() : state.token);
                 state.sending = false; sendBtn.removeAttribute('aria-busy'); refresh();
                 showError(failMessage(res.status, res.body));
             })
