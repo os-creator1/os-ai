@@ -60,6 +60,9 @@ export function ConversationsScreen({ navigation }: Props) {
   useEffect(() => { itemsRef.current = items; }, [items]);
   const changedUids = useRef(new Set<string>());
   const needsFullReload = useRef(false);
+  // Uids a refresh has taken but not yet APPLIED. A refresh superseded by a newer one discards its result, so the newer one
+  // re-reconciles these too; they leave the set only when a refresh actually applies them.
+  const unappliedUids = useRef(new Set<string>());
   // Live refreshes can overlap; only the most recently STARTED one may apply its result (an older, slower response must not
   // overwrite newer previews, ordering or unread flags).
   const refreshSeq = useRef(0);
@@ -72,10 +75,12 @@ export function ConversationsScreen({ navigation }: Props) {
    */
   const refreshTop = useCallback(async () => {
     if (!scope) return;
-    const uids = [...changedUids.current];
+    changedUids.current.forEach((u) => unappliedUids.current.add(u));
     changedUids.current.clear();
+    const uids = [...unappliedUids.current];
     if (needsFullReload.current || filter !== 'all' || search.trim() !== '') {
       needsFullReload.current = false;
+      unappliedUids.current.clear(); // a full reload re-reads everything
       void load(true);
       return;
     }
@@ -96,6 +101,7 @@ export function ConversationsScreen({ navigation }: Props) {
         }
       }
       if (generation.current !== current || mine !== refreshSeq.current) return;
+      uids.forEach((u) => unappliedUids.current.delete(u));
       setItems((previous) => {
         if (previous === null) return res.data;
         const rest = previous

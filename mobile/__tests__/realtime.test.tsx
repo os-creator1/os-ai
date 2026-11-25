@@ -384,4 +384,34 @@ describe('live conversation list', () => {
     expect(screen.queryByText('OLDER preview')).toBeNull();
     jest.useRealTimers();
   });
+  it('a conversation named by a superseded refresh is still reconciled by the newer one', async () => {
+    jest.useFakeTimers();
+    const deferred: Array<(v: any) => void> = [];
+    const first = { data: [row('c1', 'Ann', false, 'top')], meta: { page: 1, next_page: 2 } };
+    const conversations = jest.fn(async (_s: any, q: any) => {
+      if (q.page === 2) return { data: [row('c9', 'Older Lead', true, 'unread preview')], meta: { page: 2, next_page: null } };
+      if (conversations.mock.calls.filter((c: any[]) => c[1].page !== 2).length === 1) return first;
+      return new Promise((r) => { deferred.push(r); });
+    });
+    const conversation = jest.fn(async () => ({ conversation: row('c9', 'Older Lead', false, 'unread preview'), contact_uid: null, has_more: false, messages: [] }));
+    const { factory, created } = fakeTransports();
+    await mount(fakeApi({ conversations, conversation }), factory, <ConversationsScreen {...({ navigation: { navigate: jest.fn(), setOptions: jest.fn() }, route: { params: undefined } } as any)} />);
+    await waitFor(() => screen.getByText('Ann'));
+    await fireEvent.press(screen.getByText('Load older leads'));
+    await waitFor(() => screen.getByText('Older Lead'));
+    await waitFor(() => expect(created).toHaveLength(1));
+    const ch = channelFor('biz-aaaaaaaa', 'user-uid-0001');
+
+    await act(async () => { created[0].emit(ch, { type: 'read', business_uid: 'biz-aaaaaaaa', conversation_uid: 'c9' }); });
+    await act(async () => { jest.advanceTimersByTime(400); });      // refresh #1 (names c9) starts, slow
+    await act(async () => { created[0].emit(ch, { type: 'received', business_uid: 'biz-aaaaaaaa', conversation_uid: 'c1' }); });
+    await act(async () => { jest.advanceTimersByTime(400); });      // refresh #2 (names only c1) supersedes it
+    await waitFor(() => expect(deferred).toHaveLength(2));
+
+    await act(async () => { deferred[1](first); });
+    await waitFor(() => expect(screen.queryByLabelText('Unread')).toBeNull());
+    await act(async () => { deferred[0](first); });
+    expect(screen.queryByLabelText('Unread')).toBeNull();
+    jest.useRealTimers();
+  });
 });
