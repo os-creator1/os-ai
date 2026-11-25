@@ -383,6 +383,25 @@ const seed = (server) => { server.add('A', 'Ann'); server.add('B', 'Bob'); serve
     assert.deepEqual(await badge(page, 'A'), { unread: true, n: '1' }, 'left without it ever being displayed: unread');
   });
 
+  await scenario('(no stuck read) the initial load of A fails, so the thread is never displayed: a reply to A is still badged', async (page, server) => {
+    seed(server); await bootList(page, server);
+    server.fail = (kind, id) => (kind === 'timeline' && id === 'A' ? 500 : 0);
+    await page.evaluate(() => $('.chat-users-list li[data-id=A]').trigger('click')); await page.waitForTimeout(300);
+    assert.equal(await page.evaluate(() => $('.chat_history').children().length), 0, 'nothing displayed');
+    server.inbound('A', 'unseen: the thread never loaded', 'a2');
+    await refresh(page, server); await refresh(page, server);
+    assert.deepEqual(await badge(page, 'A'), { unread: true, n: '1' });
+  });
+
+  await scenario('(no stuck read) a thread that became unavailable (404) is not deferred forever: its new reply is badged', async (page, server) => {
+    seed(server); await bootList(page, server); await open(page, server, 'A');
+    server.fail = (kind, id) => (kind === 'timeline' && id === 'A' ? 404 : 0);
+    await refresh(page, server);                                                              // A is now known gone for this operator
+    server.inbound('A', 'arrives for a thread that is no longer served', 'a2');
+    await refresh(page, server); await refresh(page, server);
+    assert.deepEqual(await badge(page, 'A'), { unread: true, n: '1' });
+  });
+
   await scenario('(mobile read) the server counter is reset by another client: the next reply shows 1 unread, not hidden by the old baseline', async (page, server) => {
     seed(server); server.convs.A.unread = 5; await bootList(page, server);
     await open(page, server, 'A'); await open(page, server, 'B');

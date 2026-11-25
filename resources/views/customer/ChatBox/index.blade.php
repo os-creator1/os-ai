@@ -2497,6 +2497,7 @@
         // The open conversation's row is not painted unread while its thread answer is still expected to display the reply (it would
         // flash for a round trip). The thread step settles it: displayed -> baseline advances; failed / dropped -> painted honestly.
         let deferId = "";
+        let skipStreak = 0;                    // consecutive cycles whose thread step was skipped because the page was busy
         let threadOutcome = "";                // "applied" | "skipped" (nothing asked yet) | "unsettled" (asked, not displayed)
         const rowFor = ($root, id) => $root.children("li").filter(function () { return idOf(this) === id; }).first();
 
@@ -2655,11 +2656,11 @@
 
         async function refreshThread(activeId, ep) {
           // Nothing drawn yet means the conversation is still opening through its own load; email and compose are other views.
-          threadOutcome = "skipped";
-
-          if (!isSms(activeId) || activeId === deadThread || !$(".chat_history").children().length) { return; }
-
           threadOutcome = "unsettled";
+
+          // Nothing displayed (the open load failed or is still running) or a thread the server no longer serves: no later cycle is
+          // going to display a reply here, so the row must be painted for what it is, never deferred.
+          if (!isSms(activeId) || activeId === deadThread || !$(".chat_history").children().length) { return; }
 
           const startedAt = Date.now();
           const $row = $("#users-list li[data-id]").filter(function () { return idOf(this) === activeId; }).first();
@@ -2672,7 +2673,7 @@
             response = await post(conversationUrl("timeline", activeId), { _token: "{{ csrf_token() }}" });
           } catch (xhr) {
             // This thread is gone for this operator; the list and every other conversation keep updating.
-            if (xhr && (xhr.status === 403 || xhr.status === 404)) { deadThread = activeId; return; }
+            if (xhr && (xhr.status === 403 || xhr.status === 404)) { deadThread = activeId; threadOutcome = "unsettled"; return; }
 
             throw xhr;
           }
@@ -2735,7 +2736,10 @@
 
           // Settled (displayed, failed, or dropped for a switch): paint honestly. Skipped (the page was busy with the thread itself):
           // the next cycle will show it, so the open row keeps not flashing until then.
-          if (threadOutcome !== "skipped" || activeId !== String($(".chat_id").val() || "")) { deferId = ""; }
+          skipStreak = threadOutcome === "skipped" ? skipStreak + 1 : 0;
+
+          // Bounded: a page that stays busy cannot keep a reply painted read for more than a few cycles.
+          if (threadOutcome !== "skipped" || skipStreak > 3 || activeId !== String($(".chat_id").val() || "")) { deferId = ""; }
 
           if (activeId !== "") { repaint(activeId); }
 
