@@ -49,6 +49,15 @@ class ConversationSender
      */
     public function reply(ChatBox $box, string $message, ?UploadedFile $media, string $sendUid, bool $requireManaged = false): JsonResponse
     {
+        $response = $this->performReply($box, $message, $media, $sendUid, $requireManaged);
+        // Phones (including this user's other devices) see the new outgoing bubble live. Never throws; never pushes.
+        app(\App\Library\Mobile\MobileConversationNotifier::class)->changed($box, \App\Events\Mobile\MobileConversationChanged::OUTBOUND);
+
+        return $response;
+    }
+
+    private function performReply(ChatBox $box, string $message, ?UploadedFile $media, string $sendUid, bool $requireManaged): JsonResponse
+    {
         $business = $box->business;
 
         $owner = $this->owner($business);
@@ -99,6 +108,17 @@ class ConversationSender
      * A deliberate new provider attempt for a Failed / Delivery-failed bubble. null = no such bubble in this conversation.
      */
     public function retry(ChatBox $box, string $sendUid): ?JsonResponse
+    {
+        $response = $this->performRetry($box, $sendUid);
+
+        if ($response !== null) {
+            app(\App\Library\Mobile\MobileConversationNotifier::class)->changed($box, \App\Events\Mobile\MobileConversationChanged::OUTBOUND);
+        }
+
+        return $response;
+    }
+
+    private function performRetry(ChatBox $box, string $sendUid): ?JsonResponse
     {
         $business = $box->business;
 

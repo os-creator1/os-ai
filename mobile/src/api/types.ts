@@ -45,3 +45,16 @@ export type ContactProfile = {
 };
 export type CallingCapability = { available: boolean; reason: string | null; phase: string };
 export type Scope = { workspaceUid: string; businessUid: string };
+
+export type RealtimeConfig = {
+  enabled: boolean;
+  provider: 'pusher';
+  key: string | null;
+  cluster: string | null;
+  host: string | null;
+  port: number | null;
+  tls: boolean;
+};
+/** Content-free change notice. The app re-reads through the API; it never trusts these fields for anything but "what to refetch". */
+export type ChangeType = 'received' | 'outbound' | 'status' | 'read';
+export type ConversationChange = { type: ChangeType; business_uid: string; conversation_uid: string };

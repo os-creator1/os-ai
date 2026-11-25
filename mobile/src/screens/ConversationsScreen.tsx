@@ -1,8 +1,11 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { FlatList, Pressable, RefreshControl, StyleSheet, Text, TextInput, View } from 'react-native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
+import { ApiError } from '../api/client';
 import type { ConversationSummary } from '../api/types';
 import { useAuth } from '../auth/AuthContext';
+import { NotificationBanner } from '../notifications/NotificationBanner';
+import { useRealtime } from '../realtime/RealtimeProvider';
 import { colors, space } from '../theme';
 import type { RootStack } from '../navigation/types';
 import { Button, ErrorState, Loading } from './ui';
@@ -22,10 +25,15 @@ export function ConversationsScreen({ navigation }: Props) {
   const [moreError, setMoreError] = useState<string | null>(null);
   const generation = useRef(0);
   const fetchingMore = useRef(false);
+  // True while the latest full load has not finished (applied, failed or superseded).
+  const loadInFlight = useRef(false);
 
   const load = useCallback(async (preserveItems = false) => {
     if (!scope) return;
     const current = ++generation.current;
+    // Full loads and live refreshes share ONE ordering: whichever STARTED last may apply its result.
+    const startedAs = ++refreshSeq.current;
+    loadInFlight.current = true;
     fetchingMore.current = false;
     setLoadingMore(false);
     setMoreError(null);
@@ -36,12 +44,20 @@ export function ConversationsScreen({ navigation }: Props) {
     try {
       const res = await api.conversations(scope, { filter, search: search.trim() || undefined, page: 1 });
       if (generation.current !== current) return;
+      // A live refresh started after this load owns the newer view; applying this older response would roll it back.
+      if (startedAs !== refreshSeq.current) {
+        // Keep pagination available: the superseding refresh may fail, and this response's page-1 meta is still valid.
+        setNextPage((n) => n ?? res.meta.next_page);
+        return;
+      }
       setItems(res.data);
       setNextPage(res.meta.next_page);
     } catch (e) {
       if (generation.current === current) {
         setError(e instanceof Error ? e.message : 'Could not load conversations.');
       }
+    } finally {
+      if (generation.current === current) loadInFlight.current = false;
     }
   }, [api, scope, filter, search]);
 
@@ -51,6 +67,90 @@ export function ConversationsScreen({ navigation }: Props) {
     void load();
     return () => { generation.current++; };
   }, [load]);
+
+  const itemsRef = useRef<ConversationSummary[] | null>(null);
+  useEffect(() => { itemsRef.current = items; }, [items]);
+  const changedUids = useRef(new Set<string>());
+  const needsFullReload = useRef(false);
+  // Uids a refresh has taken but not yet APPLIED. A refresh superseded by a newer one discards its result, so the newer one
+  // re-reconciles these too; they leave the set only when a refresh actually applies them.
+  const unappliedUids = useRef(new Set<string>());
+  // Live refreshes can overlap; only the most recently STARTED one may apply its result (an older, slower response must not
+  // overwrite newer previews, ordering or unread flags).
+  const refreshSeq = useRef(0);
+
+  /**
+   * Live update. Page 1 is re-read and folded in (changed conversations jump to the top in server order; older pages the user
+   * loaded stay; nothing is shown twice). A conversation the event names that is loaded but NOT on page 1 — e.g. one on page 2
+   * that was just read on another device, which does not change its sort key — is reconciled individually from the API rather
+   * than assumed unchanged. A resync (reconnect / app resume) or a filtered/searched view simply reloads.
+   */
+  const refreshTop = useCallback(async () => {
+    if (!scope) return;
+    // Nothing shown yet and the initial (or filter/search) load is still running: its response may predate what the event
+    // is about, so KEEP the signals and look again shortly, once that load has applied.
+    if (itemsRef.current === null && loadInFlight.current) {
+      if (debounce.current) clearTimeout(debounce.current);
+      debounce.current = setTimeout(() => { void refreshTopRef.current(); }, 250);
+      return;
+    }
+    changedUids.current.forEach((u) => unappliedUids.current.add(u));
+    changedUids.current.clear();
+    const uids = [...unappliedUids.current];
+    if (needsFullReload.current || filter !== 'all' || search.trim() !== '') {
+      needsFullReload.current = false;
+      unappliedUids.current.clear(); // a full reload re-reads everything
+      void load(true);
+      return;
+    }
+    const current = generation.current;
+    const mine = ++refreshSeq.current;
+    try {
+      const res = await api.conversations(scope, { filter, page: 1 });
+      if (generation.current !== current || mine !== refreshSeq.current) return;
+      // If page 1 shares nothing with what is loaded while more pages exist, so many conversations arrived at once that the
+      // new window cannot be joined contiguously to the old results (some changed conversation may now sit on a page we
+      // would skip). Restart from the top instead of splicing.
+      const loadedNow = itemsRef.current ?? [];
+      if (loadedNow.length > 0 && res.meta.next_page !== null && !res.data.some((c) => loadedNow.some((l) => l.uid === c.uid))) {
+        unappliedUids.current.clear();
+        void load(true);
+        return;
+      }
+      const onPageOne = new Set(res.data.map((c) => c.uid));
+      const patches = new Map<string, ConversationSummary | null>();
+      for (const uid of uids) {
+        if (onPageOne.has(uid) || !itemsRef.current?.some((c) => c.uid === uid)) continue;
+        try {
+          patches.set(uid, (await api.conversation(scope, uid)).conversation);
+        } catch (e) {
+          // No longer reachable (moved Location, access lost): drop it from the list.
+          if (e instanceof ApiError && e.status === 404) patches.set(uid, null);
+        }
+      }
+      if (generation.current !== current || mine !== refreshSeq.current) return;
+      uids.forEach((u) => unappliedUids.current.delete(u));
+      setItems((previous) => {
+        if (previous === null) return res.data;
+        const rest = previous
+          .filter((c) => !onPageOne.has(c.uid))
+          .flatMap((c) => (patches.has(c.uid) ? (patches.get(c.uid) ? [patches.get(c.uid) as ConversationSummary] : []) : [c]));
+        return [...res.data, ...rest];
+      });
+      setNextPage((n) => n ?? res.meta.next_page);
+    } catch { /* silent: the next event or pull-to-refresh retries */ }
+  }, [api, scope, filter, search, load]);
+
+  const refreshTopRef = useRef(refreshTop);
+  refreshTopRef.current = refreshTop;
+  const debounce = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useRealtime((e) => {
+    if (e.kind === 'change') changedUids.current.add(e.conversation_uid);
+    else needsFullReload.current = true;
+    if (debounce.current) clearTimeout(debounce.current);
+    debounce.current = setTimeout(() => { void refreshTop(); }, 250);
+  });
+  useEffect(() => () => { if (debounce.current) clearTimeout(debounce.current); }, []);
 
   const loadMore = useCallback(async () => {
     if (!scope || nextPage === null || items === null || refreshing || fetchingMore.current) return;
@@ -93,6 +193,7 @@ export function ConversationsScreen({ navigation }: Props) {
   // replacing the entire screen here would blur the TextInput on every key.
   return (
     <View style={s.wrap}>
+      <NotificationBanner />
       <TextInput style={s.search} placeholder="Search name or number" accessibilityLabel="Search" value={search}
         onChangeText={setSearch} autoCapitalize="none" returnKeyType="search" />
       <View style={s.tabs}>

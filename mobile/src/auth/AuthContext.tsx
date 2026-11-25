@@ -21,6 +21,8 @@ type State = {
   signOut: () => Promise<void>;
   selectBusiness: (b: Business) => Promise<void>;
   clearBusiness: () => Promise<void>;
+  /** Re-asks the SERVER which Businesses this person may open right now (used before honouring a notification tap). */
+  refreshAccess: () => Promise<Me | null>;
 };
 
 const Ctx = createContext<State | null>(null);
@@ -32,12 +34,16 @@ export const useAuth = () => {
 
 export function AuthProvider({ children, apiOverride }: { children: React.ReactNode; apiOverride?: Api }) {
   const tokenRef = useRef<string | null>(null);
+  // Bumped on every sign-in and every wipe (sign-out, 401, lock). A request that started under an earlier session must
+  // not apply its result to a later one.
+  const sessionEpoch = useRef(0);
   const [ready, setReady] = useState(false);
   const [restoreError, setRestoreError] = useState<string | null>(null);
   const [me, setMe] = useState<Me | null>(null);
   const [scope, setScope] = useState<Scope | null>(null);
 
   const wipe = useCallback(async () => {
+    sessionEpoch.current++;
     tokenRef.current = null;
     setMe(null);
     setScope(null);
@@ -101,6 +107,7 @@ export function AuthProvider({ children, apiOverride }: { children: React.ReactN
       name: Constants.deviceName ?? undefined,
       app_version: Constants.expoConfig?.version,
     });
+    sessionEpoch.current++;
     tokenRef.current = res.token;
     await store.saveSession(res.token, res.expires_at);
     await hydrate();
@@ -119,11 +126,26 @@ export function AuthProvider({ children, apiOverride }: { children: React.ReactN
 
   const clearBusiness = useCallback(async () => { setScope(null); }, []);
 
+  const refreshAccess = useCallback(async (): Promise<Me | null> => {
+    const epoch = sessionEpoch.current;
+    try {
+      const next = await api.me();
+      // Signed out (or a different account signed in) while this was in flight: discard, never resurrect the old session.
+      if (epoch !== sessionEpoch.current) return null;
+      setMe(next);
+      // A Business that is no longer listed must stop being the active scope immediately.
+      setScope((cur) => (cur && next.businesses.some((b) => b.business_uid === cur.businessUid && b.workspace_uid === cur.workspaceUid) ? cur : null));
+      return next;
+    } catch {
+      return null;
+    }
+  }, [api]);
+
   const business = me?.businesses.find((b) => scope && b.business_uid === scope.businessUid && b.workspace_uid === scope.workspaceUid) ?? null;
 
   const value: State = {
     ready, restoreError, retryRestore, discardStoredSession: wipe,
-    signedIn: me !== null, me, scope, business, api, signIn, signOut, selectBusiness, clearBusiness,
+    signedIn: me !== null, me, scope, business, api, signIn, signOut, selectBusiness, clearBusiness, refreshAccess,
   };
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
