@@ -61,6 +61,9 @@ function ConversationThread({ route, navigation }: Props) {
   const earlierInFlight = useRef(false);
   const [loadingEarlier, setLoadingEarlier] = useState(false);
   const threadGeneration = useRef(0);
+  // A live signal that arrived before the first load applied: that load's snapshot may predate it, so re-read right after.
+  const liveWanted = useRef(false);
+  const refreshLiveRef = useRef<() => Promise<void>>(async () => undefined);
 
   const load = useCallback(async (): Promise<boolean | 'superseded'> => {
     if (!scope) return false;
@@ -81,6 +84,7 @@ function ConversationThread({ route, navigation }: Props) {
       dataRef.current = d;
       setHasMore(d.has_more);
       setOlder([]);
+      if (liveWanted.current) { liveWanted.current = false; void refreshLiveRef.current(); }
       // Only the actual server history proves a previously unconfirmed
       // send/retry now has a persisted bubble. Once its send_uid appears,
       // remove the stale warning so a later delivery_failed state can
@@ -111,7 +115,8 @@ function ConversationThread({ route, navigation }: Props) {
    */
   const refreshLive = useCallback(async () => {
     // Before the first load has applied there is nothing to refresh: that load will deliver the data itself.
-    if (!scope || dataRef.current === null) return;
+    if (!scope) return;
+    if (dataRef.current === null) { liveWanted.current = true; return; }
     const version = threadGeneration.current;
     const mine = ++liveSeq.current;
     try {
@@ -150,6 +155,8 @@ function ConversationThread({ route, navigation }: Props) {
       if (d.conversation.unread && focused.current) api.markRead(scope, uid).catch(() => undefined);
     } catch { /* a failed live refresh is silent; the next event or pull-to-refresh retries */ }
   }, [api, scope, uid]);
+
+  refreshLiveRef.current = refreshLive;
 
   useRealtime((e) => {
     if (e.kind === 'resync' || (e.kind === 'change' && e.conversation_uid === uid)) void refreshLive();

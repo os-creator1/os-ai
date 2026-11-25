@@ -308,6 +308,22 @@ describe('live conversation detail: window and focus', () => {
     expect(screen.getByText('Retry')).toBeTruthy();                       // and Retry is not hidden
   });
 
+  it('a live signal that arrives during the initial thread load is kept and acted on once that load has applied', async () => {
+    const deferred: Array<(v: any) => void> = [];
+    const conversation = jest.fn(() => new Promise((r) => { deferred.push(r); }));
+    const api = fakeApi({ conversation });
+    const { factory, created } = fakeTransports();
+    await mount(api, factory, <ConversationDetailScreen {...({ navigation: nav(), route: { params: { uid: 'c1', title: 'Ann' } } } as any)} />);
+    await waitFor(() => expect(deferred).toHaveLength(1));
+    await waitFor(() => expect(created).toHaveLength(1));
+    await act(async () => { created[0].emit(ch, evt); });                    // arrives while the first load is pending
+    expect(deferred).toHaveLength(1);
+    await act(async () => { deferred[0](detail([msg(1, 'm1')])); });          // snapshot taken before the new message
+    await waitFor(() => expect(deferred).toHaveLength(2));                   // the kept signal triggers a re-read
+    await act(async () => { deferred[1](detail([msg(1, 'm1'), msg(2, 'm2 arrived meanwhile')])); });
+    await waitFor(() => screen.getByText('m2 arrived meanwhile'));
+  });
+
   it('does not yank the user to the bottom on a live update after they scrolled up to read history', async () => {
     const FlatList = require('react-native').FlatList;
     const spy = jest.spyOn(FlatList.prototype, 'scrollToEnd').mockImplementation(() => undefined);

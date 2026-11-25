@@ -1,5 +1,5 @@
-import React, { useCallback, useEffect, useState } from 'react';
-import { Linking, StyleSheet, Text, View } from 'react-native';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { AppState, Linking, StyleSheet, Text, View } from 'react-native';
 import Constants from 'expo-constants';
 import { useAuth } from '../auth/AuthContext';
 import { colors, space } from '../theme';
@@ -12,13 +12,27 @@ export function NotificationBanner() {
   const { api } = useAuth();
   const [perm, setPerm] = useState<PushPermission>('unavailable');
 
-  useEffect(() => { void getPushPermission().then(setPerm); }, []);
+  const last = useRef<PushPermission>('unavailable');
 
-  const enable = useCallback(async () => {
-    const next = await requestPushPermission();
+  // Every observed permission goes through here. When it BECOMES granted (via the prompt, or by the user flipping it in the
+  // system Settings and coming back), this device is registered for push right then — not only at the next sign-in/launch.
+  const apply = useCallback(async (next: PushPermission) => {
+    const was = last.current;
+    last.current = next;
     setPerm(next);
-    if (next === 'granted') await registerForPush(api, Constants.expoConfig?.version, { ask: false }).catch(() => undefined);
+    if (next === 'granted' && (was === 'denied' || was === 'undetermined')) {
+      await registerForPush(api, Constants.expoConfig?.version, { ask: false }).catch(() => undefined);
+    }
   }, [api]);
+
+  useEffect(() => {
+    void getPushPermission().then(apply);
+    // Returning from system Settings: re-read the permission.
+    const sub = AppState.addEventListener?.('change', (state) => { if (state === 'active') void getPushPermission().then(apply); });
+    return () => { sub?.remove?.(); };
+  }, [apply]);
+
+  const enable = useCallback(async () => { await apply(await requestPushPermission()); }, [apply]);
 
   if (perm === 'granted' || perm === 'unavailable') return null;
   return (
