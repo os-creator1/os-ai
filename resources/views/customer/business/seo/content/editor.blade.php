@@ -559,9 +559,9 @@
             document.querySelectorAll('[form="article-form"]').forEach(function (el) {
                 el.addEventListener('input', markDirty); el.addEventListener('change', markDirty);
             });
-            form.addEventListener('submit', function () { dirty = false; });
+            form.addEventListener('submit', function (e) { if (!e.defaultPrevented) { dirty = false; } });
             // The rail's own forms (archive, discard, reviewed, track, cancel schedule, restore) are deliberate navigations.
-            document.querySelectorAll('.ae-rail form').forEach(function (f) { f.addEventListener('submit', function () { dirty = false; }); });
+            document.querySelectorAll('.ae-rail form').forEach(function (f) { f.addEventListener('submit', function (e) { if (!e.defaultPrevented) { dirty = false; } }); });
             window.addEventListener('beforeunload', function (e) { if (dirty) { e.preventDefault(); e.returnValue = ''; } });
 
             // Cmd/Ctrl+S saves the draft.
