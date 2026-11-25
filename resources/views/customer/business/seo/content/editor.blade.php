@@ -100,14 +100,15 @@
         .ae textarea.ae-title { border:0; outline:0; resize:none; font:inherit; font-size:34px; font-weight:800; letter-spacing:-.02em; line-height:1.15; color:var(--ae-ink); padding:0; background:transparent; width:100%; overflow:hidden; min-height:40px; }
         .ae textarea.ae-title::placeholder, .ae textarea.ae-excerpt::placeholder { color:#C9C0BA; }
         .ae .ae-title:focus-visible, .ae .ae-excerpt:focus-visible, .ae .ae-bodyfield:focus-visible { outline:0; }
-        .ae-permalink { display:flex; flex-wrap:wrap; align-items:center; gap:6px; font-size:13px; color:var(--ae-mute); min-width:0; overflow-wrap:anywhere; }
-        .ae-permalink { flex-wrap:nowrap; align-items:flex-start; }
+        /* Icon | URL (absorbs the width constraint and wraps) | Edit (never shrinks, never wraps). */
+        .ae-permalink { display:grid; grid-template-columns:auto minmax(0,1fr) auto; align-items:start; column-gap:6px; font-size:13px; color:var(--ae-mute); min-width:0; }
         .ae-permalink .ae-ic { margin-top:3px; }
-        .ae-permalink .ae-pl-text { flex:0 1 auto; min-width:0; }
+        .ae-permalink .ae-pl-main { display:flex; flex-wrap:wrap; align-items:center; gap:6px; min-width:0; }
+        .ae-permalink .ae-pl-text { min-width:0; overflow-wrap:anywhere; }
         .ae-permalink .ae-slug { color:var(--ae-ink); font-weight:500; }
         .ae-permalink .ae-slug.is-empty { color:var(--ae-mute); font-weight:400; font-style:italic; }
-        .ae-permalink input { height:30px; min-width:0; flex:1 1 8rem; padding:0 8px; border:1px solid var(--ae-field); border-radius:8px; font:inherit; font-size:13px; color:var(--ae-ink); }
-        .ae-permalink .ae-link-btn { margin-left:4px; border:0; background:none; padding:0; min-height:24px; font:inherit; font-weight:600; color:var(--ae-brand-d); cursor:pointer; }
+        .ae-permalink input { height:30px; min-width:0; flex:1 1 10rem; padding:0 8px; border:1px solid var(--ae-field); border-radius:8px; font:inherit; font-size:13px; color:var(--ae-ink); }
+        .ae-permalink .ae-link-btn { flex:none; white-space:nowrap; margin-left:4px; border:0; background:none; padding:0 4px; min-height:24px; font:inherit; font-weight:600; color:var(--ae-brand-d); cursor:pointer; }
         .ae-permalink [hidden] { display:none !important; }
         .ae textarea.ae-excerpt { border:0; border-left:3px solid var(--ae-line2); outline:0; resize:none; font:inherit; font-size:16px; line-height:1.5; color:#5E5652; padding:2px 0 2px 14px; background:transparent; width:100%; overflow:hidden; }
 
@@ -275,9 +276,11 @@
 
                         <div class="ae-permalink" data-role="permalink">
                             <svg class="ae-ic" viewBox="0 0 24 24" style="width:13px;height:13px" aria-hidden="true"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"></path></svg>
-                            <span class="ae-pl-text"><span>{{ $host }}/</span><span class="ae-slug {{ $slugValue === '' ? 'is-empty' : '' }}" id="ae-slug-text">{{ $slugValue !== '' ? $slugValue : 'made from the title' }}</span></span>
-                            <label class="ae-sr" for="f-slug">Web address</label>
-                            <input id="f-slug" type="text" name="slug" value="{{ $slugValue }}" maxlength="80" placeholder="made from the title" hidden>
+                            <div class="ae-pl-main">
+                                <span class="ae-pl-text"><span>{{ $host }}/</span><span class="ae-slug {{ $slugValue === '' ? 'is-empty' : '' }}" id="ae-slug-text">{{ $slugValue !== '' ? $slugValue : 'made from the title' }}</span></span>
+                                <label class="ae-sr" for="f-slug">Web address</label>
+                                <input id="f-slug" type="text" name="slug" value="{{ $slugValue }}" maxlength="80" placeholder="made from the title" hidden>
+                            </div>
                             <button type="button" class="ae-link-btn" id="ae-slug-edit" aria-controls="f-slug" aria-expanded="false" data-role="slug-edit">Edit</button>
                             <span class="ae-mut ae-sr" id="ae-slug-help">Lowercase letters, numbers and hyphens. @if($article?->hasBeenPublished())If you change a published article's address, the old address keeps redirecting to the new one.@endif</span>
                         </div>
@@ -544,6 +547,22 @@
 
             function grow(el) { el.style.height = 'auto'; el.style.height = el.scrollHeight + 'px'; }
             function growAll() { [title, excerpt, body].forEach(function (el) { if (el.offsetParent !== null) { grow(el); } }); }
+            // The window's resize event fires while the app shell is still animating its content area to the new width, so a
+            // measurement taken there is against a stale, far narrower box. A ResizeObserver reports each real width change
+            // after layout, including every step of that transition, so the heights settle on their own. Only width matters:
+            // our own height changes must not re-trigger the measurement. A hidden textarea (width 0) is skipped.
+            var seenWidth = new WeakMap();
+            if (window.ResizeObserver) {
+                var observer = new ResizeObserver(function (entries) {
+                    entries.forEach(function (entry) {
+                        var w = Math.round(entry.contentRect.width);
+                        if (seenWidth.get(entry.target) === w) { return; }
+                        seenWidth.set(entry.target, w);
+                        if (w > 0) { grow(entry.target); }
+                    });
+                });
+                [title, excerpt, body].forEach(function (el) { observer.observe(el); });
+            }
 
             title.addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); } });
             title.addEventListener('input', function () { title.value = title.value.replace(/[\r\n]+/g, ' '); });
@@ -720,7 +739,7 @@
 
             refresh();
             growAll();
-            window.addEventListener('resize', growAll);
+            if (!window.ResizeObserver) { window.addEventListener('resize', growAll); }
             if (document.fonts && document.fonts.ready) { document.fonts.ready.then(growAll); }
         })();
     </script>
