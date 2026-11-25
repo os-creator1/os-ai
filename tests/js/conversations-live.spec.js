@@ -60,7 +60,7 @@ function makeServer() {
   s.addMedia = (id, text, key, media) => { const c = s.convs[id]; c.msgs.push({ key, dir: 'in', text, media }); c.unread += 1; c.at = s.clock++; };
   s.setDetail = (id, key, detail) => { s.convs[id].msgs.find((m) => m.key === key).detail = detail; };
   // The composer the real timeline() returns: the Contact's latest email thread is the reply target, else a fresh send.
-  s.composer = (id) => ({ sms: true, email: true, default: 'sms', email_connected: true, recipient: 'pat@example.com', subject: 'Re: Hi', locations: [],
+  s.composer = (id) => ({ sms: true, email: !s.convs[id].emailOff, default: 'sms', email_connected: !s.convs[id].emailOff, recipient: 'pat@example.com', subject: 'Re: Hi', locations: s.convs[id].locations || [],
     url: s.convs[id].emailUrl || 'http://conv.test/email/send', contact_uid: s.convs[id].emailUrl ? null : 'contact-' + id });
   s.emailArrives = (id, thread) => { const c = s.convs[id]; c.emailUrl = 'http://conv.test/email/reply/' + thread; c.msgs.push({ key: 'email:' + thread, dir: 'in', text: 'New email on ' + thread }); c.unread += 1; c.at = s.clock++; };
   s.sent = [];
@@ -456,6 +456,27 @@ const seed = (server) => { server.add('A', 'Ann'); server.add('B', 'Bob'); serve
       assert.equal(sent.body.contact_uid, undefined, 'a reply to a thread, not a new send for the contact');
     });
   }
+
+  await scenario('(email composer) a poll never resets the operator\'s chosen Location, and Send still carries it', async (page, server) => {
+    seed(server); server.convs.A.locations = [{ uid: 'L1', name: 'One' }, { uid: 'L2', name: 'Two' }];
+    await bootList(page, server); await open(page, server, 'A'); await composeEmail(page);
+    await page.evaluate(() => { $('#email-location').val('L2'); });
+    server.inbound('A', 'a newer text', 'a9'); await refresh(page, server);
+    assert.equal(await page.evaluate(() => $('#email-location').val()), 'L2', 'the choice survived the poll');
+    assert.equal(await page.evaluate(() => $('#email-location option').length), 3, 'the options are still the server\'s');
+    const sent = await sendAndRead(page, server);
+    assert.ok(sent, 'Send went through without asking for a Location again');
+    assert.equal(sent.body.location_uid, 'L2');
+  });
+
+  await scenario('(email composer) a poll never moves an email draft to SMS when email stops being available', async (page, server) => {
+    seed(server); await bootList(page, server); await open(page, server, 'A'); await composeEmail(page);
+    server.convs.A.emailOff = true;                                                            // the mailbox was disconnected meanwhile
+    server.inbound('A', 'a newer text', 'a9'); await refresh(page, server);
+    assert.equal(await page.evaluate(() => composerState.channel), 'email', 'the selected channel is not changed behind the operator');
+    assert.equal(await page.evaluate(() => $('#message').val()), 'half-typed email reply', 'the draft is untouched');
+    assert.ok((await keys(page)).includes('a9'), 'the thread itself still refreshed');
+  });
 
   // ---- (MMS playback) unchanged attachments keep their player, position and play state across a refresh ----
   const playing = (page) => page.evaluate(async () => {

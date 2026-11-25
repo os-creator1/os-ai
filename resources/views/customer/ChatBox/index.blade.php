@@ -2749,7 +2749,20 @@
           // The reply target follows the thread: the answer carries the composer the server derived from the Contact's LATEST email
           // thread, and Send submits through the configuration kept here. applyComposer is what the thread's own load runs on a
           // refresh of the same conversation: it keeps the selected channel and the typed subject, and never touches the draft.
-          if (response.composer) { applyComposer(response.composer, response.channel === "email" ? "email" : "sms"); }
+          // Only when it leaves the operator's selected channel usable: a background refresh must never move a typed email to SMS
+          // (that is a change only an explicit load or the operator makes). A composer not yet set up for this thread is applied.
+          if (response.composer) {
+            const usable = composerState.channel === "email" ? response.composer.email === true : response.composer.sms === true;
+
+            if (composerState.forId !== activeId || usable) {
+              // applyComposer rebuilds the Location selector blank; a background refresh must not discard the operator's choice.
+              const chosen = String($("#email-location").val() || "");
+
+              applyComposer(response.composer, response.channel === "email" ? "email" : "sms");
+
+              if (chosen !== "" && $("#email-location option").filter(function () { return $(this).val() === chosen; }).length) { $("#email-location").val(chosen); }
+            }
+          }
 
           applyTimeline(response.timeline);
 
