@@ -390,11 +390,12 @@ class ChatBoxSecurityTest extends TestCase
         $this->assertStringNotContainsString('"<p>" + messageValue + "</p>"', $source);
 
         // …the only response fields inserted as HTML are the two panes the
-        // server rendered and the unread count (a number, as before).
+        // server rendered. (The unread count used to be a third, written by the Echo handler; the live refresh now takes the whole
+        // row from the server's own `_chat_row` markup instead.)
         preg_match_all('/\.html\(response\.([a-z_]+)\)/', $source, $inserted);
         $fields = array_values(array_unique($inserted[1]));
         sort($fields);
-        $this->assertSame(['context', 'notification', 'timeline'], $fields);
+        $this->assertSame(['context', 'timeline'], $fields);
         $this->assertStringContainsString('$(".chat_history").html(response.timeline);', $source);
         $this->assertStringContainsString('$("#conversation-context").html(response.context);', $source);
 
@@ -470,8 +471,9 @@ class ChatBoxSecurityTest extends TestCase
     {
         $source = file_get_contents(base_path('resources/views/customer/ChatBox/index.blade.php'));
 
-        $this->assertStringContainsString('$counter.html(response.notification);', $source);
-        $this->assertStringContainsString('$counter.removeAttr("hidden");', $source);
+        // The unread counter is no longer patched in by the Echo handler: the live refresh re-reads the row the server renders.
+        $this->assertStringNotContainsString('$counter.html(response.notification);', $source);
+        $this->assertStringContainsString('inboxLive.refreshNow();', $source);
 
         $this->assertSame(2, substr_count($source, "@if(config('broadcasting.connections.pusher.app_id'))"));
         $this->assertSame(2, substr_count($source, '@endif'));
@@ -501,7 +503,8 @@ class ChatBoxSecurityTest extends TestCase
         $this->assertNotFalse($echoStart, 'Echo block start anchor not found.');
         $echoRegion = substr($source, $echoStart, $echoEnd - $echoStart);
 
-        $this->assertTrue(strpos($echoRegion, 'loadTimeline(chat_id);') < strpos($echoRegion, "conversationUrl('notification', chat_id)"));
+        // An Echo event runs the same refresh as polling (open thread + list), through the Business-scoped routes, not a hand-built path.
+        $this->assertStringContainsString('inboxLive.refreshNow();', $echoRegion);
         $this->assertStringNotContainsString('sms.', $echoRegion);
     }
 

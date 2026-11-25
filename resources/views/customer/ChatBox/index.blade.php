@@ -2452,6 +2452,232 @@
       }
 
 
+
+      // ── Live inbox updates ───────────────────────────────────────────────────────────────────────────────────────────
+      // A reply that MotionGrove has already stored must reach an open inbox without a reload. The only push path (Echo's
+      // MessageReceived) is fired by the legacy DLR webhook alone and needs Pusher, so a managed inbound (Telnyx, Outreach) never
+      // reached an open screen. This reads what the server already serves — the list (`load`) and the open thread (`timeline`) —
+      // about every five seconds while the tab is visible, and again at once when the tab returns, the network returns, or an
+      // Echo event arrives. One refresh runs at a time; a late response is dropped unless it still matches what is open.
+      // BEGIN live-inbox
+      var inboxLive = (function () {
+        const POLL_MS = 5000;
+        const RETRY_MS = 2000;
+        const FATAL = [401, 403, 404, 419];   // access gone or the session ended: stop asking
+        const FOLLOW_PX = 48;                 // "at the bottom" tolerance
+        let scopeOf = function () { return null; };
+        let busy = false;
+        let again = false;
+        let stopped = false;
+        let started = false;
+        let timer = null;
+        let epoch = 0;                        // bumped on every conversation switch
+        const seenCount = {};                 // conversation id -> unread count the operator has already looked at
+
+        const idOf = (el) => String($(el).attr("data-id"));
+        const countOf = ($li) => parseInt($li.find(".notification_count").first().text(), 10) || 0;
+        const isSms = (id) => id !== "" && !/^(email|compose):/.test(id);
+        const post = (url, data) => new Promise((resolve, reject) => { $.post(url, data).done(resolve).fail(reject); });
+        const rowFor = ($root, id) => $root.children("li").filter(function () { return idOf(this) === id; }).first();
+
+        function markRead($li) {
+          $li.removeClass("conv-unread");
+          $li.find(".chat-meta").html('<div class="counter" hidden><span class="badge bg-primary rounded-pill float-end notification_count"></span></div>');
+        }
+
+        // The server keeps counting for a conversation the operator has already opened (opening is a client-side read), so a
+        // refreshed row is unread only for what arrived after the operator last looked.
+        function applyReadState($li, activeId) {
+          const id = idOf($li);
+
+          if (!isSms(id)) { return; }
+
+          if (id === activeId) { seenCount[id] = countOf($li); }
+
+          if (seenCount[id] === undefined) { return; }
+
+          const fresh = countOf($li) - seenCount[id];
+
+          if (fresh <= 0) { markRead($li); } else { $li.find(".notification_count").first().text(fresh); }
+        }
+
+        // Page 1 of the same list, merged into what is shown: rows keep their identity (once each), move to their new place
+        // and keep the active mark; pages the operator scrolled in are left alone. addNew=false (the pinned rail) only updates.
+        function mergeRows($list, html, addNew) {
+          const $incoming = $("<ul></ul>").html(html);
+          const rows = $incoming.children("li[data-id]").get();
+
+          if (!rows.length || !$list.length) { return; }
+
+          const activeId = String($(".chat_id").val() || "");
+          const box = document.getElementById("users-list");
+          const top = box ? box.scrollTop : 0;
+
+          for (let i = rows.length - 1; i >= 0; i--) {
+            const $new = $(rows[i]);
+            const $old = rowFor($list, idOf(rows[i]));
+
+            if (!$old.length && !addNew) { continue; }
+
+            if ($old.hasClass("active") || idOf(rows[i]) === activeId) { $new.addClass("active"); }
+
+            applyReadState($new, activeId);
+            $old.remove();
+            $list.prepend($new);
+          }
+
+          $list.children("[data-role=chat-list-empty]").remove();
+
+          if (box) { box.scrollTop = top; }
+        }
+
+        function scopeKey(scope) { return JSON.stringify(scope); }
+
+        async function refreshList(scope, pinned) {
+          const key = scopeKey(scope);
+          const data = { _token: "{{ csrf_token() }}", page: 1, filter: scope.filter, search: pinned ? "" : scope.search, created_from: scope.createdFrom, created_to: scope.createdTo, channel: scope.channel };
+
+          if (pinned) { data.pinned = 1; }
+
+          const html = await post(conversationRoutes.load, data);
+
+          // The operator changed tab, search or channel meanwhile: this answer is for a list that is no longer shown.
+          if (scopeKey(scopeOf() || {}) !== key) { return; }
+
+          mergeRows($(pinned ? "#users-list > .chat-users-list-pinned" : ".chat-users-list").first(), html, !pinned);
+        }
+
+        function plain($root) {
+          const $copy = $root.clone();
+          $copy.find("details").removeAttr("open");
+
+          return $copy.html();
+        }
+
+        // Re-render the open thread from the server's own markup, keeping what the operator is doing: the composer is never
+        // touched, a reader keeps their place, and someone at the bottom keeps following. Items are keyed by their stable
+        // identity so one message can never be drawn twice.
+        function applyTimeline(html) {
+          const $hist = $(".chat_history");
+          const $next = $("<div></div>").html(html);
+
+          if (plain($hist) === plain($next)) { return; }
+
+          const scroller = $(".user-chats")[0];
+          const atBottom = !scroller || scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight <= FOLLOW_PX;
+          const opened = {};
+          let anchorKey = null;
+          let anchorOffset = 0;
+
+          $hist.find("details[open][data-item-key]").each(function () { opened[$(this).attr("data-item-key")] = true; });
+
+          if (scroller && !atBottom) {
+            const viewTop = scroller.getBoundingClientRect().top;
+
+            $hist.find("[data-item-key]").each(function () {
+              const box = this.getBoundingClientRect();
+
+              if (box.bottom > viewTop) { anchorKey = $(this).attr("data-item-key"); anchorOffset = box.top - viewTop; return false; }
+            });
+          }
+
+          $hist.html($next.html());
+
+          const seen = {};
+
+          $hist.find("[data-item-key]").each(function () {
+            const key = $(this).attr("data-item-key");
+
+            if (seen[key]) { $(this).remove(); return; }
+
+            seen[key] = true;
+
+            if (opened[key] && this.tagName === "DETAILS") { this.open = true; }
+          });
+
+          if (!scroller) { return; }
+
+          if (atBottom) {
+            scroller.scrollTop = scroller.scrollHeight;
+          } else if (anchorKey !== null) {
+            const el = $hist.find("[data-item-key]").filter(function () { return $(this).attr("data-item-key") === anchorKey; })[0];
+
+            if (el) { scroller.scrollTop += (el.getBoundingClientRect().top - scroller.getBoundingClientRect().top) - anchorOffset; }
+          }
+        }
+
+        async function refreshThread(activeId, ep) {
+          // Nothing drawn yet means the conversation is still opening through its own load; email and compose are other views.
+          if (!isSms(activeId) || !$(".chat_history").children().length) { return; }
+
+          const response = await post(conversationUrl("timeline", activeId), { _token: "{{ csrf_token() }}" });
+
+          // Switched away (or away and back) while this was in flight: it belongs to a thread that is no longer the open one.
+          if (ep !== epoch || String($(".chat_id").val() || "") !== activeId) { return; }
+
+          applyTimeline(response.timeline);
+        }
+
+        function schedule(ms) {
+          clearTimeout(timer);
+
+          if (stopped || !started) { return; }
+
+          timer = setTimeout(cycle, ms === undefined ? POLL_MS : ms);
+        }
+
+        async function cycle() {
+          if (stopped || !started || document.hidden) { return; }
+
+          if (busy) { again = true; return; }
+
+          const scope = scopeOf();
+
+          if (!scope) { schedule(); return; }
+
+          busy = true;
+          again = false;
+          clearTimeout(timer);
+
+          const ep = epoch;
+          const activeId = String($(".chat_id").val() || "");
+          let failed = false;
+
+          const steps = [() => refreshList(scope, false), () => refreshThread(activeId, ep)];
+
+          // The pinned rail is its own list; only a rail that exists is worth a request.
+          if ($("#users-list > .chat-users-list-pinned > li").length) { steps.splice(1, 0, () => refreshList(scope, true)); }
+
+          for (const step of steps) {
+            try {
+              await step();
+            } catch (xhr) {
+              if (xhr && FATAL.indexOf(xhr.status) !== -1) { stopped = true; } else { failed = true; }
+            }
+          }
+
+          busy = false;
+          schedule(failed ? RETRY_MS : again ? 0 : POLL_MS);
+        }
+
+        // A conversation switch invalidates every answer still on its way. Registered before the selection handler so the row's
+        // unread count is read before that handler clears it.
+        $("#users-list").on("click.inboxLive", ".chat-users-list li, .chat-users-list-pinned li", function () {
+          epoch += 1;
+
+          if (isSms(idOf(this))) { seenCount[idOf(this)] = countOf($(this)); }
+        });
+
+        document.addEventListener("visibilitychange", function () { if (!document.hidden) { cycle(); } });
+        window.addEventListener("online", function () { cycle(); });
+
+        return {
+          start: function (scope) { scopeOf = scope; started = true; stopped = false; schedule(); },
+          refreshNow: function () { cycle(); },
+        };
+      })();
+      // END live-inbox
+
       $(document).ready(function() {
         // Use event delegation to bind click events to dynamically loaded users
         $("#users-list").on("click", ".chat-users-list li, .chat-users-list-pinned li", function() {
@@ -2935,33 +3161,9 @@
       // Slice 2B: only this Business's own channel — never the old global
       // "chat" channel every customer shared. routes/channels.php admits a
       // listener only when it could open this Business's inbox.
-      Echo.private(@json(\App\Events\MessageReceived::channelFor($businessUid))).listen("MessageReceived", (e) => {
-        let chat_id = e.data.uid;
-        let box_id = e.data.id;
-
-        // The open conversation reloads its timeline, so the new message
-        // arrives in the same server-rendered form as the rest of it. Any
-        // other conversation only gets its unread count.
-        if ($(".chat_id").val() === String(chat_id)) {
-          loadTimeline(chat_id);
-
-          return;
-        }
-
-        $.ajax({
-          url: conversationUrl('notification', chat_id),
-          type: "POST",
-          data: {
-            _token: "{{csrf_token()}}"
-          },
-          success: function(response) {
-            const $contact = $(`.media-list li[data-box-id=${box_id}]`);
-            const $counter = $(".counter", $contact).removeAttr("hidden");
-            $(".notification_count", $contact).html(response.notification);
-            $counter.html(response.notification);
-            $counter.removeAttr("hidden");
-          }
-        });
+      Echo.private(@json(\App\Events\MessageReceived::channelFor($businessUid))).listen("MessageReceived", () => {
+        // Same refresh as the polling path: the open thread, the list's preview / order / unread, and a first-ever reply.
+        inboxLive.refreshNow();
       });
       @endif
 
@@ -3053,6 +3255,9 @@
 
         // Initial load
         loadChatUsers(page, filter, search);
+
+        // Keep this list and the open thread current: the refresh reads exactly the scope the operator is looking at.
+        inboxLive.start(function () { return { filter: filter, search: search, channel: channel, createdFrom: createdFrom, createdTo: createdTo }; });
 
         // Deep link from Outreach (?open=<conversation uid>): open that conversation
         // once the list has loaded. Best effort; nothing happens if it is not listed.

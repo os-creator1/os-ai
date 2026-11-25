@@ -1314,9 +1314,18 @@
             $search = (string) $request->get('search', '');
             $page   = $request->get('page', 1);
 
+            // The live refresh also re-reads the pinned rail, which index() renders once: the same rows the rail shows, with only the
+            // filters the rail itself obeys (waiting / the Home date range), never the tab, search or channel of the main list.
+            $pinnedRail = $request->boolean('pinned');
+
+            if ($pinnedRail) {
+                $filter = $filter === 'waiting' ? 'waiting' : 'recents';
+                $search = '';
+            }
+
             // business_id = the selected Business, and nothing wider. A
             // NULL-business legacy conversation never appears here.
-            $query = ChatBox::query()->where('business_id', $business->id)->where('pinned', false);
+            $query = ChatBox::query()->where('business_id', $business->id)->where('pinned', $pinnedRail);
 
             // A Location-limited member sees only the threads of Locations they can reach (plus
             // Business-wide ones) — the same rule the single-record actions already enforce.
@@ -1376,6 +1385,7 @@
             // All and SMS list only SMS lead threads. Email is the separate mailbox; a linked lead's timeline still includes emails and activities.
             // Unread / Read / Waiting and Home date scopes remain SMS-only.
             $channel = in_array($request->get('channel'), ['sms', 'email'], true) ? $request->get('channel') : 'all';
+            $channel = $pinnedRail ? 'sms' : $channel;
             // Email has no Unread/Read/Waiting: those views are SMS-only, never an empty Email list.
             if ($channel === 'email' && ! in_array($filter, ['recents', 'all'], true)) {
                 $channel = 'sms';

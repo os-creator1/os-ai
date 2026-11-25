@@ -75,6 +75,7 @@ jobs:
           tests/Feature/Conversations/UnifiedConversationsInboxTest.php
           tests/Feature/BusinessEmail/BusinessEmailConversationsTest.php
           tests/Feature/Conversations/UnifiedConversationsViewAsTest.php
+          tests/Feature/Conversations/InboxLiveRefreshTest.php
           --stop-on-failure
       - name: Run conversation location and View-As regressions
         run: >-
@@ -106,3 +107,4 @@ jobs:
           npx playwright install --with-deps chromium
           node tests/js/conversations-composer.spec.js
           node tests/js/conversations-call.spec.js
+          node tests/js/conversations-live.spec.js

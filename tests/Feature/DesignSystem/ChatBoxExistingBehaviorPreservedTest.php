@@ -143,7 +143,7 @@ class ChatBoxExistingBehaviorPreservedTest extends TestCase
         $this->assertStringContainsString("load: \"{{ route('customer.workspaces.businesses.conversations.load', [\$workspaceUid, \$businessUid]) }}\"", $index);
         $this->assertStringContainsString("const conversationUrl = (name, uid) => conversationRoutes[name].replace('__UID__', encodeURIComponent(uid));", $index);
 
-        foreach (["conversationUrl('timeline', chat_id)", "conversationUrl('reply', chatBoxId)", "conversationUrl('delete', sms_id)", "conversationUrl('block', sms_id)", "conversationUrl('pin', uid)", "conversationUrl('notification', chat_id)", 'url: conversationRoutes.load'] as $call) {
+        foreach (["conversationUrl('timeline', chat_id)", "conversationUrl('reply', chatBoxId)", "conversationUrl('delete', sms_id)", "conversationUrl('block', sms_id)", "conversationUrl('pin', uid)", 'url: conversationRoutes.load'] as $call) {
             $this->assertStringContainsString($call, $index);
         }
 
@@ -378,15 +378,18 @@ class ChatBoxExistingBehaviorPreservedTest extends TestCase
         $this->assertStringNotContainsString('chat-time', $optimisticRegion);
         $this->assertSame(1, substr_count($contents, 'max-width:200px; max-height:200px;'));
 
-        // Echo: the open conversation reloads its server-rendered timeline
-        // (so a live message looks exactly like the rest of it); any other
-        // conversation only gets its unread count.
+        // Echo: an event no longer reloads the open thread by hand (which jumped to the bottom and re-applied the composer) or bumps
+        // only a counter. It triggers the SAME refresh the polling path runs: the open thread's server-rendered timeline, and the
+        // list's preview / order / unread. The refresh reads the Business-scoped `timeline` and `load` routes, never a path of its own.
         $echoStart = strpos($contents, 'Echo.private(');
         $echoEnd = strpos($contents, '@endif', $echoStart);
         $echoRegion = substr($contents, $echoStart, $echoEnd - $echoStart);
-        $this->assertTrue(
-            strpos($echoRegion, 'loadTimeline(chat_id);') < strpos($echoRegion, "conversationUrl('notification', chat_id)")
-        );
+        $this->assertStringContainsString('inboxLive.refreshNow();', $echoRegion);
+        $this->assertStringNotContainsString('loadTimeline(chat_id);', $echoRegion);
+        $live = substr($contents, (int) strpos($contents, '// BEGIN live-inbox'), (int) strpos($contents, '// END live-inbox') - (int) strpos($contents, '// BEGIN live-inbox'));
+        $this->assertStringContainsString('conversationUrl("timeline", activeId)', $live);
+        $this->assertStringContainsString('conversationRoutes.load', $live);
+        $this->assertStringNotContainsString('/chat-box', $live);
         $this->assertStringNotContainsString('chat-time', $echoRegion);
     }
 
