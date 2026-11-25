@@ -2456,6 +2456,491 @@
       }
 
 
+
+      // ── Live inbox updates ───────────────────────────────────────────────────────────────────────────────────────────
+      // A reply that MotionGrove has already stored must reach an open inbox without a reload. The only push path (Echo's
+      // MessageReceived) is fired by the legacy DLR webhook alone and needs Pusher, so a managed inbound (Telnyx, Outreach) never
+      // reached an open screen. This reads what the server already serves — the list (`load`) and the open thread (`timeline`) —
+      // about every five seconds while the tab is visible, and again at once when the tab returns, the network returns, or an
+      // Echo event arrives. One refresh runs at a time; a late response is dropped unless it still matches what is open.
+      // BEGIN live-inbox
+      var inboxLive = (function () {
+        const POLL_MS = 5000;
+        const RETRY_MS = 2000;
+        const FATAL = [401, 403, 404, 419];   // access gone or the session ended: stop asking
+        const FOLLOW_PX = 48;                 // "at the bottom" tolerance
+        const PAGE_ROWS = 50;                 // rows per page of the server's list
+        let scopeOf = function () { return null; };
+        let busy = false;
+        let again = false;
+        let stopped = false;
+        let started = false;
+        let timer = null;
+        let epoch = 0;                        // bumped on every conversation switch
+        const seenCount = {};                 // conversation id -> unread count the operator has already looked at
+
+        const idOf = (el) => String($(el).attr("data-id"));
+        const countOf = ($li) => parseInt($li.find(".notification_count").first().text(), 10) || 0;
+        // The server's cumulative unread count for a row. A refreshed row's badge shows only the DELTA since the operator last looked,
+        // so the raw count is kept apart (data-server-count) and every baseline is taken from it, never from the displayed badge.
+        const rawCountOf = ($li) => { const raw = $li.attr("data-server-count"); return raw === undefined ? countOf($li) : parseInt(raw, 10) || 0; };
+        const isSms = (id) => id !== "" && !/^(email|compose):/.test(id);
+        // global:false keeps polls out of the page's own ajax events, which is how the page's own requests (a send, a retry, a
+        // thread load) are told apart below. The timeout makes a stalled request fail into the retry path instead of wedging it.
+        const post = (url, data) => new Promise((resolve, reject) => { $.ajax({ url: url, type: "POST", data: data, global: false, timeout: 15000 }).done(resolve).fail(reject); });
+        let ownRequests = 0;                  // the page's own in-flight requests
+        let ownActivityAt = 0;                // when the page last sent or finished one
+        let deadThread = "";                  // an open thread the server no longer serves (deleted / access lost)
+        let failures = 0;
+        // Archiving / un-archiving / deleting a conversation removes a row the server's older list answers still contain. Such a
+        // request invalidates every list answer that was issued before it finished, or that lands while it is still running.
+        const REMOVES_ROW = /\/(archive|unarchive|delete)(\?.*)?$/;
+        let listGen = 0;
+        let removing = 0;
+        const listSeq = { main: 0, pinned: 0 };       // requests are numbered as they are issued, per list ...
+        const appliedSeq = { main: 0, pinned: 0 };    // ... and an answer older than one already applied is never applied
+        // The open conversation's row is not painted unread while its thread answer is still expected to display the reply (it would
+        // flash for a round trip). The thread step settles it: displayed -> baseline advances; failed / dropped -> painted honestly.
+        let deferId = "";
+        let skipStreak = 0;                    // consecutive cycles whose thread step was skipped because the page was busy
+        let threadOutcome = "";                // "applied" | "skipped" (nothing asked yet) | "unsettled" (asked, not displayed)
+        const rowFor = ($root, id) => $root.children("li").filter(function () { return idOf(this) === id; }).first();
+
+        function markRead($li) {
+          $li.removeClass("conv-unread");
+          $li.find(".chat-meta").html('<div class="counter" hidden><span class="badge bg-primary rounded-pill float-end notification_count"></span></div>');
+        }
+
+        function showUnread($li, count) {
+          $li.addClass("conv-unread");
+          $li.find(".chat-meta").html('<span class="badge bg-primary rounded-pill float-end notification_count"></span>');
+          $li.find(".notification_count").text(count);
+        }
+
+        // What a row shows, from two separate numbers: the server's cumulative count (data-server-count, as last observed) and the
+        // baseline the operator has actually looked at (seenCount). The server keeps counting for a conversation the operator
+        // opened (opening is a client-side read), so a row is unread only for what arrived after the baseline. A raw count BELOW the
+        // baseline is a genuine decrease (another client read the conversation and reset the shared counter), so the baseline
+        // follows it down and the next reply is unread again. The baseline never advances here: only a rendered thread advances it.
+        function paintRow($li) {
+          const id = idOf($li);
+
+          if (!isSms(id)) { return; }
+
+          const raw = rawCountOf($li);
+
+          if (seenCount[id] === undefined) { return; }
+
+          if (raw < seenCount[id]) { seenCount[id] = raw; }
+
+          const fresh = raw - seenCount[id];
+
+          if (fresh <= 0 || (id === deferId && id === String($(".chat_id").val() || ""))) { markRead($li); } else { showUnread($li, fresh); }
+        }
+
+        const repaint = (id) => $("#users-list li[data-id]").filter(function () { return idOf(this) === id; }).each(function () { paintRow($(this)); });
+
+        // Page 1 of the same list, merged into what is shown: rows keep their identity (once each), move to their new place
+        // and keep the active mark; pages the operator scrolled in are left alone. addNew=false (the pinned rail) only updates.
+        function mergeRows($list, html, addNew, prune) {
+          const $incoming = $("<ul></ul>").html(html);
+          const rows = $incoming.children("li[data-id]").get();
+
+          if (!$list.length) { return; }
+
+          const activeId = String($(".chat_id").val() || "");
+
+          // Membership, not just content: a conversation that stops matching the tab (a reply makes a Read one unread; an answer
+          // takes it out of Waiting) is gone from the server's page 1. The answer is the COMPLETE matching set when it is not a full
+          // page, so any other row goes. On a full page only rows ranking above the answer's last row can be judged: a row after it
+          // may simply have been pushed to page 2 by an arrival, and is left alone. A row that was scrolled in from a later page is
+          // never judged. The open conversation is never pulled out from under the operator.
+          // An answer with neither rows nor the server's empty state is not a list at all (a login page, an empty body): it changes
+          // nothing.
+          const isList = rows.length > 0 || $incoming.children("[data-role=chat-list-empty]").length > 0;
+
+          if (prune && isList) {
+            const answered = rows.map(idOf);
+            const local = $list.children("li[data-id]").get();
+
+            // The server ranks by activity time (data-activity-ts, the list's own sort key). On a full page, only a row that ranks
+            // strictly above the answer's last row can be judged: an unchanged row above it is still on page 1, so if the answer
+            // lacks it, it stopped matching. A row at or below it may only have been pushed to page 2 by an arrival (ties included),
+            // and a row scrolled in from a later page ranks below it: neither is touched. This needs neither the boundary row to be
+            // loaded here nor the local order to mirror the server's.
+            const boundaryTs = rows.length >= PAGE_ROWS ? parseInt($(rows[rows.length - 1]).attr("data-activity-ts"), 10) : null;
+            const judgeable = function (el) {
+              if (rows.length < PAGE_ROWS) { return true; }
+
+              const ts = parseInt($(el).attr("data-activity-ts"), 10);
+
+              return !isNaN(boundaryTs) && !isNaN(ts) && ts > boundaryTs;
+            };
+            const judged = $(local.filter(judgeable));
+
+            judged.each(function () {
+              const id = idOf(this);
+
+              if (isSms(id) && id !== activeId && answered.indexOf(id) === -1) { $(this).remove(); }
+            });
+          }
+
+          if (!rows.length) {
+            // Nothing matches any more: show the server's own empty state instead of the stale rows.
+            if (prune && isList && !$list.children("li[data-id]").length && !$list.children("[data-role=chat-list-empty]").length) {
+              $list.append($incoming.children("[data-role=chat-list-empty]").first());
+            }
+
+            return;
+          }
+
+          const box = document.getElementById("users-list");
+          const top = box ? box.scrollTop : 0;
+
+          for (let i = rows.length - 1; i >= 0; i--) {
+            const $new = $(rows[i]);
+            const $old = rowFor($list, idOf(rows[i]));
+
+            if (!$old.length && !addNew) { continue; }
+
+            // Pinned or unpinned while this answer was on its way: the row already lives in the other list. Never draw it twice.
+            if (!$old.length && $("#users-list li[data-id]").filter(function () { return idOf(this) === idOf(rows[i]); }).length) { continue; }
+
+            if ($old.hasClass("active") || idOf(rows[i]) === activeId) { $new.addClass("active"); }
+
+            $new.attr("data-server-count", countOf($new));   // the server's own markup: the cumulative count
+            paintRow($new);
+            $old.remove();
+            $list.prepend($new);
+          }
+
+          $list.children("[data-role=chat-list-empty]").remove();
+
+          if (box) { box.scrollTop = top; }
+        }
+
+        function scopeKey(scope) { return JSON.stringify(scope); }
+
+        async function refreshList(scope, pinned) {
+          const key = scopeKey(scope);
+          const data = { _token: "{{ csrf_token() }}", page: 1, filter: scope.filter, search: pinned ? "" : scope.search, created_from: scope.createdFrom, created_to: scope.createdTo, channel: scope.channel };
+
+          if (pinned) { data.pinned = 1; }
+
+          const gen = listGen;
+          const kind = pinned ? "pinned" : "main";
+          const seq = ++listSeq[kind];
+          const html = await post(conversationRoutes.load, data);
+
+          // A newer answer has already been applied: this one is stale, and its (possibly lower) counts would fake a decrease.
+          if (seq < appliedSeq[kind]) { return; }
+
+          // A row-removing action ran (or is running) since this was asked: this answer may still contain what it removed.
+          if (gen !== listGen || removing > 0) { return; }
+
+          // The operator changed tab, search or channel meanwhile: this answer is for a list that is no longer shown.
+          if (scopeKey(scopeOf() || {}) !== key) { return; }
+
+          appliedSeq[kind] = seq;
+          mergeRows($(pinned ? "#users-list > .chat-users-list-pinned" : ".chat-users-list").first(), html, !pinned, !pinned && scope.channel !== "email");
+        }
+
+        function plain($root) {
+          const $copy = $root.clone();
+          $copy.find("details").removeAttr("open");
+
+          return $copy.html();
+        }
+
+        // Brings the displayed thread to the server's markup item by item, by stable key. An item that did not change is kept as the
+        // very same DOM node; an item that did (a delivery state) is replaced, but its audio / video elements whose source is
+        // unchanged are carried over into the new node, so a playing attachment keeps its player, position and play state. (A
+        // media element moved within one task is not paused; it only pauses if it is left out of the document.)
+        function reconcileThread(hist, next) {
+          const keyOf = (node) => (node.nodeType === 1 ? node.getAttribute("data-item-key") : null);
+          const signature = (el) => {
+            const copy = el.cloneNode(true);
+
+            copy.removeAttribute("open");
+            copy.querySelectorAll("details").forEach(function (d) { d.removeAttribute("open"); });
+
+            return copy.outerHTML;
+          };
+          const existing = {};
+
+          Array.from(hist.children).forEach(function (el) {
+            const key = keyOf(el);
+
+            if (key !== null && existing[key] === undefined) { existing[key] = el; }
+          });
+
+          const wanted = Array.from(next.childNodes).map(function (node) {
+            const key = keyOf(node);
+            const old = key === null ? undefined : existing[key];
+
+            if (old === undefined) { return node; }
+
+            if (signature(old) === signature(node)) { return old; }
+
+            const used = [];
+
+            old.querySelectorAll("audio, video").forEach(function (player) {
+              const twin = Array.from(node.querySelectorAll(player.tagName.toLowerCase())).find(function (el) {
+                return used.indexOf(el) === -1 && el.getAttribute("src") === player.getAttribute("src");
+              });
+
+              if (twin) { used.push(twin); twin.replaceWith(player); }
+            });
+
+            return node;
+          });
+
+          let cursor = hist.firstChild;
+
+          wanted.forEach(function (node) {
+            if (node === cursor) { cursor = cursor.nextSibling; } else { hist.insertBefore(node, cursor); }
+          });
+
+          while (cursor) {
+            const following = cursor.nextSibling;
+
+            hist.removeChild(cursor);
+            cursor = following;
+          }
+        }
+
+        // Re-render the open thread from the server's own markup, keeping what the operator is doing: the composer is never
+        // touched, a reader keeps their place, and someone at the bottom keeps following. Items are keyed by their stable
+        // identity so one message can never be drawn twice.
+        function applyTimeline(html) {
+          const $hist = $(".chat_history");
+          const $next = $("<div></div>").html(html);
+
+          if (plain($hist) === plain($next)) { return; }
+
+          const scroller = $(".user-chats")[0];
+          const atBottom = !scroller || scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight <= FOLLOW_PX;
+          const opened = {};
+          let anchorKey = null;
+          let anchorOffset = 0;
+
+          $hist.find("details[open][data-item-key]").each(function () { opened[$(this).attr("data-item-key")] = true; });
+
+          if (scroller && !atBottom) {
+            const viewTop = scroller.getBoundingClientRect().top;
+
+            $hist.find("[data-item-key]").each(function () {
+              const box = this.getBoundingClientRect();
+
+              if (box.bottom > viewTop) { anchorKey = $(this).attr("data-item-key"); anchorOffset = box.top - viewTop; return false; }
+            });
+          }
+
+          reconcileThread($hist[0], $next[0]);
+
+          const seen = {};
+
+          $hist.find("[data-item-key]").each(function () {
+            const key = $(this).attr("data-item-key");
+
+            if (seen[key]) { $(this).remove(); return; }
+
+            seen[key] = true;
+
+            if (opened[key] && this.tagName === "DETAILS") { this.open = true; }
+          });
+
+          if (!scroller) { return; }
+
+          if (atBottom) {
+            scroller.scrollTop = scroller.scrollHeight;
+          } else if (anchorKey !== null) {
+            const el = $hist.find("[data-item-key]").filter(function () { return $(this).attr("data-item-key") === anchorKey; })[0];
+
+            if (el) { scroller.scrollTop += (el.getBoundingClientRect().top - scroller.getBoundingClientRect().top) - anchorOffset; }
+          }
+        }
+
+        async function refreshThread(activeId, ep) {
+          // Nothing drawn yet means the conversation is still opening through its own load; email and compose are other views.
+          threadOutcome = "unsettled";
+
+          // The thread is still opening (nothing drawn yet, its own load in flight): that load will display what the list saw, so
+          // the row is deferred, not badged. The streak cap bounds it.
+          if (isSms(activeId) && activeId !== deadThread && !$(".chat_history").children().length && ownRequests > 0) { threadOutcome = "skipped"; return; }
+
+          // Nothing displayed and no load running (the open load failed) or a thread the server no longer serves: no later cycle is
+          // going to display a reply here, so the row must be painted for what it is, never deferred.
+          if (!isSms(activeId) || activeId === deadThread || !$(".chat_history").children().length) { return; }
+
+          const startedAt = Date.now();
+          const $row = $("#users-list li[data-id]").filter(function () { return idOf(this) === activeId; }).first();
+          // What the list had observed for this conversation BEFORE the thread was asked for: the thread answer, being later, holds
+          // at least those messages. Anything that arrives after this stays unread until a later answer displays it.
+          const observed = $row.length && $row.attr("data-server-count") !== undefined ? rawCountOf($row) : null;
+          let response;
+
+          try {
+            response = await post(conversationUrl("timeline", activeId), { _token: "{{ csrf_token() }}" });
+          } catch (xhr) {
+            // This thread is gone for this operator; the list and every other conversation keep updating.
+            if (xhr && (xhr.status === 403 || xhr.status === 404)) { deadThread = activeId; threadOutcome = "unsettled"; return; }
+
+            throw xhr;
+          }
+
+          // Switched away (or away and back) while this was in flight: it belongs to a thread that is no longer the open one.
+          if (ep !== epoch || String($(".chat_id").val() || "") !== activeId) { return; }
+
+          // The operator sent, retried or reloaded this thread meanwhile (or is doing so now): this answer may predate it and
+          // would revert a fresher render or drop a just-sent bubble. The next cycle reads the settled thread.
+          if (ownRequests > 0 || ownActivityAt >= startedAt) { threadOutcome = "skipped"; return; }
+
+          // The reply target follows the thread: the answer carries the composer the server derived from the Contact's LATEST email
+          // thread, and Send submits through the configuration kept here. applyComposer is what the thread's own load runs on a
+          // refresh of the same conversation: it keeps the selected channel and the typed subject, and never touches the draft.
+          // The composer follows what the server says now, without ever changing what the operator typed or chose. While the selected
+          // channel stays usable it is applied whole (new reply target, Locations). When it would no longer be usable (a disconnected
+          // mailbox) a background refresh must not move a typed email to SMS, so the channel stays and only the truth is shown:
+          // the configuration, the guidance and Send's availability, so nothing is sent through a stale target.
+          if (response.composer) {
+            const usable = composerState.channel === "email" ? response.composer.email === true : response.composer.sms === true;
+            const setUpHere = composerState.forId === activeId;   // read BEFORE applying: it is what makes a Location choice this thread's own
+
+            if (!setUpHere || usable) {
+              // applyComposer rebuilds the Location selector blank; a background refresh must not discard the operator's choice for
+              // THIS conversation (a choice left over from another one is never carried over).
+              const chosen = setUpHere ? String($("#email-location").val() || "") : "";
+
+              applyComposer(response.composer, response.channel === "email" ? "email" : "sms");
+
+              if (chosen !== "" && $("#email-location option").filter(function () { return $(this).val() === chosen; }).length) { $("#email-location").val(chosen); }
+            } else {
+              composerState.cfg = response.composer;
+
+              // The channel pill follows what is usable now (applyComposer's own rule): a channel that is no longer usable is not
+              // offered as a clickable option. (With one channel left the pill is hidden, exactly as applyComposer would.)
+              const $pill = $("[data-role=composer-channel]");
+
+              $pill.find("[data-channel=sms]").prop("hidden", !response.composer.sms);
+              $pill.find("[data-channel=email]").prop("hidden", !response.composer.email);
+              $pill.attr("data-single", response.composer.sms && response.composer.email ? "0" : "1");
+              $pill.prop("hidden", !(response.composer.sms && response.composer.email));
+              setComposerChannel(composerState.channel);
+              syncSendAvailability();
+            }
+          }
+
+          applyTimeline(response.timeline);
+
+          // Only now, with the thread displayed, is what the list observed counted as seen.
+          threadOutcome = "applied";
+
+          if (observed !== null) { seenCount[activeId] = observed; }
+        }
+
+        function schedule(ms) {
+          clearTimeout(timer);
+
+          if (stopped || !started) { return; }
+
+          timer = setTimeout(cycle, ms === undefined ? POLL_MS : ms);
+        }
+
+        async function cycle() {
+          if (stopped || !started || document.hidden) { return; }
+
+          if (busy) { again = true; return; }
+
+          const scope = scopeOf();
+
+          if (!scope) { schedule(); return; }
+
+          busy = true;
+          again = false;
+          clearTimeout(timer);
+
+          const ep = epoch;
+          const activeId = String($(".chat_id").val() || "");
+          let failed = false;
+
+          deferId = isSms(activeId) ? activeId : "";
+          threadOutcome = "";
+
+          const steps = [() => refreshList(scope, false), () => refreshThread(activeId, ep)];
+
+          // The pinned rail is its own list; only a rail that exists is worth a request.
+          if ($("#users-list > .chat-users-list-pinned > li").length) { steps.splice(1, 0, () => refreshList(scope, true)); }
+
+          for (const step of steps) {
+            try {
+              await step();
+            } catch (xhr) {
+              if (xhr && FATAL.indexOf(xhr.status) !== -1) { stopped = true; } else { failed = true; }
+            }
+          }
+
+          // Settled (displayed, failed, or dropped for a switch): paint honestly. Skipped (the page was busy with the thread itself):
+          // the next cycle will show it, so the open row keeps not flashing until then.
+          skipStreak = threadOutcome === "skipped" ? skipStreak + 1 : 0;
+
+          // Bounded: a page that stays busy cannot keep a reply painted read for more than a few cycles.
+          if (threadOutcome !== "skipped" || skipStreak > 3 || activeId !== String($(".chat_id").val() || "")) { deferId = ""; }
+
+          if (activeId !== "") { repaint(activeId); }
+
+          busy = false;
+          failures = failed ? failures + 1 : 0;
+          schedule(failed ? Math.min(RETRY_MS * Math.pow(2, failures - 1), 30000) : again ? 0 : POLL_MS);
+        }
+
+        // A conversation switch invalidates every answer still on its way. Registered before the selection handler so the row's
+        // unread count is read before that handler clears it.
+        $("#users-list").on("click.inboxLive", ".chat-users-list li, .chat-users-list-pinned li", function () {
+          epoch += 1;
+          deadThread = "";
+
+          // The conversation being left is no longer "about to be displayed": paint it for what was actually displayed.
+          const leaving = deferId;
+
+          deferId = "";
+          skipStreak = 0;                     // the cap belongs to the open conversation, not to the page
+
+          if (isSms(idOf(this))) {
+            // Stamped now, because the selection handler clears the badge: a row no poll has refreshed yet (the initial render, a
+            // later page) must still hand its server count to the next click.
+            const raw = rawCountOf($(this));
+
+            $(this).attr("data-server-count", raw);
+            seenCount[idOf(this)] = raw;
+          }
+
+          if (leaving !== "" && leaving !== idOf(this)) { repaint(leaving); }
+        });
+
+        $(document).on("ajaxSend", function (event, xhr, settings) {
+          ownRequests += 1;
+          ownActivityAt = Date.now();
+
+          if (REMOVES_ROW.test(String(settings.url || ""))) { removing += 1; listGen += 1; }
+        });
+        $(document).on("ajaxComplete", function (event, xhr, settings) {
+          ownRequests = Math.max(0, ownRequests - 1);
+          ownActivityAt = Date.now();
+
+          if (REMOVES_ROW.test(String(settings.url || ""))) { removing = Math.max(0, removing - 1); listGen += 1; }
+        });
+
+        document.addEventListener("visibilitychange", function () { if (!document.hidden) { cycle(); } });
+        window.addEventListener("online", function () { cycle(); });
+
+        return {
+          start: function (scope) { scopeOf = scope; started = true; stopped = false; schedule(); },
+          refreshNow: function () { cycle(); },
+        };
+      })();
+      // END live-inbox
+
       $(document).ready(function() {
         // Use event delegation to bind click events to dynamically loaded users
         $("#users-list").on("click", ".chat-users-list li, .chat-users-list-pinned li", function() {
@@ -2939,33 +3424,9 @@
       // Slice 2B: only this Business's own channel — never the old global
       // "chat" channel every customer shared. routes/channels.php admits a
       // listener only when it could open this Business's inbox.
-      Echo.private(@json(\App\Events\MessageReceived::channelFor($businessUid))).listen("MessageReceived", (e) => {
-        let chat_id = e.data.uid;
-        let box_id = e.data.id;
-
-        // The open conversation reloads its timeline, so the new message
-        // arrives in the same server-rendered form as the rest of it. Any
-        // other conversation only gets its unread count.
-        if ($(".chat_id").val() === String(chat_id)) {
-          loadTimeline(chat_id);
-
-          return;
-        }
-
-        $.ajax({
-          url: conversationUrl('notification', chat_id),
-          type: "POST",
-          data: {
-            _token: "{{csrf_token()}}"
-          },
-          success: function(response) {
-            const $contact = $(`.media-list li[data-box-id=${box_id}]`);
-            const $counter = $(".counter", $contact).removeAttr("hidden");
-            $(".notification_count", $contact).html(response.notification);
-            $counter.html(response.notification);
-            $counter.removeAttr("hidden");
-          }
-        });
+      Echo.private(@json(\App\Events\MessageReceived::channelFor($businessUid))).listen("MessageReceived", () => {
+        // Same refresh as the polling path: the open thread, the list's preview / order / unread, and a first-ever reply.
+        inboxLive.refreshNow();
       });
       @endif
 
@@ -3057,6 +3518,9 @@
 
         // Initial load
         loadChatUsers(page, filter, search);
+
+        // Keep this list and the open thread current: the refresh reads exactly the scope the operator is looking at.
+        inboxLive.start(function () { return { filter: filter, search: search, channel: channel, createdFrom: createdFrom, createdTo: createdTo }; });
 
         // Deep link from Outreach (?open=<conversation uid>): open that conversation
         // once the list has loaded. Best effort; nothing happens if it is not listed.

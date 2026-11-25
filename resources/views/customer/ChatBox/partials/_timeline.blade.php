@@ -51,7 +51,7 @@
         @endphp
         @if (($compactEmail ?? false) === true)
             {{-- Inside a text conversation: a compact email card with its state, leading to the full email in the Email tab. --}}
-            <div class="mgx-em-compact mgx-em-compact-{{ $item->isInbound() ? 'in' : 'out' }}" data-role="timeline-message" data-direction="{{ $item->direction?->value }}" data-channel="email">
+            <div class="mgx-em-compact mgx-em-compact-{{ $item->isInbound() ? 'in' : 'out' }}" data-role="timeline-message" data-item-key="{{ $item->key }}" data-direction="{{ $item->direction?->value }}" data-channel="email">
                 <div class="mgx-emc-head">
                     <span class="mgx-emc-ic" aria-hidden="true"><x-ds-icon name="mail" size="17" /></span>
                     <span class="mgx-emc-t"><b data-role="timeline-email-subject">{{ $item->title !== '' ? $item->title : '(no subject)' }}</b><small>{{ $item->via !== null && str_starts_with((string) $item->via, 'Imported') ? $item->via : 'Email · ' . ($item->isInbound() ? 'Received' : 'Sent') }}</small></span>
@@ -64,7 +64,7 @@
                 <time class="mgx-emc-time" datetime="{{ $local->toIso8601String() }}">{{ $local->format(config('app.time_format')) }}</time>
             </div>
         @else
-        <details class="mgx-em mgx-em-{{ $item->isInbound() ? 'in' : 'out' }} {{ $emailWarn ? 'is-warn' : '' }}" data-role="timeline-message" data-direction="{{ $item->direction?->value }}" data-channel="email" @if ($emailOpen) open @endif>
+        <details class="mgx-em mgx-em-{{ $item->isInbound() ? 'in' : 'out' }} {{ $emailWarn ? 'is-warn' : '' }}" data-role="timeline-message" data-item-key="{{ $item->key }}" data-direction="{{ $item->direction?->value }}" data-channel="email" @if ($emailOpen) open @endif>
             <summary class="mgx-em-head">
                 <span class="mgx-em-av" aria-hidden="true">{{ $emailInitial }}</span>
                 <span class="mgx-em-from">
@@ -83,7 +83,7 @@
         </details>
         @endif
     @elseif ($item->isMessage())
-        <div class="chat {{ $item->isInbound() ? 'chat-left' : '' }} timeline-message {{ $item->tone->value === 'warning' ? 'timeline-message-warning' : '' }}" data-role="timeline-message" data-direction="{{ $item->direction?->value }}" data-channel="{{ $item->channel }}">
+        <div class="chat {{ $item->isInbound() ? 'chat-left' : '' }} timeline-message {{ $item->tone->value === 'warning' ? 'timeline-message-warning' : '' }}" data-role="timeline-message" data-item-key="{{ $item->key }}" data-direction="{{ $item->direction?->value }}" data-channel="{{ $item->channel }}">
             <div class="chat-body">
                 <div class="chat-content">
                     @foreach ($item->media as $url)
@@ -137,7 +137,7 @@
             </div>
         </div>
     @else
-        <div class="timeline-activity timeline-activity-{{ $item->tone->value }}" data-role="timeline-activity">
+        <div class="timeline-activity timeline-activity-{{ $item->tone->value }}" data-role="timeline-activity" data-item-key="{{ $item->key }}">
             <x-ds-icon :name="$item->icon" size="14" class="timeline-activity-icon" aria-hidden="true" />
             <span class="timeline-activity-title">{{ $item->title }}</span>
             @if ($item->detail !== null)
