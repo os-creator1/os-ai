@@ -165,25 +165,44 @@ class AgencyOutreachClientsController extends CustomerBaseController
     {
         $workspace = $this->resolveEntitledWorkspace($workspaceUid);
 
+        $fileRules = ['required', 'file', 'max:5120', 'mimetypes:text/plain,text/csv,application/csv,application/vnd.ms-excel,text/x-csv'];
+        $multiple = $request->has('files');
         $request->validate([
-            'file' => ['required', 'file', 'max:5120', 'mimetypes:text/plain,text/csv,application/csv,application/vnd.ms-excel,text/x-csv'],
+            ...($multiple ? ['files' => ['required', 'array', 'min:1'], 'files.*' => $fileRules] : ['file' => $fileRules]),
             'kind' => ['nullable', 'in:prospects,existing_clients'],
         ]);
 
-        $file = $request->file('file');
-        abort_unless(in_array(strtolower((string) $file->getClientOriginalExtension()), ['csv', 'txt', 'tsv'], true), 422);
+        $files = $multiple ? $request->file('files') : [$request->file('file')];
+        $names = [];
+        $parsed = ['rows' => [], 'headers' => [], 'truncated' => false];
 
-        $parsed = ProspectCsvReader::read($file->getRealPath());
+        foreach ($files as $file) {
+            $name = basename($file->getClientOriginalName());
+            if (! in_array(strtolower($file->getClientOriginalExtension()), ['csv', 'txt', 'tsv'], true)) {
+                return back()->withErrors(['file' => "Choose a CSV, TXT or TSV file instead of {$name}."]);
+            }
 
-        if (isset($parsed['error'])) {
-            return back()->withErrors(['file' => $parsed['error']]);
+            $part = ProspectCsvReader::read($file->getRealPath());
+            if (isset($part['error']) || $part['rows'] === []) {
+                return back()->withErrors(['file' => $name . ': ' . ($part['error'] ?? 'That file has a header row but no data rows.')]);
+            }
+
+            if ($names !== [] && (array_diff($part['headers'], $parsed['headers']) || array_diff($parsed['headers'], $part['headers']))) {
+                return back()->withErrors(['file' => "{$name} has different column names. Upload it separately and select the same contact group."]);
+            }
+
+            if (count($files) > 1 && ($part['truncated'] || count($parsed['rows']) + count($part['rows']) > ProspectCsvReader::MAX_ROWS)) {
+                return back()->withErrors(['file' => 'Upload up to 5,000 rows at once. Add the remaining files to the same group in another import.']);
+            }
+
+            $names[] = $name;
+            $parsed['headers'] = $part['headers'];
+            $parsed['truncated'] = $part['truncated'];
+            $parsed['rows'] = array_merge($parsed['rows'], $part['rows']);
         }
 
-        if ($parsed['rows'] === []) {
-            return back()->withErrors(['file' => 'That file has a header row but no data rows.']);
-        }
-
-        $batch = $this->importer->createBatch($workspace, $request->input('kind', 'prospects'), $file->getClientOriginalName(), $parsed, (int) Auth::id());
+        $filename = count($names) === 1 ? $names[0] : $names[0] . ' + ' . (count($names) - 1) . ' more';
+        $batch = $this->importer->createBatch($workspace, $request->input('kind', 'prospects'), $filename, $parsed, (int) Auth::id());
 
         return redirect()->route('customer.workspaces.prospecting.prospects.import.review', [$workspaceUid, $batch->uid]);
     }
@@ -213,6 +232,8 @@ class AgencyOutreachClientsController extends CustomerBaseController
             'business' => $business,
             'fieldPlan' => $business !== null && $b->kind === 'prospects' ? app(ProspectGroupMaterializer::class)->plan($business, $b) : [],
             'definitions' => $business === null ? collect() : app(CustomFieldDefinitionManager::class)->forBusiness($business),
+            'groups' => $business !== null && $b->kind === 'prospects' && $b->status !== 'imported'
+                ? ContactGroups::where('business_id', $business->id)->where('status', 1)->orderBy('name')->pluck('name', 'uid') : [],
             'defaultGroupName' => $b->group_name ?: trim((string) preg_replace('/\.(csv|txt|tsv)$/i', '', (string) $b->filename)) ?: 'Imported prospects',
         ]);
     }
@@ -287,11 +308,12 @@ class AgencyOutreachClientsController extends CustomerBaseController
         }
 
         $groupExists = $b->contact_group_id !== null;
-        $groupName = $groupExists
+        $destination = $request->validate(['contact_group_uid' => ['nullable', 'string', 'max:64']])['contact_group_uid'] ?? null;
+        $groupName = $groupExists || $destination !== null
             ? (string) $b->group_name
             : trim((string) $request->validate(['group_name' => ['required', 'string', 'max:255']], ['group_name.required' => 'Name the contact group for this import.'])['group_name']);
 
-        if (! $groupExists) {
+        if (! $groupExists && $destination === null) {
             if (! Auth::user()->can('create_contact_group')) {
                 return back()->withInput()->withErrors(['group_name' => 'You do not have permission to create contact groups.']);
             }
@@ -302,7 +324,7 @@ class AgencyOutreachClientsController extends CustomerBaseController
         }
 
         try {
-            $r = $this->importer->commitWithGroup($workspace, $business, $b, $groupName, $request->input('campaign_uid'), (int) Auth::id());
+            $r = $this->importer->commitWithGroup($workspace, $business, $b, $groupName, $request->input('campaign_uid'), (int) Auth::id(), $destination);
         } catch (\Illuminate\Auth\Access\AuthorizationException $e) {
             return back()->with('flash_error', $e->getMessage() . ' Nothing was imported.');
         }

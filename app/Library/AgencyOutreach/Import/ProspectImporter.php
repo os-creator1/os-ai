@@ -354,10 +354,10 @@ final class ProspectImporter
      *
      * @return array{prospects: array<string,mixed>, group: array<string,mixed>}
      */
-    public function commitWithGroup(Workspace $workspace, Business $business, AgencyProspectImportBatch $batch, string $groupName, ?string $campaignUid = null, ?int $actorId = null): array
+    public function commitWithGroup(Workspace $workspace, Business $business, AgencyProspectImportBatch $batch, string $groupName, ?string $campaignUid = null, ?int $actorId = null, ?string $destinationUid = null): array
     {
         try {
-            return DB::transaction(function () use ($workspace, $business, $batch, $groupName, $campaignUid, $actorId) {
+            return DB::transaction(function () use ($workspace, $business, $batch, $groupName, $campaignUid, $actorId, $destinationUid) {
                 $prospects = $this->commitProspects($workspace, $batch, $campaignUid);
 
                 if (! empty($prospects['campaign_closed'])) {
@@ -365,7 +365,7 @@ final class ProspectImporter
                 }
 
                 $fresh = $batch->fresh();
-                $group = app(ProspectGroupMaterializer::class)->materialize($workspace, $business, $fresh, $fresh->group_name ?? $groupName, true, $actorId);
+                $group = app(ProspectGroupMaterializer::class)->materialize($workspace, $business, $fresh, $fresh->group_name ?? $groupName, true, $actorId, $destinationUid);
 
                 if (! empty($group['name_conflict'])) {
                     // The name was taken between review and commit: undo the prospects too, so nothing commits without its group.
