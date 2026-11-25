@@ -118,6 +118,17 @@ class ContentEditorScreenTest extends TestCase
         $this->assertMatchesRegularExpression('#data-role="save-status" data-state="draft"[^>]*>Draft · saved#', $html);
     }
 
+    public function test_the_permalink_and_search_preview_use_the_canonical_custom_domain(): void
+    {
+        $t = $this->owner();
+        $article = $this->draftArticle($t[1]);
+
+        $html = $this->get($this->url($t, 'articles.edit', [$article->uid]))->assertOk()->getContent();
+
+        $this->assertStringContainsString(self::DOMAIN . '/blog/', $html);
+        $this->assertStringNotContainsString('/sites/', $html, 'the noindex platform path is never shown as the address');
+    }
+
     public function test_title_body_and_search_description_persist_across_save_and_reload(): void
     {
         $t = $this->owner();

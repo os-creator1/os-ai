@@ -505,11 +505,13 @@ class SeoContentArticleController extends CustomerBaseController
         ];
     }
 
-    /** The address an article lives under, without the slug: "example.com/blog/" on a live custom domain, else the platform path. */
+    /** The address an article lives under, without the slug: "example.com/blog/" on an active custom domain, else the platform path. */
     private function permalinkBase(Website $website): string
     {
         $marker = '__slug__';
-        $url = WebsiteBlogSurface::platform($website)->articleUrl($marker);
+        $surface = WebsiteBlogSurface::platform($website);
+        // The canonical (custom-domain) address is what search engines see; fall back to the platform path without one.
+        $url = $surface->canonicalArticleUrl($marker) ?? $surface->articleUrl($marker);
 
         return str_replace($marker, '', (string) preg_replace('#^https?://#i', '', $url));
     }
