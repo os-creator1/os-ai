@@ -289,6 +289,25 @@ describe('live conversation detail: window and focus', () => {
     expect(screen.getByText('Load earlier messages')).toBeTruthy();       // hasMore not clobbered
   });
 
+  it('a superseded retry whose history a live refresh already applied is not shown as unconfirmed', async () => {
+    const failed = { ...msg(1, 'm1'), direction: 'outbound', send_uid: 'su-1', status: 'delivery_failed', retryable: true };
+    const sent = { ...failed, status_message: 'Carrier could not deliver.' };   // still failed on the server: the note would show
+    const deferred: Array<(v: any) => void> = [];
+    const conversation = jest.fn()
+      .mockResolvedValueOnce(detail([failed]))
+      .mockImplementation(() => new Promise((r) => { deferred.push(r); }));
+    const api = fakeApi({ conversation, retry: jest.fn(async () => ({ message: { send_uid: 'su-1', status: 'sent' } })) });
+    const t = await open(api, nav());
+    fireEvent.press(screen.getByText('Retry'));
+    await waitFor(() => expect(deferred).toHaveLength(1));              // post-retry load() in flight
+    await act(async () => { t.emit(ch, evt); });                          // a live refresh starts after it
+    await waitFor(() => expect(deferred).toHaveLength(2));
+    await act(async () => { deferred[1](detail([sent])); });              // live applies first
+    await act(async () => { deferred[0](detail([sent])); });              // the superseded load answers last
+    expect(screen.queryByText(/could not refresh/)).toBeNull();
+    expect(screen.getByText('Retry')).toBeTruthy();                       // and Retry is not hidden
+  });
+
   it('does not yank the user to the bottom on a live update after they scrolled up to read history', async () => {
     const FlatList = require('react-native').FlatList;
     const spy = jest.spyOn(FlatList.prototype, 'scrollToEnd').mockImplementation(() => undefined);

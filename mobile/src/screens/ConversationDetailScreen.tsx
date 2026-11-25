@@ -62,7 +62,7 @@ function ConversationThread({ route, navigation }: Props) {
   const [loadingEarlier, setLoadingEarlier] = useState(false);
   const threadGeneration = useRef(0);
 
-  const load = useCallback(async (): Promise<boolean> => {
+  const load = useCallback(async (): Promise<boolean | 'superseded'> => {
     if (!scope) return false;
     const version = ++threadGeneration.current;
     // Full loads and live refreshes share ONE ordering: whichever STARTED last may apply its result.
@@ -74,9 +74,9 @@ function ConversationThread({ route, navigation }: Props) {
       const d = await api.conversation(scope, uid);
       if (version !== threadGeneration.current) return false;
       // A live refresh started after this load and owns the newer view; applying this older response would roll it back.
-      // Report "not refreshed" so a caller (a send) keeps its pending bubble until a refresh has actually confirmed it —
+      // Reported distinctly (not as a failure) so a send keeps its pending bubble until a refresh has actually confirmed it —
       // the live refresh clears it itself once the server history contains the message.
-      if (startedAs !== liveSeq.current) return false;
+      if (startedAs !== liveSeq.current) return 'superseded';
       setData(d);
       dataRef.current = d;
       setHasMore(d.has_more);
@@ -208,6 +208,13 @@ function ConversationThread({ route, navigation }: Props) {
       else await api.reply(scope, uid, body, key);
       stick.current = true;
       const refreshed = await load();
+      if (refreshed === 'superseded') {
+        // A newer live refresh owns the view (and clears a confirmed pending bubble itself). This is not a failure: never
+        // label a retry "unconfirmed" because of it — just end its "Retrying…" state; the bubble shows what the server says.
+        if (mode === 'retry') setRetryAttempts((p) => { const next = { ...p }; delete next[key]; return next; });
+        else setPending((p) => p.map((x) => (x.key === key ? { ...x, state: 'failed', error: 'Message accepted. Waiting for the conversation to refresh…', canRetry: false } : x)));
+        return;
+      }
       if (!refreshed) {
         // The send/retry itself already succeeded. Do NOT remove the bubble,
         // and do NOT offer a second send merely because the GET failed.
