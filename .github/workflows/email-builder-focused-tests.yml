@@ -1,0 +1,35 @@
+name: Email Builder Focused Tests
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'app/Library/BusinessEmail/EmailBlockRenderer.php'
+      - 'app/Library/Documents/Blocks/**'
+      - 'tests/Unit/BusinessEmail/EmailBlockRendererTest.php'
+      - '.github/workflows/email-builder-focused-tests.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  email-blocks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      APP_ENV: testing
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.2'
+          extensions: curl, dom, exif, fileinfo, gd, intl, mbstring, pdo_mysql, zip
+          coverage: none
+          tools: composer:v2
+      - name: Install dependencies without application bootstrap
+        run: composer install --no-interaction --prefer-dist --no-progress --no-scripts
+      - name: Verify syntax and focused unit tests
+        run: |
+          php -l app/Library/BusinessEmail/EmailBlockRenderer.php
+          vendor/bin/phpunit --no-configuration --bootstrap vendor/autoload.php --fail-on-empty-test-suite tests/Unit/BusinessEmail/EmailBlockRendererTest.php
