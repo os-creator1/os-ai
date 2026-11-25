@@ -41,7 +41,8 @@
     $host = rtrim($permalinkBase, '/');
 
     // The save status is driven by what actually happened: a stored timestamp from a successful save, or a refused save.
-    $refused = $errors->any() || session('status') === 'error';
+    // Only a refused save re-renders the editor with the owner's input; other errors (e.g. Track this topic) must not claim "Not saved".
+    $refused = $errors->any() || (session('status') === 'error' && session()->hasOldInput());
     $savedAgo = $savedAt === null ? null : ($savedAt->gt(now()->subMinute()) ? 'just now' : $savedAt->diffForHumans());
     $statusLabels = ['draft' => 'Draft', 'scheduled' => 'Scheduled', 'published' => 'Published', 'archived' => 'Archived'];
     if ($refused) {
@@ -559,7 +560,8 @@
                 el.addEventListener('input', markDirty); el.addEventListener('change', markDirty);
             });
             form.addEventListener('submit', function () { dirty = false; });
-            document.querySelectorAll('button[form="article-form"][type="submit"]').forEach(function (b) { b.addEventListener('click', function () { dirty = false; }); });
+            // The rail's own forms (archive, discard, reviewed, track, cancel schedule, restore) are deliberate navigations.
+            document.querySelectorAll('.ae-rail form').forEach(function (f) { f.addEventListener('submit', function () { dirty = false; }); });
             window.addEventListener('beforeunload', function (e) { if (dirty) { e.preventDefault(); e.returnValue = ''; } });
 
             // Cmd/Ctrl+S saves the draft.
@@ -621,12 +623,18 @@
                 if (!previewing) { return; }
                 timer = setTimeout(renderPreview, 250);
             }
+            var previewSeq = 0;
             function renderPreview() {
+                var seq = ++previewSeq;
                 var data = new FormData();
                 data.append('body', body.value);
                 fetch(previewUrl, { method: 'POST', headers: { 'X-CSRF-TOKEN': token, 'Accept': 'application/json' }, body: data, credentials: 'same-origin' })
                     .then(function (r) { return r.ok ? r.json() : null; })
-                    .then(function (j) { if (j && typeof j.html === 'string' && previewing) { prose.innerHTML = j.html; } });
+                    .then(function (j) {
+                        if (seq !== previewSeq || !previewing) { return; }
+                        if (j && typeof j.html === 'string') { prose.innerHTML = j.html; } else { prose.textContent = 'The preview could not be loaded. Your text is unchanged; switch back and try again.'; }
+                    })
+                    .catch(function () { if (seq === previewSeq && previewing) { prose.textContent = 'The preview could not be loaded. Your text is unchanged; switch back and try again.'; } });
             }
             function wrap(prefix, suffix, placeholder) {
                 showEditor();
@@ -691,6 +699,7 @@
             }
             gated.forEach(function (b) { var box = document.querySelector(b.getAttribute('data-requires-ack')); if (box) { box.addEventListener('change', syncAck); } });
             syncAck();
+            window.addEventListener('pageshow', syncAck);
             document.querySelectorAll('[data-focus]').forEach(function (b) {
                 b.addEventListener('click', function () { var t = document.querySelector(b.getAttribute('data-focus')); if (t) { t.scrollIntoView({ block: 'center' }); t.focus(); } });
             });

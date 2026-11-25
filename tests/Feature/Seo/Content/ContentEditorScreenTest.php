@@ -105,6 +105,19 @@ class ContentEditorScreenTest extends TestCase
         $this->assertStringContainsString('data-role="editor-errors"', $refused);
     }
 
+    public function test_an_error_that_is_not_a_refused_save_does_not_claim_the_draft_is_not_saved(): void
+    {
+        $t = $this->owner();
+        $article = $this->draftArticle($t[1]);
+
+        // e.g. "Track this topic" without a topic redirects here with an error flash and no edited input.
+        $html = $this->withSession(['status' => 'error', 'message' => 'Add a target topic to this article first, then you can track it.'])
+            ->get($this->url($t, 'articles.edit', [$article->uid]))->assertOk()->getContent();
+
+        $this->assertStringNotContainsString('Not saved', $html);
+        $this->assertMatchesRegularExpression('#data-role="save-status" data-state="draft"[^>]*>Draft · saved#', $html);
+    }
+
     public function test_title_body_and_search_description_persist_across_save_and_reload(): void
     {
         $t = $this->owner();

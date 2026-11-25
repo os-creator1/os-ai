@@ -6,8 +6,13 @@ on:
     paths:
       - 'app/Http/Controllers/Customer/Business/SeoContentArticleController.php'
       - 'resources/views/customer/business/seo/content/editor.blade.php'
-      - 'tests/Feature/Seo/Content/ContentEditorScreenTest.php'
-      - 'tests/Feature/Seo/Content/ContentHttpTest.php'
+      - 'app/Library/Seo/Content/**'
+      - 'app/Library/Website/Blog/**'
+      - 'routes/customer.php'
+      - 'resources/views/panels/**'
+      - 'resources/views/layouts/**'
+      - 'tests/Feature/Seo/Content/**'
+      - 'tests/Feature/Seo/Concerns/**'
       - '.github/workflows/article-editor-tests.yml'
 
 permissions:
