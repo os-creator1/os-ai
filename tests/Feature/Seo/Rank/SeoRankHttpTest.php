@@ -749,9 +749,10 @@ class SeoRankHttpTest extends TestCase
         $response = $this->getJson($this->u('keywords.rank-locations', $workspace, $business) . '?q=Chi')->assertOk();
 
         $this->assertSame([
-            ['code' => 5001, 'label' => 'Chicago Heights, Illinois, United States'],
-            ['code' => self::CHICAGO, 'label' => 'Chicago, Illinois, United States'],
-            ['code' => 5003, 'label' => 'Chicoutimi, Quebec, Canada'],
+            // The exact city name sorts before a longer one that merely starts with it.
+            ['code' => self::CHICAGO, 'label' => 'Chicago, Illinois, United States', 'city' => 'Chicago', 'region' => 'Illinois', 'country' => 'US'],
+            ['code' => 5001, 'label' => 'Chicago Heights, Illinois, United States', 'city' => 'Chicago Heights', 'region' => 'Illinois', 'country' => 'US'],
+            ['code' => 5003, 'label' => 'Chicoutimi, Quebec, Canada', 'city' => 'Chicoutimi', 'region' => 'Quebec', 'country' => 'CA'],
         ], $response->json('locations'));
 
         $this->getJson($this->u('keywords.rank-locations', $workspace, $business) . '?q=C')->assertOk()->assertExactJson(['locations' => [], 'status' => 'partial']);

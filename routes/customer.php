@@ -1824,6 +1824,8 @@
         Route::prefix('{workspaceUid}/businesses/{businessUid}/conversations')->name('businesses.conversations.')->group(function () {
             Route::get('/', 'ChatBoxController@index')->name('index');
             Route::get('/new', 'ChatBoxController@new')->name('new');
+            // Recipient suggestions for the New text dialog (read-only; this Business's contacts only).
+            Route::get('/recipients', 'ChatBoxController@recipients')->middleware('throttle:60,1')->name('recipients');
             // Email threads from the connected mailbox (email ledger, not chat_boxes).
             // Compatibility: the former standalone Email page now lives inside Conversations (Email filter); saved links still work.
             Route::get('/email', 'Business\EmailConversationsController@threads')->name('email');

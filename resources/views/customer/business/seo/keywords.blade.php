@@ -148,6 +148,66 @@
             .kw-table td[data-label="Keyword"]::before, .kw-table td[data-label="Actions"]::before { display: none; }
             .kw-table td[data-label="Actions"] { justify-content: flex-start; }
         }
+
+        /* "Where do customers search from?" — values from the supplied design (dialog 520px, radius 18, 24px gutters). */
+        body.rl-backdrop .modal-backdrop { --bs-backdrop-bg: #1F1A19; --bs-backdrop-opacity: .38; }
+        .rl-modal { color: #1F1A19; }
+        .modal.rl-modal .modal-dialog.rl-dialog { width: 520px; max-width: calc(100% - 32px); margin: 120px auto 24px; padding: 0; }
+        .rl-modal .rl-card { border: 0; border-radius: 18px; background: #fff; box-shadow: 0 24px 64px rgba(31,26,25,.28); overflow: visible; }
+        .rl-modal .rl-ic { width: 16px; height: 16px; flex: none; stroke: currentColor; fill: none; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+        .rl-modal .rl-ic-sm { width: 14px; height: 14px; }
+        .rl-modal .rl-ic-muted { color: #8A817C; }
+        .rl-head { display: flex; align-items: flex-start; gap: 12px; padding: 22px 24px 6px; }
+        .rl-head-copy { flex: 1; display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+        .rl-title { margin: 0; font-size: 20px; font-weight: 800; line-height: 1.25; color: #1F1A19; }
+        .rl-sub { font-size: 13.5px; color: #5E5652; }
+        .rl-x { width: 36px; height: 36px; flex: none; display: inline-flex; align-items: center; justify-content: center; border: 0; border-radius: 10px; background: #F4F0EC; color: #4A4340; cursor: pointer; }
+        .rl-x:hover { background: #ECE6E0; }
+        .rl-body { padding: 12px 24px 20px; display: flex; flex-direction: column; gap: 12px; }
+        .rl-kw { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 12px; background: #FBF9F7; border: 1px solid #F0EBE6; min-width: 0; }
+        .rl-kw[hidden] { display: none; }
+        .rl-kw-mark { width: 28px; height: 28px; flex: none; border-radius: 8px; background: #F8E9E6; color: #8F3B35; display: flex; align-items: center; justify-content: center; font-weight: 800; }
+        .rl-kw-phrase { flex: 1; min-width: 0; font-size: 14.5px; font-weight: 700; overflow-wrap: anywhere; }
+        .rl-kw-scope { font-size: 12.5px; color: #6B625E; white-space: nowrap; }
+        .rl-picker { position: relative; display: flex; flex-direction: column; gap: 12px; }
+        .rl-field { display: flex; align-items: center; gap: 8px; height: 48px; margin: 0; padding: 0 14px; border: 1px solid #D6CFC8; border-radius: 12px; background: #fff; cursor: text; }
+        .rl-field:focus-within { border-color: #B4514A; box-shadow: 0 0 0 3px #F8E9E6; }
+        .rl-input { flex: 1; min-width: 0; height: 100%; padding: 0; border: 0; outline: 0; background: transparent; font: inherit; font-size: 15px; color: #1F1A19; box-shadow: none; }
+        .rl-input::placeholder { color: #A39A94; }
+        .rl-list { margin-top: -6px; padding: 6px; border: 1px solid #E9E4DF; border-radius: 12px; background: #fff; box-shadow: 0 12px 28px rgba(31,26,25,.12); max-height: 264px; overflow-y: auto; }
+        .rl-opt { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 44px; padding: 0 12px; border: 0; border-radius: 9px; background: transparent; text-align: left; font: inherit; color: #1F1A19; cursor: pointer; }
+        .rl-opt.is-active { background: #FBF0EE; }
+        .rl-opt .rl-ic { width: 15px; height: 15px; color: #8F3B35; }
+        .rl-opt-city { flex: 1; min-width: 0; font-size: 14px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .rl-opt-city u { text-decoration: underline; }
+        .rl-opt-where { font-size: 12.5px; color: #6B625E; white-space: nowrap; }
+        .rl-hint { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: #6B625E; flex-wrap: wrap; }
+        .rl-hint .rl-ic-sm { color: #6B625E; }
+        .rl-hint-text { flex: 1 1 140px; min-width: 0; }
+        .rl-hint-text.text-danger { color: #B3261E !important; }
+        .rl-link { padding: 0; border: 0; background: none; font: inherit; font-weight: 600; color: #8F3B35; white-space: nowrap; cursor: pointer; }
+        .rl-link:hover, .rl-skip:hover { text-decoration: underline; }
+        .rl-confirm-hint { margin: -4px 0 0; font-size: 12.5px; color: #6B625E; }
+        .rl-foot { display: flex; align-items: center; gap: 10px; padding: 14px 24px; border-top: 1px solid #F0EBE6; background: #FBF9F7; border-radius: 0 0 18px 18px; }
+        .rl-spacer { flex: 1; }
+        .rl-skip { padding: 0; border: 0; background: none; font: inherit; font-size: 13.5px; font-weight: 600; color: #6B625E; cursor: pointer; text-align: left; }
+        .rl-btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 44px; padding: 0 16px; border: 0; border-radius: 10px; font: inherit; font-size: 14px; font-weight: 600; white-space: nowrap; cursor: pointer; background: transparent; color: #5E5652; }
+        .rl-btn-quiet:hover { background: #F0EBE6; }
+        .rl-btn-primary { background: #B4514A; color: #fff; }
+        .rl-btn-primary:hover:not(:disabled) { background: #8F3B35; }
+        .rl-btn-primary:disabled { opacity: .55; cursor: not-allowed; }
+        .rl-modal button:focus-visible, .rl-modal .rl-opt:focus-visible { outline: 2px solid #B4514A; outline-offset: 2px; }
+        @media (max-width: 575.98px) {
+            .modal.rl-modal .modal-dialog.rl-dialog { margin-top: 16px; }
+            .rl-head { padding: 18px 16px 4px; }
+            .rl-body { padding: 10px 16px 16px; }
+            .rl-foot { padding: 12px 16px; flex-wrap: wrap; }
+            .rl-skip { flex: 1 0 100%; order: 2; padding: 8px 0 0; }
+            .rl-spacer { display: none; }
+            .rl-foot .rl-btn { flex: 1; }
+            .rl-kw { flex-wrap: wrap; }
+            .rl-kw-scope { flex-basis: 100%; padding-left: 38px; }
+        }
     </style>
 
     <div class="kw-page">
@@ -400,7 +460,7 @@
                                                                         <button class="dropdown-item" type="submit" data-role="rank-start">Start tracking</button>
                                                                     </form>
                                                                 @else
-                                                                    <button class="dropdown-item" type="button" data-role="rank-start" data-rank-dialog="track" data-action="{{ route('customer.workspaces.businesses.seo.keywords.rank.track', [$workspaceUid, $businessUid, $keyword->uid]) }}">Start tracking</button>
+                                                                    <button class="dropdown-item" type="button" data-role="rank-start" data-rank-dialog="track" data-phrase="{{ $keyword->phrase }}" data-scope="{{ $keyword->location?->name ?? 'Whole business' }}" data-action="{{ route('customer.workspaces.businesses.seo.keywords.rank.track', [$workspaceUid, $businessUid, $keyword->uid]) }}">Start tracking</button>
                                                                 @endif
                                                             </li>
                                                         @elseif($state === SeoRankDashboardReader::STATE_UNTRACKED || ($state === SeoRankDashboardReader::STATE_PAUSED && $slotsFull))
@@ -531,15 +591,34 @@
     {{-- One chooser for every place that needs a search location (Add keyword, Start tracking). --}}
     @can('manage_seo')
         @if($rankPlan !== null && ! $viewingAsClient)
-            <x-dialog id="rank-location-dialog" title="Where should we track this keyword?" size="sm" data-role="rank-location-dialog">
-                @include('customer.business.seo._rank-location-field', ['url' => route('customer.workspaces.businesses.seo.keywords.rank-locations', [$workspaceUid, $businessUid]), 'fieldId' => 'rank-dialog-location'])
-                <p class="text-caption mb-0 mt-50" data-role="rank-location-confirm-hint">Start tracking turns on once you pick a city from the list.</p>
-                <x-slot name="footer">
-                    <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
-                    <button type="button" class="btn btn-outline-primary d-none" data-role="rank-location-skip">Add keyword without tracking</button>
-                    <button type="button" class="btn btn-primary" data-role="rank-location-confirm" disabled>Start tracking</button>
-                </x-slot>
-            </x-dialog>
+            <div class="modal fade rl-modal" id="rank-location-dialog" tabindex="-1" aria-labelledby="rank-location-title" aria-describedby="rank-location-sub" aria-hidden="true" data-role="rank-location-dialog">
+                <div class="modal-dialog rl-dialog">
+                    <div class="modal-content rl-card">
+                        <div class="rl-head">
+                            <div class="rl-head-copy">
+                                <h2 class="rl-title" id="rank-location-title">Where do customers search from?</h2>
+                                <span class="rl-sub" id="rank-location-sub">We'll check Google rank as if searching from this city.</span>
+                            </div>
+                            <button type="button" class="rl-x" data-bs-dismiss="modal" aria-label="Close"><svg class="rl-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"></path></svg></button>
+                        </div>
+                        <div class="rl-body">
+                            <div class="rl-kw" data-role="rank-location-context" hidden>
+                                <span class="rl-kw-mark" aria-hidden="true">#</span>
+                                <b class="rl-kw-phrase" data-role="rank-location-phrase"></b>
+                                <span class="rl-kw-scope" data-role="rank-location-scope"></span>
+                            </div>
+                            @include('customer.business.seo._rank-location-field', ['url' => route('customer.workspaces.businesses.seo.keywords.rank-locations', [$workspaceUid, $businessUid]), 'fieldId' => 'rank-dialog-location'])
+                            <p class="rl-confirm-hint" data-role="rank-location-confirm-hint">Start tracking turns on once you pick a city from the list.</p>
+                        </div>
+                        <div class="rl-foot">
+                            <button type="button" class="rl-skip d-none" data-role="rank-location-skip">Add without tracking</button>
+                            <span class="rl-spacer"></span>
+                            <button type="button" class="rl-btn rl-btn-quiet" data-bs-dismiss="modal">Cancel</button>
+                            <button type="button" class="rl-btn rl-btn-primary" data-role="rank-location-confirm" disabled>Start tracking</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
             <form method="POST" id="rank-dialog-form" class="d-none" data-role="rank-dialog-form">
                 @csrf
                 <input type="hidden" name="search_location_code" value="">
@@ -580,102 +659,209 @@
                 });
             });
 
-            // Search-location picker: query the cached provider locations; only a clicked result counts as chosen.
+            // Search-location picker (combobox): queries the cached provider locations; only an explicit pick
+            // (click, or Enter on the highlighted row) counts as chosen, and a typed string is never submitted.
             document.querySelectorAll('[data-role="rank-location-field"]').forEach(function (field) {
                 var input = field.querySelector('[data-role="rank-location-input"]');
                 var code = field.querySelector('[data-role="rank-location-code"]');
                 var list = field.querySelector('[data-role="rank-location-results"]');
-                var timer = null;
+                var hint = field.querySelector('[data-role="rank-location-hint"]');
+                var kwHint = field.querySelector('[data-role="rank-location-keyword-hint"]');
+                var kwPick = field.querySelector('[data-role="rank-location-keyword-pick"]');
+                var idleHint = hint.textContent;
+                var timer = null, seq = 0, hintSeq = 0, controller = null;
+                var shown = []; // the locations currently listed, in order
+                var active = -1;
+                var kwLoc = null;
 
                 function changed() { field.dispatchEvent(new CustomEvent('rank-location-change', { bubbles: true })); }
-
-                var hint = field.querySelector('[data-role="rank-location-hint"]');
-                var idleHint = hint.textContent;
-                var seq = 0;
-                function say(text, bad) { hint.textContent = text; hint.classList.toggle('text-danger', !!bad); hint.classList.toggle('text-muted', !bad); }
-                function clearList() { list.innerHTML = ''; list.classList.add('d-none'); }
+                function say(text, bad) { hint.textContent = text; hint.classList.toggle('text-danger', !!bad); }
+                function closeList() {
+                    list.innerHTML = ''; list.classList.add('d-none'); shown = []; active = -1;
+                    input.setAttribute('aria-expanded', 'false'); input.removeAttribute('aria-activedescendant');
+                }
+                function setActive(i) {
+                    active = i;
+                    Array.prototype.forEach.call(list.children, function (el, n) {
+                        el.classList.toggle('is-active', n === i); el.setAttribute('aria-selected', n === i ? 'true' : 'false');
+                    });
+                    if (i >= 0 && list.children[i]) {
+                        input.setAttribute('aria-activedescendant', list.children[i].id);
+                        list.children[i].scrollIntoView({ block: 'nearest' });
+                    }
+                }
+                function pick(loc) {
+                    // Invalidate anything still in flight: a late response must never change a made choice.
+                    seq++; clearTimeout(timer); if (controller) { controller.abort(); }
+                    input.value = loc.label; code.value = String(loc.code);
+                    closeList(); say('Location selected.', false); changed();
+                }
+                function pin() {
+                    var ns = 'http://www.w3.org/2000/svg';
+                    var svg = document.createElementNS(ns, 'svg');
+                    svg.setAttribute('class', 'rl-ic'); svg.setAttribute('viewBox', '0 0 24 24'); svg.setAttribute('aria-hidden', 'true');
+                    var path = document.createElementNS(ns, 'path'); path.setAttribute('d', 'M12 21s-7-6.200-7-11.500a7 7 0 0 1 14 0C19 14.800 12 21 12 21z');
+                    var dot = document.createElementNS(ns, 'circle'); dot.setAttribute('cx', '12'); dot.setAttribute('cy', '9.5'); dot.setAttribute('r', '2.5');
+                    svg.appendChild(path); svg.appendChild(dot);
+                    return svg;
+                }
+                function render(locs, q) {
+                    closeList();
+                    locs.forEach(function (loc, n) {
+                        var row = document.createElement('div');
+                        row.className = 'rl-opt'; row.id = input.id + '-opt-' + n; row.setAttribute('role', 'option');
+                        row.setAttribute('data-role', 'rank-location-option'); row.setAttribute('data-code', String(loc.code));
+                        row.setAttribute('aria-selected', 'false');
+                        var city = document.createElement('b'); city.className = 'rl-opt-city';
+                        var name = loc.city || loc.label;
+                        var len = loc.label.toLowerCase().indexOf(q.toLowerCase()) === 0 ? Math.min(q.length, name.length) : 0;
+                        if (len > 0) { var u = document.createElement('u'); u.textContent = name.slice(0, len); city.appendChild(u); city.appendChild(document.createTextNode(name.slice(len))); }
+                        else { city.textContent = name; }
+                        var where = document.createElement('span'); where.className = 'rl-opt-where';
+                        where.textContent = [loc.region, loc.country].filter(Boolean).join(', ');
+                        row.appendChild(pin()); row.appendChild(city); row.appendChild(where);
+                        // mousedown keeps the caret in the field; the click is the explicit choice.
+                        row.addEventListener('mousedown', function (e) { e.preventDefault(); });
+                        row.addEventListener('mouseenter', function () { setActive(n); });
+                        row.addEventListener('click', function () { pick(loc); input.focus(); });
+                        list.appendChild(row);
+                    });
+                    shown = locs;
+                    if (locs.length) { list.classList.remove('d-none'); input.setAttribute('aria-expanded', 'true'); setActive(0); }
+                }
 
                 input.addEventListener('input', function () {
                     code.value = ''; changed();
-                    clearTimeout(timer);
+                    clearTimeout(timer); if (controller) { controller.abort(); }
                     var q = input.value.trim();
                     var mine = ++seq;
-                    clearList();
+                    closeList();
                     if (q.length < 2) { say(idleHint, false); return; }
                     say('Searching…', false);
                     timer = setTimeout(function () {
-                        fetch(field.getAttribute('data-url') + '?q=' + encodeURIComponent(q), { headers: { 'Accept': 'application/json' }, credentials: 'same-origin' })
+                        controller = window.AbortController ? new AbortController() : null;
+                        fetch(field.getAttribute('data-url') + '?q=' + encodeURIComponent(q), { headers: { 'Accept': 'application/json' }, credentials: 'same-origin', signal: controller ? controller.signal : undefined })
                             .then(function (r) { if (!r.ok) { throw new Error('http ' + r.status); } return r.json(); })
                             .then(function (data) {
-                                if (mine !== seq) { return; } // a newer keystroke owns the list
+                                // A newer keystroke (or a pick) owns the list; the field must still say what was searched.
+                                if (mine !== seq || input.value.trim() !== q) { return; }
                                 var locs = data.locations || [];
-                                clearList();
-                                locs.forEach(function (loc) {
-                                    var b = document.createElement('button');
-                                    b.type = 'button';
-                                    b.className = 'list-group-item list-group-item-action';
-                                    b.setAttribute('data-role', 'rank-location-option');
-                                    b.setAttribute('data-code', loc.code);
-                                    b.textContent = loc.label;
-                                    b.addEventListener('click', function () {
-                                        input.value = loc.label; code.value = loc.code;
-                                        clearList(); say('Location selected.', false); changed();
-                                    });
-                                    list.appendChild(b);
-                                });
-                                if (locs.length) { list.classList.remove('d-none'); say('Pick a city from the list.', false); }
+                                render(locs, q);
+                                if (locs.length) { say('Pick a city from the list.', false); }
                                 else if (data.status === 'not_initialized') { say('Locations are not initialized yet. Tracking cannot start until they are loaded; you can still add the keyword without tracking.', true); }
                                 else if (data.status === 'partial') { say('No matching city found. Some locations are still loading, so try again later.', true); }
                                 else { say('No matching city. Check the spelling (supported countries: {{ \App\Library\Seo\Rank\SeoRankLocationCatalog::supportedCountriesLabel() }}).', true); }
                                 changed();
                             })
-                            .catch(function () {
-                                if (mine !== seq) { return; }
-                                clearList();
+                            .catch(function (err) {
+                                if (mine !== seq || (err && err.name === 'AbortError')) { return; }
+                                closeList();
                                 say('Locations are temporarily unavailable. Try again shortly, or add the keyword without tracking.', true);
                                 changed();
                             });
                     }, 250);
                 });
                 input.addEventListener('keydown', function (e) {
-                    if (e.key === 'ArrowDown' && list.firstElementChild) { e.preventDefault(); list.firstElementChild.focus(); }
+                    var open = !list.classList.contains('d-none') && shown.length > 0;
+                    if (e.key === 'ArrowDown' && open) { e.preventDefault(); setActive((active + 1) % shown.length); }
+                    else if (e.key === 'ArrowUp' && open) { e.preventDefault(); setActive((active - 1 + shown.length) % shown.length); }
+                    else if (e.key === 'Enter') {
+                        e.preventDefault();
+                        if (open && active >= 0) { pick(shown[active]); }
+                        else if (code.value) { field.dispatchEvent(new CustomEvent('rank-location-submit', { bubbles: true })); }
+                    }
+                    else if (e.key === 'Escape' && open) { e.preventDefault(); e.stopPropagation(); closeList(); } // first Escape closes the list, the next closes the dialog
                 });
-                list.addEventListener('keydown', function (e) {
-                    var t = e.target;
-                    if (e.key === 'ArrowDown' && t.nextElementSibling) { e.preventDefault(); t.nextElementSibling.focus(); }
-                    if (e.key === 'ArrowUp') { e.preventDefault(); (t.previousElementSibling || input).focus(); }
-                });
+
+                // The city the keyword itself names, offered beside the supported-countries line (only when exactly one cached city matches).
+                if (kwPick) {
+                    kwPick.addEventListener('click', function () { if (kwLoc) { pick(kwLoc); input.focus(); } });
+                }
+                field.rankLocation = {
+                    reset: function () {
+                        seq++; hintSeq++; clearTimeout(timer); if (controller) { controller.abort(); }
+                        input.value = ''; code.value = ''; closeList(); say(idleHint, false);
+                        kwLoc = null; if (kwHint) { kwHint.classList.add('d-none'); }
+                        changed();
+                    },
+                    keywordHint: function (phrase) {
+                        var mine = ++hintSeq; kwLoc = null; if (kwHint) { kwHint.classList.add('d-none'); }
+                        if (!phrase || !kwHint) { return; }
+                        fetch(field.getAttribute('data-url') + '?q=&hint=' + encodeURIComponent(phrase), { headers: { 'Accept': 'application/json' }, credentials: 'same-origin' })
+                            .then(function (r) { return r.ok ? r.json() : null; })
+                            .then(function (data) {
+                                if (mine !== hintSeq || !data || !data.hint) { return; }
+                                kwLoc = data.hint;
+                                kwPick.textContent = [data.hint.city, data.hint.region].filter(Boolean).join(', ');
+                                kwHint.classList.remove('d-none');
+                            })
+                            .catch(function () {});
+                    }
+                };
             });
 
             // The chooser dialog: the action stays disabled until a real result is picked.
+            var launcher = null; // the control that opened the chooser; focus returns here
             if (dialogEl) {
+                var dField = dialogEl.querySelector('[data-role="rank-location-field"]');
                 var dInput = dialogEl.querySelector('[data-role="rank-location-input"]');
                 var dCode = dialogEl.querySelector('[data-role="rank-location-code"]');
                 var confirmBtn = dialogEl.querySelector('[data-role="rank-location-confirm"]');
                 var dHint = dialogEl.querySelector('[data-role="rank-location-confirm-hint"]');
                 var skipBtn = dialogEl.querySelector('[data-role="rank-location-skip"]');
+                var ctxEl = dialogEl.querySelector('[data-role="rank-location-context"]');
                 dialogEl.addEventListener('rank-location-change', function () {
                     confirmBtn.disabled = !dCode.value;
                     dHint.classList.toggle('d-none', !!dCode.value);
                 });
+                // Tab wraps inside the dialog even when the last control (Start tracking) is disabled.
+                dialogEl.addEventListener('keydown', function (e) {
+                    if (e.key !== 'Tab') { return; }
+                    var f = Array.prototype.filter.call(dialogEl.querySelectorAll('button, input, [href], [tabindex]:not([tabindex="-1"])'), function (n) { return !n.disabled && n.offsetParent !== null && !n.classList.contains('d-none') && n.type !== 'hidden'; });
+                    if (!f.length) { return; }
+                    if (e.shiftKey && document.activeElement === f[0]) { e.preventDefault(); f[f.length - 1].focus(); }
+                    else if (!e.shiftKey && document.activeElement === f[f.length - 1]) { e.preventDefault(); f[0].focus(); }
+                });
+                dialogEl.addEventListener('rank-location-submit', function () { confirmBtn.click(); });
                 skipBtn.addEventListener('click', function () {
                     var run = skipHandler; skipHandler = null; pending = null;
                     dialog().hide();
                     if (run) { run(); }
                 });
+                dialogEl.addEventListener('show.bs.modal', function () { document.body.classList.add('rl-backdrop'); });
                 dialogEl.addEventListener('shown.bs.modal', function () { dInput.focus(); });
-                dialogEl.addEventListener('hidden.bs.modal', function () { dInput.value = ''; dCode.value = ''; confirmBtn.disabled = true; pending = null; skipHandler = null; skipBtn.classList.add('d-none'); dHint.classList.remove('d-none'); dInput.dispatchEvent(new Event('input')); });
+                dialogEl.addEventListener('hidden.bs.modal', function () {
+                    document.body.classList.remove('rl-backdrop');
+                    dField.rankLocation.reset();
+                    confirmBtn.disabled = true; pending = null; skipHandler = null;
+                    skipBtn.classList.add('d-none'); dHint.classList.remove('d-none'); ctxEl.hidden = true;
+                    // Focus goes back to the control that opened it (a closed menu item falls back to its menu button).
+                    var back = launcher; launcher = null;
+                    if (back && !back.offsetParent) { back = back.closest('.dropdown') ? back.closest('.dropdown').querySelector('[data-role="keyword-menu"]') : null; }
+                    if (back && document.body.contains(back)) { back.focus(); }
+                });
                 confirmBtn.addEventListener('click', function () {
                     if (!dCode.value || !pending) { return; }
                     var chosen = { code: dCode.value, label: dInput.value };
-                    var run = pending; pending = null;
+                    var run = pending; pending = null; // one run only: a second click finds nothing pending
+                    confirmBtn.disabled = true;
                     dialog().hide();
                     run(chosen);
                 });
             }
-            function choose(then, skipFn) {
+            // what: the keyword + scope being tracked ({phrase, scope}); skipFn: "Add without tracking" (add flows only).
+            function choose(then, skipFn, what, from) {
                 pending = then;
-                if (dialogEl) { dialogEl.querySelector('[data-role="rank-location-skip"]').classList.toggle('d-none', !skipFn); }
+                launcher = from || document.activeElement;
+                if (dialogEl) {
+                    dialogEl.querySelector('[data-role="rank-location-skip"]').classList.toggle('d-none', !skipFn);
+                    var ctxEl = dialogEl.querySelector('[data-role="rank-location-context"]');
+                    var phrase = what && what.phrase ? String(what.phrase).trim() : '';
+                    ctxEl.hidden = phrase === '';
+                    dialogEl.querySelector('[data-role="rank-location-phrase"]').textContent = phrase;
+                    dialogEl.querySelector('[data-role="rank-location-scope"]').textContent = what && what.scope ? what.scope : '';
+                    dialogEl.querySelector('[data-role="rank-location-field"]').rankLocation.keywordHint(phrase);
+                }
                 skipHandler = skipFn || null;
                 dialog().show();
             }
@@ -688,7 +874,7 @@
                         f.action = btn.getAttribute('data-action');
                         f.querySelector('[name="search_location_code"]').value = chosen.code;
                         f.submit();
-                    });
+                    }, null, { phrase: btn.getAttribute('data-phrase'), scope: btn.getAttribute('data-scope') }, btn);
                 });
             });
 
@@ -701,6 +887,10 @@
                 var label = addForm.querySelector('[data-role="add-location-label"]');
                 var scope = addForm.querySelector('[name="location_uid"]');
                 var chosenHere = null; // a location picked via Change / the chooser overrides the default
+                function addWhat() {
+                    var p = addForm.querySelector('[name="phrase"]');
+                    return { phrase: p ? p.value : '', scope: scope && scope.selectedIndex >= 0 ? scope.options[scope.selectedIndex].text : 'Whole business' };
+                }
 
                 function effective() {
                     if (chosenHere) { return chosenHere; }
@@ -717,7 +907,7 @@
                 if (scope) { scope.addEventListener('change', render); }
                 if (toggle) { toggle.addEventListener('change', render); }
                 var change = addForm.querySelector('[data-role="change-location"]');
-                if (change) { change.addEventListener('click', function () { choose(function (c) { chosenHere = c; render(); }); }); }
+                if (change) { change.addEventListener('click', function () { choose(function (c) { chosenHere = c; render(); }, null, addWhat(), change); }); }
                 render();
 
                 addForm.addEventListener('submit', function (e) {
@@ -726,7 +916,7 @@
                     choose(function (c) { chosenHere = c; render(); addForm.submit(); }, function () {
                         // Never trap the customer: save the keyword with rank tracking switched off.
                         toggle.checked = false; render(); addForm.submit();
-                    });
+                    }, addWhat(), addForm.querySelector('[type="submit"]'));
                 });
             }
 
@@ -744,9 +934,11 @@
                     var loc = (uid && defaults.locations[uid]) || defaults.business || null;
                     if (loc) { code.value = loc.code; return; }
                     e.preventDefault();
+                    var holder = form.closest('[data-role="suggested-keyword"]');
+                    var note = holder ? holder.querySelector('.kw-mut') : null;
                     choose(function (c) { code.value = c.code; form.submit(); }, function () {
                         form.querySelector('[name="track_rank"]').value = '0'; form.submit();
-                    });
+                    }, { phrase: form.querySelector('[name="phrase"]').value, scope: note ? note.textContent.trim() : '' }, form.querySelector('[type="submit"]'));
                 });
             });
 
@@ -757,7 +949,7 @@
                     var code = trackAll.querySelector('[data-role="track-all-code"]');
                     if (code.value || hasAnyDefault()) { return; }
                     e.preventDefault();
-                    choose(function (c) { code.value = c.code; trackAll.submit(); });
+                    choose(function (c) { code.value = c.code; trackAll.submit(); }, null, { phrase: 'All suggested keywords', scope: '' }, trackAll.querySelector('[type="submit"]'));
                 });
             }
 

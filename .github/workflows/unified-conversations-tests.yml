@@ -82,6 +82,12 @@ jobs:
           tests/Feature/Conversations/ChatBoxLocationAclTest.php
           tests/Feature/Security/ConversationsViewAsSendTest.php
           --stop-on-failure
+      - name: Run New text dialog and managed new-conversation tests
+        run: >-
+          php artisan test
+          tests/Feature/Conversations/NewTextDialogTest.php
+          tests/Feature/Conversations/V1ManagedNewConversationTest.php
+          --stop-on-failure
       - name: Run contact timeline and manual edit audit regressions
         run: >-
           php artisan test

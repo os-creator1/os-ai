@@ -72,10 +72,20 @@ class SeoRankTargetsController extends CustomerBaseController
 
         $query = (string) $request->query('q', '');
 
-        $results = $this->locations->search(mb_substr($query, 0, 80), 10)->map(fn ($l) => [
-            'code' => (int) $l->location_code,
-            'label' => SeoRankLocationCatalog::label($l->location_name),
-        ])->values();
+        $shape = function ($l) {
+            $parts = array_map('trim', explode(',', (string) $l->location_name));
+
+            return [
+                'code' => (int) $l->location_code,
+                'label' => SeoRankLocationCatalog::label($l->location_name),
+                // The dialog shows the city left and "region, country" right.
+                'city' => $parts[0],
+                'region' => implode(', ', array_slice($parts, 1, -1)),
+                'country' => strtoupper((string) $l->country_iso),
+            ];
+        };
+
+        $results = $this->locations->search(mb_substr($query, 0, 80), 10)->map($shape)->values();
 
         // Local lookups only. "not_initialized" = no supported city cached at all; "partial" = some
         // supported country is still missing (so an empty result may only mean "not loaded yet").
@@ -87,7 +97,17 @@ class SeoRankTargetsController extends CustomerBaseController
             $status = 'partial';
         }
 
-        return response()->json(['locations' => $results, 'status' => $status]);
+        $payload = ['locations' => $results, 'status' => $status];
+
+        // Optional: the city the keyword phrase itself names ("...biloxi ms"), when exactly one cached city matches.
+        $phrase = trim((string) $request->query('hint', ''));
+
+        if ($phrase !== '') {
+            $hint = $this->locations->suggestFromPhrase(mb_substr($phrase, 0, 120));
+            $payload['hint'] = $hint === null ? null : $shape($hint);
+        }
+
+        return response()->json($payload);
     }
 
     public function track(Request $request, string $workspaceUid, string $businessUid, string $keywordUid): RedirectResponse
