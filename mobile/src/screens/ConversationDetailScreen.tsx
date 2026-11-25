@@ -74,7 +74,9 @@ function ConversationThread({ route, navigation }: Props) {
       const d = await api.conversation(scope, uid);
       if (version !== threadGeneration.current) return false;
       // A live refresh started after this load and owns the newer view; applying this older response would roll it back.
-      if (startedAs !== liveSeq.current) return true;
+      // Report "not refreshed" so a caller (a send) keeps its pending bubble until a refresh has actually confirmed it —
+      // the live refresh clears it itself once the server history contains the message.
+      if (startedAs !== liveSeq.current) return false;
       setData(d);
       dataRef.current = d;
       setHasMore(d.has_more);
@@ -127,6 +129,10 @@ function ConversationThread({ route, navigation }: Props) {
       // contiguously. (When the server says there is nothing older, the window IS the whole thread: no gap is possible.)
       const gap = d.has_more && prev.length > 0 && !prev.some((m) => newIds.has(m.id));
       if (gap) {
+        // Invalidate any "Load earlier" already in flight: it was computed against the history being discarded.
+        threadGeneration.current++;
+        earlierInFlight.current = false;
+        setLoadingEarlier(false);
         setOlder([]);
         setHasMore(true);
       } else {

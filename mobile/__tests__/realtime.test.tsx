@@ -255,6 +255,40 @@ describe('live conversation detail: window and focus', () => {
     expect(screen.getByText('m2')).toBeTruthy();
   });
 
+  it('keeps a just-sent message visible when its post-send reload is superseded by a live refresh that then fails', async () => {
+    const deferred: Array<{ resolve: (v: any) => void; reject: (e: any) => void }> = [];
+    const conversation = jest.fn()
+      .mockResolvedValueOnce(detail([msg(1, 'm1')]))
+      .mockImplementation(() => new Promise((resolve, reject) => { deferred.push({ resolve, reject }); }));
+    const api = fakeApi({ conversation, reply: jest.fn(async (_s: any, _u: any, _b: any, key: string) => ({ message: { send_uid: key, status: 'sent' } })) });
+    const t = await open(api, nav());
+    await fireEvent.changeText(screen.getByLabelText('Message'), 'On my way');
+    await fireEvent.press(screen.getByLabelText('Send'));
+    await waitFor(() => expect(deferred).toHaveLength(1));               // post-send load() in flight
+    await act(async () => { t.emit(ch, evt); });                          // the send's own event starts a live refresh
+    await waitFor(() => expect(deferred).toHaveLength(2));
+    await act(async () => { deferred[1].reject(new Error('offline')); }); // ...which fails silently
+    await act(async () => { deferred[0].resolve(detail([msg(1, 'm1')])); });
+    expect(screen.getByText('On my way')).toBeTruthy();                   // the bubble is not lost
+  });
+
+  it('a "Load earlier" already in flight cannot re-open a gap that a window restart just closed', async () => {
+    const deferred: Array<(v: any) => void> = [];
+    const conversation = jest.fn()
+      .mockResolvedValueOnce({ ...detail([msg(60, 'm1'), msg(61, 'm61')]), has_more: true })
+      .mockImplementation(() => new Promise((r) => { deferred.push(r); }));
+    const api = fakeApi({ conversation });
+    const t = await open(api, nav());
+    await fireEvent.press(screen.getByText('Load earlier messages'));    // pages before 60
+    await act(async () => { t.emit(ch, evt); });                          // reconnect window shares nothing with what we hold
+    await waitFor(() => expect(deferred).toHaveLength(2));
+    await act(async () => { deferred[1]({ ...detail([msg(201, 'm201'), msg(202, 'm202')]), has_more: true }); });
+    await waitFor(() => screen.getByText('m202'));
+    await act(async () => { deferred[0]({ ...detail([msg(10, 'm10')]), has_more: false }); });   // the stale page arrives late
+    expect(screen.queryByText('m10')).toBeNull();
+    expect(screen.getByText('Load earlier messages')).toBeTruthy();       // hasMore not clobbered
+  });
+
   it('does not yank the user to the bottom on a live update after they scrolled up to read history', async () => {
     const FlatList = require('react-native').FlatList;
     const spy = jest.spyOn(FlatList.prototype, 'scrollToEnd').mockImplementation(() => undefined);
