@@ -21,8 +21,10 @@ use App\Library\Seo\Content\ArticleOpportunityEngine;
 use App\Library\Seo\Content\ArticleSiteInventory;
 use App\Library\Seo\SeoKeywordManager;
 use App\Library\Website\Blog\WebsiteBlogRenderer;
+use App\Library\Website\Blog\WebsiteBlogSurface;
 use App\Library\Website\Media\WebsiteMediaPayload;
 use App\Models\Business;
+use App\Models\Website;
 use App\Models\WebsiteArticle;
 use App\Models\WebsiteAsset;
 use Carbon\Carbon;
@@ -480,6 +482,8 @@ class SeoContentArticleController extends CustomerBaseController
         $timezone = $this->timezoneOf($business);
 
         return [
+            'permalinkBase' => $website === null ? '/blog/' : $this->permalinkBase($website),
+            'savedAt' => $article === null ? null : ($article->draft_saved_at ?? $article->updated_at),
             'workspaceUid' => $workspaceUid,
             'businessUid' => $businessUid,
             'business' => $business,
@@ -499,6 +503,17 @@ class SeoContentArticleController extends CustomerBaseController
             'timezone' => $timezone,
             'scheduledLocal' => $article?->scheduled_at?->copy()->setTimezone($timezone)->format('Y-m-d\TH:i'),
         ];
+    }
+
+    /** The address an article lives under, without the slug: "example.com/blog/" on an active custom domain, else the platform path. */
+    private function permalinkBase(Website $website): string
+    {
+        $marker = '__slug__';
+        $surface = WebsiteBlogSurface::platform($website);
+        // The canonical (custom-domain) address is what search engines see; fall back to the platform path without one.
+        $url = $surface->canonicalArticleUrl($marker) ?? $surface->articleUrl($marker);
+
+        return str_replace($marker, '', (string) preg_replace('#^https?://#i', '', $url));
     }
 
     /** @return array<string, mixed> */
