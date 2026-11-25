@@ -2548,11 +2548,30 @@
 
           // Membership, not just content: a conversation that stops matching the tab (a reply makes a Read one unread; an answer
           // takes it out of Waiting) is gone from the server's page 1. The answer is the COMPLETE matching set when it is not a full
-          // page, so any other row goes; when it is a full page only the rows of page 1 can be judged (the rest were scrolled in from
-          // later pages and are left alone). The open conversation is never pulled out from under the operator.
-          if (prune) {
+          // page, so any other row goes. On a full page only rows ranking above the answer's last row can be judged: a row after it
+          // may simply have been pushed to page 2 by an arrival, and is left alone. A row that was scrolled in from a later page is
+          // never judged. The open conversation is never pulled out from under the operator.
+          // An answer with neither rows nor the server's empty state is not a list at all (a login page, an empty body): it changes
+          // nothing.
+          const isList = rows.length > 0 || $incoming.children("[data-role=chat-list-empty]").length > 0;
+
+          if (prune && isList) {
             const answered = rows.map(idOf);
-            const judged = rows.length < PAGE_ROWS ? $list.children("li[data-id]") : $list.children("li[data-id]").slice(0, PAGE_ROWS);
+            const local = $list.children("li[data-id]").get();
+            let judgedCount = local.length;
+
+            if (rows.length >= PAGE_ROWS) {
+              // The answer's own last row is the lowest-ranked one on page 1: an unchanged row that ranks above it is still on
+              // page 1, so up to it (in the list's order) a row missing from the answer really stopped matching; after it, it may
+              // only have been pushed to page 2. (Not "the last answered row in list order": a row that just replied can sit late.)
+              const boundary = answered[answered.length - 1];
+
+              judgedCount = 0;
+
+              local.forEach(function (el, index) { if (idOf(el) === boundary) { judgedCount = index + 1; } });
+            }
+
+            const judged = $(local.slice(0, judgedCount));
 
             judged.each(function () {
               const id = idOf(this);
@@ -2563,7 +2582,7 @@
 
           if (!rows.length) {
             // Nothing matches any more: show the server's own empty state instead of the stale rows.
-            if (prune && !$list.children("li[data-id]").length && !$list.children("[data-role=chat-list-empty]").length) {
+            if (prune && isList && !$list.children("li[data-id]").length && !$list.children("[data-role=chat-list-empty]").length) {
               $list.append($incoming.children("[data-role=chat-list-empty]").first());
             }
 
@@ -2794,7 +2813,8 @@
             } else {
               composerState.cfg = response.composer;
 
-              // The channel pill follows what is usable now (applyComposer's own rule), so the other channel can be reached.
+              // The channel pill follows what is usable now (applyComposer's own rule): a channel that is no longer usable is not
+              // offered as a clickable option. (With one channel left the pill is hidden, exactly as applyComposer would.)
               const $pill = $("[data-role=composer-channel]");
 
               $pill.find("[data-channel=sms]").prop("hidden", !response.composer.sms);

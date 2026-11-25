@@ -97,7 +97,8 @@ async function scenario(name, fn, { clock = false } = {}) {
     try {
       if (id === 'hold') { if (server.delay['timeline:hold']) { await server.delay['timeline:hold']; } return route.fulfill({ status: 200, contentType: 'application/json', body: '{}' }); }
       if (server.fail && server.fail(kind, id)) { const f = server.fail(kind, id); return route.fulfill({ status: f, body: 'no' }); }
-      const body = kind === 'list' && params.get('channel') === 'email' ? server.emails.map((t) => `<li data-id="email:${t}" data-channel="email" class="conv-row email-row"><h6 data-role="conversation-row-title">${t}</h6></li>`).join('')
+      const body = kind === 'list' && server.listBody !== undefined ? server.listBody
+        : kind === 'list' && params.get('channel') === 'email' ? server.emails.map((t) => `<li data-id="email:${t}" data-channel="email" class="conv-row email-row"><h6 data-role="conversation-row-title">${t}</h6></li>`).join('')
         : kind === 'timeline' ? JSON.stringify({ status: 'success', timeline: server.thread(id), composer: server.composer(id), channel: 'sms' }) : server.list(kind === 'pinned', params.get('filter'), kind === 'pinned' ? 0 : 50);
       const hold = server.delay[kind + ':' + (id || '')];
       const snapshot = body;   // the answer is fixed at request time; a late arrival is stale by then
@@ -550,6 +551,25 @@ const seed = (server) => { server.add('A', 'Ann'); server.add('B', 'Bob'); serve
     const after = await ids(page);
     assert.equal(after.includes('C10'), false, 'the page-1 row that stopped matching is gone');
     assert.equal(after.includes('C52') && after.includes('C54'), true, 'rows from later pages are untouched');
+  });
+
+  await scenario('(filter) a row displaced to page 2 by an arrival on a full page is kept, and the list stays aligned with the server\'s paging', async (page, server) => {
+    for (let i = 0; i < 55; i++) { server.add('C' + i, 'Conv ' + i); server.inbound('C' + i, 'm' + i, 'k' + i); server.convs['C' + i].at = 5000 - i; }
+    await bootList(page, server);                                                                // all 55 on screen, as after scrolling to page 2
+    server.clock = 9000; server.inbound('C52', 'a later-page conversation jumps to the top', 'k52x');   // server page 1 is now C52, C0..C48: C49 is displaced
+    await refresh(page, server);
+    const after = await ids(page);
+    assert.equal(after[0], 'C52', 'the replied conversation moved to the top');
+    assert.equal(after.includes('C49'), true, 'C49 only moved to page 2: it is still a matching conversation');
+    assert.equal(after.length, 55, 'nothing was lost');
+  });
+
+  await scenario('(filter) a 200 answer that is not a real list (no rows, no empty state) never wipes the list', async (page, server) => {
+    seed(server); await bootList(page, server);
+    server.listBody = '<html><body>Please sign in</body></html>';
+    await refresh(page, server);
+    assert.deepEqual((await ids(page)).sort(), ['A', 'B'], 'the list is untouched');
+    assert.equal(await emptyShown(page), 0);
   });
 
   // ---- (MMS playback) unchanged attachments keep their player, position and play state across a refresh ----
