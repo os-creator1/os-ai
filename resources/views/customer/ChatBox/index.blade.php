@@ -2492,6 +2492,8 @@
         const REMOVES_ROW = /\/(archive|unarchive|delete)(\?.*)?$/;
         let listGen = 0;
         let removing = 0;
+        let listSeq = 0;                      // requests are numbered as they are issued ...
+        let appliedSeq = 0;                   // ... and an answer older than one already applied is never applied
         const rowFor = ($root, id) => $root.children("li").filter(function () { return idOf(this) === id; }).first();
 
         function markRead($li) {
@@ -2499,24 +2501,31 @@
           $li.find(".chat-meta").html('<div class="counter" hidden><span class="badge bg-primary rounded-pill float-end notification_count"></span></div>');
         }
 
-        // The server keeps counting for a conversation the operator has already opened (opening is a client-side read), so a
-        // refreshed row is unread only for what arrived after the operator last looked.
-        function applyReadState($li, activeId) {
+        function showUnread($li, count) {
+          $li.addClass("conv-unread");
+          $li.find(".chat-meta").html('<span class="badge bg-primary rounded-pill float-end notification_count"></span>');
+          $li.find(".notification_count").text(count);
+        }
+
+        // What a row shows, from two separate numbers: the server's cumulative count (data-server-count, as last observed) and the
+        // baseline the operator has actually looked at (seenCount). The server keeps counting for a conversation the operator
+        // opened (opening is a client-side read), so a row is unread only for what arrived after the baseline. A raw count BELOW the
+        // baseline is a genuine decrease (another client read the conversation and reset the shared counter), so the baseline
+        // follows it down and the next reply is unread again. The baseline never advances here: only a rendered thread advances it.
+        function paintRow($li) {
           const id = idOf($li);
 
           if (!isSms(id)) { return; }
 
-          const raw = countOf($li);   // straight from the server's markup here
-
-          $li.attr("data-server-count", raw);
-
-          if (id === activeId) { seenCount[id] = raw; }
+          const raw = rawCountOf($li);
 
           if (seenCount[id] === undefined) { return; }
 
+          if (raw < seenCount[id]) { seenCount[id] = raw; }
+
           const fresh = raw - seenCount[id];
 
-          if (fresh <= 0) { markRead($li); } else { $li.find(".notification_count").first().text(fresh); }
+          if (fresh <= 0) { markRead($li); } else { showUnread($li, fresh); }
         }
 
         // Page 1 of the same list, merged into what is shown: rows keep their identity (once each), move to their new place
@@ -2542,7 +2551,8 @@
 
             if ($old.hasClass("active") || idOf(rows[i]) === activeId) { $new.addClass("active"); }
 
-            applyReadState($new, activeId);
+            $new.attr("data-server-count", countOf($new));   // the server's own markup: the cumulative count
+            paintRow($new);
             $old.remove();
             $list.prepend($new);
           }
@@ -2561,7 +2571,11 @@
           if (pinned) { data.pinned = 1; }
 
           const gen = listGen;
+          const seq = ++listSeq;
           const html = await post(conversationRoutes.load, data);
+
+          // A newer answer has already been applied: this one is stale, and its (possibly lower) counts would fake a decrease.
+          if (seq < appliedSeq) { return; }
 
           // A row-removing action ran (or is running) since this was asked: this answer may still contain what it removed.
           if (gen !== listGen || removing > 0) { return; }
@@ -2569,6 +2583,7 @@
           // The operator changed tab, search or channel meanwhile: this answer is for a list that is no longer shown.
           if (scopeKey(scopeOf() || {}) !== key) { return; }
 
+          appliedSeq = seq;
           mergeRows($(pinned ? "#users-list > .chat-users-list-pinned" : ".chat-users-list").first(), html, !pinned);
         }
 
@@ -2636,6 +2651,10 @@
           if (!isSms(activeId) || activeId === deadThread || !$(".chat_history").children().length) { return; }
 
           const startedAt = Date.now();
+          const $row = $("#users-list li[data-id]").filter(function () { return idOf(this) === activeId; }).first();
+          // What the list had observed for this conversation BEFORE the thread was asked for: the thread answer, being later, holds
+          // at least those messages. Anything that arrives after this stays unread until a later answer displays it.
+          const observed = $row.length && $row.attr("data-server-count") !== undefined ? rawCountOf($row) : null;
           let response;
 
           try {
@@ -2655,6 +2674,12 @@
           if (ownRequests > 0 || ownActivityAt >= startedAt) { return; }
 
           applyTimeline(response.timeline);
+
+          // Only now, with the thread displayed, is what the list observed counted as seen.
+          if (observed !== null) {
+            seenCount[activeId] = observed;
+            $("#users-list li[data-id]").filter(function () { return idOf(this) === activeId; }).each(function () { paintRow($(this)); });
+          }
         }
 
         function schedule(ms) {

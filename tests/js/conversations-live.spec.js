@@ -302,6 +302,73 @@ const seed = (server) => { server.add('A', 'Ann'); server.add('B', 'Bob'); serve
     assert.equal(await page.evaluate(() => $('.chat-users-list li[data-id=A] .notification_count').text()), '1');
   });
 
+  const badge = (page, id) => page.evaluate((i) => ({ unread: $('.chat-users-list li[data-id=' + i + ']').hasClass('conv-unread'), n: $('.chat-users-list li[data-id=' + i + '] .notification_count').text() }), id);
+
+  await scenario('(unseen reply 1) the poll observes a reply, A\'s timeline is delayed, the operator switches to B, the late answer is dropped: A stays unread', async (page, server) => {
+    seed(server); await bootList(page, server); await open(page, server, 'A');
+    let release; server.delay['timeline:A'] = new Promise((r) => { release = r; });
+    server.inbound('A', 'never rendered in A', 'a2');
+    await page.evaluate(() => inboxLive.refreshNow()); await page.waitForTimeout(400);        // list observed the reply, timeline still pending
+    await page.evaluate(() => $('.chat-users-list li[data-id=B]').trigger('click'));
+    await page.waitForFunction(() => $('.chat_id').val() === 'B' && $('.chat_history [data-item-key=b1]').length === 1);
+    server.delay['timeline:A'] = null; release(); await page.waitForTimeout(500);
+    assert.deepEqual(await badge(page, 'A'), { unread: true, n: '1' });
+    await refresh(page, server); await refresh(page, server);
+    assert.deepEqual(await badge(page, 'A'), { unread: true, n: '1' }, 'and it stays unread on later polls');
+  });
+
+  await scenario('(unseen reply 2) the timeline request FAILS, then the operator switches away: A stays unread', async (page, server) => {
+    seed(server); await bootList(page, server); await open(page, server, 'A');
+    server.fail = (kind, id) => (kind === 'timeline' && id === 'A' ? 503 : 0);
+    server.inbound('A', 'unseen', 'a2');
+    await page.evaluate(() => inboxLive.refreshNow()); await page.waitForTimeout(500);
+    assert.deepEqual(await keys(page), ['a1'], 'the reply was never drawn');
+    await open(page, server, 'B'); server.fail = null;
+    await refresh(page, server);
+    assert.deepEqual(await badge(page, 'A'), { unread: true, n: '1' });
+  });
+
+  await scenario('(unseen reply 3) the reply actually renders in A: A is read, and stays read after switching away', async (page, server) => {
+    seed(server); await bootList(page, server); await open(page, server, 'A');
+    server.inbound('A', 'seen in A', 'a2'); await refresh(page, server);
+    assert.deepEqual(await keys(page), ['a1', 'a2']);
+    assert.equal((await badge(page, 'A')).unread, false);
+    await open(page, server, 'B'); await refresh(page, server);
+    assert.equal((await badge(page, 'A')).unread, false, 'read, because it was displayed');
+  });
+
+  await scenario('(unseen reply 4) an arrival newer than what an older timeline answer contained stays unread', async (page, server) => {
+    seed(server); await bootList(page, server); await open(page, server, 'A');
+    server.inbound('A', 'in the answer', 'a2');
+    let release; server.delay['timeline:A'] = new Promise((r) => { release = r; });
+    await page.evaluate(() => inboxLive.refreshNow()); await page.waitForTimeout(400);        // timeline request issued: its answer holds a2 only
+    server.inbound('A', 'newer than the answer', 'a3');
+    server.delay['timeline:A'] = null; release(); await page.waitForTimeout(500);
+    assert.deepEqual(await keys(page), ['a1', 'a2']);
+    // The next cycle's list observes a3, but its own timeline answer is held and the operator leaves: a3 was never displayed.
+    let release2; server.delay['timeline:A'] = new Promise((r) => { release2 = r; });
+    await page.evaluate(() => inboxLive.refreshNow()); await page.waitForTimeout(400);
+    await page.evaluate(() => $('.chat-users-list li[data-id=B]').trigger('click'));
+    await page.waitForFunction(() => $('.chat_id').val() === 'B' && $('.chat_history [data-item-key=b1]').length === 1);
+    server.delay['timeline:A'] = null; release2(); await page.waitForTimeout(500);
+    assert.deepEqual(await badge(page, 'A'), { unread: true, n: '1' }, 'a3 was never displayed, so it is unread (a2 was displayed, so it is not counted)');
+    await open(page, server, 'A'); await refresh(page, server);
+    assert.deepEqual(await keys(page), ['a1', 'a2', 'a3']);
+    assert.equal((await badge(page, 'A')).unread, false, 'read once it is displayed');
+  });
+
+  await scenario('(mobile read) the server counter is reset by another client: the next reply shows 1 unread, not hidden by the old baseline', async (page, server) => {
+    seed(server); server.convs.A.unread = 5; await bootList(page, server);
+    await open(page, server, 'A'); await open(page, server, 'B');
+    server.convs.A.unread = 0;                                                                // read on mobile: shared counter reset
+    await refresh(page, server);
+    assert.equal((await badge(page, 'A')).unread, false);
+    server.inbound('A', 'first reply after the mobile read', 'a2'); await refresh(page, server);
+    assert.deepEqual(await badge(page, 'A'), { unread: true, n: '1' });
+    server.inbound('A', 'second', 'a3'); await refresh(page, server);
+    assert.deepEqual(await badge(page, 'A'), { unread: true, n: '2' });
+  });
+
   await scenario('(thread 2) poll in flight, the operator pins (real handler), the older response lands: the row appears once, in the rail', async (page, server) => {
     seed(server); await bootList(page, server); await open(page, server, 'A');
     let release; server.delay['list:'] = new Promise((r) => { release = r; });
