@@ -541,6 +541,24 @@ describe('live conversation list', () => {
     jest.useRealTimers();
   });
 
+  it('restarts from the top when the refreshed first page cannot be joined to the loaded results (a burst of new conversations)', async () => {
+    jest.useFakeTimers();
+    const conversations = jest.fn()
+      .mockResolvedValueOnce({ data: [row('c1', 'Ann', false, 'old top')], meta: { page: 1, next_page: 2 } })
+      .mockResolvedValue({ data: [row('n1', 'Newcomer One', true, 'burst'), row('n2', 'Newcomer Two', true, 'burst')], meta: { page: 1, next_page: 2 } });
+    const { factory, created } = fakeTransports();
+    await mount(fakeApi({ conversations }), factory, <ConversationsScreen {...({ navigation: { navigate: jest.fn(), setOptions: jest.fn() }, route: { params: undefined } } as any)} />);
+    await waitFor(() => screen.getByText('Ann'));
+    await waitFor(() => expect(created).toHaveLength(1));
+    await act(async () => { created[0].emit(channelFor('biz-aaaaaaaa', 'user-uid-0001'), { type: 'received', business_uid: 'biz-aaaaaaaa', conversation_uid: 'n1' }); });
+    await act(async () => { jest.advanceTimersByTime(400); });
+    await waitFor(() => screen.getByText('Newcomer One'));
+    // Pagination restarted from the fresh page 1 (a second fetch, then a full reload), not spliced onto the old list.
+    await waitFor(() => expect(conversations.mock.calls.length).toBeGreaterThanOrEqual(3));
+    expect(screen.queryByText('Ann')).toBeNull();
+    jest.useRealTimers();
+  });
+
   it('an older, slower inbox refresh cannot overwrite a newer one', async () => {
     jest.useFakeTimers();
     const deferred: Array<(v: any) => void> = [];

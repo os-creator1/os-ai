@@ -108,6 +108,15 @@ export function ConversationsScreen({ navigation }: Props) {
     try {
       const res = await api.conversations(scope, { filter, page: 1 });
       if (generation.current !== current || mine !== refreshSeq.current) return;
+      // If page 1 shares nothing with what is loaded while more pages exist, so many conversations arrived at once that the
+      // new window cannot be joined contiguously to the old results (some changed conversation may now sit on a page we
+      // would skip). Restart from the top instead of splicing.
+      const loadedNow = itemsRef.current ?? [];
+      if (loadedNow.length > 0 && res.meta.next_page !== null && !res.data.some((c) => loadedNow.some((l) => l.uid === c.uid))) {
+        unappliedUids.current.clear();
+        void load(true);
+        return;
+      }
       const onPageOne = new Set(res.data.map((c) => c.uid));
       const patches = new Map<string, ConversationSummary | null>();
       for (const uid of uids) {
