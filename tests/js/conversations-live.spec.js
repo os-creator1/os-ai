@@ -73,6 +73,7 @@ async function scenario(name, fn, { clock = false } = {}) {
     server.hits.push({ kind, id, params: Object.fromEntries(params) });
     server.inflight += 1; server.maxInflight = Math.max(server.maxInflight, server.inflight);
     try {
+      if (id === 'hold') { if (server.delay['timeline:hold']) { await server.delay['timeline:hold']; } return route.fulfill({ status: 200, contentType: 'application/json', body: '{}' }); }
       if (server.fail && server.fail(kind, id)) { const f = server.fail(kind, id); return route.fulfill({ status: f, body: 'no' }); }
       const body = kind === 'list' && params.get('channel') === 'email' ? server.emails.map((t) => `<li data-id="email:${t}" data-channel="email" class="conv-row email-row"><h6 data-role="conversation-row-title">${t}</h6></li>`).join('')
         : kind === 'timeline' ? JSON.stringify({ status: 'success', timeline: server.thread(id) }) : server.list(kind === 'pinned');
@@ -381,6 +382,36 @@ const seed = (server) => { server.add('A', 'Ann'); server.add('B', 'Bob'); serve
     await page.evaluate(() => $('.chat-users-list li[data-id=B]').trigger('click'));
     await page.waitForTimeout(100);
     assert.deepEqual(await badge(page, 'A'), { unread: true, n: '1' }, 'left without it ever being displayed: unread');
+  });
+
+  await scenario('(no flash, opening) a reply arriving while the thread is still opening is never badged on the row being opened', async (page, server) => {
+    seed(server); await bootList(page, server);
+    let release; server.delay['timeline:A'] = new Promise((r) => { release = r; });
+    await page.evaluate(() => { window.flashed = false; new MutationObserver(() => { if ($('.chat-users-list li[data-id=A]').hasClass('conv-unread')) { window.flashed = true; } }).observe(document.getElementById('users-list'), { subtree: true, childList: true, attributes: true }); });
+    await page.evaluate(() => $('.chat-users-list li[data-id=A]').trigger('click')); await page.waitForTimeout(300);   // the open load is slow
+    server.inbound('A', 'arrives while A is opening', 'a2');
+    await page.evaluate(() => inboxLive.refreshNow()); await page.waitForTimeout(500);
+    server.delay['timeline:A'] = null; release();
+    await page.waitForFunction(() => $('.chat_history [data-item-key]').length >= 1); await page.waitForTimeout(300);
+    await refresh(page, server);
+    assert.deepEqual(await keys(page), ['a1', 'a2'].slice(0, (await keys(page)).length));
+    assert.equal(await page.evaluate(() => window.flashed), false, 'never badged, not even briefly');
+    assert.equal((await badge(page, 'A')).unread, false);
+  });
+
+  await scenario('(streak) the busy-skip cap is per open conversation, not shared across switches', async (page, server) => {
+    seed(server); await bootList(page, server); await open(page, server, 'A');
+    let releaseA; server.delay['timeline:hold'] = new Promise((r) => { releaseA = r; });
+    await page.evaluate(() => { $.post('http://conv.test/timeline/hold'); });                    // an own request in flight: thread steps are skipped
+    for (let i = 0; i < 5; i++) { await page.evaluate(() => inboxLive.refreshNow()); await page.waitForTimeout(250); }   // A burns the whole cap
+    releaseA(); await page.waitForTimeout(300);
+    await open(page, server, 'B');
+    let releaseB; server.delay['timeline:hold'] = new Promise((r) => { releaseB = r; });
+    await page.evaluate(() => { $.post('http://conv.test/timeline/hold'); });
+    server.inbound('B', 'reply to B while the page is busy', 'b2');
+    await page.evaluate(() => inboxLive.refreshNow()); await page.waitForTimeout(400);
+    assert.equal((await badge(page, 'B')).unread, false, 'B gets its own deferral window');
+    releaseB(); await page.waitForTimeout(300);
   });
 
   await scenario('(no stuck read) the initial load of A fails, so the thread is never displayed: a reply to A is still badged', async (page, server) => {

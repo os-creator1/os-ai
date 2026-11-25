@@ -2658,7 +2658,11 @@
           // Nothing drawn yet means the conversation is still opening through its own load; email and compose are other views.
           threadOutcome = "unsettled";
 
-          // Nothing displayed (the open load failed or is still running) or a thread the server no longer serves: no later cycle is
+          // The thread is still opening (nothing drawn yet, its own load in flight): that load will display what the list saw, so
+          // the row is deferred, not badged. The streak cap bounds it.
+          if (isSms(activeId) && activeId !== deadThread && !$(".chat_history").children().length && ownRequests > 0) { threadOutcome = "skipped"; return; }
+
+          // Nothing displayed and no load running (the open load failed) or a thread the server no longer serves: no later cycle is
           // going to display a reply here, so the row must be painted for what it is, never deferred.
           if (!isSms(activeId) || activeId === deadThread || !$(".chat_history").children().length) { return; }
 
@@ -2758,6 +2762,7 @@
           const leaving = deferId;
 
           deferId = "";
+          skipStreak = 0;                     // the cap belongs to the open conversation, not to the page
 
           if (isSms(idOf(this))) {
             // Stamped now, because the selection handler clears the badge: a row no poll has refreshed yet (the initial render, a
