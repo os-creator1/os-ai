@@ -17,6 +17,10 @@ const between = (from, to) => {
   return blade.slice(a, b);
 };
 const shipped = [
+  // The page's own composer (channel switch, reply target, Send): the live refresh must drive it, so it is loaded for real.
+  between('var composerState', "/**\n       * Load the person's activity timeline"),
+  between('function m5UuidV4', 'function enter_chat'),
+  between('function enter_chat', '// Conversations failed-send/retry — delegated'),
   between('// BEGIN live-inbox', '// END live-inbox'),
   between('$("#users-list").on("click", ".chat-users-list li, .chat-users-list-pinned li", function() {\n          // Destroy', '// The contact panel slides'),
   // The page's own pin handler and its own email archive / delete handlers (real code; the harness only supplies the server).
@@ -30,7 +34,13 @@ const html = `<!doctype html><html><body>
 <div id="users-list" style="height:160px;overflow:auto"><ul class="chat-users-list-pinned"></ul><ul class="chat-users-list"></ul></div>
 <div class="user-chats" style="height:120px;overflow:auto"><div class="chat_history"></div></div>
 <div id="conversation-context"></div><button class="add-to-pin">pin</button><div class="active-chat"></div><div class="start-chat-area d-none"></div>
-<button data-email-action="archive">archive</button><button data-email-action="delete">delete</button><input type="file" id="media_image"><textarea id="message"></textarea></body></html>`;
+<button data-email-action="archive">archive</button><button data-email-action="delete">delete</button><input type="file" id="media_image">
+<div class="chat-app-form"><div data-role="composer-channel"><button class="conversation-channel-option" data-channel="sms"></button><button class="conversation-channel-option" data-channel="email"></button></div>
+<div data-role="composer-email-fields"><input id="email-subject"><select id="email-location"></select></div><div data-role="composer-email-toolbar"></div><span data-role="composer-email-to"><span data-role="composer-email-recipient"></span></span><p data-role="composer-guidance"></p>
+<textarea id="message" class="message"></textarea><button class="send">Send</button></div></body></html>`;
+
+// 10 s of silence as a playable WAV, so a real <audio>/<video> element can genuinely play in Chromium.
+const wav = (() => { const n = 80000, b = Buffer.alloc(44 + n, 0x80); b.write('RIFF', 0); b.writeUInt32LE(36 + n, 4); b.write('WAVEfmt ', 8); b.writeUInt32LE(16, 16); b.writeUInt16LE(1, 20); b.writeUInt16LE(1, 22); b.writeUInt32LE(8000, 24); b.writeUInt32LE(8000, 28); b.writeUInt16LE(1, 32); b.writeUInt16LE(8, 34); b.write('data', 36); b.writeUInt32LE(n, 40); return 'data:audio/wav;base64,' + b.toString('base64'); })();
 
 // ---- the simulated server: conversations with stored messages; unread is a server count that opening never clears ----
 function makeServer() {
@@ -46,13 +56,20 @@ function makeServer() {
       + '</div></li>';
   };
   s.list = (pinned) => Object.values(s.convs).filter((c) => c.pinned === pinned).sort((a, b) => b.at - a.at).map(row).join('');
-  s.thread = (id) => s.convs[id].msgs.map((m) => `<div class="chat" data-role="timeline-message" data-item-key="${m.key}"><p>${m.text}</p></div>`).join('') || '<div class="timeline-empty">No messages</div>';
+  s.thread = (id) => s.convs[id].msgs.map((m) => `<div class="chat" data-role="timeline-message" data-item-key="${m.key}">${(m.media || []).map((x) => `<p class="timeline-media"><${x.tag} controls src="${x.src}"></${x.tag}></p>`).join('')}<p>${m.text}</p>${m.detail ? `<span data-role="timeline-detail">${m.detail}</span>` : ''}</div>`).join('') || '<div class="timeline-empty">No messages</div>';
+  s.addMedia = (id, text, key, media) => { const c = s.convs[id]; c.msgs.push({ key, dir: 'in', text, media }); c.unread += 1; c.at = s.clock++; };
+  s.setDetail = (id, key, detail) => { s.convs[id].msgs.find((m) => m.key === key).detail = detail; };
+  // The composer the real timeline() returns: the Contact's latest email thread is the reply target, else a fresh send.
+  s.composer = (id) => ({ sms: true, email: true, default: 'sms', email_connected: true, recipient: 'pat@example.com', subject: 'Re: Hi', locations: [],
+    url: s.convs[id].emailUrl || 'http://conv.test/email/send', contact_uid: s.convs[id].emailUrl ? null : 'contact-' + id });
+  s.emailArrives = (id, thread) => { const c = s.convs[id]; c.emailUrl = 'http://conv.test/email/reply/' + thread; c.msgs.push({ key: 'email:' + thread, dir: 'in', text: 'New email on ' + thread }); c.unread += 1; c.at = s.clock++; };
+  s.sent = [];
   return s;
 }
 
 async function scenario(name, fn, { clock = false } = {}) {
   if (process.env.ONLY && !name.includes(process.env.ONLY)) { return; }
-  const browser = await chromium.launch();
+  const browser = await chromium.launch({ args: ['--autoplay-policy=no-user-gesture-required'] });
   const page = await browser.newPage();
   const server = makeServer();
   if (clock) { await page.clock.install(); }
@@ -68,6 +85,7 @@ async function scenario(name, fn, { clock = false } = {}) {
       if (act === 'archive' || act === 'delete') { server.emails = server.emails.filter((e) => e !== t); }
       return route.fulfill({ status: 200, contentType: 'application/json', body: '{"status":"success"}' });
     }
+    if (url.includes('/email/send') || url.includes('/email/reply/')) { server.sent.push({ url, body: Object.fromEntries(params) }); return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ status: 'success', message: 'Sent.' }) }); }
     const kind = url.includes('/load') ? (params.get('pinned') ? 'pinned' : 'list') : 'timeline';
     const id = kind === 'timeline' ? url.split('/').pop() : null;
     server.hits.push({ kind, id, params: Object.fromEntries(params) });
@@ -76,7 +94,7 @@ async function scenario(name, fn, { clock = false } = {}) {
       if (id === 'hold') { if (server.delay['timeline:hold']) { await server.delay['timeline:hold']; } return route.fulfill({ status: 200, contentType: 'application/json', body: '{}' }); }
       if (server.fail && server.fail(kind, id)) { const f = server.fail(kind, id); return route.fulfill({ status: f, body: 'no' }); }
       const body = kind === 'list' && params.get('channel') === 'email' ? server.emails.map((t) => `<li data-id="email:${t}" data-channel="email" class="conv-row email-row"><h6 data-role="conversation-row-title">${t}</h6></li>`).join('')
-        : kind === 'timeline' ? JSON.stringify({ status: 'success', timeline: server.thread(id) }) : server.list(kind === 'pinned');
+        : kind === 'timeline' ? JSON.stringify({ status: 'success', timeline: server.thread(id), composer: server.composer(id), channel: 'sms' }) : server.list(kind === 'pinned');
       const hold = server.delay[kind + ':' + (id || '')];
       const snapshot = body;   // the answer is fixed at request time; a late arrival is stale by then
       if (hold) { await hold; }
@@ -90,13 +108,13 @@ async function scenario(name, fn, { clock = false } = {}) {
   await page.evaluate((code) => {
     window.conversationRoutes = { load: 'http://conv.test/load' };
     window.conversationUrl = (n, id) => 'http://conv.test/' + n + '/' + id;
-    window.invalidateComposer = () => {}; window.resetConversationHeader = () => {};
+    window.resetConversationHeader = () => {}; window.isRtl = false; window.emailSendsInFlight = window.emailSendsInFlight || {};
     window.setPinState = () => {}; window.confirm = () => true;
     window.toastr = { warning: (m) => (window.toasts = window.toasts || []).push(m), success: () => {} };
     window.conversationRoutes.emailAction = { archive: 'http://conv.test/email-thread/archive', delete: 'http://conv.test/email-thread/delete', unarchive: 'http://conv.test/email-thread/unarchive', unread: 'http://conv.test/email-thread/unread' };
     window.conversationUrl = (n, id) => 'http://conv.test/' + n + '/' + id;
     // The selection handler's own timeline load: the open conversation's thread is drawn when it answers.
-    window.loadTimeline = (id) => $.post('http://conv.test/timeline/' + id).done((r) => { if ($('.chat_id').val() === String(id)) { $('.chat_history').html(r.timeline); } });
+    window.loadTimeline = (id) => $.post('http://conv.test/timeline/' + id).done((r) => { if ($('.chat_id').val() === String(id)) { $('.chat_history').html(r.timeline); applyComposer(r.composer, 'sms'); } });
     window.scope = { filter: 'recents', search: '', channel: 'all', createdFrom: '', createdTo: '' };
     const s = document.createElement('script'); s.textContent = code; document.body.appendChild(s);
   }, shipped);
@@ -412,6 +430,74 @@ const seed = (server) => { server.add('A', 'Ann'); server.add('B', 'Bob'); serve
     await page.evaluate(() => inboxLive.refreshNow()); await page.waitForTimeout(400);
     assert.equal((await badge(page, 'B')).unread, false, 'B gets its own deferral window');
     releaseB(); await page.waitForTimeout(300);
+  });
+
+  // ---- (email reply target) the refreshed timeline's composer metadata drives the page's real composer and Send ----
+  const composeEmail = (page) => page.evaluate(() => { setComposerChannel('email'); $('#email-subject').val('Re: pricing'); $('#message').val('half-typed email reply').focus(); $('#message')[0].setSelectionRange(2, 6); });
+  const sendAndRead = async (page, server) => { await page.evaluate(() => enter_chat()); await page.waitForTimeout(500); return server.sent.at(-1); };
+
+  for (const [label, hadThread] of [['the contact already had an email thread', true], ['the contact had no email thread when first opened', false]]) {
+    await scenario(`(email reply target) ${label}: a newer thread arrives through live refresh, and Send targets it, with draft, focus and channel kept`, async (page, server) => {
+      seed(server); if (hadThread) { server.convs.A.emailUrl = 'http://conv.test/email/reply/T-old'; }
+      await bootList(page, server); await open(page, server, 'A'); await composeEmail(page);
+      assert.equal(await page.evaluate(() => composerState.cfg.url), hadThread ? 'http://conv.test/email/reply/T-old' : 'http://conv.test/email/send');
+      server.emailArrives('A', 'T-new'); await refresh(page, server);
+      assert.ok((await keys(page)).includes('email:T-new'), 'the timeline shows the new email');
+      assert.equal(await page.evaluate(() => composerState.cfg.url), 'http://conv.test/email/reply/T-new', 'the composer now targets the new thread');
+      assert.equal(await page.evaluate(() => composerState.channel), 'email', 'the selected channel is kept');
+      assert.equal(await page.evaluate(() => $('#message').val()), 'half-typed email reply', 'the draft is kept');
+      assert.equal(await page.evaluate(() => $('#email-subject').val()), 'Re: pricing', 'the typed subject is kept');
+      assert.equal(await page.evaluate(() => document.activeElement.id), 'message', 'focus is kept');
+      assert.deepEqual(await page.evaluate(() => [$('#message')[0].selectionStart, $('#message')[0].selectionEnd]), [2, 6]);
+      const sent = await sendAndRead(page, server);
+      assert.ok(sent, 'Send made a request');
+      assert.equal(sent.url, 'http://conv.test/email/reply/T-new', 'the ACTUAL request goes to the newest thread');
+      assert.equal(sent.body.body, 'half-typed email reply');
+      assert.equal(sent.body.contact_uid, undefined, 'a reply to a thread, not a new send for the contact');
+    });
+  }
+
+  // ---- (MMS playback) unchanged attachments keep their player, position and play state across a refresh ----
+  const playing = (page) => page.evaluate(async () => {
+    const a = $('audio')[0], v = $('video')[0]; window.__a = a; window.__v = v;
+    await Promise.all([a.play(), v.play()]);
+    await new Promise((r) => setTimeout(r, 700));
+    return { a: a.currentTime, v: v.currentTime };
+  });
+  const players = (page) => page.evaluate(() => ({ sameA: $('audio')[0] === window.__a, sameV: $('video')[0] === window.__v, aPaused: window.__a.paused, vPaused: window.__v.paused, a: window.__a.currentTime, v: window.__v.currentTime, connected: window.__a.isConnected && window.__v.isConnected }));
+
+  await scenario('(MMS playback) a new message arriving keeps the playing audio and video elements, positions and play state', async (page, server) => {
+    seed(server); server.addMedia('A', 'voicemail', 'mm1', [{ tag: 'audio', src: wav }]); server.convs.A.msgs.find((m) => m.key === 'mm1').media.push({ tag: 'video', src: wav });
+    await bootList(page, server); await open(page, server, 'A');
+    const before = await playing(page);
+    assert.ok(before.a > 0.3 && before.v > 0.3, 'both are really playing');
+    server.inbound('A', 'a newer message', 'a9'); await refresh(page, server);
+    assert.ok((await keys(page)).includes('a9'), 'the new message is rendered');
+    const after = await players(page);
+    assert.equal(after.sameA && after.sameV, true, 'the existing elements were kept, not recreated');
+    assert.equal(after.aPaused || after.vPaused, false, 'still playing');
+    assert.ok(after.a >= before.a && after.v >= before.v, 'the positions did not reset');
+  });
+
+  await scenario('(MMS playback) a delivery update on the attachment\'s own message is rendered and the player is still kept', async (page, server) => {
+    seed(server); server.addMedia('A', 'voicemail', 'mm1', [{ tag: 'audio', src: wav }]); server.convs.A.msgs.find((m) => m.key === 'mm1').media.push({ tag: 'video', src: wav });
+    await bootList(page, server); await open(page, server, 'A');
+    const before = await playing(page);
+    server.setDetail('A', 'mm1', 'Delivered'); await refresh(page, server);
+    assert.equal(await page.evaluate(() => $('[data-item-key=mm1] [data-role=timeline-detail]').text()), 'Delivered', 'the delivery state is rendered');
+    const after = await players(page);
+    assert.equal(after.sameA && after.sameV && after.connected, true, 'the same players, still in the page');
+    assert.equal(after.aPaused || after.vPaused, false, 'still playing');
+    assert.ok(after.a >= before.a && after.v >= before.v, 'the positions did not reset');
+  });
+
+  await scenario('(MMS playback) an attachment that actually changed is replaced, not kept', async (page, server) => {
+    seed(server); server.addMedia('A', 'voicemail', 'mm1', [{ tag: 'audio', src: wav }]);
+    await bootList(page, server); await open(page, server, 'A');
+    await page.evaluate(() => { window.__a = $('audio')[0]; });
+    server.convs.A.msgs.find((m) => m.key === 'mm1').media = [{ tag: 'audio', src: wav + 'AAAA' }];
+    await refresh(page, server);
+    assert.equal(await page.evaluate(() => $('audio')[0] === window.__a), false, 'a different source is a different attachment');
   });
 
   await scenario('(no stuck read) the initial load of A fails, so the thread is never displayed: a reply to A is still badged', async (page, server) => {

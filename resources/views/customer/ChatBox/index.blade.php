@@ -2602,6 +2602,63 @@
           return $copy.html();
         }
 
+        // Brings the displayed thread to the server's markup item by item, by stable key. An item that did not change is kept as the
+        // very same DOM node; an item that did (a delivery state) is replaced, but its audio / video elements whose source is
+        // unchanged are carried over into the new node, so a playing attachment keeps its player, position and play state. (A
+        // media element moved within one task is not paused; it only pauses if it is left out of the document.)
+        function reconcileThread(hist, next) {
+          const keyOf = (node) => (node.nodeType === 1 ? node.getAttribute("data-item-key") : null);
+          const signature = (el) => {
+            const copy = el.cloneNode(true);
+
+            copy.removeAttribute("open");
+            copy.querySelectorAll("details").forEach(function (d) { d.removeAttribute("open"); });
+
+            return copy.outerHTML;
+          };
+          const existing = {};
+
+          Array.from(hist.children).forEach(function (el) {
+            const key = keyOf(el);
+
+            if (key !== null && existing[key] === undefined) { existing[key] = el; }
+          });
+
+          const wanted = Array.from(next.childNodes).map(function (node) {
+            const key = keyOf(node);
+            const old = key === null ? undefined : existing[key];
+
+            if (old === undefined) { return node; }
+
+            if (signature(old) === signature(node)) { return old; }
+
+            const used = [];
+
+            old.querySelectorAll("audio, video").forEach(function (player) {
+              const twin = Array.from(node.querySelectorAll(player.tagName.toLowerCase())).find(function (el) {
+                return used.indexOf(el) === -1 && el.getAttribute("src") === player.getAttribute("src");
+              });
+
+              if (twin) { used.push(twin); twin.replaceWith(player); }
+            });
+
+            return node;
+          });
+
+          let cursor = hist.firstChild;
+
+          wanted.forEach(function (node) {
+            if (node === cursor) { cursor = cursor.nextSibling; } else { hist.insertBefore(node, cursor); }
+          });
+
+          while (cursor) {
+            const following = cursor.nextSibling;
+
+            hist.removeChild(cursor);
+            cursor = following;
+          }
+        }
+
         // Re-render the open thread from the server's own markup, keeping what the operator is doing: the composer is never
         // touched, a reader keeps their place, and someone at the bottom keeps following. Items are keyed by their stable
         // identity so one message can never be drawn twice.
@@ -2629,7 +2686,7 @@
             });
           }
 
-          $hist.html($next.html());
+          reconcileThread($hist[0], $next[0]);
 
           const seen = {};
 
@@ -2688,6 +2745,11 @@
           // The operator sent, retried or reloaded this thread meanwhile (or is doing so now): this answer may predate it and
           // would revert a fresher render or drop a just-sent bubble. The next cycle reads the settled thread.
           if (ownRequests > 0 || ownActivityAt >= startedAt) { threadOutcome = "skipped"; return; }
+
+          // The reply target follows the thread: the answer carries the composer the server derived from the Contact's LATEST email
+          // thread, and Send submits through the configuration kept here. applyComposer is what the thread's own load runs on a
+          // refresh of the same conversation: it keeps the selected channel and the typed subject, and never touches the draft.
+          if (response.composer) { applyComposer(response.composer, response.channel === "email" ? "email" : "sms"); }
 
           applyTimeline(response.timeline);
 
