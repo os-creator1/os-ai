@@ -40,15 +40,15 @@ class NotifyMobileOfInboundMessage implements ShouldQueue
         // Only an occurrence that just happened is "new": an import, a backfill, or a queue backlog clearing must not ring phones
         // for old messages. Judged by THIS occurrence's own record, never by the thread's latest message (which a newer
         // message would make look fresh for every old occurrence too).
-        $fresh = $this->occurredWithinFreshWindow($event->occurrenceKey);
+        $freshUntil = $this->freshUntil($event->occurrenceKey);
 
-        if (! $fresh) {
+        if ($freshUntil === null || $freshUntil <= now()->getTimestamp()) {
             return;
         }
 
         foreach ($users as $user) {
             try {
-                SendMobilePush::dispatch((int) $user->id, (int) $box->id, $event->occurrenceKey);
+                SendMobilePush::dispatch((int) $user->id, (int) $box->id, $event->occurrenceKey, $freshUntil);
             } catch (\Throwable $e) {
                 // Never let a push problem surface in the inbound pipeline (synchronous queue drivers run the job inline).
                 Log::warning('mobile_push_failed', ['exception' => $e::class]);
@@ -56,7 +56,11 @@ class NotifyMobileOfInboundMessage implements ShouldQueue
         }
     }
 
-    private function occurredWithinFreshWindow(string $occurrenceKey): bool
+    /**
+     * The unix time until which THIS occurrence is still "new" (its own record's created_at + the freshness window), or null
+     * when it cannot be proven fresh (unknown or missing record). The push job re-checks this deadline when it RUNS.
+     */
+    private function freshUntil(string $occurrenceKey): ?int
     {
         [$kind, $id] = array_pad(explode(':', $occurrenceKey, 2), 2, '');
 
@@ -66,7 +70,10 @@ class NotifyMobileOfInboundMessage implements ShouldQueue
             default => null,
         };
 
-        // Unknown or missing record: not provably fresh, so no push (the live event still goes out).
-        return $at !== null && \Illuminate\Support\Carbon::parse($at)->gte(now()->subSeconds((int) config('mobile.fresh_message_seconds', 600)));
+        if ($at === null) {
+            return null;
+        }
+
+        return \Illuminate\Support\Carbon::parse($at)->getTimestamp() + (int) config('mobile.fresh_message_seconds', 600);
     }
 }

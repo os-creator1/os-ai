@@ -262,6 +262,28 @@ class MobileRealtimePushTest extends TestCase
         $this->assertCount(1, $this->push->sent, 'Retried, and never duplicated.');
     }
 
+    public function test_a_push_job_that_runs_after_its_occurrence_went_stale_sends_nothing(): void
+    {
+        Event::fake([MobileConversationChanged::class]);
+        [$owner, $business, , $identity] = $this->managedTenant();
+        $this->phone($owner, self::TOKEN_A);
+        $this->inbound($identity);
+        $this->push->sent = [];
+        DB::table('mobile_push_deliveries')->delete();
+        $box = ChatBox::query()->where('business_id', $business->id)->sole();
+        $key = 'operation:' . DB::table('business_messaging_operations')->where('business_id', $business->id)->orderByDesc('id')->value('id');
+
+        // The job waited in a backlog (or a provider retry crossed the deadline): the occurrence is no longer new.
+        $late = new \App\Jobs\Mobile\SendMobilePush((int) $owner->user_id, (int) $box->id, $key, now()->getTimestamp() - 1);
+        app()->call([$late, 'handle']);
+        $this->assertCount(0, $this->push->sent, 'A job past its occurrence deadline must not ring the phone.');
+
+        // The same job inside its deadline still sends.
+        $inTime = new \App\Jobs\Mobile\SendMobilePush((int) $owner->user_id, (int) $box->id, $key, now()->getTimestamp() + 600);
+        app()->call([$inTime, 'handle']);
+        $this->assertCount(1, $this->push->sent);
+    }
+
     public function test_the_event_targets_the_exact_conversation_even_when_another_thread_with_that_customer_is_newer(): void
     {
         Event::fake([MobileConversationChanged::class]);

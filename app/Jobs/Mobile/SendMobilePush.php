@@ -32,6 +32,8 @@ class SendMobilePush implements ShouldQueue
         public readonly int $userId,
         public readonly int $conversationBoxId,
         public readonly string $dedupeKey,
+        /** Unix time after which this occurrence is no longer "new": a backlog or a late retry must not ring phones for it. */
+        public readonly ?int $freshUntil = null,
     ) {
     }
 
@@ -43,6 +45,10 @@ class SendMobilePush implements ShouldQueue
 
     public function handle(MobileRecipients $recipients, MobilePushSender $push): void
     {
+        if ($this->freshUntil !== null && now()->getTimestamp() >= $this->freshUntil) {
+            return;
+        }
+
         $user = User::query()->find($this->userId);
         $box = ChatBox::query()->find($this->conversationBoxId);
         $business = $box === null ? null : Business::query()->find($box->business_id);

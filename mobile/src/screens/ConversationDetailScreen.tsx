@@ -64,6 +64,10 @@ function ConversationThread({ route, navigation }: Props) {
   // A live signal that arrived before the first load applied: that load's snapshot may predate it, so re-read right after.
   const liveWanted = useRef(false);
   const refreshLiveRef = useRef<() => Promise<void>>(async () => undefined);
+  // Mirror of the loaded history pages, and a sequence so only the latest reconcile of them applies.
+  const olderRef = useRef<Message[]>([]);
+  olderRef.current = older;
+  const olderSeq = useRef(0);
 
   const load = useCallback(async (): Promise<boolean | 'superseded'> => {
     if (!scope) return false;
@@ -113,7 +117,7 @@ function ConversationThread({ route, navigation }: Props) {
    * user already loaded, never overwriting a newer full load, and never flashing a spinner. Messages are de-duplicated
    * by id when rendered, so an event racing a send's own refresh cannot create a second bubble.
    */
-  const refreshLive = useCallback(async () => {
+  const refreshLive = useCallback(async (reconcileOlder = false) => {
     // Before the first load has applied there is nothing to refresh: that load will deliver the data itself.
     if (!scope) return;
     if (dataRef.current === null) { liveWanted.current = true; return; }
@@ -151,15 +155,38 @@ function ConversationThread({ route, navigation }: Props) {
       setRetryAttempts((attempts) => Object.fromEntries(
         Object.entries(attempts).filter(([key, attempt]) => attempt.state !== 'unconfirmed' || !confirmed.has(key)),
       ));
+      // A delivery receipt can concern a message OUTSIDE the latest window (an older page the user loaded): the window above
+      // cannot tell us. Re-read the pages between the window and the oldest loaded message and refresh those bubbles in place.
+      const loaded = olderRef.current;
+      if (reconcileOlder && loaded.length > 0 && d.messages.length > 0) {
+        const seq = ++olderSeq.current;
+        const oldestId = loaded[0].id;
+        const fresh = new Map<number, Message>();
+        try {
+          let before = d.messages[0].id;
+          for (let i = 0; i < 10; i++) {
+            const page = await api.conversation(scope, uid, before);
+            page.messages.forEach((m) => fresh.set(m.id, m));
+            const first = page.messages[0]?.id;
+            if (!first || first <= oldestId || !page.has_more) break;
+            before = first;
+          }
+          if (version === threadGeneration.current && seq === olderSeq.current) {
+            setOlder((o) => o.map((m) => fresh.get(m.id) ?? m));
+          }
+        } catch { /* keep what is shown; the next event or pull-to-refresh retries */ }
+      }
       // Marked read only when the user can actually see it: a hidden (covered) screen never clears unread.
       if (d.conversation.unread && focused.current) api.markRead(scope, uid).catch(() => undefined);
     } catch { /* a failed live refresh is silent; the next event or pull-to-refresh retries */ }
   }, [api, scope, uid]);
 
-  refreshLiveRef.current = refreshLive;
+  refreshLiveRef.current = () => refreshLive();
 
   useRealtime((e) => {
-    if (e.kind === 'resync' || (e.kind === 'change' && e.conversation_uid === uid)) void refreshLive();
+    if (e.kind === 'resync' || (e.kind === 'change' && e.conversation_uid === uid)) {
+      void refreshLive(e.kind === 'resync' || e.type === 'status' || e.type === 'outbound');
+    }
   });
 
   // Focus, not mount: when another screen is pushed on top, this conversation is no longer "being viewed", so it neither

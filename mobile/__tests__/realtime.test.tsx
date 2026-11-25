@@ -324,6 +324,25 @@ describe('live conversation detail: window and focus', () => {
     await waitFor(() => screen.getByText('m2 arrived meanwhile'));
   });
 
+  it('a delivery receipt for a message in an older loaded page updates that bubble (it is outside the latest window)', async () => {
+    const outbound = (status: string, extra: any = {}) => ({ ...msg(50, 'old outbound'), direction: 'outbound', send_uid: 'su-50', status, ...extra });
+    let phase: 'sent' | 'failed' = 'sent';
+    const conversation = jest.fn(async (_s: any, _u: string, before?: number) => {
+      if (before === undefined) return { ...detail([msg(100, 'm1'), msg(101, 'm101')]), has_more: true };          // latest window
+      return { ...detail([outbound(phase === 'sent' ? 'sent' : 'delivery_failed', phase === 'failed' ? { status_message: 'Carrier rejected it.', retryable: true } : {})]), has_more: false };   // older page
+    });
+    const api = fakeApi({ conversation });
+    const t = await open(api, nav());
+    await fireEvent.press(screen.getByText('Load earlier messages'));
+    await waitFor(() => screen.getByText('old outbound'));
+    expect(screen.queryByText('Carrier rejected it.')).toBeNull();
+
+    phase = 'failed';
+    await act(async () => { t.emit(ch, { type: 'status', business_uid: 'biz-aaaaaaaa', conversation_uid: 'c1' }); });
+    await waitFor(() => screen.getByText('Carrier rejected it.'));
+    expect(screen.getByText('Retry')).toBeTruthy();
+  });
+
   it('does not yank the user to the bottom on a live update after they scrolled up to read history', async () => {
     const FlatList = require('react-native').FlatList;
     const spy = jest.spyOn(FlatList.prototype, 'scrollToEnd').mockImplementation(() => undefined);
