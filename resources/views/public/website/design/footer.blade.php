@@ -4,6 +4,7 @@
     here or in the header dropdowns, so none is orphaned. Escaped output only.
 --}}
 @php($footerLinks = $nav['footer'])
+
 <footer class="wd-footer wd-footer-{{ $design->variant('footer') }}" data-testid="site-footer">
     <div class="website-container wd-footer-grid">
         <div class="wd-footer-brand">
@@ -31,9 +32,7 @@
             <nav class="wd-footer-col" aria-label="Explore">
                 <p class="wd-footer-heading">Explore</p>
                 <ul>
-                    @foreach ($footerLinks['explore'] as $link)
-                        <li><a href="{{ $link['url'] }}">{{ $link['title'] }}</a></li>
-                    @endforeach
+                    @include('public.website.design.footer-links', ['links' => $footerLinks['explore']])
                 </ul>
             </nav>
         @endif
@@ -42,9 +41,7 @@
             <nav class="wd-footer-col" aria-label="Services">
                 <p class="wd-footer-heading">Services</p>
                 <ul>
-                    @foreach ($footerLinks['services'] as $link)
-                        <li><a href="{{ $link['url'] }}">{{ $link['title'] }}</a></li>
-                    @endforeach
+                    @include('public.website.design.footer-links', ['links' => $footerLinks['services']])
                 </ul>
             </nav>
         @endif
@@ -53,9 +50,7 @@
             <nav class="wd-footer-col" aria-label="Areas we serve">
                 <p class="wd-footer-heading">Areas we serve</p>
                 <ul>
-                    @foreach ($footerLinks['areas'] as $link)
-                        <li><a href="{{ $link['url'] }}">{{ $link['title'] }}</a></li>
-                    @endforeach
+                    @include('public.website.design.footer-links', ['links' => $footerLinks['areas']])
                 </ul>
             </nav>
         @endif

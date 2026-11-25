@@ -15,6 +15,9 @@ use App\Models\AgencyProspectImportRow;
 use App\Models\Blacklists;
 use App\Models\Business;
 use App\Models\Workspace;
+use App\Models\ContactGroups;
+use App\Library\AgencyOutreach\OutreachContactGroupBridge;
+use Illuminate\Validation\ValidationException;
 use Illuminate\Support\Facades\DB;
 
 /**
@@ -354,10 +357,15 @@ final class ProspectImporter
      *
      * @return array{prospects: array<string,mixed>, group: array<string,mixed>}
      */
-    public function commitWithGroup(Workspace $workspace, Business $business, AgencyProspectImportBatch $batch, string $groupName, ?string $campaignUid = null, ?int $actorId = null): array
+    public function commitWithGroup(Workspace $workspace, Business $business, AgencyProspectImportBatch $batch, string $groupName, ?string $campaignUid = null, ?int $actorId = null, ?string $destinationUid = null): array
     {
         try {
-            return DB::transaction(function () use ($workspace, $business, $batch, $groupName, $campaignUid, $actorId) {
+            return DB::transaction(function () use ($workspace, $business, $batch, $groupName, $campaignUid, $actorId, $destinationUid) {
+                // Serialize appends before the transaction takes its first consistent read.
+                $destination = $destinationUid !== null && $batch->contact_group_id === null
+                    ? ContactGroups::where('business_id', $business->id)->where('status', 1)
+                        ->where('uid', $destinationUid)->lockForUpdate()->firstOrFail()
+                    : null;
                 $prospects = $this->commitProspects($workspace, $batch, $campaignUid);
 
                 if (! empty($prospects['campaign_closed'])) {
@@ -365,7 +373,12 @@ final class ProspectImporter
                 }
 
                 $fresh = $batch->fresh();
-                $group = app(ProspectGroupMaterializer::class)->materialize($workspace, $business, $fresh, $fresh->group_name ?? $groupName, true, $actorId);
+                $group = app(ProspectGroupMaterializer::class)->materialize($workspace, $business, $fresh, $fresh->group_name ?? $groupName, true, $actorId, $destination);
+
+                if ($destination !== null && empty($group['already_materialized'])
+                    && app(OutreachContactGroupBridge::class)->memberCount($destination, $business) > OutreachContactGroupBridge::MAX_CONTACTS) {
+                    throw ValidationException::withMessages(['contact_group_uid' => 'This import would exceed the campaign limit of 5,000 contacts per group. Choose another group or reduce the upload.']);
+                }
 
                 if (! empty($group['name_conflict'])) {
                     // The name was taken between review and commit: undo the prospects too, so nothing commits without its group.

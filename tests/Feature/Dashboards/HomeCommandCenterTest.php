@@ -182,7 +182,8 @@ class HomeCommandCenterTest extends TestCase
 
     public function test_a_healthy_quiet_growth_business_without_rank_tracking_has_one_seo_move_and_no_urgent_problems(): void
     {
-        [$customer] = $this->tenant(WorkspacePlanTier::Growth, 'Calm Venue', 'Calm Account');
+        [$customer, $business] = $this->tenant(WorkspacePlanTier::Growth, 'Calm Venue', 'Calm Account');
+        $this->website($business, 'published'); // No website gap: this test asserts the ordinary SEO setup path.
         $this->authenticateAs($customer);
 
         $home = $this->command($customer->user);

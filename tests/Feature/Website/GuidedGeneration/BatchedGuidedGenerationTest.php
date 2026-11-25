@@ -647,4 +647,192 @@ class BatchedGuidedGenerationTest extends TestCase
         }
         $this->assertSame(0, \App\Models\WebsitePage::where('website_id', $website->id)->where('title', 'like', '%OTHER-TENANT%')->count());
     }
+
+    // ------------------------------------------------------------------ recovery from malformed batch output (production attempts 6 and 7)
+
+    /** A section type the entry's page does not allow, whatever the page type is. */
+    private function disallowedType(array $entry): string
+    {
+        return collect(['testimonials', 'gallery', 'backdrops', 'packages', 'form', 'faq', 'cta', 'custom_section'])
+            ->first(fn (string $type) => ! in_array($type, $entry['allowed_section_types'], true)) ?? $this->fail('every probe type is allowed on ' . $entry['page_key']);
+    }
+
+    public function test_an_overlong_seo_title_is_repaired_in_place_with_no_extra_ai_call(): void
+    {
+        [$customer, $business, $website, $template] = $this->largeBusiness();
+        $long = 'Photo Booth Rental and Event Services for Weddings, Corporate Parties and Birthdays Across the Region';
+        $this->assertGreaterThan(70, mb_strlen($long));
+
+        $this->provider(function (array $entry, int $call) use ($long) {
+            $page = $this->defaultPage($entry);
+            if ($entry['page_key'] === ($this->calls[$call - 1]['keys'][3] ?? null)) {
+                $page['seo_title'] = ($call === 1 ? $long : 'Batch ' . $call . ' Event Photo Booth Hire and Guest Experience Packages for Every Celebration') . ' - Harbor';   // pages.3.seo_title: over 70 characters, distinct per batch
+            }
+
+            return $page;
+        });
+
+        $attempt = $this->generate($customer, $business, $website, $template);
+
+        $this->assertSame(WebsiteGuidedGenerationAttempt::STATUS_SUCCEEDED, $attempt->status, (string) $attempt->failure_reason);
+        $this->assertSame(0, $attempt->retry_count, 'repaired, not retried');
+        $this->assertCount(count($this->expectedBatches($business, $this->plan($business, $template, $website))), $this->calls, 'one request per batch and nothing more');
+        foreach ($website->fresh()->pages as $page) {
+            $this->assertLessThanOrEqual(70, mb_strlen((string) $page->seo_title));
+        }
+        $this->assertTrue($website->fresh()->pages->contains(fn ($page) => str_starts_with((string) $page->seo_title, 'Photo Booth Rental and Event Services for Weddings')), 'the long title was shortened at a word, not rewritten');
+    }
+
+    public function test_a_substantive_section_the_page_does_not_allow_is_never_silently_deleted_it_is_rejected_and_retried_with_the_reason(): void
+    {
+        [$customer, $business, $website, $template] = $this->largeBusiness();
+        $this->homePage($website, ['title' => 'Published Home']);
+        $revision = app(\App\Library\Website\WebsitePublisher::class)->publish($website->fresh(), $customer->user_id);
+        $draftBefore = $website->fresh()->pages()->get(['id', 'title', 'slug', 'sections'])->toArray();
+        $substantive = ['type' => 'x', 'data' => ['heading' => 'Real customer praise', 'body' => 'Substantive copy the page may not carry.']];
+
+        // pages.0.sections.N.type on BOTH tries: the first page carries a section its plan entry does not allow.
+        $this->rawProvider(function (array $payload) use (&$substantive) {
+            $substantive['type'] = $this->disallowedType($payload['plan'][0]);
+
+            return json_encode(['pages' => array_map(fn ($entry, $i) => $this->defaultPage($entry, $i === 0 ? ['sections' => array_merge($this->defaultPage($entry)['sections'], [$substantive])] : []), $payload['plan'], array_keys($payload['plan']))]);
+        });
+
+        $attempt = $this->generate($customer, $business, $website, $template);
+
+        $this->assertSame(WebsiteGuidedGenerationAttempt::STATUS_FAILED, $attempt->status, 'the content was not deleted to make validation pass');
+        $this->assertCount(1 + GenerationBatchPlanner::MAX_RETRIES_PER_BATCH, $this->calls, 'the existing single retry, nothing more');
+        $this->assertStringNotContainsString('PREVIOUS ANSWER FOR THIS REQUEST WAS REJECTED', $this->calls[0]['system']);
+        $this->assertStringContainsString('is not allowed on the', $this->calls[1]['system'], 'the retry receives the reason');
+        $this->assertSame($draftBefore, $website->fresh()->pages()->get(['id', 'title', 'slug', 'sections'])->toArray(), 'nothing was committed');
+        $this->assertSame($revision->id, $website->fresh()->published_revision_id, 'the published website is untouched');
+    }
+
+    public function test_a_corrective_retry_tells_the_model_why_and_a_valid_answer_then_completes_generation(): void
+    {
+        [$customer, $business, $website, $template] = $this->largeBusiness();
+
+        // Try 1 of batch 1: two pages share one seo_title (pages.N.seo_title). The retry is valid.
+        $this->rawProvider(function (array $payload, int $call) {
+            $pages = array_map(fn ($entry) => $this->defaultPage($entry), $payload['plan']);
+            if ($call === 1) {
+                $pages[3]['seo_title'] = $pages[1]['seo_title'];
+            }
+
+            return json_encode(['pages' => $pages]);
+        });
+
+        $attempt = $this->generate($customer, $business, $website, $template);
+
+        $this->assertSame(WebsiteGuidedGenerationAttempt::STATUS_SUCCEEDED, $attempt->status, (string) $attempt->failure_reason);
+        $this->assertSame(1, $attempt->retry_count);
+        $this->assertStringNotContainsString('PREVIOUS ANSWER FOR THIS REQUEST WAS REJECTED', $this->calls[0]['system'], 'the first request is unchanged');
+        $this->assertStringContainsString('PREVIOUS ANSWER FOR THIS REQUEST WAS REJECTED', $this->calls[1]['system']);
+        $this->assertStringContainsString('duplicates another page', $this->calls[1]['system'], 'the retry says what was wrong');
+        $this->assertSame($this->calls[0]['keys'], $this->calls[1]['keys'], 'the same batch is retried, with the same plan');
+        $this->assertSame($this->calls[0]['payload']['plan'], $this->calls[1]['payload']['plan'], 'the plan is identical across the retry');
+        $this->assertCount(count($this->expectedBatches($business, $this->plan($business, $template, $website))) + 1, $this->calls, 'exactly one extra request, for the one retry');
+        $this->assertSame(count($this->plan($business, $template, $website)), $website->fresh()->pages()->count(), 'every planned page was written');
+    }
+
+    public function test_the_exact_production_failure_a_bad_first_answer_then_one_page_of_five_commits_nothing_and_keeps_the_published_site(): void
+    {
+        [$customer, $business, $website, $template] = $this->largeBusiness();
+        $this->homePage($website, ['title' => 'Published Home']);
+        $revision = app(\App\Library\Website\WebsitePublisher::class)->publish($website->fresh(), $customer->user_id);
+        $draftBefore = $website->fresh()->pages()->get(['id', 'title', 'slug', 'sections'])->toArray();
+
+        $this->rawProvider(function (array $payload, int $call) {
+            $pages = array_map(fn ($entry) => $this->defaultPage($entry), $payload['plan']);
+
+            if ($call === 1) {
+                // attempt 6/7, first request: an unusable duplicate title AND a page whose hero is missing.
+                $pages[3]['seo_title'] = $pages[1]['seo_title'];
+                $pages[0]['sections'] = [['type' => 'text', 'data' => ['heading' => 'No hero', 'body' => 'Body text.']]];
+
+                return json_encode(['pages' => $pages]);
+            }
+
+            // The retry returns ONE page of the five (returned_pages=1, expected_pages=5).
+            return json_encode(['pages' => [$pages[0]]]);
+        });
+
+        $attempt = $this->generate($customer, $business, $website, $template);
+
+        $this->assertSame(WebsiteGuidedGenerationAttempt::STATUS_FAILED, $attempt->status);
+        $this->assertCount(1 + GenerationBatchPlanner::MAX_RETRIES_PER_BATCH, $this->calls, 'one request and its single retry; nothing further is spent');
+        $this->assertStringContainsString('duplicates another page', $this->calls[1]['system'], 'the retry carries the reasons the first answer was rejected');
+        $this->assertSame($draftBefore, $website->fresh()->pages()->get(['id', 'title', 'slug', 'sections'])->toArray(), 'not one page was added, changed or removed');
+        $this->assertSame($revision->id, $website->fresh()->published_revision_id, 'the published website is untouched');
+    }
+
+    public function test_an_incomplete_answer_is_retried_asking_for_every_page_and_a_complete_one_then_commits(): void
+    {
+        [$customer, $business, $website, $template] = $this->largeBusiness();
+
+        $this->rawProvider(function (array $payload, int $call) {
+            $pages = array_map(fn ($entry) => $this->defaultPage($entry), $payload['plan']);
+
+            return json_encode(['pages' => $call === 1 ? [$pages[0]] : $pages]);   // returned_pages=1, expected_pages=5 — once
+        });
+
+        $attempt = $this->generate($customer, $business, $website, $template);
+
+        $this->assertSame(WebsiteGuidedGenerationAttempt::STATUS_SUCCEEDED, $attempt->status, (string) $attempt->failure_reason);
+        $this->assertStringContainsString('You must return exactly 5 pages', $this->calls[1]['system']);
+        foreach ($this->calls[0]['keys'] as $key) {
+            $this->assertStringContainsString($key, $this->calls[1]['system'], "the retry names the required page {$key}");
+        }
+        $this->assertSame(count($this->plan($business, $template, $website)), $website->fresh()->pages()->count(), 'no planned page is missing');
+    }
+
+    public function test_the_normalizer_only_repairs_what_cannot_change_meaning(): void
+    {
+        $plan = [['page_key' => 'home', 'allowed_section_types' => ['hero', 'text']], ['page_key' => 'about', 'allowed_section_types' => ['hero', 'text']]];
+        $hero = ['type' => 'hero', 'data' => ['heading' => 'H']];
+
+        $out = \App\Library\Website\GuidedGeneration\GuidedOutputNormalizer::normalize([
+            ['page_key' => 'home', 'seo_title' => '  ' . str_repeat('word ', 20) . ' ', 'meta_description' => '   ', 'sections' => [
+                $hero,
+                ['type' => 'image_text', 'data' => ['heading' => 'Kept', 'body' => 'Same words.', 'image' => null]],
+                ['type' => 'testimonials', 'data' => ['items' => [['quote' => 'Invented praise']]]],
+                ['type' => 'image_text', 'data' => ['heading' => 'Empty', 'body' => '']],
+            ]],
+            ['page_key' => 'unknown', 'seo_title' => str_repeat('x', 200), 'sections' => 'not-an-array'],
+            'not-a-page',
+        ], $plan);
+
+        $this->assertCount(3, $out['pages'], 'no page is added or removed');
+        $home = $out['pages'][0];
+        $this->assertSame(['hero', 'text', 'testimonials', 'image_text'], array_column($home['sections'], 'type'), 'image_text with real copy became text; every other unsupported section (testimonials, an empty image_text) is left exactly as written for validation to reject');
+        $this->assertSame('Same words.', $home['sections'][1]['data']['body']);
+        $this->assertSame(['items' => [['quote' => 'Invented praise']]], $home['sections'][2]['data'], 'untouched');
+        $this->assertLessThanOrEqual(70, mb_strlen($home['seo_title']));
+        $this->assertSame('word', substr($home['seo_title'], -4), 'cut at a word boundary');
+        $this->assertNull($home['meta_description'], 'a blank description is absent, never invented');
+        $this->assertSame(str_repeat('x', 200), $out['pages'][1]['seo_title'], 'a page_key outside the plan is left for the validator to reject');
+        $this->assertSame('not-a-page', $out['pages'][2]);
+
+        // A model-written form is never tidied away: it stays, so validation fails the batch.
+        $form = ['type' => 'form', 'data' => ['form_uid' => 'ai-invented']];
+        $kept = \App\Library\Website\GuidedGeneration\GuidedOutputNormalizer::normalize([['page_key' => 'about', 'sections' => [$hero, $form]]], $plan);
+        $this->assertSame(['hero', 'form'], array_column($kept['pages'][0]['sections'], 'type'));
+    }
+
+    public function test_rejection_notes_are_bounded_printable_and_name_the_required_pages(): void
+    {
+        $notes = GuidedWebsiteGenerationClient::rejectionNotes([
+            'plan.missing' => ["Required planned page 'about' is missing from the generated output."],
+            'pages.0.sections.3.type' => ["Section type '" . "\u{202E}evil\n<script>" . "' is not allowed on the 'home' page."],
+            'pages.1.content' => array_fill(0, 20, str_repeat('long problem ', 40)),
+        ], ['home', 'about', 'contact', 'faq', 'services']);
+
+        $this->assertLessThanOrEqual(GuidedWebsiteGenerationClient::MAX_REJECTION_NOTES, count($notes));
+        $this->assertStringContainsString('exactly 5 pages', $notes[0]);
+        $this->assertStringContainsString('home, about, contact, faq, services', $notes[0]);
+        foreach ($notes as $note) {
+            $this->assertLessThanOrEqual(GuidedWebsiteGenerationClient::MAX_REJECTION_CHARS + 120, mb_strlen($note));
+            $this->assertSame(1, preg_match('/^[\x20-\x7E]+$/', $note), 'printable ASCII only');
+        }
+    }
 }

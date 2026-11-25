@@ -20,7 +20,8 @@
     $primary = $ctaResolver->sectionCta($data['primary_cta'] ?? null, $siteCta, $pageUrls ?? []);
     $secondaryUrl = $ctaResolver->resolveLink(trim((string) ($data['secondary_cta']['url'] ?? '')), $pageUrls ?? []);
     $secondary = $secondaryUrl !== '' ? array_merge($data['secondary_cta'], ['url' => $secondaryUrl]) : null;
-    $isSplit = in_array($heroVariant, ['split', 'split-soft'], true) && $image !== null;
+    $isSplit = in_array($heroVariant, ['split', 'split-soft', 'editorial-split'], true) && $image !== null;
+    $isEditorial = $heroVariant === 'editorial-split';
 @endphp
 <section class="wd-hero wd-hero-{{ $heroVariant }} @if ($image) wd-hero-photo @else wd-hero-typographic @endif @if (! $isHomePage) wd-hero-inner-page @endif @if ($isSplit) wd-hero-is-split @endif"
     data-testid="site-hero">
@@ -30,6 +31,9 @@
     @endif
     <div class="website-container wd-hero-grid">
         <div class="wd-hero-copy">
+            @if ($isEditorial && $isHomePage && trim((string) ($websiteMeta['name'] ?? '')) !== '')
+                <p class="wd-hero-eyebrow">{{ $websiteMeta['name'] }}</p>
+            @endif
             <h1 class="wd-hero-title">{{ $design->accentHeading($data['heading'] ?? '') }}</h1>
             @if (! empty($data['subheading']))
                 <p class="wd-hero-sub">{{ $data['subheading'] }}</p>
@@ -45,7 +49,14 @@
                 </div>
             @endif
         </div>
-        @if ($isSplit)
+        @if ($isEditorial)
+            {{-- The editorial hero always keeps its second column: the owner's photo when there is one, else a composed green panel (never an empty frame). --}}
+            <div class="wd-hero-media @if (! $image) wd-hero-media-plate @endif">
+                @if ($image)
+                    {{ \App\Library\Website\Media\ResponsiveImage::tag($image, '(min-width: 900px) 50vw, 100vw', ['eager' => true, 'priority' => true]) }}
+                @endif
+            </div>
+        @elseif ($isSplit)
             <div class="wd-hero-media">
                 {{ \App\Library\Website\Media\ResponsiveImage::tag($image, '(min-width: 900px) 480px, 100vw', ['eager' => true, 'priority' => true]) }}
             </div>

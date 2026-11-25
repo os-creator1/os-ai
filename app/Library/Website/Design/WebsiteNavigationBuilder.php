@@ -8,7 +8,7 @@ namespace App\Library\Website\Design;
  * overview, a page per service, a page per area, ...); a header that lists
  * them all overflows on a phone. So:
  *
- *   primary:  Home · Services ▾ · Packages · Gallery ▾ · Locations ▾ · About · Contact
+ *   primary:  Home · Services ▾ · Packages · Gallery · Backdrops · Locations ▾ · About · Contact
  *   footer:   Explore (every top-level page) · Services · Areas we serve
  *
  * Every page is still reachable (no orphan pages — each one is a child of a
@@ -129,9 +129,13 @@ final class WebsiteNavigationBuilder
             $primary[] = $item($packages);
         }
 
+        // Gallery and Backdrops are two separate destinations (real event photos vs the equipment styles on offer): each is a normal
+        // clickable page, and neither is presented as the other's dropdown.
         if ($gallery !== null) {
-            $primary[] = $item($gallery, $backdrops !== null ? [$child($backdrops)] : []);
-        } elseif ($backdrops !== null) {
+            $primary[] = $item($gallery);
+        }
+
+        if ($backdrops !== null) {
             $primary[] = $item($backdrops);
         }
 

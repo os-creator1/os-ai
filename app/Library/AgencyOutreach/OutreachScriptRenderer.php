@@ -38,7 +38,18 @@ final class OutreachScriptRenderer
     {
         $text = '';
 
+        // Idempotent: callers that already canonicalised are unaffected, and the ones that did not
+        // (replies, previews) still resolve the owner's vocabulary identically.
+        $template = OutreachScriptTokens::canonicalise($template);
+
         try {
+            // The prospect's company, resolved once for preview and every send. It is the PROSPECT's
+            // name (never the sender's Business), and only for a prospect of this very Workspace.
+            $company = $prospect !== null && (int) $prospect->workspace_id === (int) $workspace->id
+                ? OutreachCompanyName::for($prospect)
+                : null;
+            $template = OutreachCompanyName::fill($template, $company);
+
             $context = self::context($workspace, $prospect);
             $text = app(MergeFieldResolver::class)->render($template, $context);
         } catch (Throwable) {
@@ -62,7 +73,7 @@ final class OutreachScriptRenderer
             $business = AgencyOutreachBusinessResolver::forWorkspace($workspace) ?? self::standIn($workspace);
 
             return app(MergeFieldResolver::class)->unknownTokens(
-                $text,
+                OutreachScriptTokens::canonicalise($text),
                 $business,
                 [MergeFieldRegistry::GROUP_AGENCY, MergeFieldRegistry::GROUP_PROSPECT],
             );

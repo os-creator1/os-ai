@@ -80,12 +80,13 @@ class GuidedWebsiteGenerationClient
      *         page paths are the valid internal link targets, so a page may link to one written in another batch. Null = $plan is the whole site.
      * @param  ?array  $contentFacts  SeoContentFacts::build() — the bounded primary market/service/services/areas the pages must reflect; built here when null
      * @param  array<int, string>  $usedSeoTitles  SEO titles already written for earlier batches, so this batch avoids duplicating them
+     * @param  array<int, string>  $rejections  rejectionNotes() of the previous try of this same batch (the corrective retry); empty on a first request
      * @return ?array<int, array{page_key: string, title: string, seo_title: ?string, meta_description: ?string, sections: array}> null on any refusal/failure/malformed output
      */
-    public function generate(Business $business, array $plan, ?int $actorUserId = null, ?string $idempotencyKey = null, ?array $sitePlan = null, array $usedSeoTitles = [], ?array $contentFacts = null): ?array
+    public function generate(Business $business, array $plan, ?int $actorUserId = null, ?string $idempotencyKey = null, ?array $sitePlan = null, array $usedSeoTitles = [], ?array $contentFacts = null, array $rejections = []): ?array
     {
         $this->lastDiagnostic = null;
-        $messages = $this->buildMessages($business, $plan, $sitePlan, self::promptSafeTitles($usedSeoTitles), null, $contentFacts);
+        $messages = $this->buildMessages($business, $plan, $sitePlan, self::promptSafeTitles($usedSeoTitles), null, $contentFacts, $rejections);
 
         $raw = $this->client->complete($messages, $business, $actorUserId, self::MAX_OUTPUT_TOKENS, $idempotencyKey);
         if ($raw === null) {
@@ -193,7 +194,7 @@ class GuidedWebsiteGenerationClient
         return SeoContentFacts::build($business, app(\App\Library\Website\WebsitePageStrategy::class), $canonicalFacts ?? $this->canonicalFacts($business));
     }
 
-    private function buildMessages(Business $business, array $plan, ?array $sitePlan = null, array $usedSeoTitles = [], ?array $facts = null, ?array $contentFacts = null): array
+    private function buildMessages(Business $business, array $plan, ?array $sitePlan = null, array $usedSeoTitles = [], ?array $facts = null, ?array $contentFacts = null, array $rejections = []): array
     {
 
         // Link targets always come from the COMPLETE site plan; with no site plan the request is the whole site (unchanged prompt).
@@ -317,10 +318,51 @@ class GuidedWebsiteGenerationClient
             }
         }
 
+        // The corrective retry: the previous answer for THIS batch was rejected, and the model is told exactly why (bounded, sanitized
+        // reasons from our own validator) instead of being asked the identical question again.
+        if ($rejections !== []) {
+            $instructions[count($instructions) - 1] = 'YOUR PREVIOUS ANSWER FOR THIS REQUEST WAS REJECTED. Fix every point below and answer again for ALL pages of the plan:' . "\n- " . implode("\n- ", $rejections) . "\n" . $instructions[count($instructions) - 1];
+        }
+
         return [
             ['role' => 'system', 'content' => implode("\n", $instructions)],
             ['role' => 'user', 'content' => json_encode($userPayload)],
         ];
+    }
+
+    /** Most reasons / characters a retry prompt may carry: a retry must stay inside the batch's input-token headroom. */
+    public const MAX_REJECTION_NOTES = 6;
+
+    public const MAX_REJECTION_CHARS = 200;
+
+    /**
+     * The reasons the validator rejected a batch, as short plain lines for the corrective retry's prompt. Only our own validator's
+     * messages, stripped to printable ASCII and bounded (the model's output is never echoed back wholesale), plus an explicit
+     * "return exactly these pages" line whenever pages were missing.
+     *
+     * @param  array<string, array<int, string>>  $errors  ValidationException::errors()
+     * @param  array<int, string>  $batchKeys  the page_key values this batch must contain
+     * @return array<int, string>
+     */
+    public static function rejectionNotes(array $errors, array $batchKeys): array
+    {
+        $notes = [];
+
+        if (isset($errors['plan.missing'])) {
+            $notes[] = 'You must return exactly ' . count($batchKeys) . ' pages, one for each of these page_key values: ' . implode(', ', array_map(fn ($key) => preg_replace('/[^a-z0-9_.:-]/i', '', (string) $key), $batchKeys)) . '.';
+        }
+
+        foreach ($errors as $field => $messages) {
+            foreach ((array) $messages as $message) {
+                $clean = trim(preg_replace('/[^\x20-\x7E]/', '', (string) $message) ?? '');
+
+                if ($clean !== '' && $field !== 'plan.missing') {
+                    $notes[] = mb_substr($clean, 0, self::MAX_REJECTION_CHARS);
+                }
+            }
+        }
+
+        return array_slice(array_values(array_unique($notes)), 0, self::MAX_REJECTION_NOTES);
     }
 
     /**

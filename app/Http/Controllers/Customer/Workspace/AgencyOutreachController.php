@@ -376,6 +376,7 @@ class AgencyOutreachController extends CustomerBaseController
             'websiteUrl' => $settings?->website_url,
             'bookingUrl' => $settings?->booking_url,
             'replyDelay' => collect(\App\Library\AgencyOutreach\OutreachReplyTiming::windows($workspace))->map(fn (array $w) => ['min' => intdiv($w[0], 60), 'max' => intdiv($w[1], 60)])->all(),
+            'openerDailyCap' => $settings?->opener_daily_cap ?? (config('outreach.send_pacing.opener_daily_cap') > 0 ? (int) config('outreach.send_pacing.opener_daily_cap') : null),
             'followupEnabled' => $script->followUpEnabled(),
             'followupDelay' => $script->followUpDelayHours(),
             'aiEnabled' => $script->aiEnabled(),

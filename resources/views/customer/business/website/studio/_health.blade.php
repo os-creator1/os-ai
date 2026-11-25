@@ -32,6 +32,17 @@
                                 </ul>
                             </details>
                         @endif
+                        @if (! empty($check['area_candidates']) && ! empty($check['confirm_areas_url']))
+                            {{-- Facts the site's own pages state: the owner confirms, per area; nothing is used until then. --}}
+                            <form method="POST" action="{{ $check['confirm_areas_url'] }}" class="mt-2" data-testid="confirm-areas-form">
+                                @csrf
+                                <div class="small fw-bold mb-1">Confirm the areas you really serve</div>
+                                @foreach ($check['area_candidates'] as $candidate)
+                                    <label class="d-block small"><input type="checkbox" name="areas[]" value="{{ $candidate }}"> {{ $candidate }}</label>
+                                @endforeach
+                                <button type="submit" class="btn btn-sm btn-outline-primary mt-1">Add the ticked areas</button>
+                            </form>
+                        @endif
                         @if ($check['action'])
                             <a class="small" href="{{ $check['action']['url'] }}">{{ $check['action']['label'] }}</a>
                         @endif

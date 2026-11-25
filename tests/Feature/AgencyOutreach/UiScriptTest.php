@@ -155,6 +155,19 @@ class UiScriptTest extends TestCase
         $this->assertSame(['{{bogus.x}}'], $json['unknown']);
     }
 
+    public function test_the_preview_recognises_company_name_and_contact_company_as_the_prospects_company(): void
+    {
+        $a = $this->outreachAgency('Alpha');
+        $this->authenticateAs($a['customer']);
+
+        $json = $this->postJson($this->outreachRoute('script.preview', $a['workspace']), [
+            'text' => 'Hi {{company_name}}, {{ contact.company }} from {{agency_name}}',
+        ])->assertOk()->json();
+
+        $this->assertSame('Hi Example Company, Example Company from Alpha Agency', $json['preview']);
+        $this->assertSame([], $json['unknown']);
+    }
+
     public function test_the_booking_type_picker_lists_only_active_booking_types_of_the_agencys_own_business(): void
     {
         $a = $this->outreachAgency('Alpha');
@@ -184,5 +197,55 @@ class UiScriptTest extends TestCase
         $this->authenticateAs($a['customer']);
 
         $this->get($this->outreachRoute('settings.show', $a['workspace']))->assertOk();
+    }
+
+    public function test_the_opener_limit_shows_defaults_saves_and_leaves_the_script_version_alone(): void
+    {
+        $a = $this->outreachAgency('Alpha');
+        $this->authenticateAs($a['customer']);
+        $url = $this->outreachRoute('script.update', $a['workspace']);
+
+        $html = $this->get($this->outreachRoute('script.show', $a['workspace']))->assertOk()->getContent();
+        $this->assertStringContainsString('name="opener_daily_cap"', $html);
+        $this->assertStringContainsString('value="50"', $html, 'Existing Agencies default to 50.');
+
+        $before = (int) AgencyProspectingSetting::where('workspace_id', $a['workspace']->id)->value('script_version');
+        $this->post($url, ['opener_daily_cap' => '120'])->assertSessionHas('flash_success');
+
+        $row = AgencyProspectingSetting::where('workspace_id', $a['workspace']->id)->first();
+        $this->assertSame(120, $row->opener_daily_cap);
+        $this->assertSame($before, (int) $row->script_version, 'Changing the limit is not a new message version.');
+
+        $this->post($url, ['opener_daily_cap' => ''])->assertSessionHas('flash_success');
+        $this->assertNull($row->fresh()->opener_daily_cap, 'Blank returns to the default.');
+    }
+
+    public function test_invalid_opener_limits_are_rejected_and_nothing_is_saved(): void
+    {
+        $a = $this->outreachAgency('Alpha');
+        $this->authenticateAs($a['customer']);
+        $url = $this->outreachRoute('script.update', $a['workspace']);
+
+        foreach (['0', '-5', '2.5', '501', 'abc', '1e2'] as $bad) {
+            $this->post($url, ['opener_daily_cap' => $bad])->assertSessionHasErrors('opener_daily_cap');
+            $this->assertNull(AgencyProspectingSetting::where('workspace_id', $a['workspace']->id)->value('opener_daily_cap'), "'{$bad}' must not persist.");
+        }
+
+        foreach (['1', '500'] as $ok) {
+            $this->post($url, ['opener_daily_cap' => $ok])->assertSessionHasNoErrors();
+        }
+    }
+
+    public function test_the_opener_limit_is_isolated_between_workspaces(): void
+    {
+        $a = $this->outreachAgency('Alpha');
+        $b = $this->outreachAgency('Beta');
+        $this->authenticateAs($a['customer']);
+
+        $this->post($this->outreachRoute('script.update', $b['workspace']), ['opener_daily_cap' => 7])->assertNotFound();
+        $this->post($this->outreachRoute('script.update', $a['workspace']), ['opener_daily_cap' => 9])->assertSessionHas('flash_success');
+
+        $this->assertSame(9, AgencyProspectingSetting::where('workspace_id', $a['workspace']->id)->value('opener_daily_cap'));
+        $this->assertNull(AgencyProspectingSetting::where('workspace_id', $b['workspace']->id)->value('opener_daily_cap'));
     }
 }

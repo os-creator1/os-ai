@@ -183,6 +183,10 @@ final class WizardContentDefaults
         }
         usort($prices, fn ($a, $b) => $a['amount'] <=> $b['amount']);
         $lowest = $prices === [] ? null : CatalogMoney::format((int) round($prices[0]['amount'] * 100), $prices[0]['currency']);
+        // A rebuild from canonical records has no booth rows; it passes the lowest published package price instead.
+        if ($lowest === null && is_string($answers['lowest_package_price'] ?? null) && trim($answers['lowest_package_price']) !== '') {
+            $lowest = trim($answers['lowest_package_price']);
+        }
 
         $saved = $answers['service_area_cities'] ?? null;
         $areaList = is_array($saved) ? array_values(array_filter(array_map('strval', $saved))) : (array) ($business->primaryLocation()->first()?->service_area_cities ?? []);
