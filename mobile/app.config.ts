@@ -35,7 +35,7 @@ const config: ExpoConfig = {
     'expo-dev-client',
     'expo-secure-store',
     ['expo-notifications', { color: '#1F6F5C' }],
-    ['expo-build-properties', { android: { usesCleartextTraffic: false } }],
+    ['expo-build-properties', { android: { usesCleartextTraffic: process.env.MOBILE_DEV_CLEARTEXT === '1' } }],
   ],
   extra: {
     apiUrl: process.env.EXPO_PUBLIC_API_URL ?? '',
