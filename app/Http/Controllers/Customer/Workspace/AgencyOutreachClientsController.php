@@ -168,11 +168,16 @@ class AgencyOutreachClientsController extends CustomerBaseController
         $fileRules = ['required', 'file', 'max:5120', 'mimetypes:text/plain,text/csv,application/csv,application/vnd.ms-excel,text/x-csv'];
         $multiple = $request->has('files');
         $request->validate([
+            'file_count' => ['nullable', 'integer', 'min:1'],
             ...($multiple ? ['files' => ['required', 'array', 'min:1'], 'files.*' => $fileRules] : ['file' => $fileRules]),
             'kind' => ['nullable', 'in:prospects,existing_clients'],
         ]);
 
         $files = $multiple ? $request->file('files') : [$request->file('file')];
+        if ($request->filled('file_count') && count($files) !== (int) $request->input('file_count')) {
+            return back()->withErrors(['file' => 'Some selected files did not reach the server. Upload fewer files at a time.']);
+        }
+
         $names = [];
         $parsed = ['rows' => [], 'headers' => [], 'truncated' => false];
 

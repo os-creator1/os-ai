@@ -144,9 +144,9 @@
                         @endforeach
                     </select>
                     <div id="new-group-name">
-                    <label for="group_name">New contact group name</label>
-                    <input type="text" id="group_name" name="group_name" class="in @error('group_name') bad @enderror" maxlength="255" value="{{ old('group_name', $defaultGroupName) }}" data-role="group-name">
-                    @error('group_name')<span class="err" role="alert">{{ $message }}</span>@enderror
+                        <label for="group_name">New contact group name</label>
+                        <input type="text" id="group_name" name="group_name" class="in @error('group_name') bad @enderror" maxlength="255" value="{{ old('group_name', $defaultGroupName) }}" data-role="group-name">
+                        @error('group_name')<span class="err" role="alert">{{ $message }}</span>@enderror
                     </div>
                     <span class="hint"><b>{{ $summary['ready'] ?? 0 }}</b> prospects will be saved to this one group, ready to pick for a campaign. Nothing is sent.</span>
                 </div>

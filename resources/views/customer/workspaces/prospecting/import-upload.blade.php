@@ -11,6 +11,7 @@
         <div class="imp-head"><h2>Import prospects</h2>@include('customer.workspaces.prospecting._import-stepper')</div>
         <form method="post" enctype="multipart/form-data" action="{{ route('customer.workspaces.prospecting.prospects.import.upload', $workspaceUid) }}" class="mid" style="padding:20px 24px">
             @csrf
+            <input type="hidden" name="file_count" id="imp-file-count" value="">
             <div class="fl"><label for="imp-kind">What are you importing?</label>
                 <select id="imp-kind" name="kind" class="in">
                     <option value="prospects" @selected(old('kind', 'prospects') === 'prospects')>Prospects to message (e.g. a Google Maps export)</option>
@@ -22,10 +23,19 @@
                 @foreach($errors->get('files.*') as $messages)
                     @foreach($messages as $message)<span class="err" role="alert">{{ $message }}</span>@endforeach
                 @endforeach
+                @error('file_count')<span class="err" role="alert">{{ $message }}</span>@enderror
                 @error('files')<span class="err" role="alert">{{ $message }}</span>@enderror
                 <span class="hint">Select files with the same column names to review them together. We detect the columns for you. Nothing is texted by importing a file.</span></div>
             <div class="foot" style="margin:0 -24px -20px;padding-left:24px;padding-right:24px"><a class="btn" href="{{ route('customer.workspaces.prospecting.prospects.index', $workspaceUid) }}">Cancel</a><button type="submit" class="btn pri">Upload and check</button></div>
         </form>
     </section>
 </div>
+@endsection
+
+@section('page-script')
+<script>
+    document.getElementById('imp-file').addEventListener('change', function () {
+        document.getElementById('imp-file-count').value = this.files.length;
+    });
+</script>
 @endsection
