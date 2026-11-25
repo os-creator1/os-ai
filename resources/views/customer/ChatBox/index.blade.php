@@ -2465,6 +2465,7 @@
         const RETRY_MS = 2000;
         const FATAL = [401, 403, 404, 419];   // access gone or the session ended: stop asking
         const FOLLOW_PX = 48;                 // "at the bottom" tolerance
+        const PAGE_ROWS = 50;                 // rows per page of the server's list
         let scopeOf = function () { return null; };
         let busy = false;
         let again = false;
@@ -2537,13 +2538,38 @@
 
         // Page 1 of the same list, merged into what is shown: rows keep their identity (once each), move to their new place
         // and keep the active mark; pages the operator scrolled in are left alone. addNew=false (the pinned rail) only updates.
-        function mergeRows($list, html, addNew) {
+        function mergeRows($list, html, addNew, prune) {
           const $incoming = $("<ul></ul>").html(html);
           const rows = $incoming.children("li[data-id]").get();
 
-          if (!rows.length || !$list.length) { return; }
+          if (!$list.length) { return; }
 
           const activeId = String($(".chat_id").val() || "");
+
+          // Membership, not just content: a conversation that stops matching the tab (a reply makes a Read one unread; an answer
+          // takes it out of Waiting) is gone from the server's page 1. The answer is the COMPLETE matching set when it is not a full
+          // page, so any other row goes; when it is a full page only the rows of page 1 can be judged (the rest were scrolled in from
+          // later pages and are left alone). The open conversation is never pulled out from under the operator.
+          if (prune) {
+            const answered = rows.map(idOf);
+            const judged = rows.length < PAGE_ROWS ? $list.children("li[data-id]") : $list.children("li[data-id]").slice(0, PAGE_ROWS);
+
+            judged.each(function () {
+              const id = idOf(this);
+
+              if (isSms(id) && id !== activeId && answered.indexOf(id) === -1) { $(this).remove(); }
+            });
+          }
+
+          if (!rows.length) {
+            // Nothing matches any more: show the server's own empty state instead of the stale rows.
+            if (prune && !$list.children("li[data-id]").length && !$list.children("[data-role=chat-list-empty]").length) {
+              $list.append($incoming.children("[data-role=chat-list-empty]").first());
+            }
+
+            return;
+          }
+
           const box = document.getElementById("users-list");
           const top = box ? box.scrollTop : 0;
 
@@ -2592,7 +2618,7 @@
           if (scopeKey(scopeOf() || {}) !== key) { return; }
 
           appliedSeq[kind] = seq;
-          mergeRows($(pinned ? "#users-list > .chat-users-list-pinned" : ".chat-users-list").first(), html, !pinned);
+          mergeRows($(pinned ? "#users-list > .chat-users-list-pinned" : ".chat-users-list").first(), html, !pinned, !pinned && scope.channel !== "email");
         }
 
         function plain($root) {
@@ -2767,6 +2793,14 @@
               if (chosen !== "" && $("#email-location option").filter(function () { return $(this).val() === chosen; }).length) { $("#email-location").val(chosen); }
             } else {
               composerState.cfg = response.composer;
+
+              // The channel pill follows what is usable now (applyComposer's own rule), so the other channel can be reached.
+              const $pill = $("[data-role=composer-channel]");
+
+              $pill.find("[data-channel=sms]").prop("hidden", !response.composer.sms);
+              $pill.find("[data-channel=email]").prop("hidden", !response.composer.email);
+              $pill.attr("data-single", response.composer.sms && response.composer.email ? "0" : "1");
+              $pill.prop("hidden", !(response.composer.sms && response.composer.email));
               setComposerChannel(composerState.channel);
               syncSendAvailability();
             }

@@ -55,7 +55,11 @@ function makeServer() {
       + (c.unread ? `<span class="badge notification_count">${c.unread}</span>` : '<div class="counter" hidden><span class="badge notification_count"></span></div>')
       + '</div></li>';
   };
-  s.list = (pinned) => Object.values(s.convs).filter((c) => c.pinned === pinned).sort((a, b) => b.at - a.at).map(row).join('');
+  // The real `load`: the tab's filter (read / unread), newest first, 50 rows a page, and the empty state when nothing matches.
+  s.list = (pinned, filter, limit) => {
+    const rows = Object.values(s.convs).filter((c) => c.pinned === pinned).filter((c) => (filter === 'read' ? !c.unread : filter === 'unread' ? c.unread > 0 : true)).sort((a, b) => b.at - a.at).slice(0, limit || 1e9).map(row).join('');
+    return rows || (pinned ? '' : '<div class="text-center text-muted p-2" data-role="chat-list-empty">No conversations</div>');
+  };
   s.thread = (id) => s.convs[id].msgs.map((m) => `<div class="chat" data-role="timeline-message" data-item-key="${m.key}">${(m.media || []).map((x) => `<p class="timeline-media"><${x.tag} controls src="${x.src}"></${x.tag}></p>`).join('')}<p>${m.text}</p>${m.detail ? `<span data-role="timeline-detail">${m.detail}</span>` : ''}</div>`).join('') || '<div class="timeline-empty">No messages</div>';
   s.addMedia = (id, text, key, media) => { const c = s.convs[id]; c.msgs.push({ key, dir: 'in', text, media }); c.unread += 1; c.at = s.clock++; };
   s.setDetail = (id, key, detail) => { s.convs[id].msgs.find((m) => m.key === key).detail = detail; };
@@ -94,7 +98,7 @@ async function scenario(name, fn, { clock = false } = {}) {
       if (id === 'hold') { if (server.delay['timeline:hold']) { await server.delay['timeline:hold']; } return route.fulfill({ status: 200, contentType: 'application/json', body: '{}' }); }
       if (server.fail && server.fail(kind, id)) { const f = server.fail(kind, id); return route.fulfill({ status: f, body: 'no' }); }
       const body = kind === 'list' && params.get('channel') === 'email' ? server.emails.map((t) => `<li data-id="email:${t}" data-channel="email" class="conv-row email-row"><h6 data-role="conversation-row-title">${t}</h6></li>`).join('')
-        : kind === 'timeline' ? JSON.stringify({ status: 'success', timeline: server.thread(id), composer: server.composer(id), channel: 'sms' }) : server.list(kind === 'pinned');
+        : kind === 'timeline' ? JSON.stringify({ status: 'success', timeline: server.thread(id), composer: server.composer(id), channel: 'sms' }) : server.list(kind === 'pinned', params.get('filter'), kind === 'pinned' ? 0 : 50);
       const hold = server.delay[kind + ':' + (id || '')];
       const snapshot = body;   // the answer is fixed at request time; a late arrival is stale by then
       if (hold) { await hold; }
@@ -124,7 +128,7 @@ async function scenario(name, fn, { clock = false } = {}) {
 const bootList = (page, server) => page.evaluate(({ list, pinned }) => {
   $('.chat-users-list').html(list); $('.chat-users-list-pinned').html(pinned);
   inboxLive.start(() => window.scope);
-}, { list: server.list(false), pinned: server.list(true) });
+}, { list: server.list(false, server.bootFilter, 1e9), pinned: server.list(true) });
 const open = async (page, server, id) => {
   await page.evaluate((i) => $('.chat-users-list li[data-id="' + i + '"], .chat-users-list-pinned li[data-id="' + i + '"]').first().trigger('click'), id);
   await page.waitForFunction((i) => $('.chat_id').val() === i && $('.chat_history').children().length > 0, id);
@@ -487,6 +491,7 @@ const seed = (server) => { server.add('A', 'Ann'); server.add('B', 'Bob'); serve
     assert.equal(await page.evaluate(() => composerState.channel), 'email', 'the channel is not changed');
     assert.equal(await page.evaluate(() => $('#message').val()), 'half-typed email reply', 'the draft is untouched');
     assert.equal(await page.evaluate(() => $('[data-role=composer-guidance]').prop('hidden')), false, 'the guidance is shown');
+    assert.equal(await page.evaluate(() => $('[data-role=composer-channel] [data-channel=email]').prop('hidden')), true, 'the channel pill follows what is usable now');
     const before = server.sent.length;
     await page.evaluate(() => enter_chat()); await page.waitForTimeout(400);
     assert.equal(server.sent.length, before, 'Send does not go to the stale reply target');
@@ -505,6 +510,46 @@ const seed = (server) => { server.add('A', 'Ann'); server.add('B', 'Bob'); serve
     server.inbound('B', 'poll sets B up', 'b9'); await refresh(page, server);
     assert.equal(await page.evaluate(() => composerState.forId), 'B', 'the poll set the composer up for B');
     assert.equal(await page.evaluate(() => $('#email-location').val() || ''), '', 'B does not inherit A\'s Location');
+  });
+
+  // ---- (filter membership) a conversation that stops matching the active tab leaves the list; one that merely moved past page 1 stays ----
+  const onTab = (page, f) => page.evaluate((x) => { window.scope = { filter: x, search: '', channel: 'all', createdFrom: '', createdTo: '' }; }, f);
+  const ids = (page) => page.evaluate(() => $('.chat-users-list > li[data-id]').map((_, e) => $(e).attr('data-id')).get());
+  const emptyShown = (page) => page.evaluate(() => $('.chat-users-list [data-role=chat-list-empty]').length);
+
+  await scenario('(filter) in the Read tab a conversation that receives a reply leaves the list, and the others stay', async (page, server) => {
+    seed(server); server.bootFilter = 'read'; await onTab(page, 'read'); await bootList(page, server);
+    assert.deepEqual((await ids(page)).sort(), ['A', 'B']);
+    server.inbound('B', 'B no longer matches Read', 'b2'); await refresh(page, server);
+    assert.deepEqual(await ids(page), ['A'], 'B left the Read list; it is now unread');
+    assert.equal(await page.evaluate(() => $('.chat-users-list li[data-id=A] [data-role=conversation-row-preview]').text()), 'a-1');
+  });
+
+  await scenario('(filter) when the LAST matching conversation leaves, the server\'s empty state is shown', async (page, server) => {
+    seed(server); delete server.convs.B; server.bootFilter = 'read'; await onTab(page, 'read'); await bootList(page, server);
+    server.inbound('A', 'the only read one got a reply', 'a2'); await refresh(page, server);
+    assert.deepEqual(await ids(page), []);
+    assert.equal(await emptyShown(page), 1, 'the empty state replaces the stale row');
+    server.convs.A.unread = 0; await refresh(page, server);                                   // it matches again (read elsewhere)
+    assert.deepEqual(await ids(page), ['A']);
+    assert.equal(await emptyShown(page), 0, 'and the empty state goes away');
+  });
+
+  await scenario('(filter) the open conversation is never pulled out from under the operator', async (page, server) => {
+    seed(server); server.bootFilter = 'read'; await onTab(page, 'read'); await bootList(page, server); await open(page, server, 'A');
+    server.inbound('A', 'reply to the open one', 'a2'); await refresh(page, server);
+    assert.ok((await ids(page)).includes('A'), 'A stays: it is open');
+    assert.deepEqual(await keys(page), ['a1', 'a2']);
+  });
+
+  await scenario('(filter) rows that only moved beyond page 1 (scrolled in later pages) are kept; a page-1 row that stops matching is removed', async (page, server) => {
+    for (let i = 0; i < 55; i++) { server.add('C' + i, 'Conv ' + i); server.inbound('C' + i, 'm' + i, 'k' + i); server.convs['C' + i].unread = 0; server.convs['C' + i].at = 5000 - i; }
+    server.bootFilter = 'read'; await onTab(page, 'read'); await bootList(page, server);       // all 55 shown, as after scrolling to page 2
+    assert.equal((await ids(page)).length, 55);
+    server.inbound('C10', 'C10 now unread', 'k10x'); server.convs.C10.unread = 1; await refresh(page, server);
+    const after = await ids(page);
+    assert.equal(after.includes('C10'), false, 'the page-1 row that stopped matching is gone');
+    assert.equal(after.includes('C52') && after.includes('C54'), true, 'rows from later pages are untouched');
   });
 
   // ---- (MMS playback) unchanged attachments keep their player, position and play state across a refresh ----
