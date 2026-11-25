@@ -29,7 +29,8 @@ export function ConversationsScreen({ navigation }: Props) {
   const load = useCallback(async (preserveItems = false) => {
     if (!scope) return;
     const current = ++generation.current;
-    refreshSeq.current++;
+    // Full loads and live refreshes share ONE ordering: whichever STARTED last may apply its result.
+    const startedAs = ++refreshSeq.current;
     fetchingMore.current = false;
     setLoadingMore(false);
     setMoreError(null);
@@ -40,6 +41,8 @@ export function ConversationsScreen({ navigation }: Props) {
     try {
       const res = await api.conversations(scope, { filter, search: search.trim() || undefined, page: 1 });
       if (generation.current !== current) return;
+      // A live refresh started after this load owns the newer view; applying this older response would roll it back.
+      if (startedAs !== refreshSeq.current) return;
       setItems(res.data);
       setNextPage(res.meta.next_page);
     } catch (e) {
@@ -75,6 +78,14 @@ export function ConversationsScreen({ navigation }: Props) {
    */
   const refreshTop = useCallback(async () => {
     if (!scope) return;
+    // Nothing shown yet: the initial load (or a filter/search reload) that is in flight will deliver fresh data itself, and
+    // must not be superseded by a live refresh that could fail and leave an empty screen.
+    if (itemsRef.current === null) {
+      changedUids.current.clear();
+      unappliedUids.current.clear();
+      needsFullReload.current = false;
+      return;
+    }
     changedUids.current.forEach((u) => unappliedUids.current.add(u));
     changedUids.current.clear();
     const uids = [...unappliedUids.current];
