@@ -105,6 +105,43 @@ final class ContactDirectory
     }
 
     /**
+     * Contacts matching a search, for the Conversations "New text" recipient dropdown. Each row carries enough to tell two
+     * people with the same name apart (group, email, company, formatted phone) and whether the contact may be texted. The same
+     * matching and Location scope as the Contacts list; an empty search lists the newest contacts.
+     *
+     * @return list<array{uid: string, name: ?string, phone: string, digits: string, group: ?string, email: ?string, company: ?string, can_text: bool}>
+     */
+    public function recipientSuggestions(Business $business, string $search, int $limit = 8, ?int $actorUserId = null): array
+    {
+        $contacts = $this->query($business, $search, $actorUserId)
+            ->with('contactGroup:id,business_id,name')
+            ->orderByDesc('id')
+            ->limit($limit)
+            ->get(['id', 'uid', 'group_id', 'business_id', 'phone', 'status']);
+
+        $identity = $this->identityFor($contacts->pluck('id')->map(fn ($id) => (int) $id)->all());
+        $blocked = \App\Models\Blacklists::query()->where('business_id', $business->id)
+            ->whereIn('number', $contacts->map(fn (Contacts $c) => ChatBoxBusinessBackfillV1::normalizeCounterparty((string) $c->phone))->filter()->unique()->values()->all())
+            ->pluck('number')->flip();
+
+        return $contacts->map(function (Contacts $contact) use ($business, $identity, $blocked) {
+            $digits = ChatBoxBusinessBackfillV1::normalizeCounterparty((string) $contact->phone);
+
+            return [
+                'uid' => (string) $contact->uid,
+                'name' => $this->fullName($identity[$contact->id] ?? []),
+                'phone' => $this->displayPhone($contact),
+                'digits' => $digits,
+                'group' => $this->groupNameFor($business, $contact),
+                'email' => $identity[$contact->id]['EMAIL'] ?? null,
+                'company' => $identity[$contact->id]['COMPANY'] ?? null,
+                // The send path refuses unsubscribed and blacklisted numbers; the dropdown says so up front.
+                'can_text' => $digits !== '' && $contact->status !== Contacts::STATUS_UNSUBSCRIBE && ! $blocked->has($digits),
+            ];
+        })->values()->all();
+    }
+
+    /**
      * Name and phone for a set of contacts, keyed by id, in two queries. A
      * contact of any other Business is simply absent.
      *

@@ -85,6 +85,8 @@ class SeoRankLocationCatalog
 
         return $this->supported(SeoRankLocation::query())
             ->where('location_name', 'like', $escaped . '%')
+            // City name first, so "Biloxi" lists before "Biloxi Beach" (a bare space would otherwise sort before the comma).
+            ->orderByRaw("SUBSTRING_INDEX(location_name, ',', 1)")
             ->orderBy('location_name')
             ->limit(max(1, min(25, $limit)))
             ->get();
@@ -114,6 +116,66 @@ class SeoRankLocationCatalog
         $present = $this->supported(SeoRankLocation::query())->distinct()->pluck('country_iso')->map(fn ($c) => strtoupper((string) $c))->all();
 
         return array_values(array_diff(self::supportedCountries(), $present));
+    }
+
+    /** US state / DC and Canadian province abbreviations (lowercase) => provider region name. UI hint only, never a lookup key. */
+    private const REGION_ABBREVIATIONS = [
+        'al' => 'Alabama', 'ak' => 'Alaska', 'az' => 'Arizona', 'ar' => 'Arkansas', 'ca' => 'California', 'co' => 'Colorado',
+        'ct' => 'Connecticut', 'de' => 'Delaware', 'dc' => 'District of Columbia', 'fl' => 'Florida', 'ga' => 'Georgia',
+        'hi' => 'Hawaii', 'id' => 'Idaho', 'il' => 'Illinois', 'in' => 'Indiana', 'ia' => 'Iowa', 'ks' => 'Kansas',
+        'ky' => 'Kentucky', 'la' => 'Louisiana', 'me' => 'Maine', 'md' => 'Maryland', 'ma' => 'Massachusetts',
+        'mi' => 'Michigan', 'mn' => 'Minnesota', 'ms' => 'Mississippi', 'mo' => 'Missouri', 'mt' => 'Montana',
+        'ne' => 'Nebraska', 'nv' => 'Nevada', 'nh' => 'New Hampshire', 'nj' => 'New Jersey', 'nm' => 'New Mexico',
+        'ny' => 'New York', 'nc' => 'North Carolina', 'nd' => 'North Dakota', 'oh' => 'Ohio', 'ok' => 'Oklahoma',
+        'or' => 'Oregon', 'pa' => 'Pennsylvania', 'ri' => 'Rhode Island', 'sc' => 'South Carolina', 'sd' => 'South Dakota',
+        'tn' => 'Tennessee', 'tx' => 'Texas', 'ut' => 'Utah', 'vt' => 'Vermont', 'va' => 'Virginia', 'wa' => 'Washington',
+        'wv' => 'West Virginia', 'wi' => 'Wisconsin', 'wy' => 'Wyoming',
+        'ab' => 'Alberta', 'bc' => 'British Columbia', 'mb' => 'Manitoba', 'nb' => 'New Brunswick',
+        'nl' => 'Newfoundland and Labrador', 'ns' => 'Nova Scotia', 'on' => 'Ontario', 'pe' => 'Prince Edward Island',
+        'qc' => 'Quebec', 'sk' => 'Saskatchewan',
+    ];
+
+    /**
+     * A supported cached city named at the end of a keyword phrase ("photo booth rental biloxi ms" -> Biloxi,
+     * Mississippi), or null. Local lookup only. A trailing state/province abbreviation narrows the match; without
+     * one a city name shared by several cached rows is ambiguous and yields null rather than a guess.
+     */
+    public function suggestFromPhrase(string $phrase): ?SeoRankLocation
+    {
+        $words = preg_split('/[^\p{L}\p{N}\'.-]+/u', mb_strtolower(trim($phrase)), -1, PREG_SPLIT_NO_EMPTY) ?: [];
+        $region = null;
+
+        if (count($words) > 1 && isset(self::REGION_ABBREVIATIONS[end($words)])) {
+            $region = self::REGION_ABBREVIATIONS[array_pop($words)];
+        }
+
+        for ($n = min(3, count($words)); $n >= 1; $n--) {
+            $city = implode(' ', array_slice($words, -$n));
+            $matches = $this->supported(SeoRankLocation::query())
+                ->where('location_name', 'like', addcslashes($city, '\\%_') . ',' . ($region !== null ? addcslashes($region, '\\%_') . ',' : '') . '%')
+                ->orderBy('location_name')
+                ->limit(2)
+                ->get();
+
+            if ($matches->count() === 1) {
+                return $matches->first();
+            }
+
+            if ($matches->count() > 1) {
+                return null;
+            }
+        }
+
+        return null;
+    }
+
+    /** "Biloxi,Mississippi,United States" -> "Biloxi, MS" (the provider region abbreviated where it is a US state or Canadian province). */
+    public static function shortLabel(string $locationName): string
+    {
+        $parts = array_map('trim', explode(',', $locationName));
+        $abbr = array_search($parts[1] ?? '', self::REGION_ABBREVIATIONS, true);
+
+        return $abbr !== false ? $parts[0] . ', ' . strtoupper((string) $abbr) : self::label($locationName);
     }
 
     /** "Chicago,Illinois,United States" -> "Chicago, Illinois, United States". */

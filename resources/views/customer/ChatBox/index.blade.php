@@ -1759,7 +1759,7 @@
                 No conversation selected
             </h4>
             <p class="start-chat-description d-none d-md-block">Choose a conversation on the left, or start a new one.</p>
-            <a href="{{ route('customer.workspaces.businesses.conversations.new', [$workspaceUid, $businessUid]) }}"
+            <a href="{{ route('customer.workspaces.businesses.conversations.new', [$workspaceUid, $businessUid]) }}" data-new-text-open
                class="btn btn-primary btn-sm d-none d-md-inline-flex">{{ __('locale.labels.new_conversion') }}</a>
         </div>
         <!--/ To load Conversation -->
@@ -1895,6 +1895,9 @@
         <!--/ Active Chat -->
     </section>
     <!--/ Main chat area -->
+
+    {{-- "New text": opens from the launch controls above and in the sidebar; they keep their href as the no-JS fallback. --}}
+    @include('customer.ChatBox.partials._new_text_dialog')
 
     {{-- The existing CRM browser softphone (popup + SDK), only when this user may place browser calls here. No second calling system. --}}
     @includeWhen(! empty($browserCalling), 'customer.people._softphone')
@@ -3066,6 +3069,21 @@
             else if (++tries > 20) { clearInterval(timer); }
           }, 250);
         })();
+
+        // "New text" sent: show that conversation. The list is reloaded and the new row opened exactly as the deep link above does;
+        // if it is not in the current list (an active filter or search), the same deep link is followed instead.
+        document.addEventListener("new-text-sent", function (e) {
+          const wanted = e.detail && e.detail.uid;
+          if (!wanted) { loadChatUsers(page, filter, search); return; }
+          const fallback = "{{ route('customer.workspaces.businesses.conversations.index', [$workspaceUid, $businessUid]) }}" + "?open=" + encodeURIComponent(wanted);
+          loadChatUsers(1, "", "");
+          let tries = 0;
+          const timer = setInterval(function () {
+            const $row = $("#users-list li").filter(function () { return String($(this).attr("data-id")) === wanted; }).first();
+            if ($row.length) { clearInterval(timer); $row.trigger("click"); closeListOnSmallScreens(); }
+            else if (++tries > 20) { clearInterval(timer); window.location.href = fallback; }
+          }, 250);
+        });
 
         // A deep link opens a conversation: on narrow screens the list slides away so the conversation itself is what is shown.
         function closeListOnSmallScreens() {

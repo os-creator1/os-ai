@@ -227,6 +227,13 @@
 
             [, $business] = $resolved;
 
+            // The "New text" dialog asks for the same compose context as JSON (Accept: application/json); a block it cannot
+            // recover from is a JSON refusal there, and the same redirect as ever for the full page.
+            $json = request()->expectsJson();
+            $blocked = fn (string $message) => $json
+                ? response()->json(['status' => 'error', 'message' => $message], 409)
+                : redirect()->route('customer.workspaces.businesses.conversations.index', [$workspaceUid, $businessUid])->with(['status' => 'error', 'message' => $message]);
+
             $breadcrumbs = [
                 ['link' => url('dashboard'), 'name' => __('locale.menu.Dashboard')],
                 ['link' => route('customer.workspaces.businesses.conversations.index', [$workspaceUid, $businessUid]), 'name' => __('locale.menu.Chat Box')],
@@ -238,10 +245,7 @@
             $activeSubscription = $business->customer?->activeSubscription();
 
             if (! $activeSubscription && ! $this->hasActivePlatformSubscription($business)) {
-                return redirect()->route('customer.workspaces.businesses.conversations.index', [$workspaceUid, $businessUid])->with([
-                    'status'  => 'error',
-                    'message' => __('locale.customer.no_active_subscription'),
-                ]);
+                return $blocked(__('locale.customer.no_active_subscription'));
             }
 
             // Customer Experience Slice 3 correction — a managed Business's
@@ -272,10 +276,7 @@
                 }
 
                 if ($managedFromNumber === null) {
-                    return redirect()->route('customer.workspaces.businesses.conversations.index', [$workspaceUid, $businessUid])->with([
-                        'status'  => 'error',
-                        'message' => ConversationSendFailureReason::MessagingNotReady->customerMessage(),
-                    ]);
+                    return $blocked(ConversationSendFailureReason::MessagingNotReady->customerMessage());
                 }
 
                 $phone_numbers  = collect();
@@ -291,10 +292,7 @@
                 // has genuinely never finished messaging setup — a real,
                 // expected post-signup state (§7 requires no A2P/number
                 // setup at signup), not a pricing problem.
-                return redirect()->route('customer.workspaces.businesses.conversations.index', [$workspaceUid, $businessUid])->with([
-                    'status'  => 'error',
-                    'message' => ConversationSendFailureReason::MessagingNotReady->customerMessage(),
-                ]);
+                return $blocked(ConversationSendFailureReason::MessagingNotReady->customerMessage());
             } else {
                 $phone_numbers = PhoneNumbers::where('business_id', $business->id)->where('status', 'assigned')->cursor();
 
@@ -316,10 +314,133 @@
                 ? $retryToken
                 : (string) Str::uuid();
 
+            if ($json) {
+                return response()->json($this->composeContext($business, $managedTransport, $managedFromNumber, $countries, $coverage, $phone_numbers, $sendingServers, $templates, $idempotencyToken));
+            }
+
             return view('customer.ChatBox.new', compact(
                 'breadcrumbs', 'phone_numbers', 'coverage', 'sendingServers', 'templates', 'idempotencyToken', 'workspaceUid', 'businessUid',
                 'managedTransport', 'managedFromNumber', 'countries'
             ));
+        }
+
+        /**
+         * The compose context the "New text" dialog needs, as plain JSON: the Business's own texting number, the destination
+         * country list (a formatting helper only, exactly the full page's list) and the Business's active templates.
+         *
+         * A Business that needs a person's choice of sender or sending server (several of either on the legacy transport)
+         * reports `dialog_supported: false`, and the dialog sends the person to the full compose page, which asks.
+         */
+        private function composeContext(Business $business, bool $managedTransport, ?string $managedFromNumber, $countries, $coverage, $phoneNumbers, $sendingServers, $templates, string $idempotencyToken): array
+        {
+            $from = $managedFromNumber;
+            $senderId = null;
+            $sendingServerId = null;
+            $supported = true;
+
+            if (! $managedTransport) {
+                $numbers = collect($phoneNumbers)->values();
+                $servers = $sendingServers->filter(fn ($server) => isset($server->sendingServer) && $server->sendingServer->status == 1 && $server->sendingServer->two_way)->values();
+                $supported = $numbers->count() === 1 && $servers->count() <= 1;
+                $from = $numbers->first()?->number;
+                $senderId = $from;
+                $sendingServerId = $servers->first()?->sendingServer?->id;
+                $countries = collect($coverage)->map(fn ($row) => $row->country)->filter()->unique('id')->values();
+            }
+
+            return [
+                'status' => 'success',
+                'dialog_supported' => $supported,
+                'from' => $from,
+                'from_display' => $from === null ? null : $this->displayNumber($from),
+                'sender_id' => $senderId,
+                'sending_server' => $sendingServerId,
+                'countries' => collect($countries)->map(fn ($country) => [
+                    'id' => (int) $country->id,
+                    'dial' => (string) $country->country_code,
+                    'iso' => (string) $country->iso_code,
+                    'name' => (string) $country->name,
+                ])->values()->all(),
+                'templates' => $templates->map(fn ($template) => ['id' => $template->id, 'name' => $template->name])->values()->all(),
+                'idempotency_token' => $idempotencyToken,
+            ];
+        }
+
+        private function displayNumber(string $number): string
+        {
+            try {
+                $util = PhoneNumberUtil::getInstance();
+                $parsed = $util->parse('+' . ltrim($number, '+'));
+
+                $national = (string) $parsed->getNationalNumber();
+
+                // North American numbers read "+1 (970) 825-9551"; any other country uses the international format.
+                return $parsed->getCountryCode() === 1 && strlen($national) === 10
+                    ? '+1 (' . substr($national, 0, 3) . ') ' . substr($national, 3, 3) . '-' . substr($national, 6)
+                    : $util->format($parsed, \libphonenumber\PhoneNumberFormat::INTERNATIONAL);
+            } catch (Throwable) {
+                return $number;
+            }
+        }
+
+        /**
+         * Recipient suggestions for the "New text" dialog: this Business's contacts (Location-scoped for the actor) matching what
+         * was typed. Each row names the destination country and national number so choosing it fills the same fields a typed
+         * number would, and says whether the contact can be texted at all.
+         */
+        public function recipients(Request $request, string $workspaceUid, string $businessUid): JsonResponse
+        {
+            $resolved = $this->resolveBusiness($workspaceUid, $businessUid);
+
+            if ($resolved === null) {
+                return $this->notFound();
+            }
+
+            [, $business] = $resolved;
+
+            if (! Auth::user()->can('chat_box')) {
+                abort(403);
+            }
+
+            $search = mb_substr(trim((string) $request->query('q', '')), 0, 100);
+
+            if ($search === '') {
+                return response()->json(['contacts' => []]);
+            }
+
+            $util = PhoneNumberUtil::getInstance();
+            $contacts = collect(app(\App\Library\Contacts\ContactDirectory::class)->recipientSuggestions($business, $search, 8, (int) Auth::id()))
+                ->map(function (array $contact) use ($util) {
+                    $countryId = null;
+                    $national = $contact['digits'];
+
+                    try {
+                        $parsed = $util->parse('+' . $contact['digits']);
+                        $region = $util->getRegionCodeForNumber($parsed);
+                        $dial = (string) $parsed->getCountryCode();
+                        $country = Country::query()->where('status', 1)->where('country_code', $dial)
+                            ->orderByRaw('iso_code = ? desc', [(string) $region])->first();
+                        $countryId = $country?->id;
+                        $national = (string) $parsed->getNationalNumber();
+                    } catch (NumberParseException) {
+                        $countryId = null;
+                    }
+
+                    return [
+                        'uid' => $contact['uid'],
+                        'name' => $contact['name'],
+                        'phone' => $contact['digits'] !== '' ? $this->displayNumber($contact['digits']) : $contact['phone'],
+                        'group' => $contact['group'],
+                        'email' => $contact['email'],
+                        'company' => $contact['company'],
+                        'country_id' => $countryId !== null ? (int) $countryId : null,
+                        'national' => $national,
+                        // A number whose country cannot be sent to, or an opted-out / blocked contact, is shown but not selectable.
+                        'can_text' => $contact['can_text'] && $countryId !== null,
+                    ];
+                })->values();
+
+            return response()->json(['contacts' => $contacts]);
         }
 
         /**
@@ -337,9 +458,14 @@
 
             [, $business] = $resolved;
 
-            $back = fn (string $message) => redirect()
-                ->route('customer.workspaces.businesses.conversations.new', [$workspaceUid, $businessUid])
-                ->with(['status' => 'error', 'message' => $message]);
+            // The "New text" dialog posts with Accept: application/json and keeps its draft on screen, so every refusal below
+            // is returned to it as JSON instead of a redirect away from it. The full compose page is unchanged.
+            $json = $request->expectsJson();
+            $back = fn (string $message) => $json
+                ? response()->json(['status' => 'error', 'message' => $message], 422)
+                : redirect()
+                    ->route('customer.workspaces.businesses.conversations.new', [$workspaceUid, $businessUid])
+                    ->with(['status' => 'error', 'message' => $message]);
 
             if (config('app.stage') === 'demo') {
                 return $back(__('locale.demo_mode_not_available'));
@@ -572,6 +698,20 @@
                     )->customerMessage();
                 }
 
+                if ($json) {
+                    // Only a provider-accepted send closes the dialog. Anything else (a blacklisted number, a refusal, a send
+                    // still settling) leaves the draft where it is with the reason, and the token action says whether the
+                    // same idempotency token must be reused for the retry.
+                    $accepted = $sentPayload->status === 'success';
+
+                    return response()->json([
+                        'status' => $sentPayload->status,
+                        'message' => $sentPayload->message,
+                        'm5_token_action' => $sentPayload->m5_token_action ?? 'clear',
+                        'conversation_uid' => $accepted ? $this->conversationUidAfterSend($business, $countryCode . $phone) : null,
+                    ], $accepted ? 200 : 422);
+                }
+
                 // RFC-005 Milestone 5 §6.1 — 'retain' returns to compose with
                 // the same token so a retry resolves against the same open
                 // reservation; 'clear' (or none) goes to the inbox.
@@ -592,6 +732,24 @@
             }
 
             return $back(__('locale.exceptions.something_went_wrong'));
+        }
+
+        /**
+         * The conversation a just-accepted send landed in: this Business's thread with that number whose newest outbound message
+         * is the latest. Resolved from what the send itself wrote, never from anything the browser supplied.
+         */
+        private function conversationUidAfterSend(Business $business, string $digits): ?string
+        {
+            $digits = (string) preg_replace('/\D+/', '', $digits);
+            $boxIds = ChatBox::query()->where('business_id', $business->id)->where('to', $digits)->pluck('id');
+
+            if ($boxIds->isEmpty()) {
+                return null;
+            }
+
+            $boxId = ChatBoxMessage::query()->whereIn('box_id', $boxIds)->where('direction', \App\Models\Reports::DIRECTION_OUTGOING)->latest('id')->value('box_id');
+
+            return $boxId === null ? null : ChatBox::query()->where('id', $boxId)->value('uid');
         }
 
         /**

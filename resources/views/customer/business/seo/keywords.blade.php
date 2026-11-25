@@ -400,7 +400,7 @@
                                                                         <button class="dropdown-item" type="submit" data-role="rank-start">Start tracking</button>
                                                                     </form>
                                                                 @else
-                                                                    <button class="dropdown-item" type="button" data-role="rank-start" data-rank-dialog="track" data-action="{{ route('customer.workspaces.businesses.seo.keywords.rank.track', [$workspaceUid, $businessUid, $keyword->uid]) }}">Start tracking</button>
+                                                                    <button class="dropdown-item" type="button" data-role="rank-start" data-rank-dialog="track" data-phrase="{{ $keyword->phrase }}" data-scope="{{ $keyword->location?->name ?? 'Whole business' }}" data-action="{{ route('customer.workspaces.businesses.seo.keywords.rank.track', [$workspaceUid, $businessUid, $keyword->uid]) }}">Start tracking</button>
                                                                 @endif
                                                             </li>
                                                         @elseif($state === SeoRankDashboardReader::STATE_UNTRACKED || ($state === SeoRankDashboardReader::STATE_PAUSED && $slotsFull))
@@ -531,15 +531,7 @@
     {{-- One chooser for every place that needs a search location (Add keyword, Start tracking). --}}
     @can('manage_seo')
         @if($rankPlan !== null && ! $viewingAsClient)
-            <x-dialog id="rank-location-dialog" title="Where should we track this keyword?" size="sm" data-role="rank-location-dialog">
-                @include('customer.business.seo._rank-location-field', ['url' => route('customer.workspaces.businesses.seo.keywords.rank-locations', [$workspaceUid, $businessUid]), 'fieldId' => 'rank-dialog-location'])
-                <p class="text-caption mb-0 mt-50" data-role="rank-location-confirm-hint">Start tracking turns on once you pick a city from the list.</p>
-                <x-slot name="footer">
-                    <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
-                    <button type="button" class="btn btn-outline-primary d-none" data-role="rank-location-skip">Add keyword without tracking</button>
-                    <button type="button" class="btn btn-primary" data-role="rank-location-confirm" disabled>Start tracking</button>
-                </x-slot>
-            </x-dialog>
+            @include('customer.business.seo._rank-location-dialog', ['url' => route('customer.workspaces.businesses.seo.keywords.rank-locations', [$workspaceUid, $businessUid])])
             <form method="POST" id="rank-dialog-form" class="d-none" data-role="rank-dialog-form">
                 @csrf
                 <input type="hidden" name="search_location_code" value="">
@@ -580,20 +572,79 @@
                 });
             });
 
-            // Search-location picker: query the cached provider locations; only a clicked result counts as chosen.
+            // Search-location picker: query the cached provider locations; only an explicit pick (click, or Enter on the
+            // highlighted row) counts as chosen. The highlight is only a cursor: typing never selects anything.
             document.querySelectorAll('[data-role="rank-location-field"]').forEach(function (field) {
                 var input = field.querySelector('[data-role="rank-location-input"]');
                 var code = field.querySelector('[data-role="rank-location-code"]');
                 var list = field.querySelector('[data-role="rank-location-results"]');
-                var timer = null;
-
-                function changed() { field.dispatchEvent(new CustomEvent('rank-location-change', { bubbles: true })); }
-
                 var hint = field.querySelector('[data-role="rank-location-hint"]');
                 var idleHint = hint.textContent;
+                var countryShort = {};
+                try { var names = JSON.parse(field.getAttribute('data-countries') || '{}'); Object.keys(names).forEach(function (iso) { countryShort[names[iso]] = iso; }); } catch (e) { /* labels fall back to the full country name */ }
+                var timer = null;
                 var seq = 0;
-                function say(text, bad) { hint.textContent = text; hint.classList.toggle('text-danger', !!bad); hint.classList.toggle('text-muted', !bad); }
-                function clearList() { list.innerHTML = ''; list.classList.add('d-none'); }
+                var active = -1;
+
+                function changed() { field.dispatchEvent(new CustomEvent('rank-location-change', { bubbles: true })); }
+                function say(text, bad) { hint.textContent = text; hint.classList.toggle('text-danger', !!bad); }
+                function options() { return list.querySelectorAll('[data-role="rank-location-option"]'); }
+                function setActive(i) {
+                    var opts = options();
+                    if (!opts.length) { active = -1; input.removeAttribute('aria-activedescendant'); return; }
+                    active = (i + opts.length) % opts.length;
+                    opts.forEach(function (o, n) { o.classList.toggle('is-active', n === active); o.setAttribute('aria-selected', n === active ? 'true' : 'false'); });
+                    input.setAttribute('aria-activedescendant', opts[active].id);
+                    opts[active].scrollIntoView({ block: 'nearest' });
+                }
+                function clearList() { list.innerHTML = ''; list.classList.add('d-none'); active = -1; input.setAttribute('aria-expanded', 'false'); input.removeAttribute('aria-activedescendant'); }
+                function pick(loc) {
+                    seq++; clearTimeout(timer); // a response still in flight must not reopen the list
+                    input.value = loc.label; code.value = loc.code;
+                    clearList(); say('Location selected.', false); changed();
+                }
+                field.pickLocation = pick;
+                field.resetPicker = function () { seq++; clearTimeout(timer); input.value = ''; code.value = ''; clearList(); say(idleHint, false); changed(); };
+
+                // "Mississippi, United States" -> "Mississippi, US"
+                function region(label) {
+                    var parts = label.split(',').map(function (x) { return x.trim(); });
+                    parts.shift();
+                    if (parts.length && countryShort[parts[parts.length - 1]]) { parts[parts.length - 1] = countryShort[parts[parts.length - 1]]; }
+                    return parts.join(', ');
+                }
+                function highlight(city, q) {
+                    var b = document.createElement('b');
+                    var at = city.toLowerCase().indexOf(q.toLowerCase());
+                    if (at === 0 && q) {
+                        var u = document.createElement('u'); u.textContent = city.slice(0, q.length);
+                        b.appendChild(u); b.appendChild(document.createTextNode(city.slice(q.length)));
+                    } else { b.textContent = city; }
+                    return b;
+                }
+                function render(locs, q) {
+                    clearList();
+                    locs.forEach(function (loc, n) {
+                        var row = document.createElement('div');
+                        row.className = 'kwd-opt';
+                        row.id = input.id + '-opt-' + n;
+                        row.setAttribute('role', 'option');
+                        row.setAttribute('aria-selected', 'false');
+                        row.setAttribute('data-role', 'rank-location-option');
+                        row.setAttribute('data-code', loc.code);
+                        row.innerHTML = '<svg class="kwd-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 21s-7-6.200-7-11.500a7 7 0 0 1 14 0C19 14.800 12 21 12 21z"></path><circle cx="12" cy="9.500" r="2.500"></circle></svg>';
+                        row.appendChild(highlight(loc.label.split(',')[0].trim(), q));
+                        var right = document.createElement('span'); right.textContent = region(loc.label);
+                        row.appendChild(right);
+                        row.setAttribute('aria-label', loc.label);
+                        // mousedown keeps the focus in the input; the pick itself is the click.
+                        row.addEventListener('mousedown', function (e) { e.preventDefault(); });
+                        row.addEventListener('mousemove', function () { if (active !== n) { setActive(n); } });
+                        row.addEventListener('click', function () { pick(loc); input.focus(); });
+                        list.appendChild(row);
+                    });
+                    if (locs.length) { list.classList.remove('d-none'); input.setAttribute('aria-expanded', 'true'); setActive(0); }
+                }
 
                 input.addEventListener('input', function () {
                     code.value = ''; changed();
@@ -607,23 +658,10 @@
                         fetch(field.getAttribute('data-url') + '?q=' + encodeURIComponent(q), { headers: { 'Accept': 'application/json' }, credentials: 'same-origin' })
                             .then(function (r) { if (!r.ok) { throw new Error('http ' + r.status); } return r.json(); })
                             .then(function (data) {
-                                if (mine !== seq) { return; } // a newer keystroke owns the list
+                                if (mine !== seq) { return; } // a newer keystroke (or a pick) owns the list
                                 var locs = data.locations || [];
-                                clearList();
-                                locs.forEach(function (loc) {
-                                    var b = document.createElement('button');
-                                    b.type = 'button';
-                                    b.className = 'list-group-item list-group-item-action';
-                                    b.setAttribute('data-role', 'rank-location-option');
-                                    b.setAttribute('data-code', loc.code);
-                                    b.textContent = loc.label;
-                                    b.addEventListener('click', function () {
-                                        input.value = loc.label; code.value = loc.code;
-                                        clearList(); say('Location selected.', false); changed();
-                                    });
-                                    list.appendChild(b);
-                                });
-                                if (locs.length) { list.classList.remove('d-none'); say('Pick a city from the list.', false); }
+                                render(locs, q);
+                                if (locs.length) { say('Pick a city from the list.', false); }
                                 else if (data.status === 'not_initialized') { say('Locations are not initialized yet. Tracking cannot start until they are loaded; you can still add the keyword without tracking.', true); }
                                 else if (data.status === 'partial') { say('No matching city found. Some locations are still loading, so try again later.', true); }
                                 else { say('No matching city. Check the spelling (supported countries: {{ \App\Library\Seo\Rank\SeoRankLocationCatalog::supportedCountriesLabel() }}).', true); }
@@ -638,33 +676,71 @@
                     }, 250);
                 });
                 input.addEventListener('keydown', function (e) {
-                    if (e.key === 'ArrowDown' && list.firstElementChild) { e.preventDefault(); list.firstElementChild.focus(); }
-                });
-                list.addEventListener('keydown', function (e) {
-                    var t = e.target;
-                    if (e.key === 'ArrowDown' && t.nextElementSibling) { e.preventDefault(); t.nextElementSibling.focus(); }
-                    if (e.key === 'ArrowUp') { e.preventDefault(); (t.previousElementSibling || input).focus(); }
+                    var opts = options();
+                    if (e.key === 'ArrowDown' && opts.length) { e.preventDefault(); setActive(active + 1); }
+                    else if (e.key === 'ArrowUp' && opts.length) { e.preventDefault(); setActive(active - 1); }
+                    else if (e.key === 'Enter') {
+                        // Enter never submits anything by itself: it picks the highlighted row, if the list is showing.
+                        e.preventDefault();
+                        if (opts.length && active > -1) { opts[active].click(); }
+                    } else if (e.key === 'Escape' && opts.length) {
+                        // First Escape closes the suggestions; the next one closes the dialog.
+                        e.preventDefault(); e.stopPropagation(); clearList();
+                    }
                 });
             });
 
+
+            // Focus containment: Bootstrap 5.1 only reacts to focusin, so Tab off the last enabled control would land on <body> for a step.
+            // Wrap explicitly instead.
+            function trapTab(root) {
+                root.addEventListener('keydown', function (e) {
+                    if (e.key !== 'Tab') { return; }
+                    var items = Array.prototype.filter.call(root.querySelectorAll('button, input, textarea, select, a[href], [tabindex]'), function (el) {
+                        return !el.disabled && el.type !== 'hidden' && el.getAttribute('tabindex') !== '-1' && el.offsetParent !== null;
+                    });
+                    if (!items.length) { return; }
+                    var first = items[0], last = items[items.length - 1];
+                    if (e.shiftKey && (document.activeElement === first || !root.contains(document.activeElement))) { e.preventDefault(); last.focus(); }
+                    else if (!e.shiftKey && (document.activeElement === last || !root.contains(document.activeElement))) { e.preventDefault(); first.focus(); }
+                });
+            }
+
             // The chooser dialog: the action stays disabled until a real result is picked.
+            var opener = null; // the control that launched the dialog; focus returns to it on close
             if (dialogEl) {
+                var field = dialogEl.querySelector('[data-role="rank-location-field"]');
                 var dInput = dialogEl.querySelector('[data-role="rank-location-input"]');
                 var dCode = dialogEl.querySelector('[data-role="rank-location-code"]');
                 var confirmBtn = dialogEl.querySelector('[data-role="rank-location-confirm"]');
-                var dHint = dialogEl.querySelector('[data-role="rank-location-confirm-hint"]');
                 var skipBtn = dialogEl.querySelector('[data-role="rank-location-skip"]');
-                dialogEl.addEventListener('rank-location-change', function () {
-                    confirmBtn.disabled = !dCode.value;
-                    dHint.classList.toggle('d-none', !!dCode.value);
-                });
+                var spacer = dialogEl.querySelector('[data-role="rank-location-spacer"]');
+                var kwBox = dialogEl.querySelector('[data-role="rank-location-keyword"]');
+                var kwHint = dialogEl.querySelector('[data-role="rank-location-keyword-hint"]');
+                var kwPick = dialogEl.querySelector('[data-role="rank-location-keyword-pick"]');
+                var hintSeq = 0;
+                var hintLoc = null;
+
+                trapTab(dialogEl);
+                dialogEl.addEventListener('rank-location-change', function () { confirmBtn.disabled = !dCode.value; });
                 skipBtn.addEventListener('click', function () {
                     var run = skipHandler; skipHandler = null; pending = null;
                     dialog().hide();
                     if (run) { run(); }
                 });
+                kwPick.addEventListener('click', function () { if (hintLoc) { field.pickLocation(hintLoc); dInput.focus(); } });
+                // The overlay is the modal itself (no separate backdrop): a click on it, outside the card, cancels.
+                dialogEl.addEventListener('mousedown', function (e) { if (e.target === dialogEl) { dialog().hide(); } });
                 dialogEl.addEventListener('shown.bs.modal', function () { dInput.focus(); });
-                dialogEl.addEventListener('hidden.bs.modal', function () { dInput.value = ''; dCode.value = ''; confirmBtn.disabled = true; pending = null; skipHandler = null; skipBtn.classList.add('d-none'); dHint.classList.remove('d-none'); dInput.dispatchEvent(new Event('input')); });
+                dialogEl.addEventListener('hidden.bs.modal', function () {
+                    hintSeq++; hintLoc = null; pending = null; skipHandler = null;
+                    field.resetPicker();
+                    confirmBtn.disabled = true; skipBtn.classList.add('d-none'); spacer.classList.remove('d-none'); kwHint.classList.add('d-none');
+                    // Return focus to the launcher. A menu item that closed with its dropdown falls back to that menu's toggle.
+                    var back = opener; opener = null;
+                    if (back && !back.offsetParent) { back = back.closest('.dropdown') && back.closest('.dropdown').querySelector('[data-bs-toggle="dropdown"]'); }
+                    if (back && back.focus) { back.focus(); }
+                });
                 confirmBtn.addEventListener('click', function () {
                     if (!dCode.value || !pending) { return; }
                     var chosen = { code: dCode.value, label: dInput.value };
@@ -673,10 +749,28 @@
                     run(chosen);
                 });
             }
-            function choose(then, skipFn) {
+            // ctx: { phrase, scope } shown above the search box; the keyword's own city (if its phrase names one) is offered as a hint.
+            function choose(then, skipFn, ctx) {
                 pending = then;
-                if (dialogEl) { dialogEl.querySelector('[data-role="rank-location-skip"]').classList.toggle('d-none', !skipFn); }
+                opener = document.activeElement;
+                ctx = ctx || {};
+                dialogEl.querySelector('[data-role="rank-location-keyword-phrase"]').textContent = ctx.phrase || '';
+                dialogEl.querySelector('[data-role="rank-location-keyword-scope"]').textContent = ctx.scope || '';
+                kwBox.classList.toggle('d-none', !ctx.phrase);
+                skipBtn.classList.toggle('d-none', !skipFn);
+                spacer.classList.toggle('d-none', !!skipFn);
                 skipHandler = skipFn || null;
+                var mine = ++hintSeq;
+                kwHint.classList.add('d-none'); hintLoc = null;
+                if (ctx.phrase && !ctx.noHint) {
+                    fetch(field.getAttribute('data-url') + '?hint=' + encodeURIComponent(ctx.phrase), { headers: { 'Accept': 'application/json' }, credentials: 'same-origin' })
+                        .then(function (r) { return r.ok ? r.json() : null; })
+                        .then(function (data) {
+                            if (mine !== hintSeq || !data || !data.suggestion) { return; }
+                            hintLoc = data.suggestion; kwPick.textContent = data.suggestion.short; kwHint.classList.remove('d-none');
+                        })
+                        .catch(function () { /* the hint is optional */ });
+                }
                 dialog().show();
             }
 
@@ -688,7 +782,7 @@
                         f.action = btn.getAttribute('data-action');
                         f.querySelector('[name="search_location_code"]').value = chosen.code;
                         f.submit();
-                    });
+                    }, null, { phrase: btn.getAttribute('data-phrase'), scope: btn.getAttribute('data-scope') });
                 });
             });
 
@@ -707,6 +801,10 @@
                     var uid = scope ? scope.value : '';
                     return (uid && defaults.locations[uid]) || defaults.business || null;
                 }
+                function addContext() {
+                    var phrase = addForm.querySelector('[name="phrase"]');
+                    return { phrase: phrase ? phrase.value.trim() : '', scope: scope && scope.selectedOptions.length ? scope.selectedOptions[0].textContent.trim() : 'Whole business' };
+                }
                 function render() {
                     if (!codeInput) { return; }
                     var loc = effective();
@@ -717,7 +815,7 @@
                 if (scope) { scope.addEventListener('change', render); }
                 if (toggle) { toggle.addEventListener('change', render); }
                 var change = addForm.querySelector('[data-role="change-location"]');
-                if (change) { change.addEventListener('click', function () { choose(function (c) { chosenHere = c; render(); }); }); }
+                if (change) { change.addEventListener('click', function () { choose(function (c) { chosenHere = c; render(); }, null, addContext()); }); }
                 render();
 
                 addForm.addEventListener('submit', function (e) {
@@ -726,7 +824,7 @@
                     choose(function (c) { chosenHere = c; render(); addForm.submit(); }, function () {
                         // Never trap the customer: save the keyword with rank tracking switched off.
                         toggle.checked = false; render(); addForm.submit();
-                    });
+                    }, addContext());
                 });
             }
 
@@ -744,9 +842,10 @@
                     var loc = (uid && defaults.locations[uid]) || defaults.business || null;
                     if (loc) { code.value = loc.code; return; }
                     e.preventDefault();
+                    var row = form.closest('[data-role="suggested-keyword"]');
                     choose(function (c) { code.value = c.code; form.submit(); }, function () {
                         form.querySelector('[name="track_rank"]').value = '0'; form.submit();
-                    });
+                    }, { phrase: row ? row.getAttribute('data-phrase') : '', scope: row ? (row.querySelector('.kw-mut') || {}).textContent : '' });
                 });
             });
 
@@ -757,7 +856,7 @@
                     var code = trackAll.querySelector('[data-role="track-all-code"]');
                     if (code.value || hasAnyDefault()) { return; }
                     e.preventDefault();
-                    choose(function (c) { code.value = c.code; trackAll.submit(); });
+                    choose(function (c) { code.value = c.code; trackAll.submit(); }, null, { phrase: 'All suggested keywords', scope: 'Suggested for you', noHint: true });
                 });
             }
 

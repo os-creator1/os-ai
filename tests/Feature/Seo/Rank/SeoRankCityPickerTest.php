@@ -196,7 +196,7 @@ class SeoRankCityPickerTest extends TestCase
 
         $html = $this->get($this->u('keywords.index', $workspace, $business))->assertOk()->getContent();
 
-        $this->assertMatchesRegularExpression('/data-role="rank-location-confirm" disabled>Start tracking</', $html);
+        $this->assertMatchesRegularExpression('/data-role="rank-location-confirm"[^>]* disabled>Start tracking</', $html);
         $this->assertStringContainsString('Start tracking turns on once you pick a city from the list.', $html);
         $this->assertStringContainsString('data-role="rank-location-hint" role="status"', $html);
         $this->assertStringContainsString('e.g. Toronto, Chicago or Vilnius', $html);
@@ -205,7 +205,12 @@ class SeoRankCityPickerTest extends TestCase
         }
         // Add keyword escape hatch inside the dialog (mobile modal never a dead end).
         $this->assertStringContainsString('data-role="rank-location-skip"', $html);
-        $this->assertStringContainsString('Add keyword without tracking', $html);
+        $this->assertStringContainsString('>Add without tracking<', $html);
+        // The redesigned chooser: heading, helper line, keyword context and the supported-places hint.
+        $this->assertStringContainsString('Where do customers search from?', $html);
+        $this->assertStringContainsString("We'll check Google rank as if searching from this city.", $html);
+        $this->assertStringContainsString('data-role="rank-location-keyword"', $html);
+        $this->assertStringContainsString('United States, Canada or Lithuania.', $html);
         $this->assertStringContainsString('data-bs-dismiss="modal">Cancel', $html);
     }
 
@@ -311,5 +316,86 @@ class SeoRankCityPickerTest extends TestCase
         FakeSeoRankProvider::$locations = [];
         $this->assertSame(0, Artisan::call('seo:rank-sync-locations', ['--if-missing' => true]));
         $this->assertStringContainsString('nothing to do', Artisan::output());
+    }
+
+    private function seedBiloxi(): void
+    {
+        foreach ([
+            [9900201, 'Biloxi,Mississippi,United States'],
+            [9900202, 'Biloxi Beach,Mississippi,United States'],
+            [9900203, 'Springfield,Illinois,United States'],
+            [9900204, 'Springfield,Missouri,United States'],
+        ] as [$code, $name]) {
+            (new SeoRankLocation())->forceFill(['provider' => 'dataforseo', 'location_code' => $code, 'location_name' => $name, 'country_iso' => 'US', 'location_type' => 'City'])->save();
+        }
+    }
+
+    public function test_a_partial_city_lists_every_cached_match_without_selecting_any(): void
+    {
+        [$owner, $business, $workspace] = $this->tenant();
+        $this->seedBiloxi();
+        $this->authenticateAsSeoCustomer($owner);
+
+        $json = $this->search($workspace, $business, 'Bil')->assertOk()->json();
+
+        $this->assertSame(['Biloxi, Mississippi, United States', 'Biloxi Beach, Mississippi, United States'], array_column($json['locations'], 'label'));
+        $this->assertSame([9900201, 9900202], array_column($json['locations'], 'code'));
+        $this->assertSame('ok', $json['status']);
+        $this->assertSame(0, SeoRankTarget::query()->count());
+    }
+
+    public function test_the_keyword_hint_names_the_city_in_the_phrase_from_the_cached_catalogue(): void
+    {
+        [$owner, $business, $workspace] = $this->tenant();
+        $this->seedBiloxi();
+        $this->authenticateAsSeoCustomer($owner);
+        $hint = fn (string $phrase) => $this->getJson($this->u('keywords.rank-locations', $workspace, $business) . '?hint=' . urlencode($phrase))->assertOk()->json('suggestion');
+
+        $this->assertSame(
+            ['code' => 9900201, 'label' => 'Biloxi, Mississippi, United States', 'short' => 'Biloxi, MS'],
+            $hint('photo booth rental biloxi ms'),
+        );
+        $this->assertSame(9900201, $hint('Photo Booth Rental Biloxi')['code']);
+        // A region abbreviation narrows a shared city name; without one the name is ambiguous and nothing is guessed.
+        $this->assertSame(9900204, $hint('wedding dj springfield mo')['code']);
+        $this->assertNull($hint('wedding dj springfield'));
+        // A phrase that names no cached city offers no hint, and a hint never reaches the provider.
+        $this->assertNull($hint('best photo booth near me'));
+        $this->assertSame(0, FakeSeoRankProvider::$submitCalls);
+        $this->assertSame(0, SeoRankTarget::query()->count());
+    }
+
+    public function test_add_without_tracking_saves_the_keyword_and_starts_no_rank_check(): void
+    {
+        [$owner, $business, $workspace] = $this->tenant();
+        $this->seedBiloxi();
+        $this->authenticateAsSeoCustomer($owner);
+
+        $this->post($this->u('keywords.store', $workspace, $business), ['phrase' => 'photo booth rental biloxi ms', 'track_rank' => '0', 'search_location_code' => ''])
+            ->assertSessionHas('message', 'Keyword added.');
+
+        $this->assertNotNull(SeoKeyword::query()->where('phrase', 'photo booth rental biloxi ms')->first());
+        $this->assertSame(0, SeoRankTarget::query()->count());
+        $this->assertSame(0, \App\Models\SeoRankCheckRun::query()->count());
+        $this->assertSame(0, FakeSeoRankProvider::$submitCalls);
+    }
+
+    public function test_start_tracking_from_the_chosen_city_uses_that_locations_canonical_code(): void
+    {
+        [$owner, $business, $workspace] = $this->tenant();
+        $this->seedBiloxi();
+        $this->authenticateAsSeoCustomer($owner);
+        FakeSeoRankProvider::$completeImmediately = false;
+
+        $keyword = $this->keyword($owner, $business, 'photo booth rental biloxi ms');
+        // The browser posts the code of the row that was picked, never the typed "Bil".
+        $this->post($this->u('keywords.rank.track', $workspace, $business, $keyword->uid), ['search_location_code' => 9900201])
+            ->assertSessionHas('status', 'success');
+
+        $this->assertSame(9900201, (int) SeoRankTarget::query()->where('seo_keyword_id', $keyword->id)->firstOrFail()->search_location_code);
+        // A typed string in place of a code is refused, not resolved to some nearby city.
+        $other = $this->keyword($owner, $business, 'second keyword');
+        $this->post($this->u('keywords.rank.track', $workspace, $business, $other->uid), ['search_location_code' => 'Bil'])->assertSessionHasErrors('search_location_code');
+        $this->assertSame(1, SeoRankTarget::query()->count());
     }
 }

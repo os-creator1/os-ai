@@ -70,6 +70,17 @@ class SeoRankTargetsController extends CustomerBaseController
         $this->resolveRankTenancy($workspaceUid, $businessUid);
         $this->authorize('view_seo');
 
+        // "From your keyword": the city a keyword phrase names, resolved from the same cached catalogue.
+        if ($request->query->has('hint')) {
+            $match = $this->locations->suggestFromPhrase(mb_substr((string) $request->query('hint', ''), 0, 160));
+
+            return response()->json(['suggestion' => $match === null ? null : [
+                'code' => (int) $match->location_code,
+                'label' => SeoRankLocationCatalog::label($match->location_name),
+                'short' => SeoRankLocationCatalog::shortLabel($match->location_name),
+            ]]);
+        }
+
         $query = (string) $request->query('q', '');
 
         $results = $this->locations->search(mb_substr($query, 0, 80), 10)->map(fn ($l) => [
