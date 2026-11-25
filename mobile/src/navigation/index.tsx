@@ -1,5 +1,5 @@
 import React from 'react';
-import { NavigationContainer, createNavigationContainerRef } from '@react-navigation/native';
+import { CommonActions, NavigationContainer, createNavigationContainerRef } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { useAuth } from '../auth/AuthContext';
 import { BusinessSelectorScreen } from '../screens/BusinessSelectorScreen';
@@ -17,7 +17,14 @@ const Stack = createNativeStackNavigator<RootStack>();
 const navRef = createNavigationContainerRef<RootStack>();
 
 function openConversation(uid: string) {
-  if (navRef.isReady()) navRef.navigate('ConversationDetail', { uid, title: 'Conversation' });
+  // Reset to [list, this conversation]: a tap can switch Business, and a screen left open under the previous Business must
+  // not survive beneath the new one (its API calls would now target the wrong tenant).
+  if (navRef.isReady()) {
+    navRef.dispatch(CommonActions.reset({
+      index: 1,
+      routes: [{ name: 'Conversations' }, { name: 'ConversationDetail', params: { uid, title: 'Conversation' } }],
+    }));
+  }
 }
 
 export function Navigation() {
