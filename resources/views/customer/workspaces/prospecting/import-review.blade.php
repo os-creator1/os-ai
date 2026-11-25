@@ -136,9 +136,19 @@
             @csrf
             @if(! $isClients)
                 <div class="fl" style="flex:1 1 320px">
-                    <label for="group_name">Contact group name</label>
-                    <input type="text" id="group_name" name="group_name" class="in @error('group_name') bad @enderror" maxlength="255" required value="{{ old('group_name', $defaultGroupName) }}" data-role="group-name">
-                    @error('group_name')<span class="err" role="alert">{{ $message }}</span>@enderror
+                    <label for="contact_group_uid">Save prospects to</label>
+                    <select class="in" id="contact_group_uid" name="contact_group_uid">
+                        <option value="">Create a new contact group</option>
+                        @foreach($groups as $uid => $name)
+                            <option value="{{ $uid }}" @selected(old('contact_group_uid') === $uid)>{{ $name }}</option>
+                        @endforeach
+                    </select>
+                    @error('contact_group_uid')<span class="err" role="alert">{{ $message }}</span>@enderror
+                    <div id="new-group-name">
+                        <label for="group_name">New contact group name</label>
+                        <input type="text" id="group_name" name="group_name" class="in @error('group_name') bad @enderror" maxlength="255" value="{{ old('group_name', $defaultGroupName) }}" data-role="group-name">
+                        @error('group_name')<span class="err" role="alert">{{ $message }}</span>@enderror
+                    </div>
                     <span class="hint"><b>{{ $summary['ready'] ?? 0 }}</b> prospects will be saved to this one group, ready to pick for a campaign. Nothing is sent.</span>
                 </div>
             @else
@@ -152,4 +162,19 @@
         @endunless
     </section>
 </div>
+@endsection
+
+@section('page-script')
+<script>
+    const destination = document.getElementById('contact_group_uid');
+    if (destination) {
+        const newGroup = document.getElementById('new-group-name');
+        const updateDestination = () => {
+            newGroup.hidden = destination.value !== '';
+            document.getElementById('group_name').required = !newGroup.hidden;
+        };
+        destination.addEventListener('change', updateDestination);
+        updateDestination();
+    }
+</script>
 @endsection

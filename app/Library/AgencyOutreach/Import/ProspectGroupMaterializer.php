@@ -143,7 +143,7 @@ final class ProspectGroupMaterializer
      *
      * @return array<string, mixed> report
      */
-    public function materialize(Workspace $workspace, Business $business, AgencyProspectImportBatch $batch, string $groupName, bool $apply = true, ?int $actorId = null): array
+    public function materialize(Workspace $workspace, Business $business, AgencyProspectImportBatch $batch, string $groupName, bool $apply = true, ?int $actorId = null, ?ContactGroups $destination = null): array
     {
         abort_unless((int) $batch->workspace_id === (int) $workspace->id, 404);
 
@@ -163,6 +163,12 @@ final class ProspectGroupMaterializer
 
         $existingGroup = $batch->contact_group_id !== null
             ? ContactGroups::query()->where('id', $batch->contact_group_id)->where('business_id', $business->id)->first() : null;
+
+        if ($destination !== null && $existingGroup === null) {
+            abort_unless((int) $destination->business_id === (int) $business->id && $destination->status, 404);
+            $existingGroup = $destination;
+            $report['group'] = $destination->name;
+        }
 
         if ($existingGroup === null && ContactGroups::query()->where('customer_id', $business->customer_id)->where('name', $groupName)->exists()) {
             // The same rule as the Contacts "new group" form: never silently merge into a group that already exists.

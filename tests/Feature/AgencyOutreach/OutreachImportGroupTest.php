@@ -58,6 +58,55 @@ class OutreachImportGroupTest extends TestCase
         return ContactGroups::where('business_id', $a['business']->id);
     }
 
+    public function test_two_csv_files_append_to_the_same_existing_group_and_deduplicate_phones(): void
+    {
+        $a = $this->outreachAgency('Dallas', ['enrolled' => false]);
+        $this->authenticateAs($a['customer']);
+        $first = $this->upload($a, $this->csv(2));
+        $this->commit($a, $first, 'Dallas list')->assertSessionHasNoErrors();
+        $group = $this->bizGroups($a)->where('name', 'Dallas list')->firstOrFail();
+        $before = $this->bizGroups($a)->count();
+
+        $this->post($this->outreachRoute('prospects.import.upload', $a['workspace']), ['files' => [
+            UploadedFile::fake()->createWithContent('part-two.csv', $this->csv(2, 3000001)),
+            UploadedFile::fake()->createWithContent('part-three.csv', $this->csv(2, 3000002)),
+        ]])->assertSessionHasNoErrors()->assertRedirect();
+        $batch = AgencyProspectImportBatch::where('workspace_id', $a['workspace']->id)->latest('id')->firstOrFail();
+        $this->assertNotEquals($first->id, $batch->id);
+        $this->get($this->outreachRoute('prospects.import.review', $a['workspace'], [$batch->uid]))
+            ->assertOk()->assertSee($group->uid);
+        $this->post($this->outreachRoute('prospects.import.commit', $a['workspace'], [$batch->uid]), [
+            'contact_group_uid' => $group->uid,
+        ])->assertSessionHasNoErrors()->assertRedirect();
+
+        $this->assertEquals($group->id, $batch->fresh()->contact_group_id);
+        $this->assertSame($before, $this->bizGroups($a)->count());
+        $this->assertSame(4, Contacts::where('group_id', $group->id)->count());
+        $this->assertSame(4, AgencyProspectGroupLink::where('contact_group_id', $group->id)->count());
+    }
+
+    public function test_appending_beyond_campaign_capacity_rolls_back_the_batch(): void
+    {
+        $a = $this->outreachAgency('Dallas', ['enrolled' => false]);
+        $this->authenticateAs($a['customer']);
+        $group = ContactGroups::create(['customer_id' => $a['business']->customer_id, 'business_id' => $a['business']->id, 'name' => 'Full list', 'status' => true]);
+        foreach (array_chunk(range(1, 5000), 500) as $chunk) {
+            Contacts::insert(array_map(fn ($i) => [
+                'uid' => sprintf('limit%08d', $i), 'customer_id' => $group->customer_id, 'business_id' => $group->business_id,
+                'group_id' => $group->id, 'phone' => (string) (12134000000 + $i), 'status' => 'subscribe',
+            ], $chunk));
+        }
+
+        $batch = $this->upload($a, $this->csv(1));
+        $this->post($this->outreachRoute('prospects.import.commit', $a['workspace'], [$batch->uid]), [
+            'contact_group_uid' => $group->uid,
+        ])->assertSessionHasErrors('contact_group_uid');
+        $this->assertNull($batch->fresh()->contact_group_id);
+        $this->assertSame('analyzed', $batch->fresh()->status);
+        $this->assertSame(5000, Contacts::where('group_id', $group->id)->count());
+        $this->assertFalse(AgencyProspect::where('workspace_id', $a['workspace']->id)->where('phone', '12133000000')->exists());
+    }
+
     public function test_one_300_row_csv_creates_one_group_with_real_custom_field_values_and_never_sends(): void
     {
         $a = $this->outreachAgency('Dallas', ['enrolled' => false]);
