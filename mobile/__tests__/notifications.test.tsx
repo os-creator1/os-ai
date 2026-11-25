@@ -151,4 +151,27 @@ describe('NotificationRouter', () => {
     expect(t.open).not.toHaveBeenCalledWith('conv-for-A-0001');
     expect(screen.getByText('in:biz-bbbbbbbb')).toBeTruthy();
   });
+
+  it('a signed-out session is never resurrected by an access refresh that was still in flight', async () => {
+    let release: (v: any) => void = () => undefined;
+    let hold = false;
+    let held = false;
+    const t = setup([bizA, bizB], async () => {
+      if (hold && !held) { held = true; return new Promise((r) => { release = r; }); }
+      return { user, businesses: [bizA, bizB] };
+    });
+    await render(t.ui);
+    await waitFor(() => screen.getByText(/^in:/));
+    hold = true;
+    await t.tap(response('s1', payload('biz-bbbbbbbb', 'conv-uid-0001')));
+    await waitFor(() => expect(held).toBe(true));
+
+    await act(async () => { (screen.getByText('signout').props.onPress as () => void)(); });
+    await waitFor(() => screen.getByText('out'));
+    await act(async () => { release({ user, businesses: [bizA, bizB] }); });   // the old session's /me finally answers
+
+    expect(screen.getByText('out')).toBeTruthy();            // still signed out
+    expect(screen.queryByText(/^in:/)).toBeNull();           // old identity / businesses not restored
+    expect(t.open).not.toHaveBeenCalled();
+  });
 });

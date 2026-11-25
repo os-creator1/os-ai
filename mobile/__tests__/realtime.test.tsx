@@ -357,4 +357,31 @@ describe('live conversation list', () => {
     await waitFor(() => screen.getByText('New Lead'));
     jest.useRealTimers();
   });
+
+  it('an older, slower inbox refresh cannot overwrite a newer one', async () => {
+    jest.useFakeTimers();
+    const deferred: Array<(v: any) => void> = [];
+    const conversations = jest.fn()
+      .mockResolvedValueOnce({ data: [row('c1', 'Ann', false, 'initial')], meta: { page: 1, next_page: null } })
+      .mockImplementation(() => new Promise((r) => { deferred.push(r); }));
+    const { factory, created } = fakeTransports();
+    await mount(fakeApi({ conversations }), factory, <ConversationsScreen {...({ navigation: { navigate: jest.fn(), setOptions: jest.fn() }, route: { params: undefined } } as any)} />);
+    await waitFor(() => screen.getByText('Ann'));
+    await waitFor(() => expect(created).toHaveLength(1));
+    const ch = channelFor('biz-aaaaaaaa', 'user-uid-0001');
+    const evt = { type: 'received', business_uid: 'biz-aaaaaaaa', conversation_uid: 'c1' };
+
+    await act(async () => { created[0].emit(ch, evt); });
+    await act(async () => { jest.advanceTimersByTime(400); });      // refresh #1 starts (slow)
+    await act(async () => { created[0].emit(ch, evt); });
+    await act(async () => { jest.advanceTimersByTime(400); });      // refresh #2 starts
+    await waitFor(() => expect(deferred).toHaveLength(2));
+
+    await act(async () => { deferred[1]({ data: [row('c1', 'Ann', true, 'NEWER preview')], meta: { page: 1, next_page: null } }); });
+    await waitFor(() => screen.getByText('NEWER preview'));
+    await act(async () => { deferred[0]({ data: [row('c1', 'Ann', false, 'OLDER preview')], meta: { page: 1, next_page: null } }); });
+    expect(screen.getByText('NEWER preview')).toBeTruthy();
+    expect(screen.queryByText('OLDER preview')).toBeNull();
+    jest.useRealTimers();
+  });
 });

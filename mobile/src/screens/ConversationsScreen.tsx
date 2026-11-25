@@ -29,6 +29,7 @@ export function ConversationsScreen({ navigation }: Props) {
   const load = useCallback(async (preserveItems = false) => {
     if (!scope) return;
     const current = ++generation.current;
+    refreshSeq.current++;
     fetchingMore.current = false;
     setLoadingMore(false);
     setMoreError(null);
@@ -59,6 +60,9 @@ export function ConversationsScreen({ navigation }: Props) {
   useEffect(() => { itemsRef.current = items; }, [items]);
   const changedUids = useRef(new Set<string>());
   const needsFullReload = useRef(false);
+  // Live refreshes can overlap; only the most recently STARTED one may apply its result (an older, slower response must not
+  // overwrite newer previews, ordering or unread flags).
+  const refreshSeq = useRef(0);
 
   /**
    * Live update. Page 1 is re-read and folded in (changed conversations jump to the top in server order; older pages the user
@@ -76,9 +80,10 @@ export function ConversationsScreen({ navigation }: Props) {
       return;
     }
     const current = generation.current;
+    const mine = ++refreshSeq.current;
     try {
       const res = await api.conversations(scope, { filter, page: 1 });
-      if (generation.current !== current) return;
+      if (generation.current !== current || mine !== refreshSeq.current) return;
       const onPageOne = new Set(res.data.map((c) => c.uid));
       const patches = new Map<string, ConversationSummary | null>();
       for (const uid of uids) {
@@ -90,7 +95,7 @@ export function ConversationsScreen({ navigation }: Props) {
           if (e instanceof ApiError && e.status === 404) patches.set(uid, null);
         }
       }
-      if (generation.current !== current) return;
+      if (generation.current !== current || mine !== refreshSeq.current) return;
       setItems((previous) => {
         if (previous === null) return res.data;
         const rest = previous
