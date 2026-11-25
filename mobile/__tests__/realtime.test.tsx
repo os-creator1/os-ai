@@ -466,6 +466,46 @@ describe('live conversation list', () => {
     jest.useRealTimers();
   });
 
+  it('a live signal that arrives during the initial load is kept and acted on once that load has applied', async () => {
+    jest.useFakeTimers();
+    const deferred: Array<(v: any) => void> = [];
+    const conversations = jest.fn(() => new Promise((r) => { deferred.push(r); }));
+    const { factory, created } = fakeTransports();
+    await mount(fakeApi({ conversations }), factory, <ConversationsScreen {...({ navigation: { navigate: jest.fn(), setOptions: jest.fn() }, route: { params: undefined } } as any)} />);
+    await waitFor(() => expect(deferred).toHaveLength(1));
+    await waitFor(() => expect(created).toHaveLength(1));
+    await act(async () => { created[0].emit(channelFor('biz-aaaaaaaa', 'user-uid-0001'), { type: 'received', business_uid: 'biz-aaaaaaaa', conversation_uid: 'c1' }); });
+    await act(async () => { jest.advanceTimersByTime(400); });             // signal arrives while the first load is still running
+    expect(deferred).toHaveLength(1);                                        // ...and does not fetch yet
+    await act(async () => { deferred[0]({ data: [row('c1', 'Ann', false, 'served before the message')], meta: { page: 1, next_page: null } }); });
+    await waitFor(() => screen.getByText('Ann'));
+    await act(async () => { jest.advanceTimersByTime(600); });             // the kept signal now triggers a re-read
+    await waitFor(() => expect(deferred).toHaveLength(2));
+    await act(async () => { deferred[1]({ data: [row('c1', 'Ann', true, 'the missed message')], meta: { page: 1, next_page: null } }); });
+    await waitFor(() => screen.getByText('the missed message'));
+    jest.useRealTimers();
+  });
+
+  it('keeps "Load older" available when a pull-to-refresh is superseded by a live refresh that fails', async () => {
+    jest.useFakeTimers();
+    const deferred: Array<{ resolve: (v: any) => void; reject: (e: any) => void }> = [];
+    const conversations = jest.fn()
+      .mockResolvedValueOnce({ data: [row('c1', 'Ann', false, 'initial')], meta: { page: 1, next_page: 2 } })
+      .mockImplementation(() => new Promise((resolve, reject) => { deferred.push({ resolve, reject }); }));
+    const { factory, created } = fakeTransports();
+    await mount(fakeApi({ conversations }), factory, <ConversationsScreen {...({ navigation: { navigate: jest.fn(), setOptions: jest.fn() }, route: { params: undefined } } as any)} />);
+    await waitFor(() => screen.getByText('Ann'));
+    await waitFor(() => expect(created).toHaveLength(1));
+    await act(async () => { void screen.getByTestId('conversation-list').props.refreshControl.props.onRefresh(); });
+    await act(async () => { created[0].emit(channelFor('biz-aaaaaaaa', 'user-uid-0001'), { type: 'received', business_uid: 'biz-aaaaaaaa', conversation_uid: 'c1' }); });
+    await act(async () => { jest.advanceTimersByTime(400); });
+    await waitFor(() => expect(deferred).toHaveLength(2));
+    await act(async () => { deferred[1].reject(new Error('offline')); });
+    await act(async () => { deferred[0].resolve({ data: [row('c1', 'Ann', false, 'refreshed')], meta: { page: 1, next_page: 2 } }); });
+    expect(screen.getByText('Load older leads')).toBeTruthy();
+    jest.useRealTimers();
+  });
+
   it('an older, slower inbox refresh cannot overwrite a newer one', async () => {
     jest.useFakeTimers();
     const deferred: Array<(v: any) => void> = [];

@@ -25,12 +25,15 @@ export function ConversationsScreen({ navigation }: Props) {
   const [moreError, setMoreError] = useState<string | null>(null);
   const generation = useRef(0);
   const fetchingMore = useRef(false);
+  // True while the latest full load has not finished (applied, failed or superseded).
+  const loadInFlight = useRef(false);
 
   const load = useCallback(async (preserveItems = false) => {
     if (!scope) return;
     const current = ++generation.current;
     // Full loads and live refreshes share ONE ordering: whichever STARTED last may apply its result.
     const startedAs = ++refreshSeq.current;
+    loadInFlight.current = true;
     fetchingMore.current = false;
     setLoadingMore(false);
     setMoreError(null);
@@ -42,13 +45,19 @@ export function ConversationsScreen({ navigation }: Props) {
       const res = await api.conversations(scope, { filter, search: search.trim() || undefined, page: 1 });
       if (generation.current !== current) return;
       // A live refresh started after this load owns the newer view; applying this older response would roll it back.
-      if (startedAs !== refreshSeq.current) return;
+      if (startedAs !== refreshSeq.current) {
+        // Keep pagination available: the superseding refresh may fail, and this response's page-1 meta is still valid.
+        setNextPage((n) => n ?? res.meta.next_page);
+        return;
+      }
       setItems(res.data);
       setNextPage(res.meta.next_page);
     } catch (e) {
       if (generation.current === current) {
         setError(e instanceof Error ? e.message : 'Could not load conversations.');
       }
+    } finally {
+      if (generation.current === current) loadInFlight.current = false;
     }
   }, [api, scope, filter, search]);
 
@@ -78,12 +87,11 @@ export function ConversationsScreen({ navigation }: Props) {
    */
   const refreshTop = useCallback(async () => {
     if (!scope) return;
-    // Nothing shown yet: the initial load (or a filter/search reload) that is in flight will deliver fresh data itself, and
-    // must not be superseded by a live refresh that could fail and leave an empty screen.
-    if (itemsRef.current === null) {
-      changedUids.current.clear();
-      unappliedUids.current.clear();
-      needsFullReload.current = false;
+    // Nothing shown yet and the initial (or filter/search) load is still running: its response may predate what the event
+    // is about, so KEEP the signals and look again shortly, once that load has applied.
+    if (itemsRef.current === null && loadInFlight.current) {
+      if (debounce.current) clearTimeout(debounce.current);
+      debounce.current = setTimeout(() => { void refreshTopRef.current(); }, 250);
       return;
     }
     changedUids.current.forEach((u) => unappliedUids.current.add(u));
@@ -124,6 +132,8 @@ export function ConversationsScreen({ navigation }: Props) {
     } catch { /* silent: the next event or pull-to-refresh retries */ }
   }, [api, scope, filter, search, load]);
 
+  const refreshTopRef = useRef(refreshTop);
+  refreshTopRef.current = refreshTop;
   const debounce = useRef<ReturnType<typeof setTimeout> | null>(null);
   useRealtime((e) => {
     if (e.kind === 'change') changedUids.current.add(e.conversation_uid);
