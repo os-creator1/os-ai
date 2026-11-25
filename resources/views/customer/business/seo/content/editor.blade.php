@@ -15,6 +15,9 @@
 
 @section('title', $article ? 'Edit article' : 'New article')
 
+{{-- The editor draws its own top row (back link and save status); the shell must not print a second heading above it. --}}
+@section('page-heading', 'own')
+
 @section('page-style')
     <link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 @endsection
@@ -97,9 +100,12 @@
         .ae textarea.ae-title::placeholder, .ae textarea.ae-excerpt::placeholder { color:#C9C0BA; }
         .ae .ae-title:focus-visible, .ae .ae-excerpt:focus-visible, .ae .ae-bodyfield:focus-visible { outline:0; }
         .ae-permalink { display:flex; flex-wrap:wrap; align-items:center; gap:6px; font-size:13px; color:var(--ae-mute); min-width:0; overflow-wrap:anywhere; }
+        .ae-permalink { flex-wrap:nowrap; align-items:flex-start; }
+        .ae-permalink .ae-ic { margin-top:3px; }
+        .ae-permalink .ae-pl-text { flex:0 1 auto; min-width:0; }
         .ae-permalink .ae-slug { color:var(--ae-ink); font-weight:500; }
         .ae-permalink .ae-slug.is-empty { color:var(--ae-mute); font-weight:400; font-style:italic; }
-        .ae-permalink input { height:30px; min-width:12rem; flex:1 1 12rem; padding:0 8px; border:1px solid var(--ae-field); border-radius:8px; font:inherit; font-size:13px; color:var(--ae-ink); }
+        .ae-permalink input { height:30px; min-width:0; flex:1 1 8rem; padding:0 8px; border:1px solid var(--ae-field); border-radius:8px; font:inherit; font-size:13px; color:var(--ae-ink); }
         .ae-permalink .ae-link-btn { margin-left:4px; border:0; background:none; padding:0; min-height:24px; font:inherit; font-weight:600; color:var(--ae-brand-d); cursor:pointer; }
         .ae-permalink [hidden] { display:none !important; }
         .ae textarea.ae-excerpt { border:0; border-left:3px solid var(--ae-line2); outline:0; resize:none; font:inherit; font-size:16px; line-height:1.5; color:#5E5652; padding:2px 0 2px 14px; background:transparent; width:100%; overflow:hidden; }
@@ -139,7 +145,7 @@
         .ae-serp .t { font-size:17px; color:#1A0DAB; line-height:1.25; }
         .ae-serp .d { font-size:13px; line-height:1.45; color:#4D5156; }
         .ae-meta { display:flex; flex-wrap:wrap; gap:12px; padding-top:12px; border-top:1px solid var(--ae-line2); }
-        .ae-meta .ae-fld:nth-child(1) { flex:1 1 220px; } .ae-meta .ae-fld:nth-child(2) { flex:0 1 160px; min-width:140px; } .ae-meta .ae-fld:nth-child(3) { flex:1 1 200px; }
+        .ae-meta .ae-fld:nth-child(1) { flex:1 1 220px; } .ae-meta .ae-fld:nth-child(2) { flex:0 1 190px; min-width:160px; } .ae-meta .ae-fld:nth-child(3) { flex:1 1 200px; }
         .ae details.ae-more summary { list-style:none; display:inline-flex; align-items:center; gap:6px; min-height:44px; cursor:pointer; font-size:13.5px; font-weight:500; color:#8A817C; }
         .ae details.ae-more summary::-webkit-details-marker { display:none; }
         .ae details.ae-more summary:hover { color:#5E5652; }
@@ -268,7 +274,7 @@
 
                         <div class="ae-permalink" data-role="permalink">
                             <svg class="ae-ic" viewBox="0 0 24 24" style="width:13px;height:13px" aria-hidden="true"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"></path></svg>
-                            <span>{{ $host }}/</span><span class="ae-slug {{ $slugValue === '' ? 'is-empty' : '' }}" id="ae-slug-text">{{ $slugValue !== '' ? $slugValue : 'made from the title' }}</span>
+                            <span class="ae-pl-text"><span>{{ $host }}/</span><span class="ae-slug {{ $slugValue === '' ? 'is-empty' : '' }}" id="ae-slug-text">{{ $slugValue !== '' ? $slugValue : 'made from the title' }}</span></span>
                             <label class="ae-sr" for="f-slug">Web address</label>
                             <input id="f-slug" type="text" name="slug" value="{{ $slugValue }}" maxlength="80" placeholder="made from the title" hidden>
                             <button type="button" class="ae-link-btn" id="ae-slug-edit" aria-controls="f-slug" aria-expanded="false" data-role="slug-edit">Edit</button>
