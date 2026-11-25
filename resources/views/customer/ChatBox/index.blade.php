@@ -2476,6 +2476,9 @@
 
         const idOf = (el) => String($(el).attr("data-id"));
         const countOf = ($li) => parseInt($li.find(".notification_count").first().text(), 10) || 0;
+        // The server's cumulative unread count for a row. A refreshed row's badge shows only the DELTA since the operator last looked,
+        // so the raw count is kept apart (data-server-count) and every baseline is taken from it, never from the displayed badge.
+        const rawCountOf = ($li) => { const raw = $li.attr("data-server-count"); return raw === undefined ? countOf($li) : parseInt(raw, 10) || 0; };
         const isSms = (id) => id !== "" && !/^(email|compose):/.test(id);
         // global:false keeps polls out of the page's own ajax events, which is how the page's own requests (a send, a retry, a
         // thread load) are told apart below. The timeout makes a stalled request fail into the retry path instead of wedging it.
@@ -2484,6 +2487,11 @@
         let ownActivityAt = 0;                // when the page last sent or finished one
         let deadThread = "";                  // an open thread the server no longer serves (deleted / access lost)
         let failures = 0;
+        // Archiving / un-archiving / deleting a conversation removes a row the server's older list answers still contain. Such a
+        // request invalidates every list answer that was issued before it finished, or that lands while it is still running.
+        const REMOVES_ROW = /\/(archive|unarchive|delete)(\?.*)?$/;
+        let listGen = 0;
+        let removing = 0;
         const rowFor = ($root, id) => $root.children("li").filter(function () { return idOf(this) === id; }).first();
 
         function markRead($li) {
@@ -2498,11 +2506,15 @@
 
           if (!isSms(id)) { return; }
 
-          if (id === activeId) { seenCount[id] = countOf($li); }
+          const raw = countOf($li);   // straight from the server's markup here
+
+          $li.attr("data-server-count", raw);
+
+          if (id === activeId) { seenCount[id] = raw; }
 
           if (seenCount[id] === undefined) { return; }
 
-          const fresh = countOf($li) - seenCount[id];
+          const fresh = raw - seenCount[id];
 
           if (fresh <= 0) { markRead($li); } else { $li.find(".notification_count").first().text(fresh); }
         }
@@ -2548,7 +2560,11 @@
 
           if (pinned) { data.pinned = 1; }
 
+          const gen = listGen;
           const html = await post(conversationRoutes.load, data);
+
+          // A row-removing action ran (or is running) since this was asked: this answer may still contain what it removed.
+          if (gen !== listGen || removing > 0) { return; }
 
           // The operator changed tab, search or channel meanwhile: this answer is for a list that is no longer shown.
           if (scopeKey(scopeOf() || {}) !== key) { return; }
@@ -2690,11 +2706,21 @@
           epoch += 1;
           deadThread = "";
 
-          if (isSms(idOf(this))) { seenCount[idOf(this)] = countOf($(this)); }
+          if (isSms(idOf(this))) { seenCount[idOf(this)] = rawCountOf($(this)); }
         });
 
-        $(document).on("ajaxSend", function () { ownRequests += 1; ownActivityAt = Date.now(); });
-        $(document).on("ajaxComplete", function () { ownRequests = Math.max(0, ownRequests - 1); ownActivityAt = Date.now(); });
+        $(document).on("ajaxSend", function (event, xhr, settings) {
+          ownRequests += 1;
+          ownActivityAt = Date.now();
+
+          if (REMOVES_ROW.test(String(settings.url || ""))) { removing += 1; listGen += 1; }
+        });
+        $(document).on("ajaxComplete", function (event, xhr, settings) {
+          ownRequests = Math.max(0, ownRequests - 1);
+          ownActivityAt = Date.now();
+
+          if (REMOVES_ROW.test(String(settings.url || ""))) { removing = Math.max(0, removing - 1); listGen += 1; }
+        });
 
         document.addEventListener("visibilitychange", function () { if (!document.hidden) { cycle(); } });
         window.addEventListener("online", function () { cycle(); });

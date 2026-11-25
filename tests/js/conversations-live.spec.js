@@ -19,17 +19,22 @@ const between = (from, to) => {
 const shipped = [
   between('// BEGIN live-inbox', '// END live-inbox'),
   between('$("#users-list").on("click", ".chat-users-list li, .chat-users-list-pinned li", function() {\n          // Destroy', '// The contact panel slides'),
+  // The page's own pin handler and its own email archive / delete handlers (real code; the harness only supplies the server).
+  between('$(".add-to-pin").on("click"', '        }).always(function() {\n          $pin.prop("disabled", false);\n        });\n      });'),
+  '}).always(function() { $pin.prop("disabled", false); }); });',
+  between('function openEmailThreadKey', '$(document).on("click", "[data-undo-archive]"'),
 ].join('\n').replace(/\{\{[\s\S]*?\}\}/g, 'x');
 
 const html = `<!doctype html><html><body>
 <input class="chat_id">
 <div id="users-list" style="height:160px;overflow:auto"><ul class="chat-users-list-pinned"></ul><ul class="chat-users-list"></ul></div>
 <div class="user-chats" style="height:120px;overflow:auto"><div class="chat_history"></div></div>
-<div id="conversation-context"></div><input type="file" id="media_image"><textarea id="message"></textarea></body></html>`;
+<div id="conversation-context"></div><button class="add-to-pin">pin</button><div class="active-chat"></div><div class="start-chat-area d-none"></div>
+<button data-email-action="archive">archive</button><button data-email-action="delete">delete</button><input type="file" id="media_image"><textarea id="message"></textarea></body></html>`;
 
 // ---- the simulated server: conversations with stored messages; unread is a server count that opening never clears ----
 function makeServer() {
-  const s = { convs: {}, clock: 1000, hits: [], inflight: 0, maxInflight: 0, delay: {}, fail: null, reloads: 0 };
+  const s = { convs: {}, clock: 1000, hits: [], inflight: 0, maxInflight: 0, delay: {}, fail: null, reloads: 0, emails: [] };
   s.add = (id, name, opts = {}) => { s.convs[id] = { id, name, pinned: !!opts.pinned, unread: 0, at: s.clock++, msgs: [] }; return s.convs[id]; };
   s.inbound = (id, text, key) => { const c = s.convs[id]; c.msgs.push({ key: key || `m${s.clock}`, dir: 'in', text }); c.unread += 1; c.at = s.clock++; };
   s.outbound = (id, text) => { const c = s.convs[id]; c.msgs.push({ key: `m${s.clock}`, dir: 'out', text }); c.at = s.clock++; };
@@ -55,13 +60,22 @@ async function scenario(name, fn, { clock = false } = {}) {
     const url = route.request().url();
     if (url.endsWith('/')) { return route.fulfill({ contentType: 'text/html', body: html }); }
     const params = new URLSearchParams(route.request().postData() || '');
+    if (url.includes('/pin/')) { const c = server.convs[url.split('/').pop()]; c.pinned = !c.pinned; return route.fulfill({ status: 200, contentType: 'application/json', body: '{"status":"success"}' }); }
+    if (url.includes('/email-thread/')) {
+      const act = url.split('/').pop(); const t = params.get('thread');
+      if (server.actionHold) { await server.actionHold; }
+      if (server.actionFail) { return route.fulfill({ status: 422, contentType: 'application/json', body: '{"message":"nope"}' }); }
+      if (act === 'archive' || act === 'delete') { server.emails = server.emails.filter((e) => e !== t); }
+      return route.fulfill({ status: 200, contentType: 'application/json', body: '{"status":"success"}' });
+    }
     const kind = url.includes('/load') ? (params.get('pinned') ? 'pinned' : 'list') : 'timeline';
     const id = kind === 'timeline' ? url.split('/').pop() : null;
     server.hits.push({ kind, id, params: Object.fromEntries(params) });
     server.inflight += 1; server.maxInflight = Math.max(server.maxInflight, server.inflight);
     try {
       if (server.fail && server.fail(kind, id)) { const f = server.fail(kind, id); return route.fulfill({ status: f, body: 'no' }); }
-      const body = kind === 'timeline' ? JSON.stringify({ status: 'success', timeline: server.thread(id) }) : server.list(kind === 'pinned');
+      const body = kind === 'list' && params.get('channel') === 'email' ? server.emails.map((t) => `<li data-id="email:${t}" data-channel="email" class="conv-row email-row"><h6 data-role="conversation-row-title">${t}</h6></li>`).join('')
+        : kind === 'timeline' ? JSON.stringify({ status: 'success', timeline: server.thread(id) }) : server.list(kind === 'pinned');
       const hold = server.delay[kind + ':' + (id || '')];
       const snapshot = body;   // the answer is fixed at request time; a late arrival is stale by then
       if (hold) { await hold; }
@@ -76,6 +90,10 @@ async function scenario(name, fn, { clock = false } = {}) {
     window.conversationRoutes = { load: 'http://conv.test/load' };
     window.conversationUrl = (n, id) => 'http://conv.test/' + n + '/' + id;
     window.invalidateComposer = () => {}; window.resetConversationHeader = () => {};
+    window.setPinState = () => {}; window.confirm = () => true;
+    window.toastr = { warning: (m) => (window.toasts = window.toasts || []).push(m), success: () => {} };
+    window.conversationRoutes.emailAction = { archive: 'http://conv.test/email-thread/archive', delete: 'http://conv.test/email-thread/delete', unarchive: 'http://conv.test/email-thread/unarchive', unread: 'http://conv.test/email-thread/unread' };
+    window.conversationUrl = (n, id) => 'http://conv.test/' + n + '/' + id;
     // The selection handler's own timeline load: the open conversation's thread is drawn when it answers.
     window.loadTimeline = (id) => $.post('http://conv.test/timeline/' + id).done((r) => { if ($('.chat_id').val() === String(id)) { $('.chat_history').html(r.timeline); } });
     window.scope = { filter: 'recents', search: '', channel: 'all', createdFrom: '', createdTo: '' };
@@ -259,6 +277,68 @@ const seed = (server) => { server.add('A', 'Ann'); server.add('B', 'Bob'); serve
     server.delay['list:'] = null; release(); await page.waitForTimeout(500);
     assert.equal(await page.evaluate(() => $('#users-list li[data-id=A]').length), 1);
   });
+
+  await scenario('(thread 1) reopening a thread keeps the cumulative server count apart from the displayed delta', async (page, server) => {
+    seed(server); server.convs.A.unread = 5; await bootList(page, server);
+    await open(page, server, 'A'); await open(page, server, 'B');            // A read at 5, left
+    server.inbound('A', 'one', 'a2'); server.inbound('A', 'two', 'a3');      // server count is now 7
+    await refresh(page, server);
+    assert.equal(await page.evaluate(() => $('.chat-users-list li[data-id=A] .notification_count').text()), '2', 'only the 2 new ones are shown');
+    await page.evaluate(() => $('.chat-users-list li[data-id=A]').trigger('click'));      // reopen A
+    await page.evaluate(() => $('.chat-users-list li[data-id=B]').trigger('click'));      // leave again BEFORE the next poll
+    await refresh(page, server);
+    assert.equal(await page.evaluate(() => $('.chat-users-list li[data-id=A]').hasClass('conv-unread')), false, 'A shows zero unread');
+    assert.equal(await page.evaluate(() => $('.chat-users-list li[data-id=A] .notification_count').text()), '');
+    server.inbound('A', 'three', 'a4'); await refresh(page, server);
+    assert.equal(await page.evaluate(() => $('.chat-users-list li[data-id=A] .notification_count').text()), '1', 'a later message is unread again, alone');
+  });
+
+  await scenario('(thread 2) poll in flight, the operator pins (real handler), the older response lands: the row appears once, in the rail', async (page, server) => {
+    seed(server); await bootList(page, server); await open(page, server, 'A');
+    let release; server.delay['list:'] = new Promise((r) => { release = r; });
+    server.inbound('B', 'b news', 'b2');
+    await page.evaluate(() => inboxLive.refreshNow()); await page.waitForTimeout(300);          // the older response is on its way
+    await page.evaluate(() => $('.add-to-pin').trigger('click'));                                 // pin A through the page's own handler
+    await page.waitForFunction(() => $('.chat-users-list-pinned li[data-id=A]').length === 1);
+    server.delay['list:'] = null; release(); await page.waitForTimeout(500);
+    assert.equal(await page.evaluate(() => $('#users-list li[data-id=A]').length), 1, 'exactly once');
+    assert.equal(await page.evaluate(() => $('.chat-users-list-pinned li[data-id=A]').length), 1, 'in the pinned rail');
+    assert.equal(await page.evaluate(() => $('.chat-users-list li[data-id=B] [data-role=conversation-row-preview]').text()), 'b news', 'the rest of the older answer still merged');
+  });
+
+  for (const action of ['archive', 'delete']) {
+    await scenario(`(thread 3) Email list poll in flight, ${action} succeeds (real handler), the older response lands: the thread stays removed`, async (page, server) => {
+      server.emails = ['T1', 'T2'];
+      await page.evaluate(() => { window.scope = { filter: 'recents', search: '', channel: 'email', createdFrom: '', createdTo: '' }; });
+      await page.evaluate((l) => { $('.chat-users-list').html(l); inboxLive.start(() => window.scope); },
+        server.emails.map((t) => `<li data-id="email:${t}" data-channel="email" class="conv-row email-row"><h6 data-role="conversation-row-title">${t}</h6></li>`).join(''));
+      await page.evaluate(() => { $('.chat-users-list li[data-id="email:T1"]').addClass('active'); $('.chat_id').val('email:T1'); });
+      let release; server.delay['list:'] = new Promise((r) => { release = r; });
+      await page.evaluate(() => inboxLive.refreshNow()); await page.waitForTimeout(300);        // the older answer (with T1) is on its way
+      await page.evaluate((a) => $('[data-email-action=' + a + ']').trigger('click'), action);
+      await page.waitForFunction(() => $('.chat-users-list li[data-id="email:T1"]').length === 0);
+      server.delay['list:'] = null; release(); await page.waitForTimeout(500);
+      assert.equal(await page.evaluate(() => $('.chat-users-list li[data-id="email:T1"]').length), 0, 'stays removed');
+      assert.equal(await page.evaluate(() => $('.chat-users-list li[data-id="email:T2"]').length), 1);
+      await page.waitForTimeout(5600);
+      assert.equal(await page.evaluate(() => $('.chat-users-list li[data-id="email:T1"]').length), 0, 'and the next poll agrees');
+    });
+
+    await scenario(`(thread 3, failure) a failed ${action} keeps the row and the existing failure behaviour; the next list answer is used normally`, async (page, server) => {
+      server.emails = ['T1', 'T2']; server.actionFail = true;
+      await page.evaluate(() => { window.scope = { filter: 'recents', search: '', channel: 'email', createdFrom: '', createdTo: '' }; });
+      await page.evaluate((l) => { $('.chat-users-list').html(l); inboxLive.start(() => window.scope); },
+        server.emails.map((t) => `<li data-id="email:${t}" data-channel="email" class="conv-row email-row"><h6 data-role="conversation-row-title">${t}</h6></li>`).join(''));
+      await page.evaluate(() => { $('.chat-users-list li[data-id="email:T1"]').addClass('active'); $('.chat_id').val('email:T1'); window.toasts = []; });
+      await page.evaluate((a) => $('[data-email-action=' + a + ']').trigger('click'), action);
+      await page.waitForTimeout(400);
+      assert.equal(await page.evaluate(() => $('.chat-users-list li[data-id="email:T1"]').length), 1, 'the row stays: nothing was changed');
+      assert.equal(await page.evaluate(() => window.toasts.length), 1, 'the existing warning toast');
+      assert.equal(await page.evaluate(() => $('.chat_id').val()), 'email:T1', 'the thread stays open');
+      await refresh(page, server);
+      assert.equal(await page.evaluate(() => $('.chat-users-list li[data-id="email:T1"]').length), 1);
+    });
+  }
 
   await scenario('polling is paused while the tab is hidden and catches up the moment it is visible again', async (page, server) => {
     seed(server); await bootList(page, server); await open(page, server, 'A');
