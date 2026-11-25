@@ -2492,8 +2492,12 @@
         const REMOVES_ROW = /\/(archive|unarchive|delete)(\?.*)?$/;
         let listGen = 0;
         let removing = 0;
-        let listSeq = 0;                      // requests are numbered as they are issued ...
-        let appliedSeq = 0;                   // ... and an answer older than one already applied is never applied
+        const listSeq = { main: 0, pinned: 0 };       // requests are numbered as they are issued, per list ...
+        const appliedSeq = { main: 0, pinned: 0 };    // ... and an answer older than one already applied is never applied
+        // The open conversation's row is not painted unread while its thread answer is still expected to display the reply (it would
+        // flash for a round trip). The thread step settles it: displayed -> baseline advances; failed / dropped -> painted honestly.
+        let deferId = "";
+        let threadOutcome = "";                // "applied" | "skipped" (nothing asked yet) | "unsettled" (asked, not displayed)
         const rowFor = ($root, id) => $root.children("li").filter(function () { return idOf(this) === id; }).first();
 
         function markRead($li) {
@@ -2525,8 +2529,10 @@
 
           const fresh = raw - seenCount[id];
 
-          if (fresh <= 0) { markRead($li); } else { showUnread($li, fresh); }
+          if (fresh <= 0 || (id === deferId && id === String($(".chat_id").val() || ""))) { markRead($li); } else { showUnread($li, fresh); }
         }
+
+        const repaint = (id) => $("#users-list li[data-id]").filter(function () { return idOf(this) === id; }).each(function () { paintRow($(this)); });
 
         // Page 1 of the same list, merged into what is shown: rows keep their identity (once each), move to their new place
         // and keep the active mark; pages the operator scrolled in are left alone. addNew=false (the pinned rail) only updates.
@@ -2571,11 +2577,12 @@
           if (pinned) { data.pinned = 1; }
 
           const gen = listGen;
-          const seq = ++listSeq;
+          const kind = pinned ? "pinned" : "main";
+          const seq = ++listSeq[kind];
           const html = await post(conversationRoutes.load, data);
 
           // A newer answer has already been applied: this one is stale, and its (possibly lower) counts would fake a decrease.
-          if (seq < appliedSeq) { return; }
+          if (seq < appliedSeq[kind]) { return; }
 
           // A row-removing action ran (or is running) since this was asked: this answer may still contain what it removed.
           if (gen !== listGen || removing > 0) { return; }
@@ -2583,7 +2590,7 @@
           // The operator changed tab, search or channel meanwhile: this answer is for a list that is no longer shown.
           if (scopeKey(scopeOf() || {}) !== key) { return; }
 
-          appliedSeq = seq;
+          appliedSeq[kind] = seq;
           mergeRows($(pinned ? "#users-list > .chat-users-list-pinned" : ".chat-users-list").first(), html, !pinned);
         }
 
@@ -2648,7 +2655,11 @@
 
         async function refreshThread(activeId, ep) {
           // Nothing drawn yet means the conversation is still opening through its own load; email and compose are other views.
+          threadOutcome = "skipped";
+
           if (!isSms(activeId) || activeId === deadThread || !$(".chat_history").children().length) { return; }
+
+          threadOutcome = "unsettled";
 
           const startedAt = Date.now();
           const $row = $("#users-list li[data-id]").filter(function () { return idOf(this) === activeId; }).first();
@@ -2671,15 +2682,14 @@
 
           // The operator sent, retried or reloaded this thread meanwhile (or is doing so now): this answer may predate it and
           // would revert a fresher render or drop a just-sent bubble. The next cycle reads the settled thread.
-          if (ownRequests > 0 || ownActivityAt >= startedAt) { return; }
+          if (ownRequests > 0 || ownActivityAt >= startedAt) { threadOutcome = "skipped"; return; }
 
           applyTimeline(response.timeline);
 
           // Only now, with the thread displayed, is what the list observed counted as seen.
-          if (observed !== null) {
-            seenCount[activeId] = observed;
-            $("#users-list li[data-id]").filter(function () { return idOf(this) === activeId; }).each(function () { paintRow($(this)); });
-          }
+          threadOutcome = "applied";
+
+          if (observed !== null) { seenCount[activeId] = observed; }
         }
 
         function schedule(ms) {
@@ -2707,6 +2717,9 @@
           const activeId = String($(".chat_id").val() || "");
           let failed = false;
 
+          deferId = isSms(activeId) ? activeId : "";
+          threadOutcome = "";
+
           const steps = [() => refreshList(scope, false), () => refreshThread(activeId, ep)];
 
           // The pinned rail is its own list; only a rail that exists is worth a request.
@@ -2720,6 +2733,12 @@
             }
           }
 
+          // Settled (displayed, failed, or dropped for a switch): paint honestly. Skipped (the page was busy with the thread itself):
+          // the next cycle will show it, so the open row keeps not flashing until then.
+          if (threadOutcome !== "skipped" || activeId !== String($(".chat_id").val() || "")) { deferId = ""; }
+
+          if (activeId !== "") { repaint(activeId); }
+
           busy = false;
           failures = failed ? failures + 1 : 0;
           schedule(failed ? Math.min(RETRY_MS * Math.pow(2, failures - 1), 30000) : again ? 0 : POLL_MS);
@@ -2731,6 +2750,11 @@
           epoch += 1;
           deadThread = "";
 
+          // The conversation being left is no longer "about to be displayed": paint it for what was actually displayed.
+          const leaving = deferId;
+
+          deferId = "";
+
           if (isSms(idOf(this))) {
             // Stamped now, because the selection handler clears the badge: a row no poll has refreshed yet (the initial render, a
             // later page) must still hand its server count to the next click.
@@ -2739,6 +2763,8 @@
             $(this).attr("data-server-count", raw);
             seenCount[idOf(this)] = raw;
           }
+
+          if (leaving !== "" && leaving !== idOf(this)) { repaint(leaving); }
         });
 
         $(document).on("ajaxSend", function (event, xhr, settings) {

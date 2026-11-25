@@ -357,6 +357,32 @@ const seed = (server) => { server.add('A', 'Ann'); server.add('B', 'Bob'); serve
     assert.equal((await badge(page, 'A')).unread, false, 'read once it is displayed');
   });
 
+  await scenario('(no flash) a reply to the open, displayed conversation never shows an unread badge on its row while the thread loads', async (page, server) => {
+    seed(server); await bootList(page, server); await open(page, server, 'A');
+    await page.evaluate(() => { window.flashed = false; new MutationObserver(() => { if ($('.chat-users-list li[data-id=A]').hasClass('conv-unread')) { window.flashed = true; } }).observe(document.getElementById('users-list'), { subtree: true, childList: true, attributes: true }); });
+    let release; server.delay['timeline:A'] = new Promise((r) => { release = r; });
+    server.inbound('A', 'live reply', 'a2');
+    await page.evaluate(() => inboxLive.refreshNow()); await page.waitForTimeout(500);        // list observed it, thread still loading
+    assert.equal((await badge(page, 'A')).unread, false, 'no badge while the open thread is about to show it');
+    server.delay['timeline:A'] = null; release(); await page.waitForTimeout(500);
+    assert.deepEqual(await keys(page), ['a1', 'a2']);
+    assert.equal(await page.evaluate(() => window.flashed), false, 'never, not even briefly');
+  });
+
+  await scenario('(no flash) while the page itself is busy with the thread (poll skipped), the open row still does not flash; the badge appears once the operator leaves', async (page, server) => {
+    seed(server); await bootList(page, server); await open(page, server, 'A');
+    server.inbound('A', 'during own request', 'a2');
+    await page.evaluate(() => { window.holdOwn = $.post('http://conv.test/timeline/A'); $.ajaxSettings.global = true; });   // an own (global) request in flight: the thread poll is skipped
+    let release; server.delay['timeline:A'] = new Promise((r) => { release = r; });
+    await page.evaluate(() => { $.post('http://conv.test/timeline/A'); }); await page.waitForTimeout(100);
+    await page.evaluate(() => inboxLive.refreshNow()); await page.waitForTimeout(500);
+    assert.equal((await badge(page, 'A')).unread, false, 'skipped thread poll: still no flash on the open row');
+    server.delay['timeline:A'] = null; release(); await page.waitForTimeout(300);
+    await page.evaluate(() => $('.chat-users-list li[data-id=B]').trigger('click'));
+    await page.waitForTimeout(100);
+    assert.deepEqual(await badge(page, 'A'), { unread: true, n: '1' }, 'left without it ever being displayed: unread');
+  });
+
   await scenario('(mobile read) the server counter is reset by another client: the next reply shows 1 unread, not hidden by the old baseline', async (page, server) => {
     seed(server); server.convs.A.unread = 5; await bootList(page, server);
     await open(page, server, 'A'); await open(page, server, 'B');
