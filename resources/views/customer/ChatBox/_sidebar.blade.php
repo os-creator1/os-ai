@@ -32,7 +32,7 @@
                             :label="__('locale.labels.search')"
                             :placeholder="__('locale.labels.search')" />
             <div class="d-block d-md-none">
-                <a href="{{ route('customer.workspaces.businesses.conversations.new', [$workspaceUid, $businessUid]) }}" class="text-dark ms-1"><x-ds-icon name="plus-circle" />
+                <a data-role="new-text-launch" aria-label="{{ __('locale.labels.new_conversion') }}" href="{{ route('customer.workspaces.businesses.conversations.new', [$workspaceUid, $businessUid]) }}" class="text-dark ms-1"><x-ds-icon name="plus-circle" />
                 </a>
             </div>
         </div>

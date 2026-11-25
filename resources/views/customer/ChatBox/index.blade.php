@@ -1759,7 +1759,7 @@
                 No conversation selected
             </h4>
             <p class="start-chat-description d-none d-md-block">Choose a conversation on the left, or start a new one.</p>
-            <a href="{{ route('customer.workspaces.businesses.conversations.new', [$workspaceUid, $businessUid]) }}"
+            <a data-role="new-text-launch" href="{{ route('customer.workspaces.businesses.conversations.new', [$workspaceUid, $businessUid]) }}"
                class="btn btn-primary btn-sm d-none d-md-inline-flex">{{ __('locale.labels.new_conversion') }}</a>
         </div>
         <!--/ To load Conversation -->
@@ -1898,6 +1898,9 @@
 
     {{-- The existing CRM browser softphone (popup + SDK), only when this user may place browser calls here. No second calling system. --}}
     @includeWhen(! empty($browserCalling), 'customer.people._softphone')
+
+    {{-- "New text": the compose form as a dialog over the inbox (the launch links above still work as plain links). --}}
+    @include('customer.ChatBox.partials._new_text_dialog')
 @endsection
 
 @section('vendor-script')
@@ -1909,6 +1912,7 @@
 @section('page-script')
     <!-- Page js files -->
     <script src="{{ asset(mix('js/scripts/pages/chat.js')) }}"></script>
+    <script src="{{ asset(mix('js/scripts/sms-counter.js')) }}"></script>
     <script src="{{ asset(mix('vendors/js/extensions/sweetalert2.all.min.js')) }}"></script>
     @if(config('broadcasting.connections.pusher.app_id'))
         <script src="{{ asset(mix('js/scripts/echo.js')) }}"></script>

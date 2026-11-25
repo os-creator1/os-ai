@@ -87,11 +87,11 @@ class SeoRankCityPickerTest extends TestCase
         Http::fake();
 
         $this->search($workspace, $business, 'Chicago')->assertOk()->assertExactJson([
-            'locations' => [['code' => self::CHICAGO, 'label' => 'Chicago, Illinois, United States']],
+            'locations' => [['code' => self::CHICAGO, 'label' => 'Chicago, Illinois, United States', 'city' => 'Chicago', 'region' => 'Illinois', 'country' => 'US']],
             'status' => 'ok',
         ]);
         $this->search($workspace, $business, 'vilnius')->assertOk()->assertExactJson([
-            'locations' => [['code' => self::VILNIUS, 'label' => 'Vilnius, Vilnius County, Lithuania']],
+            'locations' => [['code' => self::VILNIUS, 'label' => 'Vilnius, Vilnius County, Lithuania', 'city' => 'Vilnius', 'region' => 'Vilnius County', 'country' => 'LT']],
             'status' => 'ok',
         ]);
 
@@ -108,7 +108,7 @@ class SeoRankCityPickerTest extends TestCase
         FakeSeoRankProvider::$completeImmediately = false;
 
         $this->search($workspace, $business, 'Toronto')->assertOk()->assertExactJson([
-            'locations' => [['code' => self::TORONTO, 'label' => 'Toronto, Ontario, Canada']],
+            'locations' => [['code' => self::TORONTO, 'label' => 'Toronto, Ontario, Canada', 'city' => 'Toronto', 'region' => 'Ontario', 'country' => 'CA']],
             'status' => 'ok',
         ]);
         // The province row is not a city and never appears.
@@ -205,8 +205,82 @@ class SeoRankCityPickerTest extends TestCase
         }
         // Add keyword escape hatch inside the dialog (mobile modal never a dead end).
         $this->assertStringContainsString('data-role="rank-location-skip"', $html);
-        $this->assertStringContainsString('Add keyword without tracking', $html);
+        $this->assertStringContainsString('Add without tracking', $html);
         $this->assertStringContainsString('data-bs-dismiss="modal">Cancel', $html);
+    }
+
+    public function test_the_dialog_matches_the_design_structure_and_footer_order(): void
+    {
+        [$owner, $business, $workspace] = $this->tenant();
+        $this->authenticateAsSeoCustomer($owner);
+        $this->post($this->u('keywords.store', $workspace, $business), ['phrase' => 'first keyword', 'track_rank' => '0']);
+
+        $html = $this->get($this->u('keywords.index', $workspace, $business))->assertOk()->getContent();
+        $dialog = substr($html, strpos($html, 'id="rank-location-dialog"'));
+
+        $this->assertStringContainsString('Where do customers search from?', $dialog);
+        $this->assertStringContainsString("We'll check Google rank as if searching from this city.", $dialog);
+        $this->assertStringContainsString('data-role="rank-location-context"', $dialog);
+        $this->assertStringContainsString('role="combobox"', $dialog);
+        $this->assertStringContainsString('role="listbox"', $dialog);
+        $this->assertStringContainsString('US, Canada and Lithuania.', $dialog);
+        // Add without tracking on the left; Cancel then Start tracking on the right.
+        $skip = strpos($dialog, 'data-role="rank-location-skip"');
+        $cancel = strpos($dialog, 'data-bs-dismiss="modal">Cancel');
+        $start = strpos($dialog, 'data-role="rank-location-confirm"');
+        $this->assertTrue($skip < $cancel && $cancel < $start);
+        // A row's own Start tracking hands the dialog its keyword and scope.
+        $this->assertMatchesRegularExpression('/data-rank-dialog="track" data-phrase="first keyword" data-scope="Whole business"/', $html);
+    }
+
+    public function test_lookup_returns_city_region_and_country_for_the_dropdown_rows(): void
+    {
+        [$owner, $business, $workspace] = $this->tenant();
+        $this->authenticateAsSeoCustomer($owner);
+        foreach ([[9900301, 'Biloxi,Mississippi,United States'], [9900302, 'Biloxi Beach,Mississippi,United States']] as [$code, $name]) {
+            (new SeoRankLocation())->forceFill(['provider' => 'dataforseo', 'location_code' => $code, 'location_name' => $name, 'country_iso' => 'US', 'location_type' => 'City'])->save();
+        }
+
+        $rows = $this->search($workspace, $business, 'Bil')->assertOk()->json('locations');
+
+        $this->assertSame(['Biloxi', 'Mississippi', 'US', 9900301], [$rows[0]['city'], $rows[0]['region'], $rows[0]['country'], $rows[0]['code']]);
+        $this->assertSame('Biloxi Beach', $rows[1]['city']);
+    }
+
+    public function test_the_keyword_derived_hint_names_a_city_only_when_exactly_one_cached_city_matches(): void
+    {
+        [$owner, $business, $workspace] = $this->tenant();
+        $this->authenticateAsSeoCustomer($owner);
+        foreach ([
+            [9900301, 'Biloxi,Mississippi,United States'],
+            [9900311, 'Springfield,Illinois,United States'],
+            [9900312, 'Springfield,Missouri,United States'],
+        ] as [$code, $name]) {
+            (new SeoRankLocation())->forceFill(['provider' => 'dataforseo', 'location_code' => $code, 'location_name' => $name, 'country_iso' => 'US', 'location_type' => 'City'])->save();
+        }
+        $hint = fn (string $phrase) => $this->getJson($this->u('keywords.rank-locations', $workspace, $business) . '?q=&hint=' . urlencode($phrase))->assertOk()->json('hint');
+
+        $this->assertSame(9900301, $hint('photo booth rental biloxi ms')['code']);
+        $this->assertSame(9900301, $hint('photo booth rental biloxi')['code']);
+        $this->assertSame('Mississippi', $hint('photo booth rental biloxi')['region']);
+        $this->assertNull($hint('photo booth rental springfield'), 'an ambiguous name is never guessed');
+        $this->assertNull($hint('photo booth rental'));
+        // Without a phrase the payload is unchanged.
+        $this->assertArrayNotHasKey('hint', $this->search($workspace, $business, 'Bil')->json());
+    }
+
+    public function test_a_typed_partial_city_never_starts_tracking_without_a_chosen_code(): void
+    {
+        [$owner, $business, $workspace] = $this->tenant();
+        $this->authenticateAsSeoCustomer($owner);
+        FakeSeoRankProvider::$completeImmediately = false;
+
+        // The browser submits only a chosen code; with none, the keyword is saved UNtracked and says why.
+        $this->post($this->u('keywords.store', $workspace, $business), ['phrase' => 'photo booth biloxi', 'track_rank' => '1', 'search_location_code' => ''])
+            ->assertSessionHas('message', 'Keyword saved. Rank tracking off. Choose a search location from the list to track its rank.');
+        $this->assertNotNull(SeoKeyword::query()->where('phrase', 'photo booth biloxi')->first());
+        $this->assertSame(0, SeoRankTarget::query()->count());
+        $this->assertSame(0, FakeSeoRankProvider::$submitCalls);
     }
 
     public function test_choosing_vilnius_sends_its_code_and_starts_tracking(): void

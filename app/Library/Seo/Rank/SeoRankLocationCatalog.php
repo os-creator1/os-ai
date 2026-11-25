@@ -34,6 +34,15 @@ class SeoRankLocationCatalog
     ];
     public const LANGUAGE = 'en';
 
+    /** The compact form used in the dialog hint: "US, Canada and Lithuania". */
+    public static function supportedCountriesShortLabel(): string
+    {
+        $names = array_map(fn (string $c) => $c === 'US' ? 'US' : (self::COUNTRY_NAMES[$c] ?? $c), self::supportedCountries());
+        $last = array_pop($names);
+
+        return $names === [] ? (string) $last : implode(', ', $names) . ' and ' . $last;
+    }
+
     /** @return list<string> */
     public static function supportedCountries(): array
     {
@@ -85,9 +94,49 @@ class SeoRankLocationCatalog
 
         return $this->supported(SeoRankLocation::query())
             ->where('location_name', 'like', $escaped . '%')
+            // City name first ("Biloxi" before "Biloxi Beach": a space sorts before the comma that follows a bare city name).
+            ->orderByRaw("SUBSTRING_INDEX(location_name, ',', 1)")
             ->orderBy('location_name')
             ->limit(max(1, min(25, $limit)))
             ->get();
+    }
+
+    /**
+     * The one cached city a keyword phrase names, or null. "photo booth rental biloxi" -> Biloxi, Mississippi.
+     * Tries the phrase's trailing 1-3 words (longest first), also without a trailing two-letter state/province
+     * token ("biloxi ms"), and answers only when exactly one supported city has that exact name: an ambiguous
+     * name ("springfield") yields no hint rather than a guess.
+     */
+    public function suggestFromPhrase(string $phrase): ?SeoRankLocation
+    {
+        $words = array_values(array_filter(preg_split('/[^\p{L}\p{N}\'\-]+/u', mb_strtolower($phrase)) ?: []));
+        $candidates = [];
+
+        for ($n = min(3, count($words)); $n >= 1; $n--) {
+            $tail = array_slice($words, -$n);
+            $candidates[] = implode(' ', $tail);
+
+            if ($n > 1 && mb_strlen(end($tail)) === 2) {
+                $candidates[] = implode(' ', array_slice($tail, 0, -1));
+            }
+        }
+
+        foreach (array_unique($candidates) as $name) {
+            if (mb_strlen($name) < 3) {
+                continue;
+            }
+
+            $matches = $this->supported(SeoRankLocation::query())
+                ->where('location_name', 'like', addcslashes($name, '\\%_') . ',%')
+                ->limit(2)
+                ->get();
+
+            if ($matches->count() === 1) {
+                return $matches->first();
+            }
+        }
+
+        return null;
     }
 
     /** A supported, cached location by provider code, or null. */
