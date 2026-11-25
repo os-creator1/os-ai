@@ -65,13 +65,16 @@ function ConversationThread({ route, navigation }: Props) {
   const load = useCallback(async (): Promise<boolean> => {
     if (!scope) return false;
     const version = ++threadGeneration.current;
-    liveSeq.current++;
+    // Full loads and live refreshes share ONE ordering: whichever STARTED last may apply its result.
+    const startedAs = ++liveSeq.current;
     earlierInFlight.current = false;
     setLoadingEarlier(false);
     setError(null);
     try {
       const d = await api.conversation(scope, uid);
       if (version !== threadGeneration.current) return false;
+      // A live refresh started after this load and owns the newer view; applying this older response would roll it back.
+      if (startedAs !== liveSeq.current) return true;
       setData(d);
       dataRef.current = d;
       setHasMore(d.has_more);
@@ -105,7 +108,8 @@ function ConversationThread({ route, navigation }: Props) {
    * by id when rendered, so an event racing a send's own refresh cannot create a second bubble.
    */
   const refreshLive = useCallback(async () => {
-    if (!scope) return;
+    // Before the first load has applied there is nothing to refresh: that load will deliver the data itself.
+    if (!scope || dataRef.current === null) return;
     const version = threadGeneration.current;
     const mine = ++liveSeq.current;
     try {
@@ -117,8 +121,18 @@ function ConversationThread({ route, navigation }: Props) {
       // messages are contiguous with the old window, so what lies before the loaded history is unchanged.
       const prev = dataRef.current?.messages ?? [];
       const firstNew = d.messages[0]?.id ?? Number.POSITIVE_INFINITY;
-      const slid = prev.filter((m) => m.id < firstNew);
-      if (slid.length > 0) setOlder((o) => [...o, ...slid]);
+      const newIds = new Set(d.messages.map((m) => m.id));
+      // A window that shares nothing with what we hold (e.g. many messages arrived while offline) may hide a gap we cannot
+      // see. Rather than splice across it, restart from the fresh window: "Load earlier" then pages back through the gap
+      // contiguously. (When the server says there is nothing older, the window IS the whole thread: no gap is possible.)
+      const gap = d.has_more && prev.length > 0 && !prev.some((m) => newIds.has(m.id));
+      if (gap) {
+        setOlder([]);
+        setHasMore(true);
+      } else {
+        const slid = prev.filter((m) => m.id < firstNew);
+        if (slid.length > 0) setOlder((o) => [...o, ...slid]);
+      }
       setData(d);
       dataRef.current = d;
       const confirmed = new Set(d.messages.map((m) => m.send_uid).filter((key): key is string => !!key));

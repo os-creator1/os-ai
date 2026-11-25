@@ -224,6 +224,37 @@ describe('live conversation detail: window and focus', () => {
     for (const body of ['m1', 'm2', 'm3', 'm4', 'm5']) expect(screen.getAllByText(body)).toHaveLength(1);
   });
 
+  it('restarts from the fresh window when a reconnect window shares nothing with what was loaded (no hidden gap)', async () => {
+    const api = fakeApi({ conversation: jest.fn()
+      .mockResolvedValueOnce({ ...detail([msg(1, 'm1'), msg(2, 'm2')]), has_more: true })
+      .mockResolvedValueOnce({ ...detail([msg(101, 'm101'), msg(102, 'm102')]), has_more: true })
+      .mockResolvedValue({ ...detail([msg(51, 'm51'), msg(52, 'm52')]), has_more: true }) });
+    const t = await open(api, nav());
+    await act(async () => { t.emit(ch, evt); });
+    await waitFor(() => screen.getByText('m102'));
+    // The stale, non-contiguous history is not spliced in; "Load earlier" pages back from the fresh window.
+    expect(screen.queryByText('m1')).toBeNull();
+    await fireEvent.press(screen.getByText('Load earlier messages'));
+    expect(api.conversation).toHaveBeenLastCalledWith(expect.anything(), 'c1', 101);
+  });
+
+  it('a slower full load cannot overwrite a newer live refresh that started after it', async () => {
+    const deferred: Array<(v: any) => void> = [];
+    const conversation = jest.fn()
+      .mockResolvedValueOnce(detail([msg(1, 'm1')]))
+      .mockImplementation(() => new Promise((r) => { deferred.push(r); }));
+    const api = fakeApi({ conversation });
+    const t = await open(api, nav());
+    // Pull-to-refresh (full load) starts, then a realtime event starts a live refresh.
+    await act(async () => { screen.getByTestId('conversation-messages').props.onRefresh(); });
+    await act(async () => { t.emit(ch, evt); });
+    await waitFor(() => expect(deferred).toHaveLength(2));
+    await act(async () => { deferred[1](detail([msg(1, 'm1'), msg(2, 'm2')])); });   // live (newer) answers first
+    await waitFor(() => screen.getByText('m2'));
+    await act(async () => { deferred[0](detail([msg(1, 'm1')])); });                 // the older load answers last
+    expect(screen.getByText('m2')).toBeTruthy();
+  });
+
   it('does not yank the user to the bottom on a live update after they scrolled up to read history', async () => {
     const FlatList = require('react-native').FlatList;
     const spy = jest.spyOn(FlatList.prototype, 'scrollToEnd').mockImplementation(() => undefined);
