@@ -293,6 +293,15 @@ const seed = (server) => { server.add('A', 'Ann'); server.add('B', 'Bob'); serve
     assert.equal(await page.evaluate(() => $('.chat-users-list li[data-id=A] .notification_count').text()), '1', 'a later message is unread again, alone');
   });
 
+  await scenario('(thread 1) a row no poll has refreshed yet, opened twice, keeps its server baseline', async (page, server) => {
+    seed(server); server.convs.A.unread = 5; await bootList(page, server);       // initial markup: no data-server-count on A
+    await open(page, server, 'A'); await open(page, server, 'B'); await open(page, server, 'A'); await open(page, server, 'B');   // no poll in between
+    await refresh(page, server);
+    assert.equal(await page.evaluate(() => $('.chat-users-list li[data-id=A]').hasClass('conv-unread')), false, 'the 5 read messages are not unread again');
+    server.inbound('A', 'one more', 'a2'); await refresh(page, server);
+    assert.equal(await page.evaluate(() => $('.chat-users-list li[data-id=A] .notification_count').text()), '1');
+  });
+
   await scenario('(thread 2) poll in flight, the operator pins (real handler), the older response lands: the row appears once, in the rail', async (page, server) => {
     seed(server); await bootList(page, server); await open(page, server, 'A');
     let release; server.delay['list:'] = new Promise((r) => { release = r; });

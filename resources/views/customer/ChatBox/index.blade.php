@@ -2706,7 +2706,14 @@
           epoch += 1;
           deadThread = "";
 
-          if (isSms(idOf(this))) { seenCount[idOf(this)] = rawCountOf($(this)); }
+          if (isSms(idOf(this))) {
+            // Stamped now, because the selection handler clears the badge: a row no poll has refreshed yet (the initial render, a
+            // later page) must still hand its server count to the next click.
+            const raw = rawCountOf($(this));
+
+            $(this).attr("data-server-count", raw);
+            seenCount[idOf(this)] = raw;
+          }
         });
 
         $(document).on("ajaxSend", function (event, xhr, settings) {
