@@ -143,6 +143,7 @@
                             <option value="{{ $uid }}" @selected(old('contact_group_uid') === $uid)>{{ $name }}</option>
                         @endforeach
                     </select>
+                    @error('contact_group_uid')<span class="err" role="alert">{{ $message }}</span>@enderror
                     <div id="new-group-name">
                         <label for="group_name">New contact group name</label>
                         <input type="text" id="group_name" name="group_name" class="in @error('group_name') bad @enderror" maxlength="255" value="{{ old('group_name', $defaultGroupName) }}" data-role="group-name">

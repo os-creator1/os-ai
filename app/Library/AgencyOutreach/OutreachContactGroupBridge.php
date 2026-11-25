@@ -208,6 +208,11 @@ final class OutreachContactGroupBridge
             });
     }
 
+    public function memberCount(ContactGroups $group, Business $business): int
+    {
+        return $this->members($group, $business)->count();
+    }
+
     private function run(Workspace $workspace, ContactGroups $group, ?AgencyProspectCampaign $campaign, bool $persist): array
     {
         $business = AgencyOutreachBusinessResolver::forWorkspace($workspace);
@@ -217,7 +222,7 @@ final class OutreachContactGroupBridge
             throw new \DomainException('That contact group does not belong to this Workspace\'s Business.');
         }
 
-        $total = $this->members($group, $business)->count();
+        $total = $this->memberCount($group, $business);
         $report = ['group_total' => $total, 'eligible' => 0, 'excluded' => 0, 'reasons' => [], 'skipped' => [], 'too_large' => $total > self::MAX_CONTACTS];
 
         if ($report['too_large']) {
