@@ -2749,18 +2749,26 @@
           // The reply target follows the thread: the answer carries the composer the server derived from the Contact's LATEST email
           // thread, and Send submits through the configuration kept here. applyComposer is what the thread's own load runs on a
           // refresh of the same conversation: it keeps the selected channel and the typed subject, and never touches the draft.
-          // Only when it leaves the operator's selected channel usable: a background refresh must never move a typed email to SMS
-          // (that is a change only an explicit load or the operator makes). A composer not yet set up for this thread is applied.
+          // The composer follows what the server says now, without ever changing what the operator typed or chose. While the selected
+          // channel stays usable it is applied whole (new reply target, Locations). When it would no longer be usable (a disconnected
+          // mailbox) a background refresh must not move a typed email to SMS, so the channel stays and only the truth is shown:
+          // the configuration, the guidance and Send's availability, so nothing is sent through a stale target.
           if (response.composer) {
             const usable = composerState.channel === "email" ? response.composer.email === true : response.composer.sms === true;
+            const setUpHere = composerState.forId === activeId;   // read BEFORE applying: it is what makes a Location choice this thread's own
 
-            if (composerState.forId !== activeId || usable) {
-              // applyComposer rebuilds the Location selector blank; a background refresh must not discard the operator's choice.
-              const chosen = String($("#email-location").val() || "");
+            if (!setUpHere || usable) {
+              // applyComposer rebuilds the Location selector blank; a background refresh must not discard the operator's choice for
+              // THIS conversation (a choice left over from another one is never carried over).
+              const chosen = setUpHere ? String($("#email-location").val() || "") : "";
 
               applyComposer(response.composer, response.channel === "email" ? "email" : "sms");
 
               if (chosen !== "" && $("#email-location option").filter(function () { return $(this).val() === chosen; }).length) { $("#email-location").val(chosen); }
+            } else {
+              composerState.cfg = response.composer;
+              setComposerChannel(composerState.channel);
+              syncSendAvailability();
             }
           }
 

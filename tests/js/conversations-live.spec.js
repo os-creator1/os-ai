@@ -478,6 +478,35 @@ const seed = (server) => { server.add('A', 'Ann'); server.add('B', 'Bob'); serve
     assert.ok((await keys(page)).includes('a9'), 'the thread itself still refreshed');
   });
 
+  await scenario('(email composer) when email becomes unavailable the page says so and blocks Send, without moving the draft or the channel; it recovers with the new reply target', async (page, server) => {
+    seed(server); server.convs.A.emailUrl = 'http://conv.test/email/reply/T-old'; await bootList(page, server); await open(page, server, 'A'); await composeEmail(page);
+    server.convs.A.emailOff = true; server.emailArrives('A', 'T-mid');
+    await page.evaluate(() => { window.toasts = []; });
+    await refresh(page, server);
+    assert.equal(await page.evaluate(() => composerState.cfg.email), false, 'the page now knows email is unavailable');
+    assert.equal(await page.evaluate(() => composerState.channel), 'email', 'the channel is not changed');
+    assert.equal(await page.evaluate(() => $('#message').val()), 'half-typed email reply', 'the draft is untouched');
+    assert.equal(await page.evaluate(() => $('[data-role=composer-guidance]').prop('hidden')), false, 'the guidance is shown');
+    const before = server.sent.length;
+    await page.evaluate(() => enter_chat()); await page.waitForTimeout(400);
+    assert.equal(server.sent.length, before, 'Send does not go to the stale reply target');
+    assert.equal(await page.evaluate(() => window.toasts.length), 1, 'the operator is told why');
+    server.convs.A.emailOff = false; server.emailArrives('A', 'T-new'); await refresh(page, server);
+    assert.equal(await page.evaluate(() => composerState.cfg.url), 'http://conv.test/email/reply/T-new', 'and it recovers with the newest thread');
+    assert.equal((await sendAndRead(page, server)).url, 'http://conv.test/email/reply/T-new');
+  });
+
+  await scenario('(email composer) a Location left over from another conversation is never carried into a thread whose composer was not set up yet', async (page, server) => {
+    seed(server); server.convs.A.locations = server.convs.B.locations = [{ uid: 'L1', name: 'One' }, { uid: 'L2', name: 'Two' }];
+    await bootList(page, server); await open(page, server, 'A'); await composeEmail(page);
+    await page.evaluate(() => { $('#email-location').val('L2'); });
+    await open(page, server, 'B');                                                              // B open; its composer is not set up yet:
+    await page.evaluate(() => { invalidateComposer(); $('#email-location').html('<option value="">x</option><option value="L2">Two</option>').val('L2'); });   // A's choice is still in the shared field
+    server.inbound('B', 'poll sets B up', 'b9'); await refresh(page, server);
+    assert.equal(await page.evaluate(() => composerState.forId), 'B', 'the poll set the composer up for B');
+    assert.equal(await page.evaluate(() => $('#email-location').val() || ''), '', 'B does not inherit A\'s Location');
+  });
+
   // ---- (MMS playback) unchanged attachments keep their player, position and play state across a refresh ----
   const playing = (page) => page.evaluate(async () => {
     const a = $('audio')[0], v = $('video')[0]; window.__a = a; window.__v = v;
