@@ -232,6 +232,34 @@ const seed = (server) => { server.add('A', 'Ann'); server.add('B', 'Bob'); serve
     assert.equal(server.hits.length, n, 'no further requests once access is refused');
   });
 
+  await scenario('a thread that is gone (404) stops only its own refresh; the list keeps updating', async (page, server) => {
+    seed(server); await bootList(page, server); await open(page, server, 'A');
+    server.fail = (kind, id) => (kind === 'timeline' && id === 'A' ? 404 : 0);
+    await refresh(page, server);
+    server.inbound('B', 'still arrives', 'b2'); await refresh(page, server); await refresh(page, server);
+    assert.equal(await page.evaluate(() => $('.chat-users-list li[data-id=B] [data-role=conversation-row-preview]').text()), 'still arrives');
+    assert.equal(server.hits.filter((h) => h.kind === 'timeline').length, 2, 'the open plus ONE refused poll: the dead thread is not asked again');
+  });
+
+  await scenario('a poll overtaken by the operator\'s own request (send / retry / reload) is not applied over it', async (page, server) => {
+    seed(server); await bootList(page, server); await open(page, server, 'A');
+    let release; server.delay['timeline:A'] = new Promise((r) => { release = r; });
+    server.inbound('A', 'older snapshot', 'a2');
+    await page.evaluate(() => inboxLive.refreshNow()); await page.waitForTimeout(300);
+    await page.evaluate(() => { $('.chat_history').append('<div class="chat" data-role="timeline-message">optimistic bubble</div>'); $.post('http://conv.test/timeline/A'); });
+    await page.waitForTimeout(200); server.delay['timeline:A'] = null; release(); await page.waitForTimeout(400);
+    assert.equal(await page.evaluate(() => $('.chat_history').text().includes('optimistic bubble')), true, 'the stale poll did not wipe the just-sent bubble');
+  });
+
+  await scenario('a row pinned while a list answer was in flight is not drawn twice', async (page, server) => {
+    seed(server); await bootList(page, server);
+    let release; server.delay['list:'] = new Promise((r) => { release = r; });
+    await page.evaluate(() => inboxLive.refreshNow()); await page.waitForTimeout(300);
+    await page.evaluate(() => { $('.chat-users-list-pinned').append($('.chat-users-list li[data-id=A]')); });   // the operator pins A
+    server.delay['list:'] = null; release(); await page.waitForTimeout(500);
+    assert.equal(await page.evaluate(() => $('#users-list li[data-id=A]').length), 1);
+  });
+
   await scenario('polling is paused while the tab is hidden and catches up the moment it is visible again', async (page, server) => {
     seed(server); await bootList(page, server); await open(page, server, 'A');
     await page.evaluate(() => { Object.defineProperty(document, 'hidden', { configurable: true, get: () => true }); });

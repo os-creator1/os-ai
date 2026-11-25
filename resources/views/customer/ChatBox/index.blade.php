@@ -2477,7 +2477,13 @@
         const idOf = (el) => String($(el).attr("data-id"));
         const countOf = ($li) => parseInt($li.find(".notification_count").first().text(), 10) || 0;
         const isSms = (id) => id !== "" && !/^(email|compose):/.test(id);
-        const post = (url, data) => new Promise((resolve, reject) => { $.post(url, data).done(resolve).fail(reject); });
+        // global:false keeps polls out of the page's own ajax events, which is how the page's own requests (a send, a retry, a
+        // thread load) are told apart below. The timeout makes a stalled request fail into the retry path instead of wedging it.
+        const post = (url, data) => new Promise((resolve, reject) => { $.ajax({ url: url, type: "POST", data: data, global: false, timeout: 15000 }).done(resolve).fail(reject); });
+        let ownRequests = 0;                  // the page's own in-flight requests
+        let ownActivityAt = 0;                // when the page last sent or finished one
+        let deadThread = "";                  // an open thread the server no longer serves (deleted / access lost)
+        let failures = 0;
         const rowFor = ($root, id) => $root.children("li").filter(function () { return idOf(this) === id; }).first();
 
         function markRead($li) {
@@ -2518,6 +2524,9 @@
             const $old = rowFor($list, idOf(rows[i]));
 
             if (!$old.length && !addNew) { continue; }
+
+            // Pinned or unpinned while this answer was on its way: the row already lives in the other list. Never draw it twice.
+            if (!$old.length && $("#users-list li[data-id]").filter(function () { return idOf(this) === idOf(rows[i]); }).length) { continue; }
 
             if ($old.hasClass("active") || idOf(rows[i]) === activeId) { $new.addClass("active"); }
 
@@ -2608,12 +2617,26 @@
 
         async function refreshThread(activeId, ep) {
           // Nothing drawn yet means the conversation is still opening through its own load; email and compose are other views.
-          if (!isSms(activeId) || !$(".chat_history").children().length) { return; }
+          if (!isSms(activeId) || activeId === deadThread || !$(".chat_history").children().length) { return; }
 
-          const response = await post(conversationUrl("timeline", activeId), { _token: "{{ csrf_token() }}" });
+          const startedAt = Date.now();
+          let response;
+
+          try {
+            response = await post(conversationUrl("timeline", activeId), { _token: "{{ csrf_token() }}" });
+          } catch (xhr) {
+            // This thread is gone for this operator; the list and every other conversation keep updating.
+            if (xhr && (xhr.status === 403 || xhr.status === 404)) { deadThread = activeId; return; }
+
+            throw xhr;
+          }
 
           // Switched away (or away and back) while this was in flight: it belongs to a thread that is no longer the open one.
           if (ep !== epoch || String($(".chat_id").val() || "") !== activeId) { return; }
+
+          // The operator sent, retried or reloaded this thread meanwhile (or is doing so now): this answer may predate it and
+          // would revert a fresher render or drop a just-sent bubble. The next cycle reads the settled thread.
+          if (ownRequests > 0 || ownActivityAt >= startedAt) { return; }
 
           applyTimeline(response.timeline);
         }
@@ -2657,16 +2680,21 @@
           }
 
           busy = false;
-          schedule(failed ? RETRY_MS : again ? 0 : POLL_MS);
+          failures = failed ? failures + 1 : 0;
+          schedule(failed ? Math.min(RETRY_MS * Math.pow(2, failures - 1), 30000) : again ? 0 : POLL_MS);
         }
 
         // A conversation switch invalidates every answer still on its way. Registered before the selection handler so the row's
         // unread count is read before that handler clears it.
         $("#users-list").on("click.inboxLive", ".chat-users-list li, .chat-users-list-pinned li", function () {
           epoch += 1;
+          deadThread = "";
 
           if (isSms(idOf(this))) { seenCount[idOf(this)] = countOf($(this)); }
         });
+
+        $(document).on("ajaxSend", function () { ownRequests += 1; ownActivityAt = Date.now(); });
+        $(document).on("ajaxComplete", function () { ownRequests = Math.max(0, ownRequests - 1); ownActivityAt = Date.now(); });
 
         document.addEventListener("visibilitychange", function () { if (!document.hidden) { cycle(); } });
         window.addEventListener("online", function () { cycle(); });
