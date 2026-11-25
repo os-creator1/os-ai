@@ -129,6 +129,22 @@ class ContentEditorScreenTest extends TestCase
         $this->assertStringNotContainsString('/sites/', $html, 'the noindex platform path is never shown as the address');
     }
 
+    public function test_the_permalink_and_growing_textareas_are_built_for_narrow_screens(): void
+    {
+        $t = $this->owner();
+        $article = $this->draftArticle($t[1]);
+
+        $html = $this->get($this->url($t, 'articles.edit', [$article->uid]))->assertOk()->getContent();
+
+        // The URL (and the slug field) live in their own shrinkable cell; the Edit control sits outside it and never wraps.
+        $this->assertMatchesRegularExpression('#<div class="ae-pl-main">.*?id="ae-slug-text".*?id="f-slug".*?</div>\s*<button type="button" class="ae-link-btn" id="ae-slug-edit"#s', $html);
+        $this->assertStringContainsString('.ae-permalink .ae-link-btn { flex:none; white-space:nowrap;', $html);
+
+        // Textarea heights follow the textarea's own width (after layout and the shell's width transition), not the window's resize event.
+        $this->assertStringContainsString('new ResizeObserver(', $html);
+        $this->assertStringContainsString("if (!window.ResizeObserver) { window.addEventListener('resize', growAll); }", $html);
+    }
+
     public function test_title_body_and_search_description_persist_across_save_and_reload(): void
     {
         $t = $this->owner();
