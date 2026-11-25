@@ -17,7 +17,7 @@
         }
     }
 @endphp
-<li data-id="{{$chat->uid}}" data-box-id="{{$chat->id}}" data-channel="sms" class="conv-row {{ $chat->pinned ? 'pinned-row' : '' }} {{ $chat->notification ? 'conv-unread' : '' }}">
+<li data-id="{{$chat->uid}}" data-box-id="{{$chat->id}}" data-activity-ts="{{ $chat->updated_at?->timestamp }}" data-channel="sms" class="conv-row {{ $chat->pinned ? 'pinned-row' : '' }} {{ $chat->notification ? 'conv-unread' : '' }}">
     <span class="avatar bg-light-primary conversation-row-avatar" aria-hidden="true">
         {{ $rowInitials !== '' ? $rowInitials : mb_substr((string) $chat->to, -2) }}
     </span>

@@ -124,6 +124,27 @@ class InboxLiveRefreshTest extends TestCase
         $this->assertSame(2, $this->unread($b));
     }
 
+    public function test_each_row_carries_the_lists_own_rank_key_and_the_list_is_ordered_by_it(): void
+    {
+        $a = $this->inbound('15551110001', 'older');
+        $b = $this->inbound('15551110002', 'newer');
+        DB::table('chat_boxes')->where('id', $a->id)->update(['updated_at' => now()->subHour()]);
+        DB::table('chat_boxes')->where('id', $b->id)->update(['updated_at' => now()]);
+        $this->authenticateAs($this->owner);
+
+        $html = $this->load();
+
+        // The live list judges whether a row left the tab by this value, so it must be the very value the list sorts by.
+        foreach ([$a, $b] as $box) {
+            $this->assertStringContainsString('data-activity-ts="' . ChatBox::find($box->id)->updated_at->timestamp . '"', $html);
+        }
+
+        preg_match_all('/data-activity-ts="(\d+)"/', $html, $m);
+        $sorted = $m[1];
+        rsort($sorted);
+        $this->assertSame($sorted, $m[1], 'newest activity first');
+    }
+
     public function test_a_first_ever_reply_appears_in_the_all_list(): void
     {
         $this->inbound('15551110001', 'someone already here');

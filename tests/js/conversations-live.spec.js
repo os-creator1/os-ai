@@ -50,14 +50,14 @@ function makeServer() {
   s.outbound = (id, text) => { const c = s.convs[id]; c.msgs.push({ key: `m${s.clock}`, dir: 'out', text }); c.at = s.clock++; };
   const row = (c) => {
     const last = c.msgs.at(-1);
-    return `<li data-id="${c.id}" data-box-id="${c.id}" class="conv-row ${c.unread ? 'conv-unread' : ''}"><h6 data-role="conversation-row-title">${c.name}</h6>`
+    return `<li data-id="${c.id}" data-box-id="${c.id}" data-activity-ts="${c.at}" class="conv-row ${c.unread ? 'conv-unread' : ''}"><h6 data-role="conversation-row-title">${c.name}</h6>`
       + `<p data-role="conversation-row-preview">${last ? last.text : 'No messages yet'}</p><div class="chat-meta">`
       + (c.unread ? `<span class="badge notification_count">${c.unread}</span>` : '<div class="counter" hidden><span class="badge notification_count"></span></div>')
       + '</div></li>';
   };
   // The real `load`: the tab's filter (read / unread), newest first, 50 rows a page, and the empty state when nothing matches.
   s.list = (pinned, filter, limit) => {
-    const rows = Object.values(s.convs).filter((c) => c.pinned === pinned).filter((c) => (filter === 'read' ? !c.unread : filter === 'unread' ? c.unread > 0 : true)).sort((a, b) => b.at - a.at).slice(0, limit || 1e9).map(row).join('');
+    const rows = Object.values(s.convs).filter((c) => c.pinned === pinned).filter((c) => (filter === 'read' ? !c.unread : filter === 'unread' ? c.unread > 0 : true)).sort((a, b) => (b.at - a.at) || (a.id < b.id ? 1 : -1)).slice(0, limit || 1e9).map(row).join('');
     return rows || (pinned ? '' : '<div class="text-center text-muted p-2" data-role="chat-list-empty">No conversations</div>');
   };
   s.thread = (id) => s.convs[id].msgs.map((m) => `<div class="chat" data-role="timeline-message" data-item-key="${m.key}">${(m.media || []).map((x) => `<p class="timeline-media"><${x.tag} controls src="${x.src}"></${x.tag}></p>`).join('')}<p>${m.text}</p>${m.detail ? `<span data-role="timeline-detail">${m.detail}</span>` : ''}</div>`).join('') || '<div class="timeline-empty">No messages</div>';
@@ -562,6 +562,29 @@ const seed = (server) => { server.add('A', 'Ann'); server.add('B', 'Bob'); serve
     assert.equal(after[0], 'C52', 'the replied conversation moved to the top');
     assert.equal(after.includes('C49'), true, 'C49 only moved to page 2: it is still a matching conversation');
     assert.equal(after.length, 55, 'nothing was lost');
+  });
+
+  await scenario('(filter) the answer\'s last row is not loaded locally (only page 1 is): a row that stopped matching is still removed', async (page, server) => {
+    for (let i = 0; i < 60; i++) { server.add('U' + String(i).padStart(2, '0'), 'Unread ' + i); server.inbound('U' + String(i).padStart(2, '0'), 'm' + i, 'k' + i); server.convs['U' + String(i).padStart(2, '0')].at = 5000 - i; }
+    server.bootFilter = 'unread'; await onTab(page, 'unread');
+    await page.evaluate((l) => { $('.chat-users-list').html(l); inboxLive.start(() => window.scope); }, server.list(false, 'unread', 50));   // only page 1 loaded
+    server.convs.U05.unread = 0;                                                               // read elsewhere: it leaves the Unread tab; page 1 now ends with U50, which is not on screen
+    await refresh(page, server);
+    assert.equal((await ids(page)).includes('U05'), false, 'removed although the boundary row was never loaded');
+    assert.equal((await ids(page)).length, 49 + 1, 'the rest stay, and the newly ranked row appears');
+  });
+
+  await scenario('(filter) a local order that differs from the server\'s (timestamp tie, a row moved by hand) never removes a row that still matches', async (page, server) => {
+    const name = (i) => 'P' + String(i).padStart(2, '0');
+    for (let i = 0; i < 50; i++) { server.add(name(i), 'P ' + i); server.inbound(name(i), 'm' + i, 'k' + i); server.convs[name(i)].at = 5000 - i; }
+    server.add('Q', 'Q'); server.inbound('Q', 'q', 'kq'); server.convs.Q.at = server.convs.P49.at;              // Q ties P49; the server's tiebreak ranks Q above P49
+    server.add('R', 'R'); server.inbound('R', 'r', 'kr'); server.convs.R.at = 3000;
+    await bootList(page, server);                                                                  // 52 rows on screen; server page 1 = P00..P48 + Q, so Q is the boundary
+    await page.evaluate(() => { $('.chat-users-list li[data-id=P49]').insertBefore($('.chat-users-list li[data-id=Q]')); });   // the local order now puts P49 BEFORE the boundary
+    await refresh(page, server);
+    const after = await ids(page);
+    assert.equal(after.includes('P49'), true, 'P49 ties the boundary: it is on page 2, not gone');
+    assert.equal(after.length, 52, 'nothing was lost');
   });
 
   await scenario('(filter) a 200 answer that is not a real list (no rows, no empty state) never wipes the list', async (page, server) => {

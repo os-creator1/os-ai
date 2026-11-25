@@ -2558,20 +2558,21 @@
           if (prune && isList) {
             const answered = rows.map(idOf);
             const local = $list.children("li[data-id]").get();
-            let judgedCount = local.length;
 
-            if (rows.length >= PAGE_ROWS) {
-              // The answer's own last row is the lowest-ranked one on page 1: an unchanged row that ranks above it is still on
-              // page 1, so up to it (in the list's order) a row missing from the answer really stopped matching; after it, it may
-              // only have been pushed to page 2. (Not "the last answered row in list order": a row that just replied can sit late.)
-              const boundary = answered[answered.length - 1];
+            // The server ranks by activity time (data-activity-ts, the list's own sort key). On a full page, only a row that ranks
+            // strictly above the answer's last row can be judged: an unchanged row above it is still on page 1, so if the answer
+            // lacks it, it stopped matching. A row at or below it may only have been pushed to page 2 by an arrival (ties included),
+            // and a row scrolled in from a later page ranks below it: neither is touched. This needs neither the boundary row to be
+            // loaded here nor the local order to mirror the server's.
+            const boundaryTs = rows.length >= PAGE_ROWS ? parseInt($(rows[rows.length - 1]).attr("data-activity-ts"), 10) : null;
+            const judgeable = function (el) {
+              if (rows.length < PAGE_ROWS) { return true; }
 
-              judgedCount = 0;
+              const ts = parseInt($(el).attr("data-activity-ts"), 10);
 
-              local.forEach(function (el, index) { if (idOf(el) === boundary) { judgedCount = index + 1; } });
-            }
-
-            const judged = $(local.slice(0, judgedCount));
+              return !isNaN(boundaryTs) && !isNaN(ts) && ts > boundaryTs;
+            };
+            const judged = $(local.filter(judgeable));
 
             judged.each(function () {
               const id = idOf(this);
