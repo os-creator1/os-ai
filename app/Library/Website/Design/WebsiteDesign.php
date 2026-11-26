@@ -69,16 +69,23 @@ final class WebsiteDesign
      */
     public function orderHomeSections(array $sections): array
     {
-        $rank = array_flip($this->homeOrder);
-        $indexed = [];
+        // Reference templates own a fixed, per-block sequence (including
+        // interleaved services, images and testimonials). Sorting only by
+        // section *type* would scramble that sequence and break fidelity.
+        if ($this->variant('home_sequence') === 'authored') {
+            $ordered = array_values($sections);
+        } else {
+            $rank = array_flip($this->homeOrder);
+            $indexed = [];
 
-        foreach (array_values($sections) as $position => $section) {
-            $indexed[] = [$rank[$section['type'] ?? ''] ?? (count($rank) + 1), $position, $section];
+            foreach (array_values($sections) as $position => $section) {
+                $indexed[] = [$rank[$section['type'] ?? ''] ?? (count($rank) + 1), $position, $section];
+            }
+
+            usort($indexed, fn (array $a, array $b) => [$a[0], $a[1]] <=> [$b[0], $b[1]]);
+
+            $ordered = array_map(fn (array $row) => $row[2], $indexed);
         }
-
-        usort($indexed, fn (array $a, array $b) => [$a[0], $a[1]] <=> [$b[0], $b[1]]);
-
-        $ordered = array_map(fn (array $row) => $row[2], $indexed);
 
         // The trust strip belongs directly under the hero, whatever order the template gives the other sections.
         $stripAt = array_search('trust_strip', array_column($ordered, 'type'), true);
