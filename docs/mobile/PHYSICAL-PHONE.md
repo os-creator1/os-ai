@@ -19,8 +19,10 @@ cd android && ANDROID_HOME=$HOME/android-sdk JAVA_HOME=<jdk17> ./gradlew assembl
 APK: `mobile/android/app/build/outputs/apk/debug/app-debug.apk`. On the phone enable *Developer options → USB debugging*, then
 `adb install app-debug.apk`. Start Metro on the computer: `EXPO_PUBLIC_API_URL=https://… npx expo start --dev-client`
 and open the app (same network, or `adb reverse tcp:8081 tcp:8081`).
-Cloud alternative: `npx eas-cli build --profile development --platform android` (needs a free Expo account; first run sets
-`extra.eas.projectId`, required for push tokens).
+Cloud alternative: `npx eas-cli build --profile development --platform android` (needs access to the `getmotiongrove` Expo
+account, which owns the EAS project in `app.config.ts`). Push additionally needs the `GOOGLE_SERVICES_JSON` EAS file variable
+(see ARCHITECTURE.md, "Enabling real-time and push"). An EAS build is signed with a different key than a local debug APK, so
+**uninstall the local build first**: Android refuses to install over it, and the old app keeps running without push.
 
 ## iPhone (needs a Mac and Apple Developer membership)
 * **Mac with Xcode 16+**, CocoaPods, Node 22; an **Apple Developer Program** account ($99/yr) — required to sign for a device.
