@@ -5,12 +5,13 @@ import type { ContactProfile } from '../api/types';
 import { useAuth } from '../auth/AuthContext';
 import type { RootStack } from '../navigation/types';
 import { colors, space } from '../theme';
-import { ErrorState, Loading } from './ui';
+import { ErrorState, Loading, useBottomInset } from './ui';
 
 type Props = NativeStackScreenProps<RootStack, 'ContactProfile'>;
 
 export function ContactProfileScreen({ route }: Props) {
   const { api, scope } = useAuth();
+  const bottomInset = useBottomInset();
   const [c, setC] = useState<ContactProfile | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -26,7 +27,7 @@ export function ContactProfileScreen({ route }: Props) {
   if (!c) return <Loading />;
 
   return (
-    <ScrollView style={s.wrap} contentContainerStyle={{ padding: space.md }}>
+    <ScrollView style={s.wrap} contentContainerStyle={{ padding: space.md, paddingBottom: space.md + bottomInset }}>
       <Text style={s.name}>{c.display_name ?? c.phone}</Text>
       <Text style={s.sub}>{c.phone}</Text>
       {c.email ? <Text style={s.sub}>{c.email}</Text> : null}

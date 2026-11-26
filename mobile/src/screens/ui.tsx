@@ -1,6 +1,16 @@
-import React from 'react';
+import React, { useContext } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
+import { SafeAreaInsetsContext } from 'react-native-safe-area-context';
 import { colors, space } from '../theme';
+
+/**
+ * Height of the system area at the bottom of the screen (Android navigation bar, iOS home indicator). The app draws
+ * edge-to-edge, so anything pinned to the bottom must add this as padding or it sits under the system bar. Reads the
+ * context directly (0 without a SafeAreaProvider) instead of useSafeAreaInsets(), which throws outside a provider.
+ */
+export function useBottomInset(): number {
+  return useContext(SafeAreaInsetsContext)?.bottom ?? 0;
+}
 
 export const Center = ({ children }: { children: React.ReactNode }) => <View style={s.center}>{children}</View>;
 export const Loading = () => <Center><ActivityIndicator accessibilityLabel="Loading" color={colors.brand} /></Center>;

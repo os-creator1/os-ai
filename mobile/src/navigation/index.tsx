@@ -8,7 +8,7 @@ import { ContactProfileScreen } from '../screens/ContactProfileScreen';
 import { ConversationDetailScreen } from '../screens/ConversationDetailScreen';
 import { ConversationsScreen } from '../screens/ConversationsScreen';
 import { LoginScreen } from '../screens/LoginScreen';
-import { Button, ErrorState, Loading } from '../screens/ui';
+import { Button, ErrorState, Loading, useBottomInset } from '../screens/ui';
 import { View } from 'react-native';
 import { NotificationRouter } from './NotificationRouter';
 import type { RootStack } from './types';
@@ -29,10 +29,11 @@ function openConversation(uid: string) {
 
 export function Navigation() {
   const { ready, restoreError, retryRestore, discardStoredSession, signedIn, scope } = useAuth();
+  const bottomInset = useBottomInset();
   if (!ready) return <Loading />;
   if (restoreError) {
     return (
-      <View style={{ flex: 1 }}>
+      <View style={{ flex: 1, paddingBottom: bottomInset }}>
         <ErrorState message={restoreError} onRetry={() => { void retryRestore(); }} />
         <Button title="Sign in with another account" variant="plain" onPress={() => { void discardStoredSession(); }} />
       </View>

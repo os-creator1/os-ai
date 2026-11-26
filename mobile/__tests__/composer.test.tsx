@@ -1,5 +1,7 @@
 import React from 'react';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react-native';
+import { StyleSheet } from 'react-native';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { AuthProvider } from '../src/auth/AuthContext';
 import { ApiError } from '../src/api/client';
 import { ConversationDetailScreen } from '../src/screens/ConversationDetailScreen';
@@ -220,6 +222,24 @@ describe('composer', () => {
     expect(screen.getByText('The carrier could not deliver this message.')).toBeTruthy();
     await fireEvent.press(screen.getByText('Retry'));
     await waitFor(() => expect(api.retry).toHaveBeenCalledWith(scope, 'c1', '22222222-2222-4222-8222-222222222222'));
+  });
+});
+
+describe('composer and the system navigation bar', () => {
+  it('pads the composer by the bottom inset so Send is not under the Android navigation bar', async () => {
+    const api = fakeApi();
+    const { Login } = require('./helpers');
+    const metrics = { frame: { x: 0, y: 0, width: 400, height: 800 }, insets: { top: 24, left: 0, right: 0, bottom: 48 } };
+    await render(
+      <SafeAreaProvider initialMetrics={metrics}>
+        <AuthProvider apiOverride={api}>
+          <Login api={api}><ConversationDetailScreen {...({ navigation: nav, route: { params: { uid: 'c1', title: 'Ann' } } } as any)} /></Login>
+        </AuthProvider>
+      </SafeAreaProvider>,
+    );
+    await waitFor(() => screen.getByText('Hello there'));
+    expect(StyleSheet.flatten(screen.getByTestId('composer').props.style).paddingBottom).toBe(8 + 48);
+    expect(screen.getByLabelText('Send')).toBeTruthy();
   });
 });
 

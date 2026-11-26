@@ -2,11 +2,12 @@ import React from 'react';
 import { FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useAuth } from '../auth/AuthContext';
 import { colors, space } from '../theme';
-import { Button, Center } from './ui';
+import { Button, Center, useBottomInset } from './ui';
 
 export function BusinessSelectorScreen() {
   const { me, selectBusiness, signOut } = useAuth();
   const items = me?.businesses ?? [];
+  const bottomInset = useBottomInset();
 
   if (items.length === 0) {
     return (
@@ -17,7 +18,7 @@ export function BusinessSelectorScreen() {
     );
   }
   return (
-    <View style={s.wrap}>
+    <View testID="business-selector" style={[s.wrap, { paddingBottom: space.md + bottomInset }]}>
       <Text style={s.hello}>Choose a business</Text>
       <FlatList
         data={items}
