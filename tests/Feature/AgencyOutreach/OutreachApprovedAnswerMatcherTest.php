@@ -307,6 +307,9 @@ class OutreachApprovedAnswerMatcherTest extends TestCase
         $this->enroll($workspace, $campaign, $this->prospect($workspace, '12025555010'));
         $this->inbound($business, 'What is the monthly fee and refund policy?', '12025555010');
         $this->assertSame("Fixture: monthly.\nFixture: refund policy.\n\n" . self::M1, $this->sentBodies()[2]);
+        $this->enroll($workspace, $campaign, $this->prospect($workspace, '12025555011'));
+        $this->inbound($business, 'What are the setup and monthly fees?', '12025555011');
+        $this->assertSame("Fixture: setup.\nFixture: monthly.\n\n" . self::M1, $this->sentBodies()[3]);
         $this->assertSame([], $this->openQuestions($workspace));
     }
 

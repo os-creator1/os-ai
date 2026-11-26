@@ -225,6 +225,23 @@ final class OutreachQuestionMatcher
         }
 
         foreach ($topics as $topic => $offset) {
+            // Coordinated qualifiers can ask for two different entries in a single topic
+            // ("setup and monthly fees"). Rank keywords inside each phrase independently.
+            $parts = preg_split('/\\b(?:and|plus|also)\\b|,/u', $norm, -1, PREG_SPLIT_OFFSET_CAPTURE);
+            $explicit = [];
+            if (count($parts) > 1) {
+                foreach ($parts as [$part, $start]) {
+                    $candidate = $this->entryAbout($topic, $entries, trim($part), [], true);
+                    if ($candidate !== null) {
+                        $explicit[$candidate['id']] ??= $start;
+                    }
+                }
+            }
+            if (count($explicit) > 1) {
+                $found += $explicit;
+                continue;
+            }
+
             $entry = $this->entryAbout($topic, $entries, $norm, $exact);
 
             if ($entry !== null) {
@@ -321,7 +338,7 @@ final class OutreachQuestionMatcher
     }
 
     /** Resolve shared topics by exact phrasing or owner keywords. Ties go to the matcher. */
-    private function entryAbout(string $topic, array $entries, string $request = '', array $exact = []): ?array
+    private function entryAbout(string $topic, array $entries, string $request = '', array $exact = [], bool $requireKeyword = false): ?array
     {
         $best = null;
         $bestScore = -1;
@@ -343,7 +360,7 @@ final class OutreachQuestionMatcher
                 $best = null;
             }
         }
-        return $best;
+        return ! $requireKeyword || $bestScore > 0 ? $best : null;
     }
 
     /** @return array<string, true> the topics an entry is primarily about (question, keywords, intent -- not the answer) */
