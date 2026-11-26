@@ -76,7 +76,7 @@ final class PhotoBoothBlueprint
             $type = (string) ($page['page_type'] ?? '');
 
             $sections = match ($type) {
-                'home' => $this->home($facts),
+                'home' => $this->isReferenceTemplate($facts) ? $this->referenceHome($facts) : $this->home($facts),
                 'services_overview' => $this->servicesOverview($facts),
                 'service_detail' => $this->serviceDetail($facts, $page),
                 'event_detail' => $this->eventDetail($facts, $page),
@@ -164,6 +164,142 @@ final class PhotoBoothBlueprint
         $sections[] = $this->contactDetails($f['business']);
 
         return $sections;
+    }
+
+    /**
+     * Three fixed structural references, never AI-selected or shuffled:
+     *  - Kaleb: hero / story / booth / inclusions / photos / reviews / areas / FAQ / inquiry.
+     *  - Booths: hero / intro / booth / features / occasions / photos / reviews / areas / FAQ / inquiry.
+     *  - Greenbelt: hero / intro / occasions / differentiation / reviews / packages /
+     *    corporate feature / photos / FAQ / areas / inquiry.
+     *
+     * Only canonical Services, Catalog items, owner-confirmed advantages,
+     * reviews, service areas and uploaded photos fill the blocks. Missing
+     * information removes the block instead of inventing customer claims.
+     * ImageText assets are bound by the existing MediaBindingService.
+     *
+     * @param array<string, mixed> $f
+     * @return array<int, array<string, mixed>>
+     */
+    private function referenceHome(array $f): array
+    {
+        $key = $f['template'];
+        $kaleb = $key === 'photo_booth_reference_kaleb';
+        $booths = $key === 'photo_booth_reference_booths';
+        $greenbelt = $key === 'photo_booth_reference_greenbelt';
+
+        $hero = $this->hero(
+            $this->heroHeadline($f),
+            $this->heroSubline($f),
+            $this->primaryCta($f),
+            $f['packages'] !== [] ? ['label' => 'View packages', 'url' => '/packages'] : null,
+        );
+        $intro = trim((string) $f['about']) === '' ? null : [
+            'type' => 'image_text',
+            'data' => [
+                'heading' => $greenbelt ? 'An experience for every celebration' : 'Make every event memorable',
+                'body' => Str::limit((string) $f['about'], 3000, ''),
+                'image' => null,
+                'image_position' => $greenbelt ? 'left' : 'right',
+            ],
+        ];
+
+        $boothCards = $f['services'] === [] ? null : [
+            'type' => 'services',
+            'data' => [
+                'heading' => $kaleb ? 'Our photo booth experience' : 'Our photo booths',
+                'role' => 'booths',
+                'items' => $this->serviceItems($f, array_slice($f['services'], 0, 6)),
+            ],
+        ];
+        $featureCards = $f['advantages'] === [] ? null : [
+            'type' => 'services',
+            'data' => [
+                'heading' => $kaleb ? 'Included with your photo booth' : 'What makes our service special',
+                'role' => 'advantages',
+                'items' => $this->advantageItems(array_slice($f['advantages'], 0, 12)),
+            ],
+        ];
+        $events = $f['events'] === [] ? null : [
+            'type' => 'services',
+            'data' => [
+                'heading' => $greenbelt ? 'Rentals for every event' : 'Events we cover',
+                'role' => 'events',
+                'items' => array_map(
+                    fn (BusinessService $e) => array_filter([
+                        'name' => Str::limit($e->name, 120, ''),
+                        'description' => $this->prose($e->description),
+                        'service_uid' => in_array($e->uid, $f['event_page_uids'] ?? [], true) ? $e->uid : null,
+                    ]),
+                    array_slice($f['events'], 0, 12),
+                ),
+            ],
+        ];
+        $packages = $f['packages'] === [] ? null : [
+            'type' => 'services',
+            'data' => [
+                'heading' => $greenbelt ? 'Our photo booth packages' : 'Packages',
+                'items' => $this->packageItems($f, array_slice($f['packages'], 0, self::HOME_PACKAGES)),
+            ],
+        ];
+        $gallery = count($f['gallery']) < self::HOME_GALLERY_MIN ? null : [
+            'type' => 'gallery',
+            'data' => [
+                'heading' => $greenbelt ? 'Real moments from our events' : 'Photo booth gallery',
+                'items' => array_map(fn (string $uid) => ['image' => $uid], array_slice($f['gallery'], 0, self::HOME_GALLERY)),
+            ],
+        ];
+        $reviews = $f['testimonials'] === [] ? null : [
+            'type' => 'testimonials',
+            'data' => ['heading' => 'Customer reviews', 'items' => array_slice($f['testimonials'], 0, 10)],
+        ];
+        $places = $f['areas'] === [] ? null : [
+            'type' => 'text',
+            'data' => [
+                'heading' => 'Areas we serve',
+                'body' => 'We serve events in ' . $this->joinList(array_slice($f['areas'], 0, 12)) . '.',
+            ],
+        ];
+        $faq = $f['faq'] === [] ? null : [
+            'type' => 'faq',
+            'data' => ['heading' => 'Frequently asked questions', 'items' => array_slice($f['faq'], 0, self::HOME_FAQ)],
+        ];
+
+        // Greenbelt's corporate-feature panel is shown ONLY if the owner has
+        // explicitly supplied a corporate event service description.
+        $corporate = $greenbelt ? collect($f['events'])
+            ->first(fn (BusinessService $event) => str_contains(mb_strtolower($event->name), 'corporate')
+                && trim((string) $event->description) !== '') : null;
+        $corporatePanel = $corporate === null ? null : [
+            'type' => 'image_text',
+            'data' => [
+                'heading' => 'Corporate event photo booths',
+                'body' => Str::limit((string) $corporate->description, 3000, ''),
+                'image' => null,
+                'image_position' => 'right',
+            ],
+        ];
+
+        $sections = match (true) {
+            $kaleb => [$hero, $intro, $boothCards, $featureCards, $gallery, $reviews, $places, $faq],
+            $booths => [$hero, $intro, $boothCards, $featureCards, $events, $gallery, $reviews, $places, $faq],
+            default => [$hero, $intro, $events, $featureCards, $reviews, $packages, $corporatePanel, $gallery, $faq, $places],
+        };
+
+        $sections[] = $this->closingCta($f);
+        $sections[] = $this->contactDetails($f['business']);
+
+        return array_values(array_filter($sections));
+    }
+
+    /** @param array<string, mixed> $f */
+    private function isReferenceTemplate(array $f): bool
+    {
+        return in_array($f['template'], [
+            'photo_booth_reference_kaleb',
+            'photo_booth_reference_booths',
+            'photo_booth_reference_greenbelt',
+        ], true);
     }
 
     /** @param array<string, mixed> $f */
