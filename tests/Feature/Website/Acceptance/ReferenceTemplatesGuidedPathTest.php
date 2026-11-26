@@ -187,6 +187,38 @@ final class ReferenceTemplatesGuidedPathTest extends TestCase
         $this->assertArrayNotHasKey('announcement', collect($sections)->firstWhere('type', 'hero')['data']);
     }
 
+    public function test_addon_cards_follow_the_catalog_at_render_time_on_the_home_and_packages_pages(): void
+    {
+        $this->tenant(['name' => 'Addon Fixture'], ['city' => 'Boise', 'region' => 'ID']);
+        $this->completeGuidedSetup();
+        $this->uploadGalleryPhotos(6);
+        Website::where('business_id', $this->business->id)->update(['template_key' => 'photo_booth_reference_booths']);
+        $this->post($this->url('generate'), ['answers_revision' => $this->wizardSession()->answers_revision])->assertRedirect();
+        $website = Website::where('business_id', $this->business->id)->firstOrFail();
+
+        $homePage = $website->pages()->where('is_home', true)->firstOrFail();
+        $packagesPage = $website->pages()->where('slug', 'packages')->firstOrFail();
+        foreach ([$homePage, $packagesPage] as $page) {
+            $addons = collect($page->sections)->first(fn ($s) => ($s['type'] ?? null) === 'services' && collect($s['data']['items'] ?? [])->contains(fn ($i) => ($i['name'] ?? '') === 'Extra hours'));
+            $this->assertNotNull($addons, "{$page->slug}: the add-on block is missing");
+            $this->assertNotEmpty(collect($addons['data']['items'])->firstWhere('name', 'Extra hours')['catalog_item_uid'] ?? null, "{$page->slug}: add-on cards must carry catalog_item_uid");
+        }
+
+        $item = \App\Models\CatalogItem::where('business_id', $this->business->id)->where('name', 'Extra hours')->firstOrFail();
+        $preview = fn ($page) => $this->get(route('customer.workspaces.businesses.website.preview', [$this->workspace->uid, $this->business->uid, $page->uid]))->assertOk()->getContent();
+        $this->assertStringContainsString('Extra hours', $preview($homePage));
+
+        // A changed price follows on BOTH pages; an archived add-on disappears from both.
+        $item->forceFill(['price_minor' => 12345])->save();
+        foreach ([$homePage, $packagesPage] as $page) {
+            $this->assertStringContainsString('123.45', $preview($page), "{$page->slug}: the new catalog price must show");
+        }
+        $item->forceFill(['lifecycle_state' => \App\Enums\Catalog\CatalogItemLifecycleState::Archived])->save();
+        foreach ([$homePage, $packagesPage] as $page) {
+            $this->assertStringNotContainsString('Extra hours', $preview($page), "{$page->slug}: an archived add-on must not stay advertised");
+        }
+    }
+
     public function test_canonical_templates_honor_the_same_copy_answers_and_change_nothing_without_them(): void
     {
         // Without any of the optional answers a canonical template keeps its exact default wording and no announcement.

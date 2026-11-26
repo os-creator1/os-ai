@@ -351,7 +351,10 @@ final class PhotoBoothBlueprint
         $addons = $f['addons'] === [] ? null : ['type' => 'services', 'data' => [
             'heading' => $greenbelt ? 'Premium add-ons' . ($f['city'] === null ? '' : ' in ' . $f['city']) : 'Special features & add-ons',
             'ref' => 'addons',
+            // `catalog_item_uid`: name and price are resolved live from Packages & Products at preview/publish time (a changed price
+            // follows, an archived add-on disappears), exactly like package cards; the label here is only the draft-time value.
             'items' => array_map(fn ($item) => array_filter([
+                'catalog_item_uid' => $item->uid,
                 'name' => Str::limit($item->name, 120, ''),
                 'description' => $this->prose($item->description),
                 'price_label' => $item->price_minor !== null && $item->currency_code ? Str::limit(CatalogMoney::format($item->price_minor, $item->currency_code), 40, '') : null,
@@ -613,7 +616,7 @@ final class PhotoBoothBlueprint
             $this->hero('Packages', $f['pricing'] === 'starting_from' ? 'Prices start from the amounts shown — your final quote depends on your event.' : 'Choose the package that fits your event.', $this->primaryCta($f)),
             $f['packages'] === [] ? $this->quoteSection($f) : ['type' => 'services', 'data' => ['heading' => 'Packages', 'items' => $this->packageItems($f, array_slice($f['packages'], 0, 12))]],
             $f['addons'] === [] ? null : ['type' => 'services', 'data' => ['heading' => 'Add-ons', 'items' => array_map(
-                fn ($a) => array_filter(['name' => Str::limit($a->name, 120, ''), 'description' => $this->prose($a->description), 'price_label' => $a->price_minor !== null && $a->currency_code ? Str::limit(CatalogMoney::format($a->price_minor, $a->currency_code), 40, '') : null]),
+                fn ($a) => array_filter(['catalog_item_uid' => $a->uid, 'name' => Str::limit($a->name, 120, ''), 'description' => $this->prose($a->description), 'price_label' => $a->price_minor !== null && $a->currency_code ? Str::limit(CatalogMoney::format($a->price_minor, $a->currency_code), 40, '') : null]),
                 array_slice($f['addons'], 0, 12)
             )]],
             $this->closingCta($f),
