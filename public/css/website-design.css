@@ -1234,6 +1234,10 @@ body.wd h1, body.wd h2, body.wd h3, body.wd h4 { font-family: var(--wd-font-head
 .wd-reference-greenbelt .wd-ref-packages .wd-section-title { color: #f4a28f; }
 .wd-reference-greenbelt .wd-ref-packages .wd-card { background: #fff; color: #2a1d45; border-radius: 24px; text-align: center; }
 .wd-reference-greenbelt .wd-ref-packages .wd-card h3 { font-size: 1.1rem; }
+/* The featured tier keeps the reference's plum card: dark background AND light text/price (the generic white card above would otherwise leave white text on white). */
+.wd-reference-greenbelt .wd-ref-packages .wd-card-featured { background: #2a1d45; color: #ffffff; border: 2px solid #f4a28f; }
+.wd-reference-greenbelt .wd-ref-packages .wd-card-featured p, .wd-reference-greenbelt .wd-ref-packages .wd-card-featured .website-service-price, .wd-reference-greenbelt .wd-ref-packages .wd-card-featured li { color: #ffffff; }
+.wd-reference-greenbelt .wd-ref-packages .wd-card-featured h3 { color: #f4a28f; }
 .wd-reference-greenbelt .wd-ref-addons { background: linear-gradient(180deg, #eadfef, #f8dcd2); }
 .wd-reference-greenbelt .wd-ref-addons .wd-section-title { font-weight: 300; letter-spacing: 0.05em; color: #2a1d45; }
 .wd-reference-greenbelt .wd-ref-addons .wd-grid { background: #fff; border-radius: 24px; padding: 2rem; box-shadow: 0 12px 30px rgba(42, 29, 69, 0.12); grid-template-columns: repeat(2, 1fr); }

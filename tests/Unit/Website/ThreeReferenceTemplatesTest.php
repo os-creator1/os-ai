@@ -123,4 +123,14 @@ final class ThreeReferenceTemplatesTest extends TestCase
         $live = ['kind' => 'form', 'label' => 'Check Availability', 'url' => '/contact-here'];
         $this->assertSame(['label' => 'Check Availability', 'url' => '/contact-here'], $resolver->sectionCta($authored, $live, $pageUrls, true));
     }
+
+    public function test_greenbelt_featured_package_card_is_never_white_text_on_white(): void
+    {
+        $css = (string) file_get_contents(public_path('css/website-design.css'));
+        $this->assertSame(1, preg_match('/\.wd-reference-greenbelt \.wd-ref-packages \.wd-card-featured\s*\{([^}]+)\}/', $css, $card));
+        $this->assertStringContainsString('background: #2a1d45;', $card[1]);
+        $this->assertStringContainsString('color: #ffffff;', $card[1]);
+        $this->assertSame(1, preg_match('/\.wd-reference-greenbelt \.wd-ref-packages \.wd-card-featured p[^{]*\{([^}]+)\}/', $css, $text));
+        $this->assertStringContainsString('color: #ffffff;', $text[1], 'description and price must stay light on the dark featured card');
+    }
 }
