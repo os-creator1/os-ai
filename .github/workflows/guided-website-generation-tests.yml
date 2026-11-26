@@ -117,6 +117,11 @@ jobs:
         run: |
           php artisan test tests/Feature/Website/Acceptance/KalebV3VisualFidelityAcceptanceTest.php --log-junit /tmp/kv3-fidelity.xml
           php -r '$x = simplexml_load_file("/tmp/kv3-fidelity.xml"); $n = count($x->xpath("//testcase")); $s = count($x->xpath("//testcase/skipped")); fwrite(STDOUT, "Discovered Emerald Gold acceptance tests: $n (skipped: $s)\n"); if ($n !== 10 || $s !== 0) exit(1);'
+      - name: Run three reference templates through the actual guided owner journey
+        shell: bash
+        run: |
+          php artisan test tests/Feature/Website/Acceptance/ThreeReferenceWizardJourneyTest.php --log-junit /tmp/three-reference-journeys.xml
+          php -r '$x = simplexml_load_file("/tmp/three-reference-journeys.xml"); $n = count($x->xpath("//testcase")); $s = count($x->xpath("//testcase/skipped")); fwrite(STDOUT, "Discovered reference owner-journey tests: $n (skipped: $s)\\n"); if ($n !== 3 || $s !== 0) exit(1);'
       - name: Run guided generation and affected page-budget regressions
         run: >-
           php artisan test
