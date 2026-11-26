@@ -43,10 +43,29 @@ final class WebsiteCtaResolver
      * @param  array<int, array{uid?: string, slug?: ?string, url: string, has_form?: bool}>  $navigationPages
      * @return array{kind: string, label: string, url: string}|null
      */
-    public function resolve(?Business $business, array $navigationPages, bool $isPreview = false): ?array
+    public function resolve(?Business $business, array $navigationPages, bool $isPreview = false, ?string $templateKey = null): ?array
     {
         if ($business === null) {
             return null;
+        }
+
+        // The three reference families have an inquiry-first funnel. Only
+        // an actually deployed, active Forms-module lead form can earn the
+        // "Check Availability" call to action. Other niches and established
+        // templates retain the original booking-first behavior.
+        if (in_array($templateKey, [
+            'photo_booth_reference_kaleb',
+            'photo_booth_reference_booths',
+            'photo_booth_reference_greenbelt',
+        ], true)) {
+            $formPage = collect($navigationPages)->first(fn ($page) =>
+                \App\Library\Website\WebsiteNicheVocabulary::roleForSlug((string) ($page['slug'] ?? '')) === 'contact'
+                && ! empty($page['url']) && ! empty($page['has_form'])
+            );
+
+            if ($formPage !== null && app(\App\Library\Website\Forms\WebsiteLeadFormResolver::class)->resolve($business) !== null) {
+                return ['kind' => 'form', 'label' => 'Check Availability', 'url' => (string) $formPage['url']];
+            }
         }
 
         $bookingUrl = $this->bookingUrl($business);
