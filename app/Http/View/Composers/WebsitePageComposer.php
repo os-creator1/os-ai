@@ -54,7 +54,7 @@ final class WebsitePageComposer
 
         $related = app(\App\Library\Website\Blog\WebsiteRelatedArticles::class)->forPage($website, $page, $pages, $isPreview);
 
-        $siteCta = $data['siteCtaOverride'] ?? $this->cta->resolve($business, $pages, $isPreview);
+        $siteCta = $data['siteCtaOverride'] ?? $this->cta->resolve($business, $pages, $isPreview, $design?->templateKey);
 
         $logoUid = $theme['logo_asset_uid'] ?? null;
         $assets = $data['assetsByUid'] ?? [];
