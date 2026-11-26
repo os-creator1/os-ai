@@ -113,12 +113,27 @@
         return kept && /^c[a-z0-9]{9}$/.test(kept) ? kept : null;
     }
 
+    var announced = null; // the visit id this document has already reported a page view for
+
+    // A page left open past the idle limit starts a NEW visit on its next interaction: announce it with a page view first, so its
+    // calendar open / form open / booking / inquiry always belongs to a counted visit with a resolvable source.
+    function ensureVisit() {
+        var s = sessionId();
+        if (announced && announced !== s) { post('pageview', {}); }
+    }
+
     function send(kind, extra) {
+        if (kind !== 'pageview') { ensureVisit(); }
+        post(kind, extra);
+    }
+
+    function post(kind, extra) {
         var body = {
             k: config.key, t: kind, v: visitorId(), s: sessionId(), e: randomHex(),
             p: window.location.pathname, r: document.referrer || '', c: campaign()
         };
         Object.keys(extra || {}).forEach(function (k) { body[k] = extra[k]; });
+        if (kind === 'pageview') { announced = body.s; }
         var json = JSON.stringify(body);
         try {
             fetch(config.endpoint, { method: 'POST', body: json, headers: { 'Content-Type': 'text/plain' }, mode: 'cors', credentials: 'omit', keepalive: true }).catch(function () {});
@@ -156,6 +171,7 @@
 
     // ---- the booking form gets the anonymous context so the SERVER can attribute the booking it stores
     function annotateBookingForm(form) {
+        ensureVisit();
         var fields = { mg_pk: config.key, mg_v: visitorId(), mg_s: sessionId(), mg_c: campaign() || '' };
         Object.keys(fields).forEach(function (name) {
             var input = form.querySelector('input[type="hidden"][name="' + name + '"]');
