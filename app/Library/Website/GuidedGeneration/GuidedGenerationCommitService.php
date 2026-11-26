@@ -347,12 +347,19 @@ final class GuidedGenerationCommitService
         $contentFacts = $this->client->contentFacts($business);
         $contentGaps = SeoContentFacts::gaps($contentFacts, $plan);
 
+        // Compose the new draft against the OWNER-SELECTED template, not the
+        // currently persisted Website template. A rebuild may switch designs;
+        // the real Website row must remain untouched until the atomic commit
+        // below succeeds, or the old draft would be corrupted on failure.
+        $compositionWebsite = clone $website;
+        $compositionWebsite->template_key = $template->key;
+
         if ($blueprint !== null) {
             // The guided builder: complete default copy from the owner's confirmed facts. No AI call, so no budget
             // and nothing that can be unavailable; the same binding, validation and atomic commit follow.
             // The writer is the niche's own: Dog Boarding has its own page set, copy and truthfulness rules.
             $writer = ($blueprint['niche'] ?? null) === \App\Library\Website\Setup\DogBoardingSetup::NICHE ? $this->dogBoardingWriter : $this->blueprintWriter;
-            $aiPages = $writer->pages($business, $website, $plan, $blueprint);
+            $aiPages = $writer->pages($business, $compositionWebsite, $plan, $blueprint);
             $retryCount = 0;
             $stopReason = null;
         } else {
@@ -400,7 +407,7 @@ final class GuidedGenerationCommitService
             // a cleanly recorded `failed` attempt, never an uncaught
             // exception left as a stuck `pending` row or a bare 500.
             $merged = $this->mergePlanWithContent($plan, $aiPages);
-            $bound = $this->mediaBinding->bind($website, $merged, $customSection, $customerFaq, $contentFacts);
+            $bound = $this->mediaBinding->bind($compositionWebsite, $merged, $customSection, $customerFaq, $contentFacts);
             $bound['pages'] = $this->groundInventedFacts($bound['pages'], $business, $plan);
 
             DB::transaction(function () use ($business, $website, $template, $bound, $attempt, $retryCount, $fenceToken, $contentGaps) {
