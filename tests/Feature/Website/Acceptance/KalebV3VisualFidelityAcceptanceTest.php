@@ -113,6 +113,54 @@ class KalebV3VisualFidelityAcceptanceTest extends TestCase
         $this->assertSame([], WebsiteDesigns::forTemplateKey('photo_booth_editorial')->roleTones);
     }
 
+    public function test_kaleb_reference_renders_its_own_ordered_home_from_confirmed_business_data(): void
+    {
+        $this->assertReferenceFamily('photo_booth_reference_kaleb', 'reference-kaleb', 'modern');
+    }
+
+    public function test_booths_reference_renders_its_own_ordered_home_from_confirmed_business_data(): void
+    {
+        $this->assertReferenceFamily('photo_booth_reference_booths', 'reference-booths', 'modern');
+    }
+
+    public function test_greenbelt_reference_renders_its_own_ordered_home_from_confirmed_business_data(): void
+    {
+        $this->assertReferenceFamily('photo_booth_reference_greenbelt', 'reference-greenbelt', 'conversion');
+    }
+
+    private function assertReferenceFamily(string $template, string $variant, string $base): void
+    {
+        [, $html] = $this->publishWithTemplate($template, true, $variant);
+
+        $this->assertStringContainsString('wd wd-' . $variant . ' wd-' . $base, $html);
+        $this->assertSame(1, substr_count($html, '<h1'));
+        $this->assertStringContainsString('data-section="image_text"', $html);
+        $this->assertStringContainsString('data-section="testimonials"', $html);
+        $this->assertStringContainsString('data-section="faq"', $html);
+        $this->assertStringContainsString('data-section="cta"', $html);
+        $this->assertSame(1, substr_count($html, 'data-section="cta"'));
+
+        // The design must not group every service block before the story:
+        // the authored image/text section stays between hero and booths/events.
+        $hero = strpos($html, 'data-section="hero"');
+        $story = strpos($html, 'data-section="image_text"');
+        $services = strpos($html, 'data-section="services"');
+        $this->assertNotFalse($hero);
+        $this->assertNotFalse($story);
+        $this->assertNotFalse($services);
+        $this->assertLessThan($story, $hero);
+        $this->assertLessThan($services, $story);
+        $this->assertStringContainsString('data-wd-menu-toggle', $html);
+
+        // Missing/undeployed Forms-module lead forms must not be advertised
+        // as a functional Check Availability form on the live site.
+        $this->assertStringNotContainsString('forms_module_deployment_uid', $html);
+
+        foreach (['award-winning', 'as seen on', 'guaranteed ranking'] as $invented) {
+            $this->assertStringNotContainsString($invented, mb_strtolower(strip_tags($html)));
+        }
+    }
+
     public function test_section_roles_come_from_the_section_itself_and_packages_are_never_a_role(): void
     {
         $role = fn (string $heading, array $items = [['name' => 'x']]) => SectionRole::of(['type' => 'services', 'data' => ['heading' => $heading, 'items' => $items]]);
