@@ -306,13 +306,16 @@ final class PhotoBoothBlueprint
         $isLuxury = collect($f['services'])->contains(
             fn (BusinessService $service) => str_contains(mb_strtolower((string) $service->description), 'luxury')
         );
+        $offersWeddings = collect($f['events'])->contains(
+            fn (BusinessService $event) => str_contains(mb_strtolower($event->name), 'wedding')
+        );
 
         return match ($f['template']) {
             'photo_booth_reference_booths' => 'Lights, Camera, Memories!',
             'photo_booth_reference_greenbelt' => ($isLuxury ? 'Luxury photo booth rentals' : 'Photo booth rentals')
                 . ($city === null ? ' for your event' : ' in ' . $city),
             default => ($isLuxury ? 'Luxury photo booth rentals' : 'Photo booth rentals')
-                . ' for weddings, celebrations and events'
+                . ($offersWeddings ? ' for weddings and events' : ' for your event')
                 . ($city === null ? '' : ' in ' . $city),
         };
     }
