@@ -84,7 +84,9 @@ final class PhotoBoothBlueprint
                 'about' => $this->about($facts),
                 'faq' => $this->faqPage($facts),
                 'gallery' => [$this->hero($page['title'] ?? 'Gallery', 'A look at the booths and the events we love being part of.'), $this->closingCta($facts), $this->contactDetails($business)],
-                'contact' => [$this->hero('Contact ' . $facts['name'], $facts['cta'] === 'call' ? 'Call us, or send a few details about your event.' : 'Tell us about your event and we\'ll get back to you.'), $this->contactDetails($business)],
+                'contact' => $this->isReferenceTemplate($facts) && $facts['lead_form_ready']
+                    ? [$this->hero('Check Availability', "Tell us about your event and we'll follow up to confirm your date."), $this->contactDetails($business)]
+                    : [$this->hero('Contact ' . $facts['name'], 'Tell us about your event and we will get back to you.'), $this->contactDetails($business)],
                 'backdrops' => [$this->hero('Backdrops', 'Choose the look that fits your event.'), $this->closingCta($facts), $this->contactDetails($business)],
                 'custom_section' => [$this->hero((string) ($page['title'] ?? $facts['name']), null)],
                 'location' => $this->location($facts, $page),
@@ -93,7 +95,8 @@ final class PhotoBoothBlueprint
 
             $pages[] = [
                 'page_key' => (string) $page['page_key'],
-                'title' => (string) ($page['title'] ?? $facts['name']),
+                'title' => $type === 'contact' && $this->isReferenceTemplate($facts) && $facts['lead_form_ready']
+                    ? 'Check Availability' : (string) ($page['title'] ?? $facts['name']),
                 'seo_title' => $this->seoTitle($facts, $type, $page),
                 'meta_description' => $this->metaDescription($facts, $type, $page),
                 'sections' => array_values(array_filter($sections)),
@@ -633,6 +636,13 @@ final class PhotoBoothBlueprint
             return ['label' => 'Call now', 'url' => 'tel:' . $phone];
         }
 
+        // These reference templates are inquiry-first. The button can say
+        // "Check Availability" ONLY when the installed Forms-module lead form
+        // really has a live, same-business Website deployment.
+        if ($this->isReferenceTemplate($f)) {
+            return ['label' => ! empty($f['lead_form_ready']) ? 'Check Availability' : 'Contact us', 'url' => '/photo-booth-contact'];
+        }
+
         return ['label' => $f['cta'] === 'book_now' ? 'Book now' : 'Request a quote', 'url' => '/photo-booth-contact'];
     }
 
@@ -742,6 +752,8 @@ final class PhotoBoothBlueprint
             'city' => $city,
             'areas' => $areas,
             'template' => (string) $website->template_key,
+            'lead_form_ready' => $this->isReferenceTemplate(['template' => (string) $website->template_key])
+                && app(\App\Library\Website\Forms\WebsiteLeadFormResolver::class)->resolve($business) !== null,
             'tone' => $tone,
             'cta' => $cta,
             'pricing' => $pricing,
@@ -831,7 +843,8 @@ final class PhotoBoothBlueprint
             'gallery' => 'Photo Booth Gallery' . $in,
             'backdrops' => 'Photo Booth Backdrops' . $in,
             'about' => 'About ' . $f['name'],
-            'contact' => 'Contact ' . $f['name'] . ' | Request a Quote',
+            'contact' => $this->isReferenceTemplate($f) && $f['lead_form_ready']
+                ? 'Check Photo Booth Availability' . $in : 'Contact ' . $f['name'] . ' | Request a Quote',
             'services_overview' => 'Photo Booths' . $in,
             default => $title !== '' ? $title : $f['name'],
         };
