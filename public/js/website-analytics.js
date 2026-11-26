@@ -91,7 +91,7 @@
         // Arriving with a DIFFERENT campaign than the one this visit already carries is a new visit, so one visit never mixes two campaigns.
         var incoming = param('mgc', /^c[a-z0-9]{9}$/);
         var kept = store('session', CAMPAIGN_KEY);
-        var switched = !!(incoming && kept && incoming !== kept);
+        var switched = !!(incoming && incoming !== kept); // a campaign this visit does not already carry (different, or none until now) starts a new visit
         if (handed && store('session', HANDOFF_KEY) !== handed) {
             // First time this handoff is seen in this tab: it wins over unrelated storage. Reusing the SAME handoff URL later
             // (refresh, revisit) is not a new handoff, so that visit can expire like any other.

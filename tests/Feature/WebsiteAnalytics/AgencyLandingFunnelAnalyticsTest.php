@@ -616,7 +616,7 @@ class AgencyLandingFunnelAnalyticsTest extends TestCase
         $this->assertStringContainsString("s = handed; fresh = true;", $js, 'adopting a handoff also clears the destination tab\'s retained campaign');
         $this->assertStringContainsString("if (announced && announced !== s) { post('pageview', {}); }", $js, 'a page that starts a new visit after idling reports that visit\'s page view first');
         $this->assertStringContainsString("ensureVisit();\n        var fields", $js, 'and so does a booking submitted on such a page');
-        $this->assertStringContainsString('incoming !== kept', $js, 'a different campaign in the same tab starts a new visit');
+        $this->assertStringContainsString('!!(incoming && incoming !== kept)', $js, 'a campaign the visit does not already carry (different, or none until now) starts a new visit');
         $this->assertStringContainsString('if (switched ||', str_replace('} else if (switched ||', 'if (switched ||', $js), 'and that new visit gets a new session id');
         $this->assertStringContainsString("else { url.searchParams.delete('mgc'); }", $js, 'a refreshed booking link drops a campaign the current visit no longer has');
         $this->assertStringContainsString("if (fresh) { store('session', CAMPAIGN_KEY, ''); }", $js, 'a new visit does not inherit the previous visit\'s campaign');
