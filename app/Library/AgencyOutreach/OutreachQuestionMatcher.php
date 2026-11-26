@@ -212,17 +212,20 @@ final class OutreachQuestionMatcher
         $norm = OutreachIntentClassifier::normalise($request);
         $key = OutreachFaq::aliasKey($request);
 
-        foreach ($entries as $entry) {
-            if ($key === OutreachFaq::aliasKey($entry['question']) || in_array($key, $entry['aliases'] ?? [], true)) {
-                return [$entry['id'] => 0];
-            }
-        }
-
         $topics = self::topicsIn($norm, $request);
         $found = [];
+        $exact = [];
+        foreach ($entries as $entry) {
+            if ($key === OutreachFaq::aliasKey($entry['question']) || in_array($key, $entry['aliases'] ?? [], true)) {
+                $exact[$entry['id']] = $entry;
+            }
+        }
+        if (count($exact) === 1 && count($topics) <= 1) {
+            return [array_key_first($exact) => 0];
+        }
 
         foreach ($topics as $topic => $offset) {
-            $entry = $this->entryAbout($topic, $entries);
+            $entry = $this->entryAbout($topic, $entries, $norm, $exact);
 
             if ($entry !== null) {
                 $found[$entry['id']] ??= $offset;
@@ -244,7 +247,11 @@ final class OutreachQuestionMatcher
             $missing = true;
         }
 
-        foreach ($entries as $entry) {
+        // A taught compound alias also covers wording the topic rules do not recognize.
+        if (count($exact) === 1) {
+            $found[array_key_first($exact)] ??= strlen($norm);
+        }
+        foreach ($topics === [] ? $entries : [] as $entry) {
             $about = $this->topicsOf($entry);
 
             // An owner keyword matches unless the request is about topics this entry is not about.
@@ -309,16 +316,30 @@ final class OutreachQuestionMatcher
         return $topics;
     }
 
-    /** The first entry whose own question, keywords or intent are ABOUT this topic. */
-    private function entryAbout(string $topic, array $entries): ?array
+    /** Resolve shared topics by exact phrasing or owner keywords. Ties go to the matcher. */
+    private function entryAbout(string $topic, array $entries, string $request = '', array $exact = []): ?array
     {
+        $best = null;
+        $bestScore = -1;
         foreach ($entries as $entry) {
-            if (isset($this->topicsOf($entry)[$topic])) {
-                return $entry;
+            if (! isset($this->topicsOf($entry)[$topic])) {
+                continue;
+            }
+            $score = isset($exact[$entry['id']]) ? PHP_INT_MAX : 0;
+            foreach ($entry['keywords'] as $keyword) {
+                $needle = OutreachIntentClassifier::normalise($keyword);
+                if ($needle !== '' && str_contains(' ' . $request . ' ', ' ' . $needle . ' ')) {
+                    $score = max($score, mb_strlen($needle));
+                }
+            }
+            if ($score > $bestScore) {
+                $best = $entry;
+                $bestScore = $score;
+            } elseif ($score === $bestScore) {
+                $best = null;
             }
         }
-
-        return null;
+        return $best;
     }
 
     /** @return array<string, true> the topics an entry is primarily about (question, keywords, intent -- not the answer) */

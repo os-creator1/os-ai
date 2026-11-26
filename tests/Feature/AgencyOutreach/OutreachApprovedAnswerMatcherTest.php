@@ -291,6 +291,21 @@ class OutreachApprovedAnswerMatcherTest extends TestCase
         $this->assertSame(0, $ai->callCount());
     }
 
+    public function test_compound_alias_keeps_other_answers_and_specific_keywords_win_shared_topics(): void
+    {
+        [$workspace, $business, , $campaign] = $this->scenario([
+            ['id' => 'setup', 'question' => 'What is the setup fee?', 'keywords' => ['setup'], 'answer' => 'Fixture: setup.'],
+            ['id' => 'monthly', 'question' => 'Monthly fee?', 'keywords' => ['monthly'], 'answer' => 'Fixture: monthly.'],
+            ['id' => 'budget', 'question' => 'Is there an ad budget?', 'aliases' => ['What is the monthly fee and ad budget?'], 'answer' => 'Fixture: budget.'],
+        ]);
+        $this->inbound($business, 'How much is your monthly fee?');
+        $this->assertSame('Fixture: monthly. ' . self::M1, $this->sentBodies()[0]);
+        $this->enroll($workspace, $campaign, $this->prospect($workspace, '12025555009'));
+        $this->inbound($business, 'What is the monthly fee and ad budget?', '12025555009');
+        $this->assertSame("Fixture: monthly.\nFixture: budget.\n\n" . self::M1, $this->sentBodies()[1]);
+        $this->assertSame([], $this->openQuestions($workspace));
+    }
+
     public function test_a_stale_script_save_cannot_remove_an_answer_taught_after_the_editor_opened(): void
     {
         [$workspace] = $this->scenario();
