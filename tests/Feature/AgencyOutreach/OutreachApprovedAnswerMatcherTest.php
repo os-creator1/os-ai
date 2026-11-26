@@ -255,6 +255,40 @@ class OutreachApprovedAnswerMatcherTest extends TestCase
         $this->assertSame(['any chance of a refund if it flops'], collect(\App\Library\AgencyOutreach\OutreachFaq::forWorkspace($workspace)->all())->keyBy('id')['guarantee']['aliases']);
     }
 
+    public function test_partial_ai_choice_keeps_the_uncovered_ad_budget_in_the_queue(): void
+    {
+        [$workspace, $business] = $this->scenario([self::FAQ[0]]);
+        $this->useFakeAi()->queueResult(AiCompletionResult::success('{"matches":[{"n":1,"id":"fee"}]}', 'fake-model', 30, 8));
+        $this->inbound($business, 'What is the monthly fee and ad budget?');
+        $this->assertStringContainsString('Fixture: the monthly fee', $this->sentBodies()[0]);
+        $this->assertSame(['What is the monthly fee and ad budget?'], $this->openQuestions($workspace));
+    }
+
+    public function test_terse_requests_reach_matching(): void
+    {
+        foreach (['More info please', 'price please', 'Testimonials?'] as $text) {
+            $this->assertSame([$text], \App\Library\AgencyOutreach\OutreachQuestionMatcher::requests($text));
+        }
+        $this->assertSame([], \App\Library\AgencyOutreach\OutreachQuestionMatcher::requests('ok?'));
+    }
+
+    public function test_a_stale_script_save_cannot_remove_an_answer_taught_after_the_editor_opened(): void
+    {
+        [$workspace] = $this->scenario();
+        $entries = \App\Library\AgencyOutreach\OutreachFaq::forWorkspace($workspace)->all();
+        $snapshot = hash('sha256', serialize($entries));
+        $updated = [...$entries, ['id' => 'new', 'question' => 'Who owns the photos?', 'answer' => 'Fixture: you do.']];
+        OutreachScriptManager::save($workspace, ['faq_entries' => $updated]);
+
+        try {
+            OutreachScriptManager::save($workspace, ['faq_entries' => $entries, 'faq_snapshot' => $snapshot]);
+            $this->fail('A stale edit removed a taught answer');
+        } catch (\Illuminate\Validation\ValidationException $error) {
+            $this->assertArrayHasKey('faq_entries', $error->errors());
+        }
+        $this->assertContains('new', array_column(\App\Library\AgencyOutreach\OutreachFaq::forWorkspace($workspace)->all(), 'id'));
+    }
+
     private function signIn(\App\Models\Customer $customer): void
     {
         $user = $customer->user;

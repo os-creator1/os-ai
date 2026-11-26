@@ -49,12 +49,12 @@ final class OutreachQuestionMatcher
     private const TOPICS = [
         'ad_spend' => '/\b((ad|ads|advertising|marketing|media) (spend|budget|budgets|costs?)|budget (for|on) (the )?(ads|advertising|marketing)|spend on (the )?(ads|advertising|marketing)|how much (should|do|would|will) (i|we) (need to )?(spend|budget|put))\b/u',
         'guarantee' => '/\b(guarantee|guarantees|guaranteed|guaranty|promise (any )?(leads|results)|what if (i|we) (dont|do not) get (any )?(leads|results))\b/u',
-        'references' => '/\b((speak|talk|chat) (with|to) (some|a few|a couple|one|two|three|\d+)? ?(of )?(your )?(customers|clients|references)|references|reference (customers|clients)|contact (some|a few|\d+)? ?(of )?your (customers|clients))\b/u',
-        'clients' => '/\b((existing|current|other|past) (clients|customers)|who (do you|have you|else do you) (work|worked) with|clients like me|how many (clients|customers)|examples of (your )?(clients|work))\b/u',
-        'lead_ownership' => '/\b(own the leads|own my leads|own (the )?leads|leads (are|be|stay) mine|who owns (the |my )?leads|ownership of (the |my )?leads|lead ownership|keep (the |my )?leads|leads belong)\b/u',
+        'references' => '/\b((speak|talk|chat) (with|to) (some|a few|a couple|one|two|three|\d+)? ?(of )?(your )?(current |existing )?(customers|clients|references)|references|reference (customers|clients)|contact (some|a few|\d+)? ?(of )?your (customers|clients))\b/u',
+        'clients' => '/\b((existing|current|other|past) (clients|customers)|(?:photo booth|wedding vendor) (?:or wedding vendor )?(?:clients|customers)|who (do you|have you|else do you) (work|worked) with|clients like me|how many (clients|customers)|examples of (your )?(clients|work))\b/u',
+        'lead_ownership' => '/\b(own (all )?(the |my |our )?leads|leads (are|be|stay) mine|who owns (the |my )?leads|ownership of (the |my )?leads|lead ownership|keep (the |my )?leads|leads belong)\b/u',
         'contract' => '/\b(contract|contracts|lock in|locked in|commitment|minimum term|term length|how long (do i|do we|is the|am i) (have to|need to|sign|stay|locked|committed|commit))\b/u',
         'cancel' => '/\b(cancel|cancellation|cancelling|canceling|exit clause)\b/u',
-        'human_ai' => '/\b(human|real person|bot|robot|automated|an ai|ai or|or ai|is this ai|are you ai|chatbot)\b/u',
+        'human_ai' => '/\b(human|real people|real person|bot|robot|automated|automation|an ai|ai or|or ai|is this ai|are you ai|chatbot)\b/u',
     ];
 
     /** When a request is about ad spend, only these words still make it a question about OUR price. */
@@ -113,10 +113,10 @@ final class OutreachQuestionMatcher
 
         // "ok?" or "really?" is a reaction, not a question to answer; "price?" names a topic.
         if (str_contains($text, '?')) {
-            return substr_count($norm, ' ') >= 2 || self::topicsIn($norm, $text) !== [];
+            return ! in_array($norm, ['ok', 'okay', 'really', 'sure', 'yes', 'no'], true);
         }
 
-        return preg_match(self::REQUEST_OPENER, $norm) === 1;
+        return preg_match(self::REQUEST_OPENER, $norm) === 1 || OutreachIntentClassifier::classify($text) !== OutreachIntentClassifier::NONE;
     }
 
     /** "Before we do that, ..." — the prospect wants answers before the booking pitch. */
@@ -178,7 +178,7 @@ final class OutreachQuestionMatcher
 
             // Only an approved, in-scope id -- and never one about a different topic than the
             // question names (testimonials for "can I speak with your customers").
-            if ($entry === null || ! $this->covers($entry, $numbered[$n])) {
+            if ($entry === null || ! $this->covers($entry, $numbered[$n], $entries)) {
                 continue;
             }
 
@@ -201,7 +201,7 @@ final class OutreachQuestionMatcher
         $key = OutreachFaq::aliasKey($request);
 
         foreach ($entries as $entry) {
-            if (in_array($key, $entry['aliases'] ?? [], true)) {
+            if ($key === OutreachFaq::aliasKey($entry['question']) || in_array($key, $entry['aliases'] ?? [], true)) {
                 return [$entry['id'] => 0];
             }
         }
@@ -329,21 +329,31 @@ final class OutreachQuestionMatcher
         return $about;
     }
 
-    /** Whether an entry is about (or its answer explicitly addresses) a topic the request names; any entry for a topic-less request. */
-    private function covers(array $entry, string $request): bool
+    /** Only clear the question when every topic missed by the deterministic pass is covered. */
+    private function covers(array $entry, string $request, array $entries): bool
     {
         $topics = self::topicsIn(OutreachIntentClassifier::normalise($request), $request);
-
-        if ($topics === [] || array_intersect_key($topics, $this->topicsOf($entry)) !== []) {
-            return true;
+        $about = $this->topicsOf($entry);
+        foreach (array_keys($topics) as $topic) {
+            if (isset($about[$topic]) || $this->addressedBy($topic, [$entry['id']], [$entry])) {
+                continue;
+            }
+            if ($this->entryAbout($topic, $entries) === null) {
+                return false;
+            }
         }
 
-        foreach (array_keys($topics) as $topic) {
+        return $topics === [] || array_intersect_key($topics, $about) !== []
+            || $this->addressedByAnyTopic(array_keys($topics), $entry);
+    }
+
+    private function addressedByAnyTopic(array $topics, array $entry): bool
+    {
+        foreach ($topics as $topic) {
             if ($this->addressedBy($topic, [$entry['id']], [$entry])) {
                 return true;
             }
         }
-
         return false;
     }
 

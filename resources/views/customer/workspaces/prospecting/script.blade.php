@@ -44,6 +44,7 @@
 
     <form method="post" action="{{ route('customer.workspaces.prospecting.script.update', $workspaceUid) }}" data-role="script-form" data-preview-url="{{ $previewUrl }}" novalidate>
         @csrf
+        <input type="hidden" name="faq_snapshot" value="{{ hash('sha256', serialize($faqEntries)) }}">
         <div class="sc">
             <aside class="sc-side" aria-label="Script sections">
                 <a href="#sc-who" class="on" data-spy><span class="n">1</span>Who you are</a>

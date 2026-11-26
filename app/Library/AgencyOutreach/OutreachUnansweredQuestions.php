@@ -68,25 +68,30 @@ final class OutreachUnansweredQuestions
      */
     public function addAnswer(Workspace $workspace, AgencyProspectUnansweredQuestion $item, string $question, string $answer, bool $onlyThisCampaign, ?User $user): string
     {
-        $this->assertOpen($workspace, $item);
+        return DB::transaction(function () use ($workspace, $item, $question, $answer, $onlyThisCampaign, $user) {
+            Workspace::whereKey($workspace->id)->lockForUpdate()->firstOrFail();
+            $item = AgencyProspectUnansweredQuestion::where('workspace_id', $workspace->id)
+                ->whereKey($item->id)->lockForUpdate()->firstOrFail();
+            $this->assertOpen($workspace, $item);
 
-        $id = 'q' . strtolower(Str::random(10));
-        $entries = OutreachFaq::forWorkspace($workspace)->all();
-        $entries[] = [
-            'id' => $id,
-            'question' => trim($question) !== '' ? trim($question) : $item->question,
-            'answer' => $answer,
-            'keywords' => [],
-            'aliases' => [OutreachFaq::aliasKey($item->question)],
-            'intent' => null,
-            'campaign_ids' => $onlyThisCampaign && $item->campaign_id !== null ? [(int) $item->campaign_id] : null,
-            'niche' => null,
-        ];
+            $id = 'q' . strtolower(Str::random(10));
+            $entries = OutreachFaq::forWorkspace($workspace)->all();
+            $entries[] = [
+                'id' => $id,
+                'question' => trim($question) !== '' ? trim($question) : $item->question,
+                'answer' => $answer,
+                'keywords' => [],
+                'aliases' => [OutreachFaq::aliasKey($item->question)],
+                'intent' => null,
+                'campaign_ids' => $onlyThisCampaign && $item->campaign_id !== null ? [(int) $item->campaign_id] : null,
+                'niche' => null,
+            ];
 
-        OutreachScriptManager::save($workspace, ['faq_entries' => $entries], $user);
-        $this->resolve($item, AgencyProspectUnansweredQuestion::RESOLUTION_ANSWER_ADDED, $id, $user);
+            OutreachScriptManager::save($workspace, ['faq_entries' => $entries], $user);
+            $this->resolve($item, AgencyProspectUnansweredQuestion::RESOLUTION_ANSWER_ADDED, $id, $user);
 
-        return $id;
+            return $id;
+        });
     }
 
     /**
@@ -97,37 +102,47 @@ final class OutreachUnansweredQuestions
      */
     public function linkAnswer(Workspace $workspace, AgencyProspectUnansweredQuestion $item, string $faqId, ?User $user): void
     {
-        $this->assertOpen($workspace, $item);
+        DB::transaction(function () use ($workspace, $item, $faqId, $user) {
+            Workspace::whereKey($workspace->id)->lockForUpdate()->firstOrFail();
+            $item = AgencyProspectUnansweredQuestion::where('workspace_id', $workspace->id)
+                ->whereKey($item->id)->lockForUpdate()->firstOrFail();
+            $this->assertOpen($workspace, $item);
 
-        $faq = OutreachFaq::forWorkspace($workspace);
+            $faq = OutreachFaq::forWorkspace($workspace);
 
-        if ($faq->applicableById($faqId, $item->campaign_id === null ? null : (int) $item->campaign_id) === null) {
-            throw ValidationException::withMessages(['faq_id' => 'Choose an approved answer that applies to this campaign.']);
-        }
-
-        $entries = array_map(static function (array $entry) use ($faqId, $item): array {
-            if ($entry['id'] === $faqId) {
-                $entry['aliases'] = OutreachFaq::aliases([...$entry['aliases'] ?? [], $item->question]);
+            if ($faq->applicableById($faqId, $item->campaign_id === null ? null : (int) $item->campaign_id) === null) {
+                throw ValidationException::withMessages(['faq_id' => 'Choose an approved answer that applies to this campaign.']);
             }
 
-            return $entry;
-        }, $faq->all());
+            $entries = array_map(static function (array $entry) use ($faqId, $item): array {
+                if ($entry['id'] === $faqId) {
+                    $entry['aliases'] = OutreachFaq::aliases([...$entry['aliases'] ?? [], $item->question]);
+                }
 
-        OutreachScriptManager::save($workspace, ['faq_entries' => $entries], $user);
-        $this->resolve($item, AgencyProspectUnansweredQuestion::RESOLUTION_ALIAS_LINKED, $faqId, $user);
+                return $entry;
+            }, $faq->all());
+
+            OutreachScriptManager::save($workspace, ['faq_entries' => $entries], $user);
+            $this->resolve($item, AgencyProspectUnansweredQuestion::RESOLUTION_ALIAS_LINKED, $faqId, $user);
+        });
     }
 
     /** "Dismiss": off the open queue; approved answers are untouched. */
     public function dismiss(Workspace $workspace, AgencyProspectUnansweredQuestion $item, ?User $user): void
     {
-        $this->assertOpen($workspace, $item);
+        DB::transaction(function () use ($workspace, $item, $user) {
+            Workspace::whereKey($workspace->id)->lockForUpdate()->firstOrFail();
+            $item = AgencyProspectUnansweredQuestion::where('workspace_id', $workspace->id)
+                ->whereKey($item->id)->lockForUpdate()->firstOrFail();
+            $this->assertOpen($workspace, $item);
 
-        $item->forceFill([
-            'status' => AgencyProspectUnansweredQuestion::STATUS_DISMISSED,
-            'resolution' => AgencyProspectUnansweredQuestion::RESOLUTION_DISMISSED,
-            'resolved_by_user_id' => $user?->id,
-            'resolved_at' => now(),
-        ])->save();
+            $item->forceFill([
+                'status' => AgencyProspectUnansweredQuestion::STATUS_DISMISSED,
+                'resolution' => AgencyProspectUnansweredQuestion::RESOLUTION_DISMISSED,
+                'resolved_by_user_id' => $user?->id,
+                'resolved_at' => now(),
+            ])->save();
+        });
     }
 
     private function resolve(AgencyProspectUnansweredQuestion $item, string $resolution, string $faqId, ?User $user): void

@@ -121,11 +121,6 @@ final class OutreachScriptManager
             $errors += $stepErrors;
         }
 
-        if (array_key_exists('faq_entries', $fields)) {
-            [$changes['faq_entries'], $faqErrors] = self::faq($fields['faq_entries'], $workspace);
-            $errors += $faqErrors;
-        }
-
         if (array_key_exists('faq_fallback', $fields)) {
             if (in_array($fields['faq_fallback'], [OutreachFaq::FALLBACK_AI, OutreachFaq::FALLBACK_CONTINUE, OutreachFaq::FALLBACK_HANDOFF], true)) {
                 $changes['faq_fallback'] = $fields['faq_fallback'];
@@ -141,7 +136,20 @@ final class OutreachScriptManager
         // V1 is calendar-link only; whatever was asked for, this is what is stored.
         $changes['scheduling_mode'] = 'calendar_link';
 
-        return DB::transaction(function () use ($workspace, $changes): AgencyProspectingSetting {
+        return DB::transaction(function () use ($workspace, $changes, $fields): AgencyProspectingSetting {
+            if (array_key_exists('faq_entries', $fields)) {
+                Workspace::whereKey($workspace->id)->lockForUpdate()->firstOrFail();
+                $current = OutreachFaq::forWorkspace($workspace)->all();
+                if (isset($fields['faq_snapshot']) && $fields['faq_snapshot'] !== hash('sha256', serialize($current))) {
+                    throw ValidationException::withMessages(['faq_entries' => 'Approved answers changed while you were editing. Review them and save again.']);
+                }
+
+                [$changes['faq_entries'], $faqErrors] = self::faq($fields['faq_entries'], $workspace);
+                if ($faqErrors !== []) {
+                    throw ValidationException::withMessages($faqErrors);
+                }
+            }
+
             $settings = AgencyProspectingSetting::query()
                 ->where('workspace_id', (int) $workspace->id)
                 ->lockForUpdate()
