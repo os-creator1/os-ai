@@ -1,4 +1,8 @@
-import Pusher from 'pusher-js/react-native';
+import PusherModule from 'pusher-js/react-native';
+
+// pusher-js 8.x: the typings declare a default export, but the React Native runtime bundle only sets
+// `module.exports.Pusher`, so the default import is a wrapper object and `new` on it throws. Accept either shape.
+const Pusher = (PusherModule as unknown as { Pusher?: typeof PusherModule }).Pusher ?? PusherModule;
 import type { RealtimeTransport, TransportFactory } from './types';
 
 /** Production transport: the platform's existing Pusher-protocol broadcaster. Authorizes every private channel with the mobile token. */
