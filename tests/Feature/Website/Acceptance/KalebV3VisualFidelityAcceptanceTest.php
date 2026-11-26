@@ -152,6 +152,11 @@ class KalebV3VisualFidelityAcceptanceTest extends TestCase
         $this->assertLessThan($services, $story);
         $this->assertStringContainsString('data-wd-menu-toggle', $html);
 
+        if ($variant === 'reference-greenbelt') {
+            $this->assertStringNotContainsString('Google reviews', $html,
+                'Manually confirmed testimonials must not be passed off as Google-sourced reviews');
+        }
+
         // Missing/undeployed Forms-module lead forms must not be advertised
         // as a functional Check Availability form on the live site.
         $this->assertStringNotContainsString('forms_module_deployment_uid', $html);
