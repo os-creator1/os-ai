@@ -1250,8 +1250,8 @@ body.wd h1, body.wd h2, body.wd h3, body.wd h4 { font-family: var(--wd-font-head
 .wd-reference-greenbelt .website-gallery-item img { border-radius: 12px; border: 6px solid #fff; aspect-ratio: 4 / 5; object-fit: cover; }
 .wd-reference-greenbelt .wd-ref-different { background: #f8dcd2; }
 .wd-reference-greenbelt .wd-ref-different .wd-card { background: transparent; border: 0; box-shadow: none; text-align: left; }
-.wd-reference-greenbelt .wd-ref-founder { background: #f4a28f; color: #fff; }
-.wd-reference-greenbelt .wd-ref-founder .wd-section-title, .wd-reference-greenbelt .wd-ref-founder p { color: #fff; text-align: left; }
+.wd-reference-greenbelt .wd-ref-founder { background: #f4a28f; color: #2a1d45; }
+.wd-reference-greenbelt .wd-ref-founder .wd-section-title, .wd-reference-greenbelt .wd-ref-founder p { color: #2a1d45; text-align: left; }
 .wd-reference-greenbelt .wd-ref-faq { background: #f8dcd2; }
 .wd-reference-greenbelt .wd-ref-faq details { background: #fff; border-radius: 8px; margin-bottom: 0.5rem; padding: 0.4rem 1rem; }
 .wd-reference-greenbelt .wd-ref-areas { background: #a79bc8; color: #2a1d45; }
@@ -1307,3 +1307,30 @@ body.wd h1, body.wd h2, body.wd h3, body.wd h4 { font-family: var(--wd-font-head
     .wd-reference-kaleb .wd-btn, .wd-reference-booths .wd-btn { padding-inline: 24px; }
     .wd-reference-kaleb .wd-hero-sub { text-align: center; }
 }
+
+/* ===================================================================================================================
+   Contrast corrections (computed-style audit over every generated page of all three templates): text now meets WCAG AA
+   (4.5:1 body, 3:1 large). Deliberate deviations from the references where the reference itself is below AA.
+   =================================================================================================================== */
+/* Kaleb */
+.wd-reference-kaleb .wd-band.wd-band-cta p, .wd-reference-kaleb .wd-band.wd-ref-quote p { color: #ffffff; }
+.wd-reference-kaleb .wd-band.wd-ref-areas .website-text-body p, .wd-reference-kaleb .wd-band.wd-ref-areas p { color: #ffffff; }
+.wd-reference-kaleb .wd-band.wd-band-testimonials .wd-accent-word, .wd-reference-kaleb .wd-band.wd-ref-reviews .wd-accent-word { color: #b58900; }
+.wd-reference-kaleb .wd-hero-tagline { color: #7d84a0; }
+.wd-reference-kaleb .wd-footer-legal p, .wd-reference-kaleb .wd-footer-legal a { color: #444444; }
+/* Booths */
+.wd-reference-booths .wd-band.wd-ref-quote h2, .wd-reference-booths .wd-band.wd-ref-quote p { color: #061633; }
+.wd-reference-booths .wd-band.wd-ref-areas .website-text-body p, .wd-reference-booths .wd-band.wd-ref-areas p { color: #ffffff; }
+.wd-reference-booths .wd-band.wd-ref-addons .wd-card p { color: #dbe6f5; }
+.wd-reference-booths .wd-review-stars { color: #8f5f00; }
+.wd-reference-kaleb .wd-review-stars { color: #b58900; }
+.wd-reference-booths .wd-ref-booths .wd-card { background: #0b6fd9; }
+/* Greenbelt */
+.wd-reference-greenbelt .wd-band.wd-band-cta p { color: #ffffff; }
+.wd-reference-greenbelt .wd-band.wd-ref-strip p { color: #2a1d45; }
+.wd-reference-greenbelt .wd-band.wd-ref-different .wd-section-title, .wd-reference-greenbelt .wd-band.wd-ref-different h3, .wd-reference-greenbelt .wd-band.wd-ref-different p { color: #2a1d45; }
+.wd-reference-greenbelt .wd-band.wd-ref-founder .wd-section-title, .wd-reference-greenbelt .wd-band.wd-ref-founder p, .wd-reference-greenbelt .wd-band.wd-ref-founder li { color: #2a1d45; }
+.wd-reference-greenbelt .wd-band.wd-ref-venues .wd-section-title { color: #2a1d45; }
+.wd-reference-greenbelt .wd-hero-reviews .wd-review-stars { color: #b5503a; }
+.wd-reference-greenbelt .wd-footer-heading { color: #f4a28f; }
+.wd-reference-greenbelt .wd-footer-legal p, .wd-reference-greenbelt .wd-footer-legal a { color: #d9cfe8; }

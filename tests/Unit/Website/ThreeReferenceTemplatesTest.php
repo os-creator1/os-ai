@@ -133,4 +133,13 @@ final class ThreeReferenceTemplatesTest extends TestCase
         $this->assertSame(1, preg_match('/\.wd-reference-greenbelt \.wd-ref-packages \.wd-card-featured p[^{]*\{([^}]+)\}/', $css, $text));
         $this->assertStringContainsString('color: #ffffff;', $text[1], 'description and price must stay light on the dark featured card');
     }
+
+    public function test_greenbelt_founder_panel_uses_dark_text_on_the_peach_background(): void
+    {
+        $css = (string) file_get_contents(public_path('css/website-design.css'));
+        $this->assertStringContainsString('.wd-reference-greenbelt .wd-band.wd-ref-founder .wd-section-title', $css);
+        $this->assertSame(1, preg_match('/\.wd-reference-greenbelt \.wd-band\.wd-ref-founder \.wd-section-title[^{]*\{([^}]+)\}/', $css, $m));
+        $this->assertStringContainsString('color: #2a1d45;', $m[1], 'founder heading and story are dark plum on peach (white on #f4a28f is ~2:1)');
+        $this->assertStringNotContainsString('wd-ref-founder { background: #f4a28f; color: #fff; }', $css);
+    }
 }

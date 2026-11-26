@@ -65,6 +65,11 @@ Status: ✅ structure and styling match the reference within the stated differen
 | Greenbelt peach / lavender buttons | (peach: plum label, as reference) | lavender strip button label darkened to plum | was white on `#a79bc8` (2.6:1) |
 Button contrast was measured from computed styles on the rendered pages (every `.wd-btn-primary`, all three templates): all ≥5:1 after the fix.
 
+## Text-contrast audit (computed styles, all generated pages)
+A Playwright pass computed foreground vs effective background for every text element on all 36 generated page renders at 1440 px (4.5:1 body, 3:1 large text). The first pass found 18 distinct failures
+(body text inside dark/gradient CTA bands, footer legal text and headings, headings on pastel bands, founder panel, add-on and booth-card text, review stars); all were corrected in CSS. The final pass reports one item:
+Kaleb's decorative review-star glyph (`aria-hidden`) at 3.2:1, above the 3:1 non-text threshold. The audit cannot measure text over photographs (hero backgrounds); those were not audited.
+
 ## Behaviour fixes from independent review (this round)
 - A Check Availability claim now requires that the PUBLIC form would accept a visitor (account active, not locked, **Forms entitlement**, version), not just deployment/form/location state.
 - The inquiry-label normalisation (authored "Check Availability" → the resolved site CTA) applies only to the three reference designs; canonical templates keep the button as written.
