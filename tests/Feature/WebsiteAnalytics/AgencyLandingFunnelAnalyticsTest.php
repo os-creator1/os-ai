@@ -322,6 +322,11 @@ class AgencyLandingFunnelAnalyticsTest extends TestCase
         $this->assertContains('www.google.com', $labels);
         $this->assertSame(2, collect($report['sources'])->firstWhere('label', 'Direct / unknown')['visits']);
         $this->assertStringNotContainsString('q=booth', json_encode($report), 'no query string is ever stored or shown');
+
+        // "Direct / unknown only" excludes the referral visit (and would exclude its calendar open and outcomes too).
+        $direct = app(AnalyticsReport::class)->build($property, '7', 'UTC', null, 'direct');
+        $this->assertSame(2, $direct['totals']['visits']);
+        $this->assertSame(['Direct / unknown'], array_column($direct['sources'], 'label'));
     }
 
     public function test_previews_drafts_scanners_prefetch_and_opted_out_visitors_are_never_counted(): void
@@ -492,6 +497,7 @@ class AgencyLandingFunnelAnalyticsTest extends TestCase
         $config = $this->pageConfig($html);
         $this->assertSame($key, $config['key']);
         $this->assertSame('handoff', $config['mode']);
+        $this->assertFalse($config['require_consent'], 'the origin that collected already had consent; this origin must not wait for an answer it cannot get');
         $this->assertSame($uuid, $config['booking_type']);
         $this->assertStringContainsString('data-role="public-scheduler"', $html);
 

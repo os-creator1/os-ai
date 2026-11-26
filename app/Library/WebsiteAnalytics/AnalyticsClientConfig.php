@@ -74,12 +74,10 @@ final class AnalyticsClientConfig
             return null;
         }
 
+        // The handoff parameters exist only because the originating site had ALREADY collected (consent given, or none required).
+        // localStorage is per origin, so the calendar page cannot see that answer and must not wait for one it can never get.
+        // A "denied" recorded on THIS origin, and Global Privacy Control, still stop collection (website-analytics.js).
         $consent = false;
-
-        if ($property->owner_type === \App\Models\WebsiteAnalyticsProperty::OWNER_WEBSITE) {
-            $website = Website::query()->find($property->website_id);
-            $consent = $website !== null && app(WebsiteTrackingSettings::class)->requiresConsent($website, WebsiteTrackingSettings::HOME_SCOPE);
-        }
 
         return $this->payload($property->public_key, $consent, false, (string) $type->public_booking_uuid, 'handoff');
     }

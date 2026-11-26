@@ -72,7 +72,11 @@ final class AnalyticsReport
             ->where('property_id', $property->id)
             ->whereBetween('occurred_at', [$start->setTimezone($storage)->toDateTimeString(), $end->setTimezone($storage)->toDateTimeString()])
             ->when($landing !== null, fn ($q) => $q->where('landing', $landing))
-            ->when($campaignFilter === self::DIRECT, fn ($q) => $q->whereNull('campaign_id'))
+            ->when($campaignFilter === self::DIRECT, fn ($q) => $q->whereNull('campaign_id')->where(fn ($d) => $d->whereNull('session_id')->orWhereNotIn('session_id', WebsiteAnalyticsEvent::query()
+                // "Direct / unknown" is the RESOLVED visit source: a visit that arrived from a campaign or a referring site is not direct,
+                // and neither are its calendar opens and confirmed outcomes.
+                ->select('session_id')->where('property_id', $property->id)->whereNotNull('session_id')
+                ->where(fn ($s) => $s->whereNotNull('campaign_id')->orWhereNotNull('referrer_host')))))
             ->when(is_int($campaignFilter), fn ($q) => $q->where('campaign_id', $campaignFilter))
             ->orderBy('id');
 
