@@ -137,7 +137,7 @@ final class WebsiteDesigns
             ],
             'photo_booth_reference_greenbelt' => [
                 'photo_booth_conversion', 'reference-greenbelt', 8,
-                'Boise Party Editorial', 'Plum and peach, strong headings, event cards, package tiers and brand activations.',
+                'Party Editorial', 'Plum and peach, strong headings, event cards, package tiers and brand activations.',
                 'Photo booth rentals with real package pricing and corporate-event offerings.',
                 ['#2a1d45', '#f4a28f'],
             ],
