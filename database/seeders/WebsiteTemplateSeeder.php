@@ -248,7 +248,7 @@ class WebsiteTemplateSeeder extends Seeder
         $specs = [
             ['photo_booth_reference_kaleb', 'Luxury Photo Booth', 'Cinematic black and gold; real booth features, gallery and reviews.', '#fac815', '#232323', 'reference-kaleb', 'serif'],
             ['photo_booth_reference_booths', 'Event Spotlight', 'Deep blue event-first layout with booth features and event imagery.', '#188bf6', '#061633', 'reference-booths', 'system'],
-            ['photo_booth_reference_greenbelt', 'Boise Party Editorial', 'Plum and peach; event cards, package tiers and corporate experiences.', '#f4a28f', '#2a1d45', 'reference-greenbelt', 'system'],
+            ['photo_booth_reference_greenbelt', 'Party Editorial', 'Plum and peach; event cards, package tiers and corporate experiences.', '#f4a28f', '#2a1d45', 'reference-greenbelt', 'system'],
         ];
 
         return array_map(static fn (array $spec): array => [
