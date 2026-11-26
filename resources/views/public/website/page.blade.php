@@ -197,8 +197,10 @@
                 @php($componentView = 'public.website.components.' . $type)
                 @php($toneKey = ($type === 'services' && collect($section['data']['items'] ?? [])->contains(fn ($item) => ! empty($item['catalog_item_uid']))) ? 'packages' : $type)
                 @php($sectionRole = $design->roleTones !== [] ? \App\Library\Website\Design\SectionRole::of($section) : null)
+                {{-- Reference designs only: an optional, validated style hook (" wd-ref-x" or nothing — never a stray space for other templates). --}}
+                @php($bandRefClass = is_string($section['data']['ref'] ?? null) && preg_match('/^[a-z0-9-]{1,32}$/', $section['data']['ref']) === 1 ? ' wd-ref-' . $section['data']['ref'] : '')
                 @if (\Illuminate\Support\Facades\View::exists($componentView))
-                    <div class="wd-band wd-tone-{{ $design->toneFor($toneKey, $sectionRole) }} wd-band-{{ $toneKey }}@if ($sectionRole) wd-band-role-{{ $sectionRole }}@endif @if (is_string($section['data']['ref'] ?? null) && preg_match('/^[a-z0-9-]{1,32}$/', $section['data']['ref'])) wd-ref-{{ $section['data']['ref'] }}@endif" data-section="{{ $toneKey }}"@if ($sectionRole) data-role="{{ $sectionRole }}"@endif>
+                    <div class="wd-band wd-tone-{{ $design->toneFor($toneKey, $sectionRole) }} wd-band-{{ $toneKey }}@if ($sectionRole) wd-band-role-{{ $sectionRole }}@endif{{ $bandRefClass }}" data-section="{{ $toneKey }}"@if ($sectionRole) data-role="{{ $sectionRole }}"@endif>
                         @if ($type === 'hero')
                             @include($componentView, ['data' => $section['data'] ?? [], 'website' => $website, 'assetsByUid' => $assetsByUid ?? [], 'formsByUid' => $formsByUid ?? [], 'isPreview' => $isPreview ?? false, 'pageUid' => $page->uid ?? null, 'servicePageUrls' => $servicePageUrls, 'placePageUrls' => $placePageUrls, 'heroImageFallback' => $heroImageFallback])
                         @else
