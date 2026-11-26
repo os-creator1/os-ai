@@ -583,6 +583,7 @@ class AgencyLandingFunnelAnalyticsTest extends TestCase
         $this->assertStringNotContainsString("send('booking", $js);
         $this->assertStringContainsString("var handed = param('mgv', HEX32);\n        var v = store('local', VISITOR_KEY);\n        if (handed) { v = handed;", $js, 'an incoming handoff visitor id wins over this origin\'s storage');
         $this->assertStringContainsString("store('session', HANDOFF_KEY) !== handed", $js, 'a handoff is adopted once; reusing the same URL later lets the visit expire');
+        $this->assertStringContainsString("else { url.searchParams.delete('mgc'); }", $js, 'a refreshed booking link drops a campaign the current visit no longer has');
         $this->assertStringContainsString("if (fresh) { store('session', CAMPAIGN_KEY, ''); }", $js, 'a new visit does not inherit the previous visit\'s campaign');
         $this->assertStringContainsString('own.indexOf(url.origin) === -1', $js, 'booking links to third-party hosts are never decorated');
         foreach (['email', 'phone', 'first_name', 'last_name'] as $personal) {

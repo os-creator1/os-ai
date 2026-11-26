@@ -138,7 +138,8 @@
         url.searchParams.set('mgv', visitorId());
         url.searchParams.set('mgs', sessionId());
         var c = campaign();
-        if (c) { url.searchParams.set('mgc', c); }
+        // The CURRENT visit's campaign only: a link decorated earlier must not keep a campaign the visit no longer has.
+        if (c) { url.searchParams.set('mgc', c); } else { url.searchParams.delete('mgc'); }
         a.setAttribute('href', url.toString());
     }
 
