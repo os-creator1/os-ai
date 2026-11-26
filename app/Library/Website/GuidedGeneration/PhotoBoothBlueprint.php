@@ -258,7 +258,7 @@ final class PhotoBoothBlueprint
         ];
         $reviews = $f['testimonials'] === [] ? null : [
             'type' => 'testimonials',
-            'data' => ['heading' => $greenbelt ? 'Google reviews' : 'Reviews', 'items' => array_slice($f['testimonials'], 0, 10)],
+            'data' => ['heading' => 'Reviews', 'items' => array_slice($f['testimonials'], 0, 10)],
         ];
         $places = $f['areas'] === [] ? null : [
             'type' => 'text',
