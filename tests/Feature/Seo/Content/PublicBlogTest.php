@@ -136,6 +136,29 @@ class PublicBlogTest extends TestCase
         $this->assertStringContainsString('href="https://' . self::DOMAIN . '/blog"', $this->body(self::HOST . '/'));
     }
 
+    public function test_reference_template_blog_navigation_follows_content_autopilot_but_preserves_live_article_urls(): void
+    {
+        [, $business, , $website] = $this->photoBoothContentTenant();
+        $website->forceFill(['template_key' => 'photo_booth_reference_kaleb'])->save();
+        $article = $this->publishedArticle($business);
+        app('cache')->flush();
+
+        $surface = \App\Library\Website\Blog\WebsiteBlogSurface::custom($website->fresh(), self::DOMAIN);
+        $renderer = app(\App\Library\Website\Blog\WebsiteBlogRenderer::class);
+        $this->assertNull($renderer->navigationEntry($website->fresh(), $surface), 'Blog is not shown when Content Autopilot is off');
+
+        $setting = \App\Models\ContentAutopilotSetting::query()->create(['business_id' => $business->id, 'enabled' => true]);
+        $this->assertSame('Blog', $renderer->navigationEntry($website->fresh(), $surface)['title']);
+
+        $setting->update(['enabled' => false]);
+        $this->assertNull($renderer->navigationEntry($website->fresh(), $surface));
+
+        // Hiding the Blog navigation is not an instruction to delete or
+        // unpublish already indexed customer articles.
+        $this->get(self::HOST . '/blog/' . $article->slug)->assertOk();
+        $this->assertStringContainsString('/blog/' . $article->slug, $this->body(self::HOST . '/sitemap.xml'));
+    }
+
     public function test_without_a_published_article_the_blog_is_404_with_no_nav_entry_and_no_sitemap_blog_urls(): void
     {
         [, $business] = $this->photoBoothContentTenant();
