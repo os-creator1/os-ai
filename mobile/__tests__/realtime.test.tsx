@@ -4,6 +4,7 @@ import { act, fireEvent, render, screen, waitFor } from '@testing-library/react-
 import { AuthProvider, useAuth } from '../src/auth/AuthContext';
 import { RealtimeProvider } from '../src/realtime/RealtimeProvider';
 import { channelFor, parseChange } from '../src/realtime/types';
+import { REALTIME_LOG_PREFIX, reportRealtimeFailure } from '../src/realtime/reportFailure';
 import { ConversationDetailScreen } from '../src/screens/ConversationDetailScreen';
 import { ApiError } from '../src/api/client';
 import { ConversationsScreen } from '../src/screens/ConversationsScreen';
@@ -125,10 +126,70 @@ describe('RealtimeProvider', () => {
     await waitFor(() => expect(created[0].disconnect).toHaveBeenCalled());
   });
 
-  it('survives a transport that throws (falls back to plain API behaviour)', async () => {
-    const factory = jest.fn(() => { throw new Error('ws down'); });
-    await mount(fakeApi(), factory);
-    await waitFor(() => screen.getByText('in'));
+  it('survives a transport that throws (falls back to plain API behaviour) and reports why', async () => {
+    const warn = jest.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      // The on-device failure fixed in #725: the transport factory itself threw, and a silent catch hid it.
+      const boom = new TypeError('Object cannot be used as a constructor');
+      const factory = jest.fn(() => { throw boom; });
+      const api = fakeApi();
+      await mount(api, factory, <ConversationsScreen {...({ navigation: { navigate: jest.fn(), setOptions: jest.fn() }, route: { params: undefined } } as any)} />);
+      await waitFor(() => expect(factory).toHaveBeenCalled());
+      await waitFor(() => expect(warn).toHaveBeenCalledWith(expect.stringMatching(/^\[realtime\] transport failed/), boom));
+      expect(warn.mock.calls.filter(([m]) => String(m).startsWith(REALTIME_LOG_PREFIX))).toHaveLength(1);
+      // Still signed in and still working on plain API reads (pull-to-refresh fallback).
+      screen.getByText('in');
+      await waitFor(() => expect(api.conversations).toHaveBeenCalled());
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it('reports a failing realtime config read as the config stage and never builds a transport', async () => {
+    const warn = jest.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      const { factory } = fakeTransports();
+      const api = fakeApi({ realtimeConfig: jest.fn(async () => { throw new ApiError(500, 'server_error', 'Server error.'); }) });
+      await mount(api, factory);
+      await waitFor(() => expect(warn).toHaveBeenCalledWith(expect.stringMatching(/^\[realtime\] config failed/), expect.any(ApiError)));
+      expect(factory).not.toHaveBeenCalled();
+      screen.getByText('in');
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it('stays quiet when realtime is simply disabled server-side (not a failure)', async () => {
+    const warn = jest.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      const { factory } = fakeTransports();
+      const api = fakeApi({ realtimeConfig: jest.fn(async () => ({ enabled: false, provider: 'pusher', key: null, cluster: null, host: null, port: null, tls: true })) });
+      await mount(api, factory);
+      await waitFor(() => expect(api.realtimeConfig).toHaveBeenCalled());
+      await act(async () => undefined);
+      expect(warn.mock.calls.filter(([m]) => String(m).startsWith(REALTIME_LOG_PREFIX))).toHaveLength(0);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+});
+
+describe('reportRealtimeFailure', () => {
+  const g = globalThis as unknown as { __DEV__: boolean };
+  it('in a release build logs one short line: stage, error name and message, no stack or payload', () => {
+    const warn = jest.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const dev = g.__DEV__;
+    g.__DEV__ = false;
+    try {
+      reportRealtimeFailure('transport', new TypeError('Object cannot be used as a constructor'));
+      reportRealtimeFailure('subscribe', 'x'.repeat(500));
+      expect(warn).toHaveBeenNthCalledWith(1, '[realtime] transport failed: TypeError: Object cannot be used as a constructor');
+      expect(warn.mock.calls[0]).toHaveLength(1);
+      expect(String(warn.mock.calls[1][0]).length).toBeLessThan(260);
+    } finally {
+      g.__DEV__ = dev;
+      warn.mockRestore();
+    }
   });
 });
 
