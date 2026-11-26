@@ -1334,3 +1334,10 @@ body.wd h1, body.wd h2, body.wd h3, body.wd h4 { font-family: var(--wd-font-head
 .wd-reference-greenbelt .wd-hero-reviews .wd-review-stars { color: #b5503a; }
 .wd-reference-greenbelt .wd-footer-heading { color: #f4a28f; }
 .wd-reference-greenbelt .wd-footer-legal p, .wd-reference-greenbelt .wd-footer-legal a { color: #d9cfe8; }
+
+/* Add-ons are catalog-referenced (price follows the catalog) so they render through the package card; the references show them as a plain
+   list of name + price with no per-item button, and the price must stay readable on the band's own background. */
+.wd-reference-booths .wd-band.wd-ref-addons .wd-card .wd-btn, .wd-reference-greenbelt .wd-band.wd-ref-addons .wd-card .wd-btn { display: none; }
+.wd-reference-booths .wd-band.wd-ref-addons .website-service-price, .wd-reference-booths .wd-band.wd-ref-addons .wd-card p { color: #ffffff; }
+.wd-reference-greenbelt .wd-band.wd-ref-addons .website-service-price { color: #2a1d45; }
+.wd-reference-booths .wd-band.wd-ref-addons .wd-card, .wd-reference-greenbelt .wd-band.wd-ref-addons .wd-card { text-align: left; }

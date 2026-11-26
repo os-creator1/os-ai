@@ -142,4 +142,12 @@ final class ThreeReferenceTemplatesTest extends TestCase
         $this->assertStringContainsString('color: #2a1d45;', $m[1], 'founder heading and story are dark plum on peach (white on #f4a28f is ~2:1)');
         $this->assertStringNotContainsString('wd-ref-founder { background: #f4a28f; color: #fff; }', $css);
     }
+
+    public function test_addon_bands_show_a_readable_price_and_no_per_item_button(): void
+    {
+        $css = (string) file_get_contents(public_path('css/website-design.css'));
+        $this->assertStringContainsString('.wd-reference-booths .wd-band.wd-ref-addons .wd-card .wd-btn', $css);
+        $this->assertSame(1, preg_match('/\.wd-reference-booths \.wd-band\.wd-ref-addons \.website-service-price[^{]*\{([^}]+)\}/', $css, $m));
+        $this->assertStringContainsString('color: #ffffff;', $m[1], 'the add-on price must be light on the navy Booths band');
+    }
 }
