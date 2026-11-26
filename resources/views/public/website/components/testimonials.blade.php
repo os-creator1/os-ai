@@ -3,6 +3,10 @@
     @if (! empty($data['heading']))
         <h2 class="wd-section-title">{{ $data['heading'] }}</h2>
     @endif
+    @if (! empty($data['badge']['rating']))
+        {{-- Owner-entered rating only (validated 1-5 / count); never fetched from or implied by a review platform. --}}
+        <p class="wd-review-badge" data-testid="review-badge"><span class="wd-review-score">{{ $data['badge']['rating'] }}</span> <span class="wd-review-stars" aria-hidden="true">&#9733;&#9733;&#9733;&#9733;&#9733;</span> <span class="wd-review-meta">{{ $data['badge']['count'] }} {{ $data['badge']['source'] ?? 'Google' }} reviews</span></p>
+    @endif
     <div class="website-testimonials-grid">
         @foreach (($data['items'] ?? []) as $item)
             <blockquote class="website-testimonial-card">

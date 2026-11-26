@@ -63,8 +63,14 @@ final class PhotoBoothBlueprint
      * @param  array<string, mixed>  $context
      * @return array<int, array{page_key: string, title: string, seo_title: string, meta_description: string, sections: array<int, array<string, mixed>>}>
      */
+    private string $announcement = '';
+
     public function pages(Business $business, Website $website, array $plan, array $context): array
     {
+        $this->announcement = $this->isReferenceTemplate(['template' => (string) $website->template_key])
+            ? trim((string) (($context['answers'] ?? [])['announcement_text'] ?? ''))
+            : '';
+
         $facts = $this->facts($business, $website, $context);
         // What the plan decided about neighbouring pages: the events that have a page (their home cards link to it) and the
         // packages page (an event page points on to it).
@@ -197,6 +203,9 @@ final class PhotoBoothBlueprint
             $this->primaryCta($f),
             $f['packages'] !== [] ? ['label' => 'View packages', 'url' => '/packages'] : null,
         );
+        if (($f['copy']['hero_eyebrow'] ?? '') !== '') {
+            $hero['data']['eyebrow'] = Str::limit((string) $f['copy']['hero_eyebrow'], 80, '');
+        }
         if (in_array($f['copy']['hero_focus'] ?? null, ['center', 'top', 'bottom', 'left', 'right'], true)) {
             $hero['data']['image_focus'] = $f['copy']['hero_focus'];
         }
@@ -261,7 +270,13 @@ final class PhotoBoothBlueprint
         ];
         $reviews = $f['testimonials'] === [] ? null : [
             'type' => 'testimonials',
-            'data' => ['heading' => $this->copy($f, 'reviews_heading', 'Reviews'), 'items' => array_slice($f['testimonials'], 0, 10)],
+            'data' => array_filter([
+                'heading' => $this->copy($f, 'reviews_heading', 'Reviews'),
+                'items' => array_slice($f['testimonials'], 0, 10),
+                // The Google rating badge is shown ONLY when the owner typed the real rating and count; never inferred.
+                'badge' => $this->googleBadge($f),
+                'ref' => 'reviews',
+            ]),
         ];
         $places = $f['areas'] === [] ? null : [
             'type' => 'text',
@@ -274,6 +289,43 @@ final class PhotoBoothBlueprint
             'type' => 'faq',
             'data' => ['heading' => $this->copy($f, 'faq_heading', 'Frequently asked questions'), 'items' => array_slice($f['faq'], 0, self::HOME_FAQ)],
         ];
+
+        $backdropRows = $f['backdrops'] === [] ? null : [
+            'type' => 'backdrops',
+            'data' => ['heading' => $kaleb ? 'All of our packages include' : 'Backdrops', 'items' => array_slice($f['backdrops'], 0, self::HOME_BACKDROPS), 'ref' => 'feature-rows'],
+        ];
+        $different = ['type' => 'services', 'data' => ['heading' => 'What makes us different', 'ref' => 'different', 'items' => array_map(
+            fn (array $item) => $item,
+            $this->process($f)['data']['items'],
+        )]];
+        $addons = $f['addons'] === [] ? null : ['type' => 'services', 'data' => [
+            'heading' => $greenbelt ? 'Premium add-ons' . ($f['city'] === null ? '' : ' in ' . $f['city']) : 'Special features & add-ons',
+            'ref' => 'addons',
+            'items' => array_map(fn ($item) => array_filter([
+                'name' => Str::limit($item->name, 120, ''),
+                'description' => $this->prose($item->description),
+                'price_label' => $item->price_minor !== null && $item->currency_code ? Str::limit(CatalogMoney::format($item->price_minor, $item->currency_code), 40, '') : null,
+            ]), array_slice($f['addons'], 0, 12)),
+        ]];
+        $founderName = trim((string) ($f['copy']['founder_name'] ?? ''));
+        $founder = $founderName === '' || trim((string) $f['about']) === '' ? null : ['type' => 'image_text', 'data' => [
+            'heading' => Str::limit('Hey, I\'m ' . $founderName . '!', 120, ''),
+            'body' => Str::limit((string) $f['about'], 3000, ''),
+            'image' => null,
+            'image_position' => 'right',
+            'ref' => 'founder',
+        ]];
+        $venues = $f['venues'] === [] ? null : ['type' => 'services', 'data' => [
+            'heading' => 'Venues we\'ve worked with' . ($f['city'] === null ? '' : ' in ' . $f['city']),
+            'ref' => 'venues',
+            'items' => array_map(fn (array $v) => array_filter(['name' => $v['name'], 'description' => $v['place'] !== '' ? $v['place'] : null]), $f['venues']),
+        ]];
+        $quote = ['type' => 'cta', 'data' => [
+            'heading' => $this->copy($f, 'closing_heading', 'Check availability & get a quote'),
+            'body' => 'Already have a date in mind? Send it over and we\'ll follow up to confirm.',
+            'buttons' => [$this->primaryCta($f)],
+            'ref' => 'quote',
+        ]];
 
         // Greenbelt's corporate-feature panel is shown ONLY if the owner has
         // explicitly supplied a corporate event service description.
@@ -290,10 +342,11 @@ final class PhotoBoothBlueprint
             ],
         ];
 
+        // Section order follows each reference homepage as captured (see docs/acceptance/.../VISUAL-COMPARISON-REPORT.md).
         $sections = match (true) {
-            $kaleb => [$hero, $intro, $boothCards, $featureCards, $gallery, $reviews, $places, $faq],
-            $booths => [$hero, $intro, $boothCards, $featureCards, $events, $gallery, $reviews, $places, $faq],
-            default => [$hero, $intro, $events, $featureCards, $reviews, $packages, $corporatePanel, $gallery, $faq, $places],
+            $kaleb => [$hero, $intro, $boothCards, $backdropRows, $featureCards, $gallery, $reviews, $events, $places, $faq],
+            $booths => [$hero, $intro, $addons, $boothCards, $backdropRows, $different, $events, $founder, $quote, $reviews, $places, $faq],
+            default => [$hero, $intro, $events, $reviews, $packages, $corporatePanel, $addons, $gallery, $different, $founder, $faq, $places, $venues],
         };
 
         $closing = $this->closingCta($f);
@@ -319,6 +372,17 @@ final class PhotoBoothBlueprint
         return Str::limit($value !== '' ? $value : $default, $max, '');
     }
 
+    /** @param array<string, mixed> $f */
+    private function googleBadge(array $f): ?array
+    {
+        $rating = trim((string) ($f['copy']['google_rating'] ?? ''));
+        $count = trim((string) ($f['copy']['google_review_count'] ?? ''));
+
+        return preg_match('/^[1-5](\.\d)?$/', $rating) === 1 && preg_match('/^\d{1,5}$/', $count) === 1
+            ? ['rating' => $rating, 'count' => (int) $count, 'source' => 'Google']
+            : null;
+    }
+
     /** Exact reference family headline structure from genuine business facts. */
     private function referenceHeroHeadline(array $f): string
     {
@@ -331,7 +395,8 @@ final class PhotoBoothBlueprint
         );
 
         return match ($f['template']) {
-            'photo_booth_reference_booths' => 'Lights, Camera, Memories!',
+            'photo_booth_reference_booths' => ($isLuxury ? 'Luxury photo booth rental' : 'Photo booth rental')
+                . ($city === null ? ' for your event' : ' in ' . $city),
             'photo_booth_reference_greenbelt' => ($isLuxury ? 'Luxury photo booth rentals' : 'Photo booth rentals')
                 . ($city === null ? ' for your event' : ' in ' . $city),
             default => ($isLuxury ? 'Luxury photo booth rentals' : 'Photo booth rentals')
@@ -557,6 +622,12 @@ final class PhotoBoothBlueprint
     {
         $data = ['heading' => Str::limit($heading, 120, '')];
 
+        // Reference designs: the owner's announcement-bar text travels with every page's hero so the header of a PUBLISHED page
+        // reads the same revision as its content (never a live draft value).
+        if ($this->announcement !== '') {
+            $data['announcement'] = Str::limit($this->announcement, 160, '');
+        }
+
         if ($subheading !== null && trim($subheading) !== '') {
             $data['subheading'] = Str::limit($subheading, 240, '');
         }
@@ -775,6 +846,20 @@ final class PhotoBoothBlueprint
             ->values()
             ->all();
 
+        // Venues the owner named per service area (questionnaire "Add local details"); shown only when real.
+        $venues = [];
+        foreach ((array) ($answers[\App\Library\Website\Setup\ServiceAreaDetails::ANSWER_KEY] ?? []) as $entry) {
+            if (! is_array($entry)) {
+                continue;
+            }
+            $where = trim((string) Str::before((string) ($entry['name'] ?? ''), ','));
+            foreach ((array) ($entry['venues'] ?? []) as $venue) {
+                if (is_string($venue) && trim($venue) !== '') {
+                    $venues[] = ['name' => Str::limit(trim($venue), 120, ''), 'place' => $where];
+                }
+            }
+        }
+
         $customerFaq = (array) ($context['customer_faq'] ?? []);
         $faq = $customerFaq !== [] ? $customerFaq : array_map(fn (array $i) => ['question' => $i['question'], 'answer' => $i['answer']], $this->defaults->faq($business, $answers));
 
@@ -814,10 +899,12 @@ final class PhotoBoothBlueprint
             'backdrops' => $backdrops,
             'about' => $about,
             'package_links' => (array) ($context['package_links'] ?? []),
+            'venues' => array_slice($venues, 0, 12),
             'copy' => array_filter(
                 array_intersect_key($answers, array_flip([
                     'hero_headline', 'hero_subtitle', 'hero_focus', 'intro_heading', 'services_heading', 'features_heading',
                     'events_heading', 'packages_heading', 'gallery_heading', 'reviews_heading', 'areas_heading', 'faq_heading', 'closing_heading',
+                    'hero_eyebrow', 'founder_name', 'google_rating', 'google_review_count',
                 ])),
                 fn ($v) => is_string($v) && trim($v) !== '',
             ),

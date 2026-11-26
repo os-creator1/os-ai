@@ -210,6 +210,19 @@ final class WebsiteSectionValidator
             ],
         };
 
+        // Reference-design presentation hooks (all optional, bounded vocabularies; escaped on output).
+        $rules['ref'] = 'nullable|string|regex:/^[a-z0-9-]{1,32}$/';
+        if ($type === WebsiteSectionType::Hero) {
+            $rules['eyebrow'] = 'nullable|string|max:80';
+            $rules['announcement'] = 'nullable|string|max:160';
+        }
+        if ($type === WebsiteSectionType::Testimonials) {
+            $rules['badge'] = 'nullable|array';
+            $rules['badge.rating'] = 'required_with:badge|string|regex:/^[1-5](\.\d)?$/';
+            $rules['badge.count'] = 'required_with:badge|integer|min:1|max:99999';
+            $rules['badge.source'] = 'required_with:badge|in:Google';
+        }
+
         $validator = ValidatorFacade::make($data, $rules);
         $validator->validate();
 

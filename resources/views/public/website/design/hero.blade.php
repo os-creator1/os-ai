@@ -36,6 +36,9 @@
             @if ($isEditorial && $isHomePage && trim((string) ($websiteMeta['name'] ?? '')) !== '')
                 <p class="wd-hero-eyebrow">{{ $websiteMeta['name'] }}</p>
             @endif
+            @if (! empty($data['eyebrow']))
+                <p class="wd-hero-tagline">{{ $data['eyebrow'] }}</p>
+            @endif
             <h1 class="wd-hero-title">{{ $design->accentHeading($data['heading'] ?? '') }}</h1>
             @if (! empty($data['subheading']))
                 <p class="wd-hero-sub">{{ $data['subheading'] }}</p>

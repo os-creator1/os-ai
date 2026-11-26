@@ -230,6 +230,8 @@ class PhotoboothWebsiteSetupQuestionnaireV3Seeder extends Seeder
             // Reference-design copy. Every field is optional: left blank, the deterministic default for the chosen
             // design is used. Stored under `answers` and read by PhotoBoothBlueprint::copy() — nothing is invented.
             self::step('hero_headline', 'Your homepage headline', 'text', false, 'answers', null, helpText: 'For example: "Luxury Wedding, Corporate & Party Photo Booth Rentals". Up to 120 characters.'),
+            self::step('announcement_text', 'Announcement bar text', 'text', false, 'answers', null, helpText: 'The short line shown above your header on every page, such as "Now booking for 2026 and 2027". Leave blank for none. Up to 160 characters.'),
+            self::step('hero_eyebrow', 'Small line above the homepage headline', 'text', false, 'answers', null, helpText: 'Optional tagline shown above the headline of the Booths-style hero. Up to 80 characters.'),
             self::step('hero_subtitle', 'Supporting text under the headline', 'text', false, 'answers', null, helpText: 'One or two sentences. Up to 240 characters.'),
             self::step('hero_focus', 'Where should the hero photo be centred?', 'select', false, 'answers', null, helpText: 'Pick the part of your homepage cover photo that must stay visible when it is cropped on phones and wide screens.',
                 options: ['center' => 'Centre', 'top' => 'Top', 'bottom' => 'Bottom', 'left' => 'Left', 'right' => 'Right']),
@@ -244,6 +246,9 @@ class PhotoboothWebsiteSetupQuestionnaireV3Seeder extends Seeder
             self::step('faq_heading', 'FAQ heading', 'text', false, 'answers', null),
             self::step('closing_heading', 'Closing call-to-action heading', 'text', false, 'answers', null),
 
+            self::step('founder_name', 'Who should visitors meet?', 'text', false, 'answers', null, helpText: 'The first name of the owner or founder, used for the "Hey, I\'m …" introduction. Leave blank to skip that section.'),
+            self::step('google_rating', 'Your Google rating (optional)', 'text', false, 'answers', null, helpText: 'Only if you want a Google reviews badge, enter your real rating from 1 to 5, such as 4.9. It is never looked up or assumed.'),
+            self::step('google_review_count', 'Your number of Google reviews (optional)', 'text', false, 'answers', null, helpText: 'The real review count that goes with that rating. Leave both blank to show no badge.'),
             self::step('advantages', 'What makes your service special?', 'multi_select', false, 'knowledge_profile', 'differentiators', helpText: 'Choose only what is genuinely true for your business — each one is shown to visitors as a fact about you.', options: self::advantageOptions(), ownerConfirms: true),
 
             self::step('testimonials', 'Would you like to feature customer reviews?', 'repeatable_group', false, 'knowledge_profile', 'testimonials', helpText: 'Add only real reviews. If you have none, this section is simply left out.', ownerConfirms: true),

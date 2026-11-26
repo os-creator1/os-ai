@@ -84,7 +84,8 @@ final class ThreeReferenceTemplatesTest extends TestCase
     {
         $steps = collect(\Database\Seeders\PhotoboothWebsiteSetupQuestionnaireV3Seeder::steps())->keyBy('key');
         $keys = ['hero_headline', 'hero_subtitle', 'hero_focus', 'intro_heading', 'services_heading', 'features_heading', 'events_heading',
-            'packages_heading', 'gallery_heading', 'reviews_heading', 'areas_heading', 'faq_heading', 'closing_heading'];
+            'packages_heading', 'gallery_heading', 'reviews_heading', 'areas_heading', 'faq_heading', 'closing_heading',
+            'announcement_text', 'hero_eyebrow', 'founder_name', 'google_rating', 'google_review_count'];
 
         foreach ($keys as $key) {
             $this->assertTrue($steps->has($key), "Missing questionnaire step {$key}");
