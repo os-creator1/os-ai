@@ -114,12 +114,18 @@
     }
 
     var announced = null; // the visit id this document has already reported a page view for
+    var displayed = { calendar: null, form: false }; // funnel steps currently displayed on this document
 
     // A page left open past the idle limit starts a NEW visit on its next interaction: announce it with a page view first, so its
     // calendar open / form open / booking / inquiry always belongs to a counted visit with a resolvable source.
     function ensureVisit() {
         var s = sessionId();
-        if (announced && announced !== s) { post('pageview', {}); }
+        if (announced && announced !== s) {
+            post('pageview', {});
+            // The calendar / form is still on screen: the new visit is also one that displayed it.
+            if (displayed.calendar) { post('calendar_open', { bt: displayed.calendar }); }
+            if (displayed.form) { post('form_open', {}); }
+        }
     }
 
     function send(kind, extra) {
@@ -211,12 +217,12 @@
         if (!app) { return; }
         var type = bookingTypeOf(app);
         if (!type) { return; }
-        whenDisplayed(app, function () { send('calendar_open', { bt: type }); });
+        whenDisplayed(app, function () { displayed.calendar = type; send('calendar_open', { bt: type }); });
     }
 
     function watchForm() {
         var frame = document.querySelector('iframe[data-mg-lead-form]');
-        if (frame) { whenDisplayed(frame, function () { send('form_open'); }); }
+        if (frame) { whenDisplayed(frame, function () { displayed.form = true; send('form_open'); }); }
     }
 
     // ---- a stored form submission announced by the Forms thank-you page (origin-, frame- and deployment-checked)

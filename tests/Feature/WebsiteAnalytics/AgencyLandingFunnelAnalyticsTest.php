@@ -587,6 +587,21 @@ class AgencyLandingFunnelAnalyticsTest extends TestCase
         $this->assertStringNotContainsString('utm', $plain);
     }
 
+    public function test_analytics_beacons_never_use_up_the_booking_rate_limit(): void
+    {
+        $a = $this->agencyWithLanding('Motion Grove Photo Booth', 'photobooth', false);
+        $key = $this->pageConfig($this->withHeader('User-Agent', self::PHONE_UA)->get('/photobooth')->assertOk()->getContent())['key'];
+        $route = app('router')->getRoutes()->getByName('public.analytics.collect');
+        $this->assertContains('throttle:analytics-collect', $route->gatherMiddleware(), 'its own named limiter, not a numeric one shared with the booking write');
+
+        // 15 beacons (more than the booking write's 10/minute budget) leave the booking POST unthrottled.
+        for ($i = 0; $i < 15; $i++) {
+            $this->beacon($this->pv($key, $this->ids()))->assertNoContent();
+        }
+        [$date, $time] = $this->firstSlot($a['type']);
+        $this->withHeader('X-Requested-With', 'XMLHttpRequest')->postJson(route('public.booking.store', [$a['type']->public_booking_uuid]), $this->bookingPayload($date, $time))->assertStatus(201);
+    }
+
     public function test_a_legacy_follow_up_link_is_tagged_with_its_campaign(): void
     {
         $a = $this->agencyWithLanding('Motion Grove Photo Booth');
@@ -614,8 +629,10 @@ class AgencyLandingFunnelAnalyticsTest extends TestCase
         $this->assertStringContainsString("var handed = param('mgv', HEX32);\n        var v = store('local', VISITOR_KEY);\n        if (handed) { v = handed;", $js, 'an incoming handoff visitor id wins over this origin\'s storage');
         $this->assertStringContainsString("store('session', HANDOFF_KEY) !== handed", $js, 'a handoff is adopted once; reusing the same URL later lets the visit expire');
         $this->assertStringContainsString("s = handed; fresh = true;", $js, 'adopting a handoff also clears the destination tab\'s retained campaign');
-        $this->assertStringContainsString("if (announced && announced !== s) { post('pageview', {}); }", $js, 'a page that starts a new visit after idling reports that visit\'s page view first');
+        $this->assertStringContainsString("if (announced && announced !== s) {\n            post('pageview', {});", $js, 'a page that starts a new visit after idling reports that visit\'s page view first');
         $this->assertStringContainsString("ensureVisit();\n        var fields", $js, 'and so does a booking submitted on such a page');
+        $this->assertStringContainsString("if (displayed.calendar) { post('calendar_open', { bt: displayed.calendar }); }", $js, 'a still-displayed calendar is re-announced for the new visit');
+        $this->assertStringContainsString("if (displayed.form) { post('form_open', {}); }", $js, 'and so is a still-displayed form');
         $this->assertStringContainsString('!!(incoming && incoming !== kept)', $js, 'a campaign the visit does not already carry (different, or none until now) starts a new visit');
         $this->assertStringContainsString('if (switched ||', str_replace('} else if (switched ||', 'if (switched ||', $js), 'and that new visit gets a new session id');
         $this->assertStringContainsString("else { url.searchParams.delete('mgc'); }", $js, 'a refreshed booking link drops a campaign the current visit no longer has');

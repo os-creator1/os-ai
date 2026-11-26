@@ -58,6 +58,9 @@
             // per document+visitor (a person fixing typos), per visitor across
             // ALL documents (rotating uids cannot dodge it), and per document
             // across visitors (a distributed hammer on one link).
+            // Native website analytics: its OWN bucket. A numeric `throttle:N,1` keys anonymous visitors by route domain + IP, so it would
+            // share a counter with the booking submission's `throttle:10,1`, and measuring a visit could cost that visitor their booking.
+            RateLimiter::for('analytics-collect', fn (Request $request) => Limit::perMinute(240)->by('analytics-collect|' . $request->ip()));
             RateLimiter::for('public-document-sign', fn (Request $request) => $this->documentLimits($request, 'sign', 10, 60, 60));
             RateLimiter::for('public-document-pay', fn (Request $request) => $this->documentLimits($request, 'pay', 10, 60, 60));
             RateLimiter::for('public-document-pay-status', fn (Request $request) => $this->documentLimits($request, 'status', 40, 240, 240));
