@@ -164,6 +164,20 @@ class WebsiteBlogRenderer
     /** The "Blog" navigation entry, or null when the site has no published article yet. */
     public function navigationEntry(Website $website, WebsiteBlogSurface $surface): ?array
     {
+        // In these three opt-in reference templates the Content Articles
+        // Autopilot switch also controls Blog *discovery* (nav and homepage
+        // guides). Published article URLs and sitemap records are deliberately
+        // not deleted when the switch goes off: doing that would break
+        // existing links and indexed articles.
+        if (in_array((string) $website->template_key, [
+            'photo_booth_reference_kaleb',
+            'photo_booth_reference_booths',
+            'photo_booth_reference_greenbelt',
+        ], true) && ! (bool) \App\Models\ContentAutopilotSetting::query()
+            ->where('business_id', $website->business_id)->value('enabled')) {
+            return null;
+        }
+
         if (! WebsiteArticle::query()->published()->where('website_id', $website->id)->exists()) {
             return null;
         }
