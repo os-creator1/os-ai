@@ -44,6 +44,17 @@ final class ThreeReferenceTemplatesTest extends TestCase
         $this->assertSame('photo_booth_emerald', WebsiteDesigns::resolve('photo_booth_emerald', ['header_variant' => 'emerald'])->templateKey);
     }
 
+    public function test_kaleb_light_testimonial_band_defines_dark_foreground_and_muted_text(): void
+    {
+        $css = file_get_contents(public_path('css/website-design.css'));
+        $this->assertNotFalse($css);
+        $this->assertSame(1, preg_match('/\\.wd-reference-kaleb \\.wd-band-testimonials\\s*\\{([^}]+)\\}/s', $css, $matches));
+        $this->assertStringContainsString('--wd-t-bg: #f9f4e8;', $matches[1]);
+        $this->assertStringContainsString('--wd-t-ink: #1c1b19;', $matches[1]);
+        $this->assertStringContainsString('--wd-t-muted: #555046;', $matches[1]);
+        $this->assertStringContainsString('--wd-a: #846200;', $matches[1]);
+    }
+
     public function test_reference_home_preserves_interleaved_blocks_and_pins_trust_strip_below_hero(): void
     {
         $sections = [
