@@ -137,5 +137,6 @@
 <script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
 @endif
 @include('public.booking._scheduler-script')
+@include('public.analytics._script', ['analytics' => $analytics ?? null])
 </body>
 </html>

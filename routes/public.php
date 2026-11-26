@@ -456,6 +456,11 @@
      */
     Route::get('robots.txt', 'Public\RobotsController@show')->name('public.robots');
 
+    // Native website analytics (Agency landing pages + Growth websites): the one anonymous collection endpoint. CSRF-exempt
+    // (see VerifyCsrfToken) because it is called from a customer's own domain; it trusts nothing but an opaque property key.
+    Route::post('analytics/collect', 'Public\WebsiteAnalyticsCollectController@collect')
+        ->middleware('throttle:240,1')->name('public.analytics.collect');
+
     Route::prefix('sites')->group(function () {
         Route::get('{website:public_id}', 'Public\WebsiteController@home')->whereUuid('website')->middleware('attribution.capture')->name('public.website.home')
             ->missing(fn () => abort(404));

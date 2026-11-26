@@ -28,6 +28,9 @@
             '/payment/*',
             'dlr/*',
             'webhooks/prospecting/*',
+            // Native website analytics beacons come from a published page, often on the customer's own domain. Anonymous,
+            // idempotent and keyed by an opaque property key; see WebsiteAnalyticsCollectController.
+            'analytics/collect',
             // The agency-owned Telnyx Messaging Profile calls this signed endpoint
             // without a Laravel browser session. Authenticate using the existing
             // channel UID/HMAC token and Ed25519 signature in the controller,

@@ -61,7 +61,7 @@ class OutreachInitialSendJob extends Base
             return;
         }
 
-        $body = OutreachScriptRenderer::render(OutreachScriptTokens::canonicalise($opening), $eligible->workspace, $eligible->prospect);
+        $body = OutreachScriptRenderer::render(OutreachScriptTokens::canonicalise($opening), $eligible->workspace, $eligible->prospect, $eligible->campaign);
 
         if ($body === '') {
             return;

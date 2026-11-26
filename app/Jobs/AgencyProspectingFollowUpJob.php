@@ -56,6 +56,7 @@ class AgencyProspectingFollowUpJob extends Base
         $body = $bookingUrl
             ? "Just following up — here's the booking link again: {$bookingUrl}"
             : 'Just following up on my last message — let me know if you have any questions!';
+        $body = app(\App\Library\WebsiteAnalytics\AnalyticsCampaignLinks::class)->tagForWorkspace($body, $snapshot['workspace_id'], $snapshot['campaign'] ?? null);
 
         $claim = DB::transaction(function () use ($operationKey, $entitlementManager, $body) {
             if ($this->operationClaimed($operationKey)) {

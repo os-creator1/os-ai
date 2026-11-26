@@ -3,6 +3,7 @@
 namespace App\Library\AgencyOutreach;
 
 use App\Library\Merge\MergeContext;
+use App\Library\WebsiteAnalytics\AnalyticsCampaignLinks;
 use App\Library\Merge\MergeFieldRegistry;
 use App\Library\Merge\MergeFieldResolver;
 use App\Models\AgencyProspect;
@@ -34,7 +35,7 @@ final class OutreachScriptRenderer
 {
     private const LEFTOVER_TOKEN = '/\{\{[^{}]*\}\}/';
 
-    public static function render(string $template, Workspace $workspace, ?AgencyProspect $prospect = null): string
+    public static function render(string $template, Workspace $workspace, ?AgencyProspect $prospect = null, ?\App\Models\AgencyProspectCampaign $campaign = null): string
     {
         $text = '';
 
@@ -57,8 +58,18 @@ final class OutreachScriptRenderer
         }
 
         $text = preg_replace(self::LEFTOVER_TOKEN, '', $text) ?? '';
+        $text = self::tidy($text);
 
-        return self::tidy($text);
+        // FINAL step: an eligible MotionGrove landing link in the finished message gets the campaign's opaque attribution
+        // value (idempotent; unrelated URLs untouched). A prospect's campaign is resolved when the caller does not pass one.
+        try {
+            $links = app(AnalyticsCampaignLinks::class);
+            $text = $links->tag($text, $workspace, $campaign ?? $links->campaignForProspect($prospect, $workspace));
+        } catch (Throwable) {
+            // Attribution is best effort: it must never stop a message from being rendered or sent.
+        }
+
+        return $text;
     }
 
     /**

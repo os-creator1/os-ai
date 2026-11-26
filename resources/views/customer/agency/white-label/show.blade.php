@@ -34,10 +34,7 @@
     <section id="agency-white-label">
         <h2 class="mb-2">White label</h2>
 
-        <ul class="nav nav-tabs mb-3" role="tablist" data-role="white-label-tabs">
-            <li class="nav-item"><a class="nav-link {{ $tab === 'branding' ? 'active' : '' }}" href="{{ $route('show') }}" role="tab" aria-selected="{{ $tab === 'branding' ? 'true' : 'false' }}" data-role="tab-branding">Branding</a></li>
-            <li class="nav-item"><a class="nav-link {{ $tab === 'landing' ? 'active' : '' }}" href="{{ $route('show', ['tab' => 'landing']) }}" role="tab" aria-selected="{{ $tab === 'landing' ? 'true' : 'false' }}" data-role="tab-landing">Landing Page</a></li>
-        </ul>
+        @include('customer.agency.white-label._tabs')
 
         @if (session('message'))
             <div class="alert alert-{{ session('status') === 'error' ? 'danger' : 'success' }}" role="status" data-role="white-label-flash">{{ session('message') }}</div>

@@ -79,7 +79,7 @@ class OutreachFollowUpJob extends Base
             return;
         }
 
-        $body = OutreachScriptRenderer::render(OutreachScriptTokens::canonicalise((string) $step['body']), $eligible->workspace, $eligible->prospect);
+        $body = OutreachScriptRenderer::render(OutreachScriptTokens::canonicalise((string) $step['body']), $eligible->workspace, $eligible->prospect, $eligible->campaign);
 
         if ($body === '') {
             $this->cancel($member->id);

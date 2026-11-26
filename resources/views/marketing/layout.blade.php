@@ -55,5 +55,6 @@
 </main>
 @yield('footer')
 <script src="{{ $mg->asset('js/marketing.js') }}" defer></script>
+@include('public.analytics._script', ['analytics' => $analytics ?? null])
 </body>
 </html>

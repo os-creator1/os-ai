@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Public;
 
 use App\Http\Controllers\Controller;
 use App\Library\AgencySite\SiteRenderer;
+use App\Library\WebsiteAnalytics\AnalyticsClientConfig;
 use App\Library\Branding\AgencyWhiteLabelManager;
 use App\Library\Workspace\AgencyClientRelationshipManager;
 use App\Library\AgencySite\OfficialDomainPaths;
@@ -43,7 +44,7 @@ class AgencySiteController extends Controller
             return redirect()->away($to, 302)->header('Cache-Control', 'no-store');
         }
 
-        $html = $this->renderer->page($site, $values, $page);
+        $html = $this->renderer->page($site, $values, $page, null, null, app(AnalyticsClientConfig::class)->forAgencySite($site, false));
         abort_if($html === null, 404);
 
         return response($html)->header('Content-Type', 'text/html; charset=UTF-8')
@@ -74,7 +75,7 @@ class AgencySiteController extends Controller
             return redirect()->away($to, 302)->header('Cache-Control', 'no-store')->header('X-Robots-Tag', 'noindex, nofollow');
         }
 
-        $html = $this->renderer->page($site, $values, $page, null, $base);
+        $html = $this->renderer->page($site, $values, $page, null, $base, app(AnalyticsClientConfig::class)->forAgencySite($site, false));
         abort_if($html === null, 404);
 
         return response($html)->header('Content-Type', 'text/html; charset=UTF-8')

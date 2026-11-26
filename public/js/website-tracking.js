@@ -194,6 +194,7 @@
                 store('local', CONSENT_KEY, value);
                 bar.remove();
                 if (value === 'granted') { loadAll(); } else { pending.length = 0; }
+                window.dispatchEvent(new CustomEvent('mg:consent', { detail: value }));
             });
             return b;
         }
