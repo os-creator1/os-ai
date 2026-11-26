@@ -24,6 +24,7 @@
     var VISITOR_KEY = 'mg_vid';
     var SESSION_KEY = 'mg_sid';
     var SESSION_AT_KEY = 'mg_sid_at';
+    var HANDOFF_KEY = 'mg_hs';
     var CAMPAIGN_KEY = 'mg_cid';
     var IDLE_MS = 30 * 60 * 1000;
     var HEX32 = /^[a-f0-9]{32}$/;
@@ -86,8 +87,16 @@
         var at = parseInt(store('session', SESSION_AT_KEY) || '0', 10);
         var now = Date.now();
         var handed = param('mgs', HEX32);
-        if (handed) { s = handed; }
-        else if (!HEX32.test(s || '') || (now - at) > IDLE_MS) { s = randomHex(); }
+        var fresh = false;
+        if (handed && store('session', HANDOFF_KEY) !== handed) {
+            // First time this handoff is seen in this tab: it wins over unrelated storage. Reusing the SAME handoff URL later
+            // (refresh, revisit) is not a new handoff, so that visit can expire like any other.
+            s = handed; store('session', HANDOFF_KEY, handed);
+        } else if (!HEX32.test(s || '') || (now - at) > IDLE_MS) {
+            s = randomHex(); fresh = true;
+        }
+        // A NEW visit starts with no inherited campaign: only an incoming mgc (read by campaign()) can give it one.
+        if (fresh) { store('session', CAMPAIGN_KEY, ''); }
         store('session', SESSION_KEY, s);
         store('session', SESSION_AT_KEY, String(now));
         return s;

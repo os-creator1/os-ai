@@ -92,11 +92,20 @@ final class AnalyticsReport
             $buckets[$at->format($hourly ? 'Y-m-d H' : 'Y-m-d')] = ['measured' => $started !== null && $until->gt($started), 'label' => $at->format($hourly ? 'ga' : 'M j'), 'start' => $at->toIso8601String(), 'page_views' => 0, 'visits' => [], 'bookings' => 0, 'inquiries' => 0];
         }
 
+        // A visit's source is where its FIRST page view came from, even when that page view is before the selected range (a visit
+        // that began before midnight and booked after it keeps its source). Resolved from the full history of the sessions in range.
+        $visitSource = [];
+        $sessionIds = (clone $query)->reorder()->whereNotNull('session_id')->distinct()->pluck('session_id');
+        foreach ($sessionIds->chunk(500) as $chunk) {
+            foreach (WebsiteAnalyticsEvent::query()->where('property_id', $property->id)->where('kind', 'pageview')->whereIn('session_id', $chunk->all())->orderBy('id')->get(['session_id', 'campaign_id', 'referrer_host']) as $first) {
+                $visitSource[$first->session_id] ??= $first->campaign_id !== null ? 'c:' . $first->campaign_id : ($first->referrer_host !== null ? 'r:' . $first->referrer_host : self::DIRECT);
+            }
+        }
+
         $visitors = $visits = $calendar = $forms = [];
         $pageViews = $bookings = $inquiries = 0;
         $pages = [];
         $sources = [];
-        $visitSource = [];
 
         foreach ($query->cursor() as $event) {
             /** @var WebsiteAnalyticsEvent $event */
@@ -105,10 +114,7 @@ final class AnalyticsReport
             $sourceKey = $event->campaign_id !== null ? 'c:' . $event->campaign_id : ($event->referrer_host !== null ? 'r:' . $event->referrer_host : self::DIRECT);
             $session = $event->session_id ?? 'e' . $event->id;
 
-            // A visit's source is the first source it was seen with; outcomes are credited to that visit's source.
-            if ($event->kind === 'pageview') {
-                $visitSource[$session] ??= $sourceKey;
-            }
+            // Outcomes are credited to the visit's source (resolved above from the whole visit, not only this range).
             $credit = $visitSource[$session] ?? $sourceKey;
             $sources[$credit] ??= ['visits' => [], 'calendar' => [], 'forms' => [], 'bookings' => 0, 'inquiries' => 0];
 

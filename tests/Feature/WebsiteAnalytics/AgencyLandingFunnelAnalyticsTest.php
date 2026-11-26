@@ -430,6 +430,24 @@ class AgencyLandingFunnelAnalyticsTest extends TestCase
         $this->assertSame('7', app(AnalyticsReport::class)->build($property, 'bogus', 'UTC')['range']);
     }
 
+    public function test_a_visit_that_began_before_the_range_keeps_its_source_for_outcomes_inside_it(): void
+    {
+        $a = $this->agencyWithLanding('Motion Grove Photo Booth');
+        $key = $this->pageConfig($this->withHeader('User-Agent', self::PHONE_UA)->get('/photobooth')->assertOk()->getContent())['key'];
+        $property = WebsiteAnalyticsProperty::query()->where('public_key', $key)->firstOrFail();
+        $ids = $this->ids();
+        $this->beacon($this->pv($key, $ids, '/photobooth', null, 'https://www.google.com/'))->assertNoContent();
+        $this->beacon(['k' => $key, 't' => 'calendar_open', 'v' => $ids['v'], 's' => $ids['s'], 'e' => bin2hex(random_bytes(16)), 'p' => '/photobooth', 'bt' => $a['type']->public_booking_uuid])->assertNoContent();
+        // The page view happened yesterday (before "Today"); the calendar open is today.
+        WebsiteAnalyticsEvent::query()->where('kind', 'pageview')->update(['occurred_at' => '2027-02-24 10:00:00']);
+
+        $today = app(AnalyticsReport::class)->build($property, 'today', 'UTC');
+        $this->assertSame(['www.google.com'], array_column($today['sources'], 'label'), 'credited to the visit\'s real source, not Direct');
+        $this->assertSame(1, $today['sources'][0]['calendar_opens']);
+        $direct = app(AnalyticsReport::class)->build($property, 'today', 'UTC', null, 'direct');
+        $this->assertSame(0, $direct['totals']['calendar_opens'], 'and the direct-only report agrees');
+    }
+
     public function test_hourly_and_daily_buckets_follow_the_account_timezone(): void
     {
         $a = $this->agencyWithLanding('Motion Grove Photo Booth');
@@ -507,6 +525,22 @@ class AgencyLandingFunnelAnalyticsTest extends TestCase
         $property = WebsiteAnalyticsProperty::query()->where('public_key', $key)->firstOrFail();
         $this->assertSame(1, $this->events($property, 'calendar_open')->count());
         $this->assertSame('/photobooth', $this->events($property, 'calendar_open')->first()->landing, 'the landing page filter still applies on another route');
+
+        // Attribution stays with the ORIGINATING visit: the landing page view (from a referral), then the calendar tab and the booking
+        // carry the SAME visitor and visit ids (the script adopts the validated handoff over the calendar origin's own storage), so the
+        // report shows one visitor, one visit, one calendar open and one booking, all credited to the original source.
+        $origin = $this->ids();
+        $this->beacon($this->pv($key, $origin, '/photobooth', null, 'https://www.google.com/search'))->assertNoContent();
+        $this->beacon(['k' => $key, 't' => 'calendar_open', 'v' => $origin['v'], 's' => $origin['s'], 'e' => bin2hex(random_bytes(16)), 'p' => '/book/' . $uuid, 'bt' => $uuid])->assertNoContent();
+        [$date, $time] = $this->firstSlot($a['type']);
+        $this->withHeader('X-Requested-With', 'XMLHttpRequest')->postJson(route('public.booking.store', [$uuid]), $this->bookingPayload($date, $time, ['mg_pk' => $key, 'mg_v' => $origin['v'], 'mg_s' => $origin['s']]))->assertStatus(201);
+        $report = app(AnalyticsReport::class)->build($property, '7', 'UTC', null, null);
+        $mine = collect($report['sources'])->firstWhere('label', 'www.google.com');
+        $this->assertSame(1, $mine['visits']);
+        $this->assertSame(1, $mine['calendar_opens']);
+        $this->assertSame(1, $mine['bookings'], 'the booking is credited to the originating referral, not Direct / unknown');
+        $this->assertSame(1, WebsiteAnalyticsEvent::query()->where('property_id', $property->id)->where('session_id', $origin['s'])->where('kind', 'calendar_open')->count());
+        $this->assertSame(1, WebsiteAnalyticsEvent::query()->where('property_id', $property->id)->where('visitor_id', $origin['v'])->distinct()->count('visitor_id'), 'no second visitor for the same browser');
     }
 
     public function test_a_malformed_handoff_never_breaks_the_calendar_page_and_a_late_business_is_linked(): void
@@ -548,7 +582,8 @@ class AgencyLandingFunnelAnalyticsTest extends TestCase
         // A browser never reports a booking; no personal data is read; nothing is stored beyond random ids.
         $this->assertStringNotContainsString("send('booking", $js);
         $this->assertStringContainsString("var handed = param('mgv', HEX32);\n        var v = store('local', VISITOR_KEY);\n        if (handed) { v = handed;", $js, 'an incoming handoff visitor id wins over this origin\'s storage');
-        $this->assertStringContainsString("if (handed) { s = handed; }", $js, 'an incoming handoff visit id wins over this origin\'s storage');
+        $this->assertStringContainsString("store('session', HANDOFF_KEY) !== handed", $js, 'a handoff is adopted once; reusing the same URL later lets the visit expire');
+        $this->assertStringContainsString("if (fresh) { store('session', CAMPAIGN_KEY, ''); }", $js, 'a new visit does not inherit the previous visit\'s campaign');
         $this->assertStringContainsString('own.indexOf(url.origin) === -1', $js, 'booking links to third-party hosts are never decorated');
         foreach (['email', 'phone', 'first_name', 'last_name'] as $personal) {
             $this->assertStringNotContainsString($personal, strtolower($js), 'the script never reads or sends a contact detail: ' . $personal);
