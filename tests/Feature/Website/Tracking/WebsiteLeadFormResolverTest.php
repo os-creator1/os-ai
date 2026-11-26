@@ -285,6 +285,43 @@ class WebsiteLeadFormResolverTest extends TestCase
             'An unrenderable published form is not falsely advertised as ready');
     }
 
+    public function test_disabled_published_deployment_a_is_not_validated_by_other_live_lead_deployment_b(): void
+    {
+        $formA = $this->installed('photo_booth_form_availability', 'Availability form A');
+        $deploymentA = $this->offer($formA);
+        $deploymentB = $this->offer($this->installed('pb3_form_lead', 'Availability form B'));
+        $this->website->forceFill(['template_key' => 'photo_booth_reference_kaleb'])->save();
+
+        $references = app(\App\Library\Website\Forms\WebsiteFormsModuleReferences::class);
+        $frozenA = $references->resolve($this->business, $deploymentA->uid);
+        $data = ['forms_module_deployment_uid' => $deploymentA->uid, 'resolved' => $frozenA];
+        $this->assertNotNull($references->renderable($data, $this->website->fresh(), false));
+
+        $snapshot = ['pages' => [[
+            'uid' => 'contact-page',
+            'title' => 'Check Availability',
+            'is_home' => false,
+            'slug' => 'photo-booth-contact',
+            'sections' => [['type' => 'forms_module_form', 'data' => $data]],
+        ]]];
+        $surface = \App\Library\Website\Blog\WebsiteBlogSurface::custom($this->website->fresh(), 'example.test');
+        $navigation = fn () => app(\App\Library\Website\Blog\WebsiteBlogRenderer::class)
+            ->navigationPages($this->website->fresh(), $snapshot, $surface);
+
+        $this->assertTrue($navigation()[0]['has_form']);
+
+        app(FormManager::class)->setDeployment($this->business, $formA, $this->location, false, FormDeploymentSource::Website);
+        $this->assertSame($deploymentB->uid, $this->resolver()->resolve($this->business)['uid']);
+        $this->assertNull($references->renderable($data, $this->website->fresh(), false),
+            'A frozen embed is not usable after its exact deployment is disabled');
+        $this->assertFalse($navigation()[0]['has_form']);
+
+        $fallback = app(\App\Library\Website\Design\WebsiteCtaResolver::class)
+            ->resolve($this->business, $navigation(), false, 'photo_booth_reference_kaleb');
+        $this->assertNotSame('Check Availability', $fallback['label'],
+            'Another live deployment cannot make a broken published inquiry appear ready');
+    }
+
     public function test_reference_templates_never_create_a_legacy_quote_form_when_the_forms_module_is_not_ready(): void
     {
         foreach (['photo_booth_reference_kaleb', 'photo_booth_reference_booths', 'photo_booth_reference_greenbelt'] as $key) {
