@@ -67,9 +67,8 @@ final class PhotoBoothBlueprint
 
     public function pages(Business $business, Website $website, array $plan, array $context): array
     {
-        $this->announcement = $this->isReferenceTemplate(['template' => (string) $website->template_key])
-            ? trim((string) (($context['answers'] ?? [])['announcement_text'] ?? ''))
-            : '';
+        // The owner's announcement-bar text travels with every page's hero (published pages stay self-consistent).
+        $this->announcement = trim((string) (($context['answers'] ?? [])['announcement_text'] ?? ''));
 
         $facts = $this->facts($business, $website, $context);
         // What the plan decided about neighbouring pages: the events that have a page (their home cards link to it) and the
@@ -131,21 +130,26 @@ final class PhotoBoothBlueprint
     {
         $sections = [];
 
-        $hero = $this->hero($this->heroHeadline($f), $this->heroSubline($f), $this->primaryCta($f), $f['packages'] !== [] ? ['label' => 'View packages', 'url' => '/packages'] : null);
-        $sections[] = $hero;
+        $hero = $this->hero(
+            $this->copy($f, 'hero_headline', $this->heroHeadline($f), 120),
+            $this->copy($f, 'hero_subtitle', $this->heroSubline($f), 240),
+            $this->primaryCta($f),
+            $f['packages'] !== [] ? ['label' => 'View packages', 'url' => '/packages'] : null,
+        );
+        $sections[] = $this->applyHeroCopy($hero, $f);
 
         if ($f['services'] !== []) {
-            $sections[] = ['type' => 'services', 'data' => ['heading' => 'Our photo booths', 'items' => $this->serviceItems($f, array_slice($f['services'], 0, 6))]];
+            $sections[] = ['type' => 'services', 'data' => ['heading' => $this->copy($f, 'services_heading', 'Our photo booths'), 'items' => $this->serviceItems($f, array_slice($f['services'], 0, 6))]];
         }
 
         if ($f['packages'] !== []) {
-            $sections[] = ['type' => 'services', 'data' => ['heading' => 'Packages', 'items' => $this->packageItems($f, array_slice($f['packages'], 0, self::HOME_PACKAGES))]];
+            $sections[] = ['type' => 'services', 'data' => ['heading' => $this->copy($f, 'packages_heading', 'Packages'), 'items' => $this->packageItems($f, array_slice($f['packages'], 0, self::HOME_PACKAGES))]];
         } elseif ($f['pricing'] === 'custom_quote' || $f['services'] !== []) {
             $sections[] = $this->quoteSection($f);
         }
 
         if ($f['events'] !== []) {
-            $sections[] = ['type' => 'services', 'data' => ['heading' => 'Events we cover', 'items' => array_map(
+            $sections[] = ['type' => 'services', 'data' => ['heading' => $this->copy($f, 'events_heading', 'Events we cover'), 'items' => array_map(
                 // An event type that has its own page links to it by its stable id (the renderer finds the page by identity).
                 fn (BusinessService $e) => array_filter(['name' => Str::limit($e->name, 120, ''), 'description' => $this->prose($e->description), 'service_uid' => in_array($e->uid, $f['event_page_uids'] ?? [], true) ? $e->uid : null]),
                 array_slice($f['events'], 0, 12)
@@ -153,7 +157,7 @@ final class PhotoBoothBlueprint
         }
 
         if (count($f['gallery']) >= self::HOME_GALLERY_MIN) {
-            $sections[] = ['type' => 'gallery', 'data' => ['heading' => 'Photos', 'items' => array_map(fn (string $uid) => ['image' => $uid], array_slice($f['gallery'], 0, self::HOME_GALLERY))]];
+            $sections[] = ['type' => 'gallery', 'data' => ['heading' => $this->copy($f, 'gallery_heading', 'Photos'), 'items' => array_map(fn (string $uid) => ['image' => $uid], array_slice($f['gallery'], 0, self::HOME_GALLERY))]];
         }
 
         if ($f['backdrops'] !== []) {
@@ -163,19 +167,38 @@ final class PhotoBoothBlueprint
         $sections[] = $this->process($f);
 
         if ($f['advantages'] !== []) {
-            $sections[] = ['type' => 'services', 'data' => ['heading' => 'Why choose ' . Str::limit($f['name'], 80, ''), 'items' => $this->advantageItems(array_slice($f['advantages'], 0, 12))]];
+            $sections[] = ['type' => 'services', 'data' => ['heading' => $this->copy($f, 'features_heading', 'Why choose ' . Str::limit($f['name'], 80, '')), 'items' => $this->advantageItems(array_slice($f['advantages'], 0, 12))]];
+        }
+
+        // "Hey, I'm …": only when the owner gave a first name AND has a story to tell; nothing is invented.
+        $founderName = trim((string) ($f['copy']['founder_name'] ?? ''));
+        if ($founderName !== '' && trim((string) $f['about']) !== '') {
+            $sections[] = ['type' => 'image_text', 'data' => [
+                'heading' => Str::limit('Hey, I\'m ' . $founderName . '!', 120, ''),
+                'body' => Str::limit((string) $f['about'], 3000, ''),
+                'image' => null,
+                'image_position' => 'right',
+            ]];
         }
 
         if ($f['testimonials'] !== []) {
-            $sections[] = ['type' => 'testimonials', 'data' => ['heading' => 'What customers say', 'items' => array_slice($f['testimonials'], 0, 10)]];
+            $sections[] = ['type' => 'testimonials', 'data' => array_filter([
+                'heading' => $this->copy($f, 'reviews_heading', 'What customers say'),
+                'items' => array_slice($f['testimonials'], 0, 10),
+                'badge' => $this->googleBadge($f),
+            ])];
         }
 
         $faq = array_slice($f['faq'], 0, self::HOME_FAQ);
         if ($faq !== []) {
-            $sections[] = ['type' => 'faq', 'data' => ['heading' => 'Frequently asked questions', 'items' => $faq]];
+            $sections[] = ['type' => 'faq', 'data' => ['heading' => $this->copy($f, 'faq_heading', 'Frequently asked questions'), 'items' => $faq]];
         }
 
-        $sections[] = $this->closingCta($f);
+        $closing = $this->closingCta($f);
+        if (isset($f['copy']['closing_heading'], $closing['data'])) {
+            $closing['data']['heading'] = $this->copy($f, 'closing_heading', (string) ($closing['data']['heading'] ?? ''));
+        }
+        $sections[] = $closing;
         $sections[] = $this->contactDetails($f['business']);
 
         return $sections;
@@ -208,14 +231,9 @@ final class PhotoBoothBlueprint
             $this->copy($f, 'hero_subtitle', $this->heroSubline($f), 240),
             $this->primaryCta($f),
         );
+        $hero = $this->applyHeroCopy($hero, $f);
         if ($greenbelt && $this->googleBadge($f) !== null) {
             $hero['data']['review_badge'] = $this->googleBadge($f);
-        }
-        if (($f['copy']['hero_eyebrow'] ?? '') !== '') {
-            $hero['data']['eyebrow'] = Str::limit((string) $f['copy']['hero_eyebrow'], 80, '');
-        }
-        if (in_array($f['copy']['hero_focus'] ?? null, ['center', 'top', 'bottom', 'left', 'right'], true)) {
-            $hero['data']['image_focus'] = $f['copy']['hero_focus'];
         }
         $intro = trim((string) $f['about']) === '' ? null : [
             'type' => 'image_text',
@@ -410,6 +428,25 @@ final class PhotoBoothBlueprint
         $value = trim((string) ($f['copy'][$key] ?? ''));
 
         return Str::limit($value !== '' ? $value : $default, $max, '');
+    }
+
+    /**
+     * The owner's optional hero tagline and focal point (questionnaire `hero_eyebrow`, `hero_focus`), for every Photo Booth design.
+     *
+     * @param array<string, mixed> $hero
+     * @param array<string, mixed> $f
+     * @return array<string, mixed>
+     */
+    private function applyHeroCopy(array $hero, array $f): array
+    {
+        if (($f['copy']['hero_eyebrow'] ?? '') !== '') {
+            $hero['data']['eyebrow'] = Str::limit((string) $f['copy']['hero_eyebrow'], 80, '');
+        }
+        if (in_array($f['copy']['hero_focus'] ?? null, ['center', 'top', 'bottom', 'left', 'right'], true)) {
+            $hero['data']['image_focus'] = $f['copy']['hero_focus'];
+        }
+
+        return $hero;
     }
 
     /** Whole sentences of `$text` that fit `$max` characters; null when even the first sentence does not fit. */

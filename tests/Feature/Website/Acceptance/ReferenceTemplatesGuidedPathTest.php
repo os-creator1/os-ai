@@ -184,6 +184,51 @@ final class ReferenceTemplatesGuidedPathTest extends TestCase
         $this->assertArrayNotHasKey('announcement', collect($sections)->firstWhere('type', 'hero')['data']);
     }
 
+    public function test_canonical_templates_honor_the_same_copy_answers_and_change_nothing_without_them(): void
+    {
+        // Without any of the optional answers a canonical template keeps its exact default wording and no announcement.
+        $this->tenant(['name' => 'Canonical Fixture'], ['city' => 'Boise', 'region' => 'ID']);
+        $this->completeGuidedSetup();
+        $this->uploadGalleryPhotos(6);
+        Website::where('business_id', $this->business->id)->update(['template_key' => 'photo_booth_modern']);
+        $this->post($this->url('generate'), ['answers_revision' => $this->wizardSession()->answers_revision])->assertRedirect();
+        $plain = Website::where('business_id', $this->business->id)->firstOrFail()->pages()->where('is_home', true)->firstOrFail()->sections;
+        $this->assertSame('Our photo booths', collect($plain)->firstWhere('type', 'services')['data']['heading']);
+        $this->assertArrayNotHasKey('announcement', $plain[0]['data']);
+        $this->assertArrayNotHasKey('eyebrow', $plain[0]['data']);
+        $this->assertNull(collect($plain)->firstWhere('data.heading', "Hey, I'm Casey!"));
+    }
+
+    public function test_canonical_templates_use_the_answers_the_owner_gave(): void
+    {
+        $this->tenant(['name' => 'Canonical Fixture'], ['city' => 'Boise', 'region' => 'ID']);
+        $this->completeGuidedSetup();
+        $this->uploadGalleryPhotos(6);
+        foreach ([
+            'hero_headline' => 'Canonical owner headline', 'hero_subtitle' => 'Canonical supporting line.', 'hero_eyebrow' => 'Canonical tagline',
+            'hero_focus' => 'bottom', 'announcement_text' => 'Canonical announcement', 'founder_name' => 'Casey',
+            'services_heading' => 'Canonical booths', 'faq_heading' => 'Canonical questions', 'google_rating' => '4.8', 'google_review_count' => '12',
+        ] as $key => $value) {
+            $this->continueStep($key, ['value' => $value])->assertOk();
+        }
+        $this->continueStep('testimonials', ['items' => [['quote' => 'Fixture review.', 'author_name' => 'A. Person', 'author_title' => 'Client']]])->assertOk();
+
+        Website::where('business_id', $this->business->id)->update(['template_key' => 'photo_booth_modern']);
+        $this->post($this->url('generate'), ['answers_revision' => $this->wizardSession()->answers_revision])->assertRedirect();
+        $sections = Website::where('business_id', $this->business->id)->firstOrFail()->pages()->where('is_home', true)->firstOrFail()->sections;
+
+        $hero = $sections[0]['data'];
+        $this->assertSame('Canonical owner headline', $hero['heading']);
+        $this->assertSame('Canonical supporting line.', $hero['subheading']);
+        $this->assertSame('Canonical tagline', $hero['eyebrow']);
+        $this->assertSame('bottom', $hero['image_focus']);
+        $this->assertSame('Canonical announcement', $hero['announcement']);
+        $this->assertSame('Canonical booths', collect($sections)->firstWhere('type', 'services')['data']['heading']);
+        $this->assertSame('Canonical questions', collect($sections)->firstWhere('type', 'faq')['data']['heading']);
+        $this->assertStringContainsString('Casey', (string) collect($sections)->firstWhere('type', 'image_text')['data']['heading']);
+        $this->assertSame(['rating' => '4.8', 'count' => 12, 'source' => 'Google'], collect($sections)->firstWhere('type', 'testimonials')['data']['badge']);
+    }
+
     private function dumpIfRequested(string $templateKey, Website $website): void
     {
         $out = getenv('DUMP_OUT');
