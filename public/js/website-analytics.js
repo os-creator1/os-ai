@@ -120,6 +120,10 @@
         var url;
         try { url = new URL(href, window.location.href); } catch (e) { return; }
         if (!BOOK_PATH.test(url.pathname)) { return; }
+        // Only MotionGrove's own calendar: this page's origin or the collection endpoint's origin, never a third-party scheduler.
+        var own = [window.location.origin];
+        try { own.push(new URL(config.endpoint, window.location.href).origin); } catch (e) { /* ignore */ }
+        if (own.indexOf(url.origin) === -1) { return; }
         url.searchParams.set('mgp', config.key);
         url.searchParams.set('mgv', visitorId());
         url.searchParams.set('mgs', sessionId());

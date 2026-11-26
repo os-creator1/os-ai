@@ -503,6 +503,30 @@ class AgencyLandingFunnelAnalyticsTest extends TestCase
         $this->assertSame('/photobooth', $this->events($property, 'calendar_open')->first()->landing, 'the landing page filter still applies on another route');
     }
 
+    public function test_a_malformed_handoff_never_breaks_the_calendar_page_and_a_late_business_is_linked(): void
+    {
+        $a = $this->agencyWithLanding('Motion Grove Photo Booth', 'photobooth', false);
+        $uuid = $a['type']->public_booking_uuid;
+        $this->get(route('public.booking.show', [$uuid]) . '?mgp[]=x')->assertOk();
+
+        // A property created before the Agency's Business existed is linked to it on the next render.
+        $key = $this->pageConfig($this->withHeader('User-Agent', self::PHONE_UA)->get('/photobooth')->assertOk()->getContent())['key'];
+        $property = WebsiteAnalyticsProperty::query()->where('public_key', $key)->firstOrFail();
+        $property->forceFill(['business_id' => null])->save();
+        $this->get('/photobooth')->assertOk();
+        $this->assertSame((int) $a['business']->id, (int) $property->fresh()->business_id);
+    }
+
+    public function test_a_legacy_follow_up_link_is_tagged_with_its_campaign(): void
+    {
+        $a = $this->agencyWithLanding('Motion Grove Photo Booth');
+        $campaign = $this->managedCampaign($a['workspace'], ['name' => 'Legacy blast']);
+        $text = "Just following up — here's the booking link again: " . url('/photobooth');
+        $tagged = app(AnalyticsCampaignLinks::class)->tagForWorkspace($text, (int) $a['workspace']->id, $campaign);
+        $this->assertStringContainsString('/photobooth?mgc=c', $tagged);
+        $this->assertSame($text, app(AnalyticsCampaignLinks::class)->tagForWorkspace($text, (int) $a['workspace']->id, null), 'no campaign, no tag');
+    }
+
     public function test_the_script_contract_consent_privacy_handoff_and_no_booking_claims(): void
     {
         $js = preg_replace('#/\*.*?\*/#s', '', file_get_contents(public_path('js/website-analytics.js')));
@@ -517,6 +541,7 @@ class AgencyLandingFunnelAnalyticsTest extends TestCase
         }
         // A browser never reports a booking; no personal data is read; nothing is stored beyond random ids.
         $this->assertStringNotContainsString("send('booking", $js);
+        $this->assertStringContainsString('own.indexOf(url.origin) === -1', $js, 'booking links to third-party hosts are never decorated');
         foreach (['email', 'phone', 'first_name', 'last_name'] as $personal) {
             $this->assertStringNotContainsString($personal, strtolower($js), 'the script never reads or sends a contact detail: ' . $personal);
         }

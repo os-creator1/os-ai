@@ -73,6 +73,12 @@ final class AnalyticsProperties
         return WebsiteAnalyticsProperty::query()->where('public_key', $key)->first();
     }
 
+    /** Is this Business website live (published and entitled) right now? Checked BEFORE a property is created. */
+    public function websiteLive(Website $website): bool
+    {
+        return $this->gate->allows($website);
+    }
+
     /** Is the measured site still live right now? A property of an unpublished/suspended site accepts nothing. */
     public function isLive(WebsiteAnalyticsProperty $property): bool
     {
@@ -124,6 +130,11 @@ final class AnalyticsProperties
         $existing = WebsiteAnalyticsProperty::query()->where($key)->first();
 
         if ($existing !== null) {
+            // The owner's Business can appear (or change) after the first render: keep the tenant link current.
+            if (($attributes['business_id'] ?? null) !== null && (int) $existing->business_id !== (int) $attributes['business_id']) {
+                $existing->forceFill(['business_id' => (int) $attributes['business_id']])->save();
+            }
+
             return $existing;
         }
 

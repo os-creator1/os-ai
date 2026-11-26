@@ -49,9 +49,14 @@ final class AnalyticsClientConfig
             return null;
         }
 
+        // Measurement starts when the site is first served LIVE, never at an earlier unpublished render.
+        if (! $this->properties->websiteLive($website)) {
+            return null;
+        }
+
         $property = $this->properties->ensureForWebsite($website);
 
-        if ($property === null || ! $this->properties->isLive($property)) {
+        if ($property === null) {
             return null;
         }
 

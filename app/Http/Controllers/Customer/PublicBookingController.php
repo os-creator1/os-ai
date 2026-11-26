@@ -86,7 +86,7 @@ class PublicBookingController extends Controller
             'slots' => $slots,
             'brand' => $this->brand($type, $business, $location, $staffIds),
             // Native website analytics: only when this calendar was opened from a measured site's link (handoff params).
-            'analytics' => $request->query('mgp') === null ? null : app(\App\Library\WebsiteAnalytics\AnalyticsClientConfig::class)->forHandoff((string) $request->query('mgp'), $type),
+            'analytics' => is_string($request->query('mgp')) ? app(\App\Library\WebsiteAnalytics\AnalyticsClientConfig::class)->forHandoff($request->query('mgp'), $type) : null,
             'timezones' => $this->timezoneOptions(),
             // The transactional-SMS consent box is offered only when texting is enabled for this
             // Booking Type AND the Business could actually text (never a consent for a dead channel).
