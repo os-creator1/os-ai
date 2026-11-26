@@ -717,7 +717,17 @@ final class MediaBindingService
 
             if ($embed !== null) {
                 // The installed niche lead form: only the stable Website-source deployment uid is stored, never a URL or markup.
-                $pages[$index]['sections'][] = ['type' => 'forms_module_form', 'data' => ['heading' => $dog ? 'Request a stay' : 'Check availability', 'forms_module_deployment_uid' => $embed['uid']]];
+                $moduleSection = ['type' => 'forms_module_form', 'data' => ['heading' => $dog ? 'Request a stay' : 'Check availability', 'forms_module_deployment_uid' => $embed['uid']]];
+                if ($this->isPhotoBoothReferenceTemplate($website)) {
+                    // The dedicated Check Availability page puts the real form
+                    // immediately after its hero; phone/email remain below it.
+                    $sectionsArray = $pages[$index]['sections'] ?? [];
+                    $heroIndex = collect($sectionsArray)->search(fn ($section) => ($section['type'] ?? null) === 'hero');
+                    array_splice($sectionsArray, $heroIndex === false ? 0 : (int) $heroIndex + 1, 0, [$moduleSection]);
+                    $pages[$index]['sections'] = $sectionsArray;
+                } else {
+                    $pages[$index]['sections'][] = $moduleSection;
+                }
                 // Beside the form, the business's real phone and email (a visitor who prefers to call, and the confirmed
                 // facts the site's LocalBusiness data may then state): the same shape as the benchmark's inquiry page.
                 $pages[$index]['sections'] = $this->withContactFallback($pages[$index]['sections']);
@@ -743,12 +753,30 @@ final class MediaBindingService
                 continue;
             }
 
+            if ($this->isPhotoBoothReferenceTemplate($website)) {
+                // A reference site must use the REAL Forms-module inquiry
+                // pipeline. Never conjure a second legacy Website quote form.
+                $pages[$index]['sections'] = $this->withContactFallback($pages[$index]['sections'] ?? []);
+                $warnings[] = 'Check Availability is not configured: install the Photo Booth Business Pack lead form, activate it, and enable its Website deployment in Forms. The website has no live inquiry form until then.';
+
+                continue;
+            }
+
             // No niche lead form is installed (a business outside the blueprint niches): the long-standing quote form.
             $form = WebsiteStarterDraftService::ensurePhotoBoothQuoteForm($website);
             $pages[$index]['sections'][] = ['type' => 'form', 'data' => ['heading' => $dog ? 'Request a stay' : 'Request a quote', 'form_uid' => $form->uid]];
         }
 
         return $pages;
+    }
+
+    private function isPhotoBoothReferenceTemplate(Website $website): bool
+    {
+        return in_array((string) $website->template_key, [
+            'photo_booth_reference_kaleb',
+            'photo_booth_reference_booths',
+            'photo_booth_reference_greenbelt',
+        ], true);
     }
 
     /** @param array<int, array<string, mixed>> $sections */
