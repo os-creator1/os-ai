@@ -145,13 +145,20 @@ class PublicBlogTest extends TestCase
 
         $surface = \App\Library\Website\Blog\WebsiteBlogSurface::custom($website->fresh(), self::DOMAIN);
         $renderer = app(\App\Library\Website\Blog\WebsiteBlogRenderer::class);
-        $this->assertNull($renderer->navigationEntry($website->fresh(), $surface), 'Blog is not shown when Content Autopilot is off');
+        $this->assertSame('Blog', $renderer->navigationEntry($website->fresh(), $surface)['title'],
+            'Switching only the draft template must not change the original published site');
+
+        // This is the published revision theme a reference site would carry.
+        // The native blog route still serves its existing articles when
+        // discovery is switched off.
+        $referenceRevision = ['website' => ['theme' => ['header_variant' => 'reference-kaleb']]];
+        $this->assertNull($renderer->navigationEntry($website->fresh(), $surface, $referenceRevision));
 
         $setting = \App\Models\ContentAutopilotSetting::query()->create(['business_id' => $business->id, 'enabled' => true]);
-        $this->assertSame('Blog', $renderer->navigationEntry($website->fresh(), $surface)['title']);
+        $this->assertSame('Blog', $renderer->navigationEntry($website->fresh(), $surface, $referenceRevision)['title']);
 
         $setting->update(['enabled' => false]);
-        $this->assertNull($renderer->navigationEntry($website->fresh(), $surface));
+        $this->assertNull($renderer->navigationEntry($website->fresh(), $surface, $referenceRevision));
 
         // Hiding the Blog navigation is not an instruction to delete or
         // unpublish already indexed customer articles.
