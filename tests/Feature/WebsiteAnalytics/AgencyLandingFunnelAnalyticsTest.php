@@ -444,6 +444,7 @@ class AgencyLandingFunnelAnalyticsTest extends TestCase
         $today = app(AnalyticsReport::class)->build($property, 'today', 'UTC');
         $this->assertSame(['www.google.com'], array_column($today['sources'], 'label'), 'credited to the visit\'s real source, not Direct');
         $this->assertSame(1, $today['sources'][0]['calendar_opens']);
+        $this->assertSame(['www.google.com'], array_unique(array_column($today['recent'], 'source')), 'Recent activity shows the visit\'s resolved source too');
         $direct = app(AnalyticsReport::class)->build($property, 'today', 'UTC', null, 'direct');
         $this->assertSame(0, $direct['totals']['calendar_opens'], 'and the direct-only report agrees');
     }

@@ -168,7 +168,8 @@ final class AnalyticsReport
                 'kind' => $event->kind,
                 'what' => self::KIND_LABELS[$event->kind] ?? $event->kind,
                 'path' => $event->path,
-                'source' => $this->sourceLabel($event->campaign_id !== null ? 'c:' . $event->campaign_id : ($event->referrer_host !== null ? 'r:' . $event->referrer_host : self::DIRECT), $campaignNames),
+                // The visit's RESOLVED source (same as the Sources table), not the outcome row's own (empty) referrer.
+                'source' => $this->sourceLabel(($event->session_id !== null ? ($visitSource[$event->session_id] ?? null) : null) ?? ($event->campaign_id !== null ? 'c:' . $event->campaign_id : ($event->referrer_host !== null ? 'r:' . $event->referrer_host : self::DIRECT)), $campaignNames),
                 // A short, random, non-identifying code so one anonymous visit can be followed down the list.
                 'visitor' => $event->visitor_id === null ? null : substr($event->visitor_id, -4),
             ];
