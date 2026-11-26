@@ -434,7 +434,9 @@ final class PhotoBoothBlueprint
         $rating = trim((string) ($f['copy']['google_rating'] ?? ''));
         $count = trim((string) ($f['copy']['google_review_count'] ?? ''));
 
-        return preg_match('/^[1-5](\.\d)?$/', $rating) === 1 && preg_match('/^\d{1,5}$/', $count) === 1
+        // Both must be real and positive (the section validator requires a count of at least 1): anything else simply omits the
+        // optional badge and never fails generation.
+        return preg_match('/^[1-5](\.\d)?$/', $rating) === 1 && preg_match('/^\d{1,5}$/', $count) === 1 && (int) $count >= 1
             ? ['rating' => $rating, 'count' => (int) $count, 'source' => 'Google']
             : null;
     }

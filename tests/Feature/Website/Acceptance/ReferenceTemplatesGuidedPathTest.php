@@ -170,7 +170,9 @@ final class ReferenceTemplatesGuidedPathTest extends TestCase
         $this->completeGuidedSetup();
         $this->uploadGalleryPhotos(6);
         $this->continueStep('testimonials', ['items' => [['quote' => 'Fixture review.', 'author_name' => 'A. Person', 'author_title' => 'Client']]])->assertOk();
-        $this->continueStep('google_rating', ['value' => '5.0'])->assertOk(); // a rating without a count is never shown
+        // A rating with a zero count (or none) is never shown, and must not fail the whole generation.
+        $this->continueStep('google_rating', ['value' => '4.9'])->assertOk();
+        $this->continueStep('google_review_count', ['value' => '0'])->assertOk();
 
         Website::where('business_id', $this->business->id)->update(['template_key' => 'photo_booth_reference_greenbelt']);
         $this->post($this->url('generate'), ['answers_revision' => $this->wizardSession()->answers_revision])->assertRedirect();
