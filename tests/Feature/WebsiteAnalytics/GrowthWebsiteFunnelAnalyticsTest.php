@@ -260,6 +260,19 @@ class GrowthWebsiteFunnelAnalyticsTest extends TestCase
         $this->assertStringContainsString("new CustomEvent('mg:consent'", file_get_contents(public_path('js/website-tracking.js')));
     }
 
+    public function test_on_site_navigation_on_the_customers_own_domain_is_never_a_referral_source(): void
+    {
+        $g = $this->growthSite(false);
+        $config = $this->config($this->withHeader('User-Agent', self::UA)->get($g['host'] . '/')->assertOk()->getContent());
+        $domain = $g['website']->domains()->value('domain');
+        $this->beacon($this->base($config['key'], 'pageview', $this->ids(), ['p' => '/', 'r' => 'https://' . $domain . '/services']))->assertNoContent();
+        $this->beacon($this->base($config['key'], 'pageview', $this->ids(), ['p' => '/', 'r' => 'https://www.' . $domain . '/']))->assertNoContent();
+        $this->beacon($this->base($config['key'], 'pageview', $this->ids(), ['p' => '/', 'r' => 'https://www.google.com/']))->assertNoContent();
+
+        $hosts = WebsiteAnalyticsEvent::query()->orderBy('id')->pluck('referrer_host')->all();
+        $this->assertSame([null, null, 'www.google.com'], $hosts);
+    }
+
     public function test_previews_unpublished_sites_and_scanners_are_never_counted_for_a_growth_site(): void
     {
         $g = $this->growthSite();

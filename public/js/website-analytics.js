@@ -72,11 +72,12 @@
     function param(name, pattern) { var v = params.get(name); return v && pattern.test(v) ? v : null; }
 
     function visitorId() {
+        // A validated handoff (from the originating site's own link) wins over whatever this origin already stored, so the
+        // calendar page continues the SAME browser instead of counting a second one.
+        var handed = param('mgv', HEX32);
         var v = store('local', VISITOR_KEY);
-        if (!HEX32.test(v || '')) {
-            v = param('mgv', HEX32) || randomHex();
-            store('local', VISITOR_KEY, v);
-        }
+        if (handed) { v = handed; store('local', VISITOR_KEY, v); }
+        else if (!HEX32.test(v || '')) { v = randomHex(); store('local', VISITOR_KEY, v); }
         return v;
     }
 
@@ -85,7 +86,7 @@
         var at = parseInt(store('session', SESSION_AT_KEY) || '0', 10);
         var now = Date.now();
         var handed = param('mgs', HEX32);
-        if (handed && (!HEX32.test(s || '') || (now - at) > IDLE_MS)) { s = handed; }
+        if (handed) { s = handed; }
         else if (!HEX32.test(s || '') || (now - at) > IDLE_MS) { s = randomHex(); }
         store('session', SESSION_KEY, s);
         store('session', SESSION_AT_KEY, String(now));

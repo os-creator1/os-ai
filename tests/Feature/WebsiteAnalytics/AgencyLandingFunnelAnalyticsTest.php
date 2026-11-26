@@ -547,6 +547,8 @@ class AgencyLandingFunnelAnalyticsTest extends TestCase
         }
         // A browser never reports a booking; no personal data is read; nothing is stored beyond random ids.
         $this->assertStringNotContainsString("send('booking", $js);
+        $this->assertStringContainsString("var handed = param('mgv', HEX32);\n        var v = store('local', VISITOR_KEY);\n        if (handed) { v = handed;", $js, 'an incoming handoff visitor id wins over this origin\'s storage');
+        $this->assertStringContainsString("if (handed) { s = handed; }", $js, 'an incoming handoff visit id wins over this origin\'s storage');
         $this->assertStringContainsString('own.indexOf(url.origin) === -1', $js, 'booking links to third-party hosts are never decorated');
         foreach (['email', 'phone', 'first_name', 'last_name'] as $personal) {
             $this->assertStringNotContainsString($personal, strtolower($js), 'the script never reads or sends a contact detail: ' . $personal);

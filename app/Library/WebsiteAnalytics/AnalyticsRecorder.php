@@ -118,7 +118,7 @@ final class AnalyticsRecorder
             'session_id' => $session,
             'path' => $path,
             'landing' => $this->landing($property, $path),
-            'referrer_host' => $this->referrerHost($payload['r'] ?? null, $request),
+            'referrer_host' => $this->referrerHost($payload['r'] ?? null, $request, $property),
             'campaign_id' => $campaign?->id,
             'subject_type' => $subjectType,
             'subject_id' => $subjectId,
@@ -200,7 +200,7 @@ final class AnalyticsRecorder
         return $site === null ? null : $this->properties->agencyLanding($site);
     }
 
-    private function referrerHost(mixed $referrer, Request $request): ?string
+    private function referrerHost(mixed $referrer, Request $request, WebsiteAnalyticsProperty $property): ?string
     {
         $host = is_string($referrer) && $referrer !== '' ? parse_url(mb_substr($referrer, 0, 500), PHP_URL_HOST) : null;
 
@@ -210,10 +210,24 @@ final class AnalyticsRecorder
 
         $host = strtolower($host);
 
-        // Our own pages are not a "source".
+        // Our own pages are not a "source": the platform and marketing hosts, and the measured website's OWN domains (a customer
+        // domain's beacon is sent to the platform host, so the request host alone cannot tell on-site navigation apart).
         $own = array_filter([strtolower((string) $request->getHost()), strtolower((string) parse_url((string) config('app.url'), PHP_URL_HOST))]);
+        $own = array_merge($own, array_map('strtolower', (array) config('marketing.hosts', [])));
 
-        return in_array($host, $own, true) ? null : mb_substr($host, 0, 120);
+        if ($property->owner_type === WebsiteAnalyticsProperty::OWNER_WEBSITE && $property->website_id !== null) {
+            $own = array_merge($own, \App\Models\WebsiteDomain::query()->where('website_id', $property->website_id)->pluck('domain')->map(fn ($d) => strtolower((string) $d))->all());
+        }
+
+        foreach ($own as $candidate) {
+            $bare = str_starts_with($candidate, 'www.') ? substr($candidate, 4) : $candidate;
+
+            if ($host === $bare || $host === 'www.' . $bare) {
+                return null;
+            }
+        }
+
+        return mb_substr($host, 0, 120);
     }
 
     private function path(mixed $value): ?string
