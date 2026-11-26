@@ -88,11 +88,15 @@
         var now = Date.now();
         var handed = param('mgs', HEX32);
         var fresh = false;
+        // Arriving with a DIFFERENT campaign than the one this visit already carries is a new visit, so one visit never mixes two campaigns.
+        var incoming = param('mgc', /^c[a-z0-9]{9}$/);
+        var kept = store('session', CAMPAIGN_KEY);
+        var switched = !!(incoming && kept && incoming !== kept);
         if (handed && store('session', HANDOFF_KEY) !== handed) {
             // First time this handoff is seen in this tab: it wins over unrelated storage. Reusing the SAME handoff URL later
             // (refresh, revisit) is not a new handoff, so that visit can expire like any other.
             s = handed; fresh = true; store('session', HANDOFF_KEY, handed);
-        } else if (!HEX32.test(s || '') || (now - at) > IDLE_MS) {
+        } else if (switched || !HEX32.test(s || '') || (now - at) > IDLE_MS) {
             s = randomHex(); fresh = true;
         }
         // A NEW visit (expired, or an adopted handoff) starts with no inherited campaign: only an incoming mgc (read by campaign()) can give it one.
