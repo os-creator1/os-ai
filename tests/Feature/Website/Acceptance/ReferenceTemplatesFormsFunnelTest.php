@@ -195,4 +195,22 @@ final class ReferenceTemplatesFormsFunnelTest extends TestCase
         $this->assertStringNotContainsString('Check Availability', $home);
         $this->assertNull(collect($website->pages()->where('slug', 'photo-booth-contact')->firstOrFail()->sections)->firstWhere('type', 'forms_module_form'));
     }
+
+    public function test_an_unentitled_forms_module_never_earns_the_check_availability_claim(): void
+    {
+        $this->tenant(['name' => 'Funnel Fixture Booths'], ['city' => 'Boise', 'region' => 'ID']);
+        [, $deployment] = $this->installLeadForm();
+        $this->completeGuidedSetup();
+        $this->uploadGalleryPhotos(6);
+        Website::where('business_id', $this->business->id)->update(['template_key' => 'photo_booth_reference_greenbelt']);
+        $this->post($this->url('generate'), ['answers_revision' => $this->wizardSession()->answers_revision])->assertRedirect();
+        $website = Website::where('business_id', $this->business->id)->firstOrFail();
+
+        $this->assertStringContainsString('Check Availability', $this->previewHtml($website, ''));
+
+        // The public form refuses visitors without the Forms entitlement, so the site must not advertise it.
+        $this->denyFeature($this->workspace, \App\Enums\Entitlement\PlatformFeature::Forms);
+        $this->assertStringNotContainsString('Check Availability', $this->previewHtml($website, ''));
+        $this->assertNotNull($deployment);
+    }
 }

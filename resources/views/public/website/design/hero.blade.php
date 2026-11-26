@@ -17,7 +17,7 @@
     }
 
     $ctaResolver = app(\App\Library\Website\Design\WebsiteCtaResolver::class);
-    $primary = $ctaResolver->sectionCta($data['primary_cta'] ?? null, $siteCta, $pageUrls ?? []);
+    $primary = $ctaResolver->sectionCta($data['primary_cta'] ?? null, $siteCta, $pageUrls ?? [], str_starts_with((string) $design->key, 'reference-'));
     $secondaryUrl = $ctaResolver->resolveLink(trim((string) ($data['secondary_cta']['url'] ?? '')), $pageUrls ?? []);
     $secondary = $secondaryUrl !== '' ? array_merge($data['secondary_cta'], ['url' => $secondaryUrl]) : null;
     $isSplit = in_array($heroVariant, ['split', 'split-soft', 'editorial-split'], true) && $image !== null;

@@ -92,9 +92,10 @@ final class WebsiteCtaResolver
      *
      * @param  ?array{label?: ?string, url?: ?string}  $cta
      * @param  array{kind: string, label: string, url: string}|null  $siteCta
+     * @param  bool  $referenceInquiry  true only when the page renders with one of the three reference designs
      * @return array{label: string, url: string}|null
      */
-    public function sectionCta(?array $cta, ?array $siteCta, array $pageUrls = []): ?array
+    public function sectionCta(?array $cta, ?array $siteCta, array $pageUrls = [], bool $referenceInquiry = false): ?array
     {
         $url = $this->resolveLink(trim((string) ($cta['url'] ?? '')), $pageUrls);
 
@@ -104,7 +105,8 @@ final class WebsiteCtaResolver
             // CTA band authored earlier may still say "Contact us"; once a
             // valid form is on the published page all buttons targeting the
             // same URL consistently read "Check Availability".
-            if ($url === ($pageUrls['photo-booth-contact'] ?? null)) {
+            // Only the three reference families normalise an authored inquiry label; every other template keeps its own button as written.
+            if ($referenceInquiry && $url === ($pageUrls['photo-booth-contact'] ?? null)) {
                 if (($siteCta['kind'] ?? null) === 'form'
                     && ($siteCta['label'] ?? null) === 'Check Availability'
                     && $url === ($siteCta['url'] ?? null)) {

@@ -87,7 +87,9 @@ final class WebsiteLeadFormResolver
             foreach ($deployments as $deployment) {
                 $resolved = $this->embed->resolve($business, (string) $deployment->uid);
 
-                if ($resolved !== null) {
+                // "Ready" means the PUBLIC form would accept a visitor: the same authority the public endpoint re-proves on every request
+                // (account active/unlocked, Forms entitlement, version), not only deployment/form/location state.
+                if ($resolved !== null && $this->publiclyAvailable((string) $deployment->uid)) {
                     return ['state' => self::STATE_READY, 'message' => '', 'embed' => $resolved + ['component_key' => $key], 'component_key' => $key];
                 }
             }
@@ -101,6 +103,17 @@ final class WebsiteLeadFormResolver
             'embed' => null,
             'component_key' => array_key_first($installed),
         ];
+    }
+
+    private function publiclyAvailable(string $deploymentUid): bool
+    {
+        try {
+            app(\App\Library\Forms\FormDeploymentResolver::class)->resolve($deploymentUid);
+
+            return true;
+        } catch (\App\Library\Forms\Exceptions\FormUnavailableException) {
+            return false;
+        }
     }
 
     /**

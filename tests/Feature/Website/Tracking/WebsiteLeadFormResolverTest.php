@@ -216,6 +216,7 @@ class WebsiteLeadFormResolverTest extends TestCase
                 ['label' => 'Contact us', 'url' => '/photo-booth-contact'],
                 $cta,
                 ['photo-booth-contact' => 'https://example.test/photo-booth-contact'],
+                true,
             );
             $this->assertSame(['label' => 'Check Availability', 'url' => 'https://example.test/photo-booth-contact'], $button,
                 'All generated primary inquiry buttons must use the actual active Forms funnel label');
@@ -232,7 +233,7 @@ class WebsiteLeadFormResolverTest extends TestCase
 
         $validForm = ['kind' => 'form', 'label' => 'Check Availability', 'url' => $urls['photo-booth-contact']];
         $this->assertSame(['label' => 'Check Availability', 'url' => $urls['photo-booth-contact']],
-            $resolver->sectionCta($savedButton, $validForm, $urls));
+            $resolver->sectionCta($savedButton, $validForm, $urls, true));
 
         foreach ([
             ['kind' => 'contact_page', 'label' => 'Contact us', 'url' => $urls['photo-booth-contact']],
@@ -240,11 +241,11 @@ class WebsiteLeadFormResolverTest extends TestCase
             ['kind' => 'phone', 'label' => 'Call us', 'url' => 'tel:+15555550123'],
         ] as $fallback) {
             $this->assertSame(['label' => $fallback['label'], 'url' => $fallback['url']],
-                $resolver->sectionCta($savedButton, $fallback, $urls),
+                $resolver->sectionCta($savedButton, $fallback, $urls, true),
                 'Never claim an availability inquiry is operational when the form cannot render');
         }
 
-        $this->assertNull($resolver->sectionCta($savedButton, null, $urls),
+        $this->assertNull($resolver->sectionCta($savedButton, null, $urls, true),
             'No working contact path means no primary availability button');
     }
 

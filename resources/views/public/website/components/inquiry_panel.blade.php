@@ -6,7 +6,7 @@
     Renders nothing when it has no destination, phone or fact to offer.
 --}}
 @php
-    $panelCta = app(\App\Library\Website\Design\WebsiteCtaResolver::class)->sectionCta($data['cta'] ?? null, $siteCta ?? null, $pageUrls ?? []);
+    $panelCta = app(\App\Library\Website\Design\WebsiteCtaResolver::class)->sectionCta($data['cta'] ?? null, $siteCta ?? null, $pageUrls ?? [], isset($design) && str_starts_with((string) $design->key, 'reference-'));
     // A PUBLISHED page carries `resolved` (frozen at publish, like `contact_details`): that value is final even when it is null, and the
     // live business is never consulted. Only Preview, which has no snapshot, reads the current business — still honouring Show phone.
     $panelResolved = $data['resolved'] ?? ['phone' => ($data['show_phone'] ?? false) ? ($website->business?->phone ?: null) : null];

@@ -7,7 +7,7 @@
 @php
     $resolver = app(\App\Library\Website\Design\WebsiteCtaResolver::class);
     $buttons = collect($data['buttons'] ?? [])
-        ->map(fn ($button) => $resolver->sectionCta($button, $siteCta ?? null, $pageUrls ?? []))
+        ->map(fn ($button) => $resolver->sectionCta($button, $siteCta ?? null, $pageUrls ?? [], isset($design) && str_starts_with((string) $design->key, 'reference-')))
         ->filter()
         ->unique('url')
         ->values();

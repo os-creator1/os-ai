@@ -56,6 +56,19 @@ Status: ✅ structure and styling match the reference within the stated differen
 | Check Availability | `/check-availability` | `green-check-{1440,390}.jpg` | Same fail-closed note. Reference form page is a plum page with a photo strip. | 🟡 |
 | Location (6) / Venues page | — | — | Venue cards on home are implemented (owner's venues only). Location pages not generated / not compared. | ⛔ |
 
+## Deliberate deviations from the reference (accessibility), found by Codex review and measured
+| Where | Reference | Generated | Why |
+|---|---|---|---|
+| Kaleb yellow pill buttons | white label on `#fac815` (~1.6:1) | `#111` label (~12:1) | WCAG AA |
+| Kaleb script words/headings on white | `#fac815` | `#b58900` on light bands (`#fac815` kept on dark bands) | ≥3:1 for large text |
+| Booths cyan→blue buttons | white label (~1.9:1 on the cyan end) | `#061633` label (≥5:1) | WCAG AA |
+| Greenbelt peach / lavender buttons | (peach: plum label, as reference) | lavender strip button label darkened to plum | was white on `#a79bc8` (2.6:1) |
+Button contrast was measured from computed styles on the rendered pages (every `.wd-btn-primary`, all three templates): all ≥5:1 after the fix.
+
+## Behaviour fixes from independent review (this round)
+- A Check Availability claim now requires that the PUBLIC form would accept a visitor (account active, not locked, **Forms entitlement**, version), not just deployment/form/location state.
+- The inquiry-label normalisation (authored "Check Availability" → the resolved site CTA) applies only to the three reference designs; canonical templates keep the button as written.
+
 ## Cross-cutting facts verified (automated)
 - Answer → section mapping and fixed order for all three templates through the real v3 questionnaire (`ReferenceTemplatesGuidedPathTest`).
 - Forms funnel with a live Forms-module lead form, and its fail-closed counterpart (`ReferenceTemplatesFormsFunnelTest`).

@@ -108,4 +108,19 @@ final class ThreeReferenceTemplatesTest extends TestCase
         $this->assertStringContainsString('--wd-head-weight: 900;', $css);          // Greenbelt heavy uppercase headings
         $this->assertStringContainsString('--wd-btn-radius: 9999px;', $css);        // Greenbelt peach pills
     }
+
+    public function test_inquiry_label_normalisation_applies_only_to_reference_designs(): void
+    {
+        $resolver = app(\App\Library\Website\Design\WebsiteCtaResolver::class);
+        $authored = ['label' => 'Check Availability', 'url' => '/photo-booth-contact'];
+        $siteCta = ['kind' => 'contact_page', 'label' => 'Contact us', 'url' => '/contact-here'];
+        $pageUrls = ['photo-booth-contact' => '/contact-here'];
+
+        // A canonical template keeps the button its owner/generator wrote, whatever the site CTA is.
+        $this->assertSame(['label' => 'Check Availability', 'url' => '/contact-here'], $resolver->sectionCta($authored, $siteCta, $pageUrls));
+        // A reference design never advertises Check Availability unless the resolved site CTA itself is the live-form CTA.
+        $this->assertSame(['label' => 'Contact us', 'url' => '/contact-here'], $resolver->sectionCta($authored, $siteCta, $pageUrls, true));
+        $live = ['kind' => 'form', 'label' => 'Check Availability', 'url' => '/contact-here'];
+        $this->assertSame(['label' => 'Check Availability', 'url' => '/contact-here'], $resolver->sectionCta($authored, $live, $pageUrls, true));
+    }
 }
