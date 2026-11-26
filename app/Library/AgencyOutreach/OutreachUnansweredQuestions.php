@@ -117,6 +117,9 @@ final class OutreachUnansweredQuestions
             $entries = array_map(static function (array $entry) use ($faqId, $item): array {
                 if ($entry['id'] === $faqId) {
                     $entry['aliases'] = OutreachFaq::aliases([...$entry['aliases'] ?? [], $item->question]);
+                    if (! in_array(OutreachFaq::aliasKey($item->question), $entry['aliases'], true)) {
+                        throw ValidationException::withMessages(['faq_id' => 'This answer has reached its alternative phrasing limit.']);
+                    }
                 }
 
                 return $entry;

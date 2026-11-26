@@ -166,19 +166,27 @@ final class OutreachReplyComposer
 
         foreach ($answers as $answer) {
             $kept = [];
-
             foreach (preg_split('/(?<=[.!?])\s+/u', $answer) ?: [] as $sentence) {
-                $urls = self::urls($sentence);
-
-                if ($urls !== [] && array_intersect($urls, $seen) !== []) {
+                $removed = false;
+                $clean = preg_replace_callback('~(?:https?://|www\\.)[^\\s<>"\']+~iu', static function (array $match) use (&$seen, &$removed): string {
+                    $url = rtrim($match[0], '.,;:!?)');
+                    if (in_array($url, $seen, true)) {
+                        $removed = true;
+                        return substr($match[0], strlen($url));
+                    }
+                    $seen[] = $url;
+                    return $match[0];
+                }, $sentence) ?? $sentence;
+                $clean = trim($clean);
+                // A link-only instruction adds nothing once its link is already in the reply.
+                if ($removed && preg_match('/^(?:[^:]{0,20}:\s*)?(?:(?:our |the )?(?:web ?site|link|details)(?: is| here)?|(?:you can )?book (?:a )?(?:quick )?call here)?[\s:.,!]*$/iu', $clean)) {
                     continue;
                 }
-
-                $seen = array_merge($seen, $urls);
-                $kept[] = $sentence;
+                if ($clean !== '') {
+                    $kept[] = $clean;
+                }
             }
-
-            $text = trim(implode(' ', $kept));
+            $text = implode(' ', $kept);
 
             if ($text !== '') {
                 $out[] = $text;
@@ -193,7 +201,7 @@ final class OutreachReplyComposer
     {
         preg_match_all('~(?:https?://|www\.)[^\s<>"\']+~iu', $text, $m);
 
-        return array_map(static fn (string $u): string => mb_strtolower(rtrim($u, '.,;:!?)')), $m[0]);
+        return array_map(static fn (string $u): string => rtrim($u, '.,;:!?)'), $m[0]);
     }
 
     /** @param list<string> $answers */

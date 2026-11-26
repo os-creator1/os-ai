@@ -34,22 +34,22 @@ class OutreachApprovedAnswerMatcherTest extends TestCase
     private const FAQ = [
         ['id' => 'fee', 'question' => 'What is the monthly fee?', 'answer' => 'Fixture: the monthly fee is $500.'],
         ['id' => 'guarantee', 'question' => 'Do you guarantee leads?', 'answer' => 'Fixture: we do not guarantee lead numbers; you get a weekly lead report.'],
-        ['id' => 'clients', 'question' => 'Who are your existing clients?', 'answer' => 'Fixture: we work with 12 local home-service companies.'],
+        ['id' => 'clients', 'question' => 'Who are your existing clients?', 'answer' => 'Fixture: yes, we work with photo booth and wedding vendors.'],
         ['id' => 'testimonials', 'question' => 'Do you have testimonials?', 'answer' => 'Fixture: read testimonials at https://fixture.example.test/reviews'],
-        ['id' => 'ownership', 'question' => 'Who owns the leads?', 'answer' => 'Fixture: you own every lead.'],
+        ['id' => 'ownership', 'question' => 'Who owns the leads?', 'answer' => 'Fixture: you own the leads and customer information.'],
         ['id' => 'terms', 'question' => 'How long is the contract and can I cancel?', 'answer' => 'Fixture: month to month, cancel any time with 30 days notice.'],
         ['id' => 'human', 'question' => 'Is this a human or AI?', 'answer' => 'Fixture: a real person on our team handles every conversation.'],
     ];
 
-    private const NINE_QUESTIONS = "What's the monthly fee?\n"
-        . "How much should I budget for ads?\n"
-        . "Do you guarantee leads?\n"
-        . "Who are your existing clients?\n"
-        . "Can I speak with three of your customers?\n"
-        . "Do I own the leads?\n"
-        . "How long is the contract?\n"
+    private const NINE_QUESTIONS = "What is your monthly fee?\n"
+        . "Is there a separate advertising budget?\n"
+        . "Do you guarantee a certain number of qualified leads?\n"
+        . "Do you have existing photo booth or wedding vendor clients?\n"
+        . "Can I speak with three current customers?\n"
+        . "Do I own my leads and customer information?\n"
+        . "Is there a long-term contract?\n"
         . "Can I cancel anytime?\n"
-        . 'Will I be dealing with a human or AI?';
+        . 'Are real people handling inquiries, or is most of it AI automation?';
 
     protected function setUp(): void
     {
@@ -90,15 +90,15 @@ class OutreachApprovedAnswerMatcherTest extends TestCase
         $this->assertSame([
             "Fixture: the monthly fee is $500.\n"
             . "Fixture: we do not guarantee lead numbers; you get a weekly lead report.\n"
-            . "Fixture: we work with 12 local home-service companies.\n"
-            . "Fixture: you own every lead.\n"
+            . "Fixture: yes, we work with photo booth and wedding vendors.\n"
+            . "Fixture: you own the leads and customer information.\n"
             . "Fixture: month to month, cancel any time with 30 days notice.\n"
             . "Fixture: a real person on our team handles every conversation.\n\n"
             . self::M1,
         ], $this->sentBodies(), 'Every covered question is answered in order; contract + cancel share one answer, rendered once.');
 
         $this->assertSame(
-            ['How much should I budget for ads?', 'Can I speak with three of your customers?'],
+            ['Is there a separate advertising budget?', 'Can I speak with three current customers?'],
             $this->openQuestions($workspace),
             'The monthly fee never answers ad spend, testimonials never answer references: each gets its own item.',
         );
