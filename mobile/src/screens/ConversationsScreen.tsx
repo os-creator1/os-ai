@@ -8,13 +8,14 @@ import { NotificationBanner } from '../notifications/NotificationBanner';
 import { useRealtime } from '../realtime/RealtimeProvider';
 import { colors, space } from '../theme';
 import type { RootStack } from '../navigation/types';
-import { Button, ErrorState, Loading } from './ui';
+import { Button, ErrorState, Loading, useBottomInset } from './ui';
 
 type Props = NativeStackScreenProps<RootStack, 'Conversations'>;
 type Filter = 'all' | 'unread';
 
 export function ConversationsScreen({ navigation }: Props) {
   const { api, scope, business, clearBusiness, signOut } = useAuth();
+  const bottomInset = useBottomInset();
   const [items, setItems] = useState<ConversationSummary[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
@@ -236,7 +237,7 @@ export function ConversationsScreen({ navigation }: Props) {
           </Pressable>
         )}
       />
-      <View style={s.footer}>
+      <View testID="conversations-bottom-bar" style={[s.footer, { paddingBottom: space.sm + bottomInset }]}>
         <Button title="Switch business" variant="plain" onPress={() => void clearBusiness()} />
         <Button title="Sign out" variant="plain" onPress={signOut} />
       </View>

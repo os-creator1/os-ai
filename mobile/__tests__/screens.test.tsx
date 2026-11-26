@@ -1,7 +1,8 @@
 import React from 'react';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react-native';
 import { AuthProvider, useAuth } from '../src/auth/AuthContext';
-import { Pressable, Text, View } from 'react-native';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
 import * as SecureStore from 'expo-secure-store';
 import { ApiError } from '../src/api/client';
 import { LoginScreen } from '../src/screens/LoginScreen';
@@ -158,6 +159,31 @@ describe('signed-in screens', () => {
     await signedIn(() => <CallsScreen />);
     await waitFor(() => screen.getByText(/Not available yet/));
     expect(screen.getByText('Voice calling is coming in the next milestone.')).toBeTruthy();
+  });
+});
+
+describe('bottom bars clear the system navigation bar (edge-to-edge)', () => {
+  // A phone with a 48dp Android navigation bar at the bottom.
+  const metrics = { frame: { x: 0, y: 0, width: 400, height: 800 }, insets: { top: 24, left: 0, right: 0, bottom: 48 } };
+  const withInsets = (ui: React.ReactElement) => <SafeAreaProvider initialMetrics={metrics}>{ui}</SafeAreaProvider>;
+  const paddingBottom = (testID: string) => StyleSheet.flatten(screen.getByTestId(testID).props.style).paddingBottom;
+
+  it('lifts the Switch business / Sign out bar above the navigation bar', async () => {
+    await signedIn(() => withInsets(<ConversationsScreen {...({ navigation: nav, route: { params: undefined } } as any)} />));
+    await waitFor(() => screen.getByText('Ann Lee'));
+    expect(paddingBottom('conversations-bottom-bar')).toBe(8 + 48);
+    expect(screen.getByText('Sign out')).toBeTruthy();
+  });
+
+  it('lifts the business selector Sign out button above the navigation bar', async () => {
+    await signedIn(() => withInsets(<BusinessSelectorScreen />));
+    expect(paddingBottom('business-selector')).toBe(16 + 48);
+  });
+
+  it('keeps the normal spacing when there is no bottom inset', async () => {
+    await signedIn(() => <ConversationsScreen {...({ navigation: nav, route: { params: undefined } } as any)} />);
+    await waitFor(() => screen.getByText('Ann Lee'));
+    expect(paddingBottom('conversations-bottom-bar')).toBe(8);
   });
 });
 

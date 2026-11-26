@@ -10,7 +10,7 @@ import { setActiveConversation } from '../notifications/target';
 import { useRealtime } from '../realtime/RealtimeProvider';
 import type { RootStack } from '../navigation/types';
 import { colors, space } from '../theme';
-import { Button, ErrorState, Loading } from './ui';
+import { Button, ErrorState, Loading, useBottomInset } from './ui';
 
 type Props = NativeStackScreenProps<RootStack, 'ConversationDetail'>;
 
@@ -38,6 +38,7 @@ export function ConversationDetailScreen(props: Props) {
 
 function ConversationThread({ route, navigation }: Props) {
   const { api, scope } = useAuth();
+  const bottomInset = useBottomInset();
   const uid = route.params.uid;
   const [data, setData] = useState<ConversationDetail | null>(null);
   const [older, setOlder] = useState<Message[]>([]);
@@ -339,7 +340,7 @@ function ConversationThread({ route, navigation }: Props) {
           onRetry={dispatch}
         />}
       />
-      <View style={s.composer}>
+      <View testID="composer" style={[s.composer, { paddingBottom: space.sm + bottomInset }]}>
         <TextInput
           style={s.input}
           placeholder="Message"
