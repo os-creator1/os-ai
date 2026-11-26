@@ -315,8 +315,11 @@ final class OutreachQuestionMatcher
         }
 
         // "Can I speak with three of your customers" is a reference request, not a client list.
-        if (isset($topics['references'])) {
-            unset($topics['clients']);
+        if (isset($topics['references'], $topics['clients'])) {
+            $outsideReference = preg_replace(self::TOPICS['references'], ' ', $norm);
+            if (preg_match(self::TOPICS['clients'], $outsideReference) !== 1) {
+                unset($topics['clients']);
+            }
         }
 
         // The broad intents are last resorts, as in classify(): "is the fee per event?" is a pricing

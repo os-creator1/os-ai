@@ -296,6 +296,8 @@ class OutreachApprovedAnswerMatcherTest extends TestCase
         [$workspace, $business, , $campaign] = $this->scenario([
             ['id' => 'setup', 'question' => 'What is the setup fee?', 'keywords' => ['setup'], 'answer' => 'Fixture: setup.'],
             ['id' => 'monthly', 'question' => 'Monthly fee?', 'keywords' => ['monthly'], 'answer' => 'Fixture: monthly.'],
+            self::FAQ[2],
+            ['id' => 'ref', 'question' => 'Can I speak with references?', 'answer' => 'Fixture: contact our references.'],
             ['id' => 'refund', 'question' => 'Refunds?', 'keywords' => ['refund'], 'answer' => 'Fixture: refund policy.'],
             ['id' => 'budget', 'question' => 'Is there an ad budget?', 'aliases' => ['What is the monthly fee and ad budget?'], 'answer' => 'Fixture: budget.'],
         ]);
@@ -310,6 +312,9 @@ class OutreachApprovedAnswerMatcherTest extends TestCase
         $this->enroll($workspace, $campaign, $this->prospect($workspace, '12025555011'));
         $this->inbound($business, 'What are the setup and monthly fees?', '12025555011');
         $this->assertSame("Fixture: setup.\nFixture: monthly.\n\n" . self::M1, $this->sentBodies()[3]);
+        $this->enroll($workspace, $campaign, $this->prospect($workspace, '12025555012'));
+        $this->inbound($business, 'Can you send references and a list of your existing clients?', '12025555012');
+        $this->assertSame("Fixture: contact our references.\n" . self::FAQ[2]['answer'] . "\n\n" . self::M1, $this->sentBodies()[4]);
         $this->assertSame([], $this->openQuestions($workspace));
     }
 
