@@ -602,7 +602,12 @@ class WebsiteController extends CustomerBaseController
                 'title' => $candidate->title,
                 'is_home' => $candidate->is_home,
                 'slug' => $candidate->slug,
-                'has_form' => collect($candidate->sections ?? [])->contains(fn ($section) => ($section['type'] ?? null) === 'form'),
+                'has_form' => collect($candidate->sections ?? [])->contains(fn ($section) =>
+                    ($section['type'] ?? null) === 'form' ||
+                    (($section['type'] ?? null) === 'forms_module_form' &&
+                        app(\App\Library\Website\Forms\WebsiteFormsModuleReferences::class)
+                            ->renderable((array) ($section['data'] ?? []), $website, true) !== null)
+                ),
                 'service_uid' => ($candidate->page_intent['service_uid'] ?? null)
                     ?: (str_starts_with((string) $candidate->slug, 'service-')
                         ? collect($candidate->sections ?? [])->map(fn ($section) => $section['data']['service_uid'] ?? null)->filter()->first()
