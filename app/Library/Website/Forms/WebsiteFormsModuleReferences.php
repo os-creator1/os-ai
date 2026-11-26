@@ -100,14 +100,40 @@ final class WebsiteFormsModuleReferences
 
         $frozen = $data['resolved'] ?? null;
 
-        if ($uid === '' || ! is_array($frozen) || (string) ($frozen['uid'] ?? '') !== $uid) {
+        if (! is_array($frozen)) {
             return null;
         }
 
-        // Keep the published embed's frozen presentation, but verify that
-        // this EXACT deployment still accepts submissions for this Business.
-        // An alternative live deployment must never make a disabled form
-        // on a previously published page look operational.
+        // Existing published templates intentionally retain their frozen
+        // embed until their owner republishes. The three new reference
+        // templates have an inquiry-first promise: their public CTA may
+        // advertise Check Availability only when the EXACT deployed form
+        // embedded in the page can still receive submissions.
+        //
+        // Read the PUBLISHED revision, not website.template_key, because an
+        // owner may have switched a draft look without publishing it.
+        $reference = $website->published_revision_id === null
+            ? in_array((string) $website->template_key, [
+                'photo_booth_reference_kaleb',
+                'photo_booth_reference_booths',
+                'photo_booth_reference_greenbelt',
+            ], true)
+            : in_array(
+                (string) (\App\Models\WebsiteRevision::find($website->published_revision_id)?->snapshot['website']['theme']['header_variant'] ?? ''),
+                ['reference-kaleb', 'reference-booths', 'reference-greenbelt'],
+                true,
+            );
+
+        if (! $reference) {
+            return $frozen;
+        }
+
+        if ($uid === '' || (string) ($frozen['uid'] ?? '') !== $uid) {
+            return null;
+        }
+
+        // Preserve published styling/version while checking operational
+        // eligibility live; a different active form cannot rescue this UID.
         return $this->resolve($website->business, $uid) !== null ? $frozen : null;
     }
 
