@@ -192,17 +192,20 @@ final class PhotoBoothBlueprint
         $greenbelt = $key === 'photo_booth_reference_greenbelt';
 
         $hero = $this->hero(
-            $this->referenceHeroHeadline($f),
-            $this->heroSubline($f),
+            $this->copy($f, 'hero_headline', $this->referenceHeroHeadline($f), 120),
+            $this->copy($f, 'hero_subtitle', $this->heroSubline($f), 240),
             $this->primaryCta($f),
             $f['packages'] !== [] ? ['label' => 'View packages', 'url' => '/packages'] : null,
         );
+        if (in_array($f['copy']['hero_focus'] ?? null, ['center', 'top', 'bottom', 'left', 'right'], true)) {
+            $hero['data']['image_focus'] = $f['copy']['hero_focus'];
+        }
         $intro = trim((string) $f['about']) === '' ? null : [
             'type' => 'image_text',
             'data' => [
-                'heading' => $kaleb ? 'We make every event extraordinary!' :
+                'heading' => $this->copy($f, 'intro_heading', $kaleb ? 'We make every event extraordinary!' :
                     ($booths ? 'Photo booth rental' . ($f['city'] === null ? '' : ' in ' . $f['city']) :
-                    'Looking for a photo booth rental' . ($f['city'] === null ? '?' : ' in ' . $f['city'] . '?')),
+                    'Looking for a photo booth rental' . ($f['city'] === null ? '?' : ' in ' . $f['city'] . '?'))),
                 'body' => Str::limit((string) $f['about'], 3000, ''),
                 'image' => null,
                 'image_position' => $greenbelt ? 'left' : 'right',
@@ -212,7 +215,7 @@ final class PhotoBoothBlueprint
         $boothCards = $f['services'] === [] ? null : [
             'type' => 'services',
             'data' => [
-                'heading' => $greenbelt ? 'Our photo booths' : 'Our photo booth experience',
+                'heading' => $this->copy($f, 'services_heading', $greenbelt ? 'Our photo booths' : 'Our photo booth experience'),
                 'role' => 'booths',
                 'items' => $this->serviceItems($f, array_slice($f['services'], 0, 6)),
             ],
@@ -220,8 +223,8 @@ final class PhotoBoothBlueprint
         $featureCards = $f['advantages'] === [] ? null : [
             'type' => 'services',
             'data' => [
-                'heading' => $kaleb ? 'All of our packages include' :
-                    ($booths ? 'Special features & add-ons' : 'What makes our service special'),
+                'heading' => $this->copy($f, 'features_heading', $kaleb ? 'All of our packages include' :
+                    ($booths ? 'Special features & add-ons' : 'What makes our service special')),
                 'role' => 'advantages',
                 'items' => $this->advantageItems(array_slice($f['advantages'], 0, 12)),
             ],
@@ -229,8 +232,8 @@ final class PhotoBoothBlueprint
         $events = $f['events'] === [] ? null : [
             'type' => 'services',
             'data' => [
-                'heading' => $greenbelt ? 'Rentals for every event' :
-                    ($booths ? 'What type of event are you planning?' : 'Events we cover'),
+                'heading' => $this->copy($f, 'events_heading', $greenbelt ? 'Rentals for every event' :
+                    ($booths ? 'What type of event are you planning?' : 'Events we cover')),
                 'role' => 'events',
                 'items' => array_map(
                     fn (BusinessService $e) => array_filter([
@@ -245,31 +248,31 @@ final class PhotoBoothBlueprint
         $packages = $f['packages'] === [] ? null : [
             'type' => 'services',
             'data' => [
-                'heading' => $greenbelt ? 'Our packages for your next event' : 'Packages',
+                'heading' => $this->copy($f, 'packages_heading', $greenbelt ? 'Our packages for your next event' : 'Packages'),
                 'items' => $this->packageItems($f, array_slice($f['packages'], 0, self::HOME_PACKAGES)),
             ],
         ];
         $gallery = count($f['gallery']) < self::HOME_GALLERY_MIN ? null : [
             'type' => 'gallery',
             'data' => [
-                'heading' => $greenbelt ? 'Photo booth event gallery' : 'See some of our favorite events',
+                'heading' => $this->copy($f, 'gallery_heading', $greenbelt ? 'Photo booth event gallery' : 'See some of our favorite events'),
                 'items' => array_map(fn (string $uid) => ['image' => $uid], array_slice($f['gallery'], 0, self::HOME_GALLERY)),
             ],
         ];
         $reviews = $f['testimonials'] === [] ? null : [
             'type' => 'testimonials',
-            'data' => ['heading' => 'Reviews', 'items' => array_slice($f['testimonials'], 0, 10)],
+            'data' => ['heading' => $this->copy($f, 'reviews_heading', 'Reviews'), 'items' => array_slice($f['testimonials'], 0, 10)],
         ];
         $places = $f['areas'] === [] ? null : [
             'type' => 'text',
             'data' => [
-                'heading' => 'Areas we serve',
+                'heading' => $this->copy($f, 'areas_heading', 'Areas we serve'),
                 'body' => 'We serve events in ' . $this->joinList(array_slice($f['areas'], 0, 12)) . '.',
             ],
         ];
         $faq = $f['faq'] === [] ? null : [
             'type' => 'faq',
-            'data' => ['heading' => 'Frequently asked questions', 'items' => array_slice($f['faq'], 0, self::HOME_FAQ)],
+            'data' => ['heading' => $this->copy($f, 'faq_heading', 'Frequently asked questions'), 'items' => array_slice($f['faq'], 0, self::HOME_FAQ)],
         ];
 
         // Greenbelt's corporate-feature panel is shown ONLY if the owner has
@@ -293,10 +296,27 @@ final class PhotoBoothBlueprint
             default => [$hero, $intro, $events, $featureCards, $reviews, $packages, $corporatePanel, $gallery, $faq, $places],
         };
 
-        $sections[] = $this->closingCta($f);
+        $closing = $this->closingCta($f);
+        if (isset($f['copy']['closing_heading'], $closing['data'])) {
+            $closing['data']['heading'] = $this->copy($f, 'closing_heading', (string) ($closing['data']['heading'] ?? ''));
+        }
+        $sections[] = $closing;
         $sections[] = $this->contactDetails($f['business']);
 
         return array_values(array_filter($sections));
+    }
+
+    /**
+     * An owner-supplied reference-design text (questionnaire answer `$key`), else the design's deterministic default.
+     * Trimmed and length-bounded; a blank answer never overrides the default.
+     *
+     * @param array<string, mixed> $f
+     */
+    private function copy(array $f, string $key, string $default, int $max = 120): string
+    {
+        $value = trim((string) ($f['copy'][$key] ?? ''));
+
+        return Str::limit($value !== '' ? $value : $default, $max, '');
     }
 
     /** Exact reference family headline structure from genuine business facts. */
@@ -794,6 +814,13 @@ final class PhotoBoothBlueprint
             'backdrops' => $backdrops,
             'about' => $about,
             'package_links' => (array) ($context['package_links'] ?? []),
+            'copy' => array_filter(
+                array_intersect_key($answers, array_flip([
+                    'hero_headline', 'hero_subtitle', 'hero_focus', 'intro_heading', 'services_heading', 'features_heading',
+                    'events_heading', 'packages_heading', 'gallery_heading', 'reviews_heading', 'areas_heading', 'faq_heading', 'closing_heading',
+                ])),
+                fn ($v) => is_string($v) && trim($v) !== '',
+            ),
         ];
     }
 

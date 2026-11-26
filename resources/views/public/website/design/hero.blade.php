@@ -22,9 +22,11 @@
     $secondary = $secondaryUrl !== '' ? array_merge($data['secondary_cta'], ['url' => $secondaryUrl]) : null;
     $isSplit = in_array($heroVariant, ['split', 'split-soft', 'editorial-split'], true) && $image !== null;
     $isEditorial = $heroVariant === 'editorial-split';
+    // Owner-chosen focal point of the hero photo (questionnaire `hero_focus`); only a fixed vocabulary reaches the style attribute.
+    $heroFocus = in_array($data['image_focus'] ?? null, ['center', 'top', 'bottom', 'left', 'right'], true) ? $data['image_focus'] : null;
 @endphp
 <section class="wd-hero wd-hero-{{ $heroVariant }} @if ($image) wd-hero-photo @else wd-hero-typographic @endif @if (! $isHomePage) wd-hero-inner-page @endif @if ($isSplit) wd-hero-is-split @endif"
-    data-testid="site-hero">
+    data-testid="site-hero" @if ($heroFocus) style="--wd-hero-focus: {{ $heroFocus === 'center' ? 'center' : 'center ' . $heroFocus }};" @endif>
     @if ($image && $heroVariant === 'fullbleed')
         {{-- A decorative full-bleed photo: eager, high priority, sized by the viewport. --}}
         {{ \App\Library\Website\Media\ResponsiveImage::tag($image, '100vw', ['eager' => true, 'priority' => true, 'class' => 'wd-hero-bg', 'alt' => '']) }}

@@ -79,4 +79,31 @@ final class ThreeReferenceTemplatesTest extends TestCase
             $this->assertSame(['hero', 'trust_strip', 'image_text', 'services', 'text', 'testimonials', 'services', 'faq', 'cta'], array_column($ordered, 'type'));
         }
     }
+
+    public function test_questionnaire_collects_independent_hero_and_section_heading_answers_all_optional(): void
+    {
+        $steps = collect(\Database\Seeders\PhotoboothWebsiteSetupQuestionnaireV3Seeder::steps())->keyBy('key');
+        $keys = ['hero_headline', 'hero_subtitle', 'hero_focus', 'intro_heading', 'services_heading', 'features_heading', 'events_heading',
+            'packages_heading', 'gallery_heading', 'reviews_heading', 'areas_heading', 'faq_heading', 'closing_heading'];
+
+        foreach ($keys as $key) {
+            $this->assertTrue($steps->has($key), "Missing questionnaire step {$key}");
+            $this->assertFalse($steps[$key]['required'], "{$key} must stay optional so older flows and blank answers keep deterministic defaults");
+            $this->assertSame('answers', $steps[$key]['target_module']);
+        }
+
+        $this->assertSame(['center', 'top', 'bottom', 'left', 'right'], array_keys($steps['hero_focus']['options']));
+        $this->assertSame('hero_copy', $steps['hero_headline']['screen']);
+        $this->assertSame('section_headings', $steps['faq_heading']['screen']);
+    }
+
+    public function test_reference_css_uses_the_measured_reference_values(): void
+    {
+        $css = (string) file_get_contents(public_path('css/website-design.css'));
+        $this->assertStringContainsString('--wd-btn-radius: 75px;', $css);          // Kaleb pill buttons
+        $this->assertStringContainsString('--wd-announce-bg: #fac815;', $css);      // Kaleb yellow announcement bar
+        $this->assertStringContainsString('linear-gradient(90deg, #188bf6, #00c9ff)', $css); // Booths gradient buttons
+        $this->assertStringContainsString('--wd-head-weight: 900;', $css);          // Greenbelt heavy uppercase headings
+        $this->assertStringContainsString('--wd-btn-radius: 9999px;', $css);        // Greenbelt peach pills
+    }
 }

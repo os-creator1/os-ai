@@ -92,6 +92,7 @@ final class WebsiteSectionValidator
                 'heading' => 'required|string|max:120',
                 'subheading' => 'nullable|string|max:240',
                 'background_image' => 'nullable|string',
+                'image_focus' => 'nullable|in:center,top,bottom,left,right',
                 'primary_cta' => 'nullable|array',
                 'primary_cta.label' => 'required_with:primary_cta|string|max:40',
                 'primary_cta.url' => 'required_with:primary_cta|string',
