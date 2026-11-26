@@ -21,7 +21,7 @@
 @endphp
 <section class="website-section website-services @if ($wd) wd-services wd-services-{{ $variant }} @if ($isPackages) wd-packages @endif @if ($role) wd-role wd-role-{{ $role }} @endif @endif" @if ($isPackages) data-testid="packages-section" @endif>
     @if (! empty($data['heading']))
-        <h2 class="wd-section-title">{{ $data['heading'] }}</h2>
+        <h2 class="wd-section-title">{{ ($design ?? null) && ($design->variants['accent_titles'] ?? false) ? $design->accentHeading((string) $data['heading']) : $data['heading'] }}</h2>
     @endif
     <div class="website-services-grid @if ($wd) wd-grid @endif">
         @foreach (array_values($items) as $itemIndex => $item)

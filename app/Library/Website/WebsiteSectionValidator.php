@@ -214,7 +214,12 @@ final class WebsiteSectionValidator
         $rules['ref'] = 'nullable|string|regex:/^[a-z0-9-]{1,32}$/';
         if ($type === WebsiteSectionType::Hero) {
             $rules['eyebrow'] = 'nullable|string|max:80';
+            $rules['compact'] = 'nullable|boolean';
             $rules['announcement'] = 'nullable|string|max:160';
+            $rules['review_badge'] = 'nullable|array';
+            $rules['review_badge.rating'] = 'required_with:review_badge|string|regex:/^[1-5](\.\d)?$/';
+            $rules['review_badge.count'] = 'required_with:review_badge|integer|min:1|max:99999';
+            $rules['review_badge.source'] = 'required_with:review_badge|in:Google';
         }
         if ($type === WebsiteSectionType::Testimonials) {
             $rules['badge'] = 'nullable|array';

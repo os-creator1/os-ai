@@ -11,7 +11,7 @@
 @endphp
 <section class="website-section website-faq">
     @if (! empty($data['heading']))
-        <h2 class="wd-section-title">{{ $data['heading'] }}</h2>
+        <h2 class="wd-section-title">{{ ($design ?? null) && ($design->variants['accent_titles'] ?? false) ? $design->accentHeading((string) $data['heading']) : $data['heading'] }}</h2>
     @endif
     <div class="website-faq-list">
         @foreach ($faqItems as $item)

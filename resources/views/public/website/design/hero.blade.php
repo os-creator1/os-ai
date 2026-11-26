@@ -25,7 +25,7 @@
     // Owner-chosen focal point of the hero photo (questionnaire `hero_focus`); only a fixed vocabulary reaches the style attribute.
     $heroFocus = in_array($data['image_focus'] ?? null, ['center', 'top', 'bottom', 'left', 'right'], true) ? $data['image_focus'] : null;
 @endphp
-<section class="wd-hero wd-hero-{{ $heroVariant }} @if ($image) wd-hero-photo @else wd-hero-typographic @endif @if (! $isHomePage) wd-hero-inner-page @endif @if ($isSplit) wd-hero-is-split @endif"
+<section class="wd-hero wd-hero-{{ $heroVariant }} @if ($image) wd-hero-photo @else wd-hero-typographic @endif @if (! $isHomePage) wd-hero-inner-page @endif @if (! empty($data['compact'])) wd-hero-compact @endif @if ($isSplit) wd-hero-is-split @endif"
     data-testid="site-hero" @if ($heroFocus) style="--wd-hero-focus: {{ $heroFocus === 'center' ? 'center' : 'center ' . $heroFocus }};" @endif>
     @if ($image && $heroVariant === 'fullbleed')
         {{-- A decorative full-bleed photo: eager, high priority, sized by the viewport. --}}
@@ -43,6 +43,9 @@
             @if (! empty($data['subheading']))
                 <p class="wd-hero-sub">{{ $data['subheading'] }}</p>
             @endif
+            @if (! empty($data['review_badge']['rating']))
+                @php($heroBadge = $data['review_badge'])
+            @endif
             @if ($primary || $secondary)
                 <div class="wd-hero-ctas">
                     @if ($primary)
@@ -52,6 +55,10 @@
                         <a class="wd-btn wd-btn-secondary wd-btn-lg" href="{{ $secondary['url'] }}">{{ $secondary['label'] ?? '' }}</a>
                     @endif
                 </div>
+            @endif
+            @if (! empty($heroBadge))
+                {{-- Owner-entered rating only; never fetched from a review platform. --}}
+                <p class="wd-hero-reviews" data-testid="hero-review-badge"><span class="wd-review-stars" aria-hidden="true">&#9733;&#9733;&#9733;&#9733;&#9733;</span> <span>{{ $heroBadge['rating'] }} &middot; powered by {{ $heroBadge['source'] ?? 'Google' }}</span></p>
             @endif
         </div>
         @if ($isEditorial)

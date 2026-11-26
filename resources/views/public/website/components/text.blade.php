@@ -1,7 +1,7 @@
 {{-- Website Component Library — text (contract §7.2). Plain escaped text only. --}}
 <section class="website-section website-text">
     @if (! empty($data['heading']))
-        <h2 class="wd-section-title">{{ $data['heading'] }}</h2>
+        <h2 class="wd-section-title">{{ ($design ?? null) && ($design->variants['accent_titles'] ?? false) ? $design->accentHeading((string) $data['heading']) : $data['heading'] }}</h2>
     @endif
     <div class="website-text-body">
         @foreach (explode("\n", $data['body'] ?? '') as $paragraph)

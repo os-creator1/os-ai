@@ -49,9 +49,9 @@ final class ThreeReferenceTemplatesTest extends TestCase
         $css = file_get_contents(public_path('css/website-design.css'));
         $this->assertNotFalse($css);
         $this->assertSame(1, preg_match('/\\.wd-reference-kaleb \\.wd-band-testimonials\\s*\\{([^}]+)\\}/s', $css, $matches));
-        $this->assertStringContainsString('--wd-t-bg: #f9f4e8;', $matches[1]);
-        $this->assertStringContainsString('--wd-t-ink: #1c1b19;', $matches[1]);
-        $this->assertStringContainsString('--wd-t-muted: #555046;', $matches[1]);
+        $this->assertStringContainsString('--wd-t-bg: #ffffff;', $matches[1]);
+        $this->assertStringContainsString('--wd-t-ink: #000000;', $matches[1]);
+        $this->assertStringContainsString('--wd-t-muted: #333333;', $matches[1]);
         $this->assertStringContainsString('--wd-a: #846200;', $matches[1]);
     }
 

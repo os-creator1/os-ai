@@ -149,7 +149,7 @@ final class WebsiteDesigns
             $design = $base[$from];
             // Measured structure differences from the shared visual base: Kaleb's hero is a split (copy left, photo right)
             // on a light field; its feature band below stays dark.
-            $variantOverrides = $templateKey === 'photo_booth_reference_kaleb' ? ['hero' => 'split'] : [];
+            $variantOverrides = $templateKey === 'photo_booth_reference_kaleb' ? ['hero' => 'split', 'accent_titles' => true] : [];
             $toneOverrides = $templateKey === 'photo_booth_reference_kaleb' ? ['hero' => 'light'] : [];
             $out[$templateKey] = new WebsiteDesign(
                 key: $key,

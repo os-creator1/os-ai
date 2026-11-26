@@ -5,6 +5,7 @@ namespace Tests\Feature\Website\Acceptance;
 use App\Library\Website\Setup\ServiceAreaDetails;
 use App\Library\Website\WebsiteAiGenerationClient;
 use App\Models\Website;
+use Tests\Support\WebsiteAcceptance\PhotoBoothFixture;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\Feature\Website\Concerns\CreatesWebsiteFixtures;
 use Tests\Feature\Website\Concerns\DrivesGuidedWizard;
@@ -47,6 +48,31 @@ final class ReferenceTemplatesGuidedPathTest extends TestCase
             exec('rm -rf ' . escapeshellarg($this->publicRoot));
         }
         parent::tearDown();
+    }
+
+    /** Realistic, large JPEG fixtures (not 1px placeholders) so crops and aspect ratios can be judged. */
+    protected function uploadPhoto(string $name = 'photo', string $unique = ''): string
+    {
+        $response = $this->jpost($this->url('backdrop-image.upload'), ['photo' => PhotoBoothFixture::jpeg(1400, 1000, $name, crc32($name . $unique) % 1000), 'name' => $name]);
+        $response->assertOk();
+
+        return (string) $response->json('path');
+    }
+
+    /** @return array<int, string> */
+    protected function uploadGalleryPhotos(int $count = 3): array
+    {
+        $uids = [];
+        for ($i = 0; $i < $count; $i++) {
+            $response = $this->withHeaders(['Accept' => 'application/json'])->post($this->url('gallery.upload'), ['photos' => [PhotoBoothFixture::jpeg(1600, 1067, 'event-' . $i, 200 + $i)]]);
+            $response->assertOk();
+            $uids[] = (string) $response->json('assets.0.uid');
+        }
+        if ($uids !== []) {
+            $this->jpost(route('customer.workspaces.businesses.website.setup.gallery.update', [$this->workspace->uid, $this->business->uid, $uids[0]]), ['is_cover' => '1'])->assertOk();
+        }
+
+        return $uids;
     }
 
     /** @return array<string, array{0: string, 1: string}> */

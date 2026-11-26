@@ -99,6 +99,12 @@ final class PhotoBoothBlueprint
                 default => [$this->hero((string) ($page['title'] ?? $facts['name']), null), $this->contactDetails($business)],
             };
 
+            // The references show these pages as a plain titled page on white, not a photographic hero.
+            if ($this->isReferenceTemplate($facts) && in_array($type, ['gallery', 'backdrops', 'contact', 'faq', 'packages'], true)
+                && ($sections[0]['type'] ?? null) === 'hero') {
+                $sections[0]['data']['compact'] = true;
+            }
+
             $pages[] = [
                 'page_key' => (string) $page['page_key'],
                 'title' => $type === 'contact' && $this->isReferenceTemplate($facts) && $facts['lead_form_ready']
@@ -201,8 +207,10 @@ final class PhotoBoothBlueprint
             $this->copy($f, 'hero_headline', $this->referenceHeroHeadline($f), 120),
             $this->copy($f, 'hero_subtitle', $this->heroSubline($f), 240),
             $this->primaryCta($f),
-            $f['packages'] !== [] ? ['label' => 'View packages', 'url' => '/packages'] : null,
         );
+        if ($greenbelt && $this->googleBadge($f) !== null) {
+            $hero['data']['review_badge'] = $this->googleBadge($f);
+        }
         if (($f['copy']['hero_eyebrow'] ?? '') !== '') {
             $hero['data']['eyebrow'] = Str::limit((string) $f['copy']['hero_eyebrow'], 80, '');
         }
@@ -218,14 +226,31 @@ final class PhotoBoothBlueprint
                 'body' => Str::limit((string) $f['about'], 3000, ''),
                 'image' => null,
                 'image_position' => $greenbelt ? 'left' : 'right',
+                'ref' => 'intro',
             ],
         ];
+
+        // Kaleb's intro is a centred dark band with ONE button; the CTA section holds a 300-character body, so the owner's story is
+        // shortened at a sentence boundary there (the full story stays on the About page). A first sentence longer than that keeps
+        // the full-text intro instead — never a mid-sentence cut.
+        if ($kaleb && $intro !== null) {
+            $short = $this->sentenceExcerpt((string) $f['about'], 300);
+            if ($short !== null) {
+                $intro = ['type' => 'cta', 'data' => [
+                    'heading' => $intro['data']['heading'],
+                    'body' => $short,
+                    'buttons' => [$this->primaryCta($f)],
+                    'ref' => 'intro',
+                ]];
+            }
+        }
 
         $boothCards = $f['services'] === [] ? null : [
             'type' => 'services',
             'data' => [
                 'heading' => $this->copy($f, 'services_heading', $greenbelt ? 'Our photo booths' : 'Our photo booth experience'),
                 'role' => 'booths',
+                'ref' => 'booths',
                 'items' => $this->serviceItems($f, array_slice($f['services'], 0, 6)),
             ],
         ];
@@ -235,6 +260,7 @@ final class PhotoBoothBlueprint
                 'heading' => $this->copy($f, 'features_heading', $kaleb ? 'All of our packages include' :
                     ($booths ? 'Special features & add-ons' : 'What makes our service special')),
                 'role' => 'advantages',
+                'ref' => 'features',
                 'items' => $this->advantageItems(array_slice($f['advantages'], 0, 12)),
             ],
         ];
@@ -244,6 +270,7 @@ final class PhotoBoothBlueprint
                 'heading' => $this->copy($f, 'events_heading', $greenbelt ? 'Rentals for every event' :
                     ($booths ? 'What type of event are you planning?' : 'Events we cover')),
                 'role' => 'events',
+                'ref' => 'events',
                 'items' => array_map(
                     fn (BusinessService $e) => array_filter([
                         'name' => Str::limit($e->name, 120, ''),
@@ -258,6 +285,7 @@ final class PhotoBoothBlueprint
             'type' => 'services',
             'data' => [
                 'heading' => $this->copy($f, 'packages_heading', $greenbelt ? 'Our packages for your next event' : 'Packages'),
+                'ref' => 'packages',
                 'items' => $this->packageItems($f, array_slice($f['packages'], 0, self::HOME_PACKAGES)),
             ],
         ];
@@ -265,6 +293,7 @@ final class PhotoBoothBlueprint
             'type' => 'gallery',
             'data' => [
                 'heading' => $this->copy($f, 'gallery_heading', $greenbelt ? 'Photo booth event gallery' : 'See some of our favorite events'),
+                'ref' => 'gallery',
                 'items' => array_map(fn (string $uid) => ['image' => $uid], array_slice($f['gallery'], 0, self::HOME_GALLERY)),
             ],
         ];
@@ -282,12 +311,13 @@ final class PhotoBoothBlueprint
             'type' => 'text',
             'data' => [
                 'heading' => $this->copy($f, 'areas_heading', 'Areas we serve'),
+                'ref' => 'areas',
                 'body' => 'We serve events in ' . $this->joinList(array_slice($f['areas'], 0, 12)) . '.',
             ],
         ];
         $faq = $f['faq'] === [] ? null : [
             'type' => 'faq',
-            'data' => ['heading' => $this->copy($f, 'faq_heading', 'Frequently asked questions'), 'items' => array_slice($f['faq'], 0, self::HOME_FAQ)],
+            'data' => ['heading' => $this->copy($f, 'faq_heading', 'Frequently asked questions'), 'items' => array_slice($f['faq'], 0, self::HOME_FAQ), 'ref' => 'faq'],
         ];
 
         $backdropRows = $f['backdrops'] === [] ? null : [
@@ -321,8 +351,8 @@ final class PhotoBoothBlueprint
             'items' => array_map(fn (array $v) => array_filter(['name' => $v['name'], 'description' => $v['place'] !== '' ? $v['place'] : null]), $f['venues']),
         ]];
         $quote = ['type' => 'cta', 'data' => [
-            'heading' => $this->copy($f, 'closing_heading', 'Check availability & get a quote'),
-            'body' => 'Already have a date in mind? Send it over and we\'ll follow up to confirm.',
+            'heading' => $kaleb ? 'Check availability for your event date!' : 'Check availability & get a quote',
+            'body' => $kaleb ? 'Don\'t miss out on our most popular dates — check availability and secure your spot!' : 'Already have a date in mind? Send it over and we\'ll follow up to confirm.',
             'buttons' => [$this->primaryCta($f)],
             'ref' => 'quote',
         ]];
@@ -342,11 +372,19 @@ final class PhotoBoothBlueprint
             ],
         ];
 
+        // Greenbelt's "popular dates" strip: the owner's own announcement text beside one inquiry button (nothing invented).
+        $strip = $greenbelt && ($f['announcement'] ?? '') !== '' ? ['type' => 'cta', 'data' => [
+            'heading' => Str::limit((string) $f['announcement'], 120, ''),
+            'body' => null,
+            'buttons' => [$this->primaryCta($f)],
+            'ref' => 'strip',
+        ]] : null;
+
         // Section order follows each reference homepage as captured (see docs/acceptance/.../VISUAL-COMPARISON-REPORT.md).
         $sections = match (true) {
-            $kaleb => [$hero, $intro, $boothCards, $backdropRows, $featureCards, $gallery, $reviews, $events, $places, $faq],
+            $kaleb => [$hero, $intro, $boothCards, $quote, $backdropRows, $featureCards, $gallery, $reviews, $events, $places, $faq],
             $booths => [$hero, $intro, $addons, $boothCards, $backdropRows, $different, $events, $founder, $quote, $reviews, $places, $faq],
-            default => [$hero, $intro, $events, $reviews, $packages, $corporatePanel, $addons, $gallery, $different, $founder, $faq, $places, $venues],
+            default => [$hero, $intro, $strip, $events, $reviews, $packages, $corporatePanel, $addons, $gallery, $different, $founder, $faq, $places, $venues],
         };
 
         $closing = $this->closingCta($f);
@@ -370,6 +408,22 @@ final class PhotoBoothBlueprint
         $value = trim((string) ($f['copy'][$key] ?? ''));
 
         return Str::limit($value !== '' ? $value : $default, $max, '');
+    }
+
+    /** Whole sentences of `$text` that fit `$max` characters; null when even the first sentence does not fit. */
+    private function sentenceExcerpt(string $text, int $max): ?string
+    {
+        $text = trim(preg_replace('/\s+/u', ' ', $text) ?? '');
+        $out = '';
+        foreach (preg_split('/(?<=[.!?])\s+/u', $text) ?: [] as $sentence) {
+            $next = $out === '' ? $sentence : $out . ' ' . $sentence;
+            if (mb_strlen($next) > $max) {
+                break;
+            }
+            $out = $next;
+        }
+
+        return $out === '' ? null : $out;
     }
 
     /** @param array<string, mixed> $f */
@@ -900,6 +954,7 @@ final class PhotoBoothBlueprint
             'about' => $about,
             'package_links' => (array) ($context['package_links'] ?? []),
             'venues' => array_slice($venues, 0, 12),
+            'announcement' => $this->announcement,
             'copy' => array_filter(
                 array_intersect_key($answers, array_flip([
                     'hero_headline', 'hero_subtitle', 'hero_focus', 'intro_heading', 'services_heading', 'features_heading',

@@ -979,11 +979,14 @@ body.wd h1, body.wd h2, body.wd h3, body.wd h4 { font-family: var(--wd-font-head
  * Web fonts are not loaded (no third-party requests): the named families apply when installed, else the stacks fall back.
  */
 
-/* Kaleb-style cinematic black/gold event experience. */
+/* ===================================================================================================================
+   KALEB — white hero, yellow pills, #232323 bands, script accents (Corinthia/Comforter), Lato body, Montserrat 700/900.
+   =================================================================================================================== */
 .wd-reference-kaleb {
     --wd-font-head: "Montserrat", "Segoe UI", "Helvetica Neue", Arial, sans-serif;
     --wd-font-body: "Lato", "Segoe UI", "Helvetica Neue", Arial, sans-serif;
-    --wd-head-weight: 700;
+    --wd-font-script: "Corinthia", "Comforter", "Snell Roundhand", cursive;
+    --wd-head-weight: 900;
     --wd-head-transform: none;
     --wd-head-track: 0;
     --wd-head-leading: 1.15;
@@ -999,38 +1002,90 @@ body.wd h1, body.wd h2, body.wd h3, body.wd h4 { font-family: var(--wd-font-head
     --wd-announce-ink: #000000;
     --wd-header-line: transparent;
     --wd-btn-radius: 75px;
+    font-family: var(--wd-font-body);
 }
 .wd-reference-kaleb .wd-btn { font: 400 1rem/1.2 var(--wd-font-body); letter-spacing: 0; padding: 15px 40px; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.25); }
 .wd-reference-kaleb .wd-btn-lg { padding: 20px 40px; }
-.wd-reference-kaleb .wd-hero-title { font-size: clamp(2.2rem, 4.2vw, 3.4rem); font-weight: 700; line-height: 1.15; text-align: center; }
+.wd-reference-kaleb .wd-announce { background: #fac815; color: #000; }
+.wd-reference-kaleb .wd-announce p { margin: 0; font: 700 0.8rem/1 var(--wd-font-body); letter-spacing: 0.04em; text-transform: uppercase; text-align: center; color: #000; }
+.wd-reference-kaleb .wd-accent-word { font-family: var(--wd-font-script); font-weight: 400; -webkit-text-stroke: 0.045em currentColor; paint-order: stroke fill; font-style: normal; color: #fac815; font-size: 1.5em; line-height: 0.8; padding-left: 0.1em; }
+.wd-reference-kaleb .wd-hero-title .wd-accent-word { font: inherit; color: inherit; padding: 0; }
+/* header: logo left, two-row uppercase nav, pill CTA right */
+@media (min-width: 900px) {
+    .wd-reference-kaleb .wd-nav-list { display: grid; grid-template-columns: repeat(4, auto); gap: 0.6rem 1.4rem; align-items: center; justify-content: center; }
+    .wd-reference-kaleb .wd-nav-cta { grid-column: 5; grid-row: 1 / span 2; margin-left: 4rem; align-self: center; }
+}
+.wd-reference-kaleb .wd-nav-link { font: 400 0.75rem/1.2 var(--wd-font-body); text-transform: uppercase; letter-spacing: 0; color: #000; }
+.wd-reference-kaleb .wd-nav-cta .wd-btn { padding: 15px 30px; font-size: 0.8rem; }
+/* hero: split, copy centred left, framed photo right */
 .wd-reference-kaleb .wd-hero { background: #ffffff; color: #000000; }
 .wd-reference-kaleb .wd-hero::before, .wd-reference-kaleb .wd-hero::after { display: none; }
-.wd-reference-kaleb .wd-hero-sub { font-size: 1.375rem; font-weight: 500; line-height: 1.3; color: #000; }
 .wd-reference-kaleb .wd-hero-is-split .wd-hero-copy { text-align: center; }
-.wd-reference-kaleb .wd-band-image_text .wd-container { padding-top: clamp(4rem, 8vw, 7rem); padding-bottom: clamp(4rem, 8vw, 7rem); }
-.wd-reference-kaleb .website-image-text-media img { aspect-ratio: 5 / 4; object-fit: cover; }
-.wd-reference-kaleb .wd-services-tiles .wd-card { border-radius: 0; }
+.wd-reference-kaleb .wd-hero-tagline { font: 400 clamp(3.4rem, 6.3vw, 5.6rem)/0.7 var(--wd-font-script); color: #b3b9cc; margin: 0 0 0.35em; text-align: center; }
+.wd-reference-kaleb .wd-hero-title { font-size: clamp(1.6rem, 2.3vw, 2.1rem); font-weight: 700; line-height: 1.25; text-align: center; }
+.wd-reference-kaleb .wd-hero-sub { font-size: 1.375rem; font-weight: 500; line-height: 1.3; color: #000; text-align: left; }
+.wd-reference-kaleb .wd-hero-ctas { justify-content: flex-start; }
+.wd-reference-kaleb .wd-hero-media img { border: 3px solid #000; aspect-ratio: 4 / 3; object-fit: cover; object-position: var(--wd-hero-focus, center); width: 100%; }
+/* section rhythm */
+.wd-reference-kaleb .wd-section-title { font-size: clamp(2rem, 3.6vw, 3.1rem); font-weight: 900; text-align: center; margin-bottom: 0.8em; }
+.wd-reference-kaleb .wd-band-trust_strip { background: #fff; }
+.wd-reference-kaleb .wd-ref-intro { background: #232323; color: #fff; text-align: center; padding: clamp(3rem, 6vw, 5.5rem) 0; }
+.wd-reference-kaleb .wd-ref-intro .wd-section-title, .wd-reference-kaleb .wd-ref-intro h2 { color: #fff; font-size: clamp(2.2rem, 4.2vw, 3.6rem); }
+.wd-reference-kaleb .wd-ref-intro p { max-width: 52rem; margin-inline: auto; font-size: 1.3rem; line-height: 1.4; color: #fff; }
+.wd-reference-kaleb .wd-ref-intro .website-image-text-media { display: none; }
+.wd-reference-kaleb .wd-ref-intro .website-image-text { display: block; text-align: center; }
+.wd-reference-kaleb .wd-ref-booths { background: #fff; }
+.wd-reference-kaleb .wd-ref-booths .wd-grid { grid-template-columns: 1fr; gap: 3rem; }
+.wd-reference-kaleb .wd-ref-booths .wd-card { display: grid; grid-template-columns: 1fr 1fr; gap: 2.5rem; align-items: center; box-shadow: none; border: 0; border-radius: 0; background: transparent; text-align: center; }
+.wd-reference-kaleb .wd-ref-booths .wd-card > img, .wd-reference-kaleb .wd-ref-booths .wd-card > picture { grid-column: 1; grid-row: 1 / span 6; width: 100%; border: 2px solid #000; }
+.wd-reference-kaleb .wd-ref-booths .wd-card > :not(img):not(picture) { grid-column: 2; }
+.wd-reference-kaleb .wd-ref-booths .wd-card:nth-child(even) > img, .wd-reference-kaleb .wd-ref-booths .wd-card:nth-child(even) > picture { grid-column: 2; }
+.wd-reference-kaleb .wd-ref-booths .wd-card:nth-child(even) > :not(img):not(picture) { grid-column: 1; }
+.wd-reference-kaleb .wd-ref-booths .wd-card h3 { font: 400 clamp(2.6rem, 4.6vw, 4.4rem)/0.85 var(--wd-font-script); color: #fac815; text-transform: none; }
+.wd-reference-kaleb .wd-ref-feature-rows { background: #fff; }
+.wd-reference-kaleb .wd-ref-feature-rows .website-backdrops-grid { display: block; }
+.wd-reference-kaleb .wd-ref-feature-rows figure { display: grid; grid-template-columns: 1fr 1fr; gap: 2.5rem; align-items: center; margin: 0 0 3rem; box-shadow: none; border: 0; background: transparent; }
+.wd-reference-kaleb .wd-ref-feature-rows figure { max-width: 1000px; margin-inline: auto; }
+.wd-reference-kaleb .wd-ref-feature-rows figure img { width: 100%; aspect-ratio: 4 / 3; object-fit: cover; }
+.wd-reference-kaleb .wd-ref-feature-rows figure:nth-child(even) img { order: 2; }
+.wd-reference-kaleb .wd-ref-feature-rows figcaption { text-align: center; }
+.wd-reference-kaleb .wd-ref-feature-rows h3 { font: 400 clamp(2.8rem, 5vw, 4.6rem)/0.85 var(--wd-font-script); color: #fac815; }
+.wd-reference-kaleb .wd-ref-features { background: #fff; }
+.wd-reference-kaleb .wd-band-gallery { background: #232323; }
+.wd-reference-kaleb .wd-band-gallery .wd-section-title { color: #fff; }
 .wd-reference-kaleb .website-gallery-item img { aspect-ratio: 4 / 5; object-fit: cover; }
-.wd-reference-kaleb .wd-section-title { font-size: clamp(2.05rem, 4.2vw, 3.75rem); font-weight: 700; text-transform: none; }
-.wd-reference-kaleb .wd-tone-dark .wd-section-title,
-.wd-reference-kaleb .wd-role-advantages .wd-section-title { color: #fac815; }
-.wd-reference-kaleb .wd-tone-dark p { font-size: 1.3rem; line-height: 1.4; }
 .wd-reference-kaleb .wd-band-testimonials {
-    /* This light editorial band inherits a dark tone from Modern; override
-       the complete foreground palette, not only its background. */
-    --wd-t-bg: #f9f4e8;
-    --wd-t-ink: #1c1b19;
-    --wd-t-muted: #555046;
-    --wd-t-line: #ded8cb;
+    /* A light band on the dark-toned Modern base: override the COMPLETE foreground palette, not only the background. */
+    --wd-t-bg: #ffffff;
+    --wd-t-ink: #000000;
+    --wd-t-muted: #333333;
+    --wd-t-line: #e6e6e6;
     --wd-a: #846200;
     --wd-card-ink: #1c1b19;
     background: var(--wd-t-bg);
     color: var(--wd-t-ink);
 }
+.wd-reference-kaleb .wd-review-badge { text-align: center; font: 700 1.1rem var(--wd-font-body); margin: 0 0 1.5rem; }
+.wd-reference-kaleb .wd-review-stars { color: #fac815; letter-spacing: 0.1em; }
+.wd-reference-kaleb .wd-ref-events, .wd-reference-kaleb .wd-ref-areas { background: #232323; color: #fff; }
+.wd-reference-kaleb .wd-ref-events .wd-section-title, .wd-reference-kaleb .wd-ref-areas .wd-section-title { color: #fff; }
+.wd-reference-kaleb .wd-ref-events .wd-card { background: transparent; border: 0; box-shadow: none; padding: 0; text-align: center; }
+.wd-reference-kaleb .wd-ref-events .wd-card h3, .wd-reference-kaleb .wd-ref-events .wd-card a { color: #fac815; font-family: var(--wd-font-body); font-size: 1rem; font-weight: 400; text-decoration: underline; }
+.wd-reference-kaleb .wd-ref-events .wd-card p { color: #fff; }
+.wd-reference-kaleb .wd-ref-areas p { text-align: center; color: #fff; }
+.wd-reference-kaleb .wd-ref-faq { background: #fff; }
+.wd-reference-kaleb .wd-ref-faq details { border-bottom: 1px solid #e3e3e3; }
+.wd-reference-kaleb .wd-band-cta { background: #232323; color: #fff; text-align: center; }
+.wd-reference-kaleb .wd-band-cta .wd-btn-primary { background: #fac815; border-color: #fac815; color: #fff; }
+.wd-reference-kaleb .wd-ref-quote h2 { font-size: clamp(1.8rem, 3.4vw, 2.8rem); }
+.wd-reference-kaleb .wd-band-cta h2 { color: #fff; font-size: clamp(2rem, 4vw, 3.4rem); }
+.wd-reference-kaleb .wd-ref-intro.wd-band-cta { background: #232323; }
 
-/* Booths-style: black hero, navy bands, skewed cyan/blue buttons. */
+/* ===================================================================================================================
+   BOOTHS — black text-only hero, navy bands, bright-blue gradient skewed buttons, Montserrat 700, Lato body.
+   =================================================================================================================== */
 .wd-reference-booths {
-    --wd-font-head: "Montserrat", "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+    --wd-font-head: "Titillium Web", "Montserrat", "Segoe UI", "Helvetica Neue", Arial, sans-serif;
     --wd-font-body: "Lato", "Segoe UI", "Helvetica Neue", Arial, sans-serif;
     --wd-head-weight: 700;
     --wd-head-transform: none;
@@ -1046,20 +1101,72 @@ body.wd h1, body.wd h2, body.wd h3, body.wd h4 { font-family: var(--wd-font-head
     --wd-announce-bg: #061633;
     --wd-header-bg: #ffffff;
     --wd-btn-radius: 0;
+    font-family: var(--wd-font-body);
 }
 .wd-reference-booths .wd-btn { font: 400 1rem/1.2 var(--wd-font-body); letter-spacing: 2px; padding: 15px 25px; }
-.wd-reference-booths .wd-btn-primary { background: linear-gradient(90deg, #188bf6, #00c9ff); border-color: transparent; transform: rotate(-2deg); box-shadow: 3px 4px 0 rgba(0, 0, 0, 0.25); }
-.wd-reference-booths .wd-hero-fullbleed { background: #000; text-align: center; }
-.wd-reference-booths .wd-hero-title { font-weight: 700; font-size: clamp(2.2rem, 4.9vw, 4.4rem); max-width: 1100px; margin-inline: auto; line-height: 0.9; }
-.wd-reference-booths .wd-band-image_text .wd-container { padding-top: clamp(3.5rem, 6vw, 6rem); padding-bottom: clamp(3.5rem, 6vw, 6rem); }
-.wd-reference-booths .wd-section-title { font-size: clamp(2rem, 3.8vw, 3.3rem); font-weight: 700; }
-.wd-reference-booths .wd-role-events .wd-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-.wd-reference-booths .wd-role-events .wd-card { border-radius: 0; }
-.wd-reference-booths .website-image-text-media img { aspect-ratio: 4 / 3; object-fit: cover; }
-.wd-reference-booths .wd-band-testimonials { background: #061633; }
-.wd-reference-booths .website-gallery-item img { aspect-ratio: 3 / 4; object-fit: cover; }
+.wd-reference-booths .wd-btn-primary { background: linear-gradient(90deg, #188bf6, #00c9ff); border-color: transparent; color: #fff; transform: rotate(-2deg); box-shadow: 3px 4px 0 rgba(0, 0, 0, 0.25); }
+.wd-reference-booths .wd-announce { background: #061633; color: #fff; }
+.wd-reference-booths .wd-announce p { margin: 0; font: 500 0.94rem/1.3 var(--wd-font-body); letter-spacing: 1px; text-transform: uppercase; text-align: center; color: #fff; }
+.wd-reference-booths .wd-nav-link { font: 400 0.72rem/1.2 var(--wd-font-body); text-transform: uppercase; color: #000; }
+/* hero: black, text only (the reference carries no photograph here) */
+.wd-reference-booths .wd-hero { background: #000; color: #fff; text-align: center; padding-block: clamp(3rem, 7vw, 6rem); }
+.wd-reference-booths .wd-hero::before { display: none; }
+.wd-reference-booths .wd-hero-media { display: none; }
+/* a photograph (when the owner chose one) sits behind a dark overlay exactly as the reference shows; without one the hero is plain black */
+.wd-reference-booths .wd-hero { position: relative; overflow: hidden; }
+.wd-reference-booths .wd-hero-bg { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; object-position: var(--wd-hero-focus, center); opacity: 0.45; }
+.wd-reference-booths .wd-hero::after { content: ""; position: absolute; inset: 0; background: rgba(0, 0, 0, 0.35); }
+.wd-reference-booths .wd-hero-grid { position: relative; z-index: 1; }
+.wd-reference-booths .wd-hero-grid { display: block; }
+.wd-reference-booths .wd-band-trust_strip, .wd-reference-greenbelt .wd-band-trust_strip { display: none; }.wd-reference-booths .wd-hero-tagline { font: 700 1.5rem/1.2 var(--wd-font-head); color: #fff; margin: 0 0 1rem; }
+.wd-reference-booths .wd-hero-title { font-weight: 700; font-size: clamp(2.2rem, 4.9vw, 4.4rem); max-width: 1100px; margin-inline: auto; line-height: 0.95; color: #fff; }
+.wd-reference-booths .wd-hero-title .wd-accent-word { color: #4caf50; }
+.wd-reference-booths .wd-hero-sub { color: #fff; max-width: 46rem; margin-inline: auto; }
+.wd-reference-booths .wd-hero-ctas { justify-content: center; }
+.wd-reference-booths .wd-section-title { font-size: clamp(2rem, 3.8vw, 3.3rem); font-weight: 700; text-align: center; }
+.wd-reference-booths .wd-ref-intro { background: #fff; }
+.wd-reference-booths .wd-ref-intro .website-image-text { grid-template-columns: 1fr 1fr; align-items: center; }
+.wd-reference-booths .wd-ref-intro .wd-section-title { text-align: left; border-bottom: 1px solid #188bf6; padding-bottom: 0.6em; }
+.wd-reference-booths .wd-ref-addons { background: #061633; color: #fff; }
+.wd-reference-booths .wd-ref-addons .wd-section-title { color: #fff; text-align: left; }
+.wd-reference-booths .wd-ref-addons .wd-grid { grid-template-columns: repeat(3, 1fr); }
+.wd-reference-booths .wd-ref-addons .wd-card { background: transparent; border: 0; box-shadow: none; color: #fff; padding: 0; }
+.wd-reference-booths .wd-ref-addons .wd-card h3 { color: #fff; font-size: 1.4rem; }
+.wd-reference-booths .wd-ref-booths { background: #fff; }
+.wd-reference-booths .wd-ref-booths .wd-card { background: #188bf6; color: #fff; border: 0; box-shadow: 0 8px 18px rgba(0, 0, 0, 0.3); border-radius: 0; }
+.wd-reference-booths .wd-ref-booths .wd-card h3, .wd-reference-booths .wd-ref-booths .wd-card p { color: #fff; }
+.wd-reference-booths .wd-ref-feature-rows { background: #fff; }
+.wd-reference-booths .wd-ref-feature-rows .website-backdrops-grid { display: block; }
+.wd-reference-booths .wd-ref-feature-rows figure { display: grid; grid-template-columns: 1fr 1fr; gap: 3rem; align-items: center; margin: 0 0 3rem; box-shadow: none; border: 0; background: transparent; }
+.wd-reference-booths .wd-ref-feature-rows figure { max-width: 1000px; margin-inline: auto; }
+.wd-reference-booths .wd-ref-feature-rows figure img { width: 100%; aspect-ratio: 4 / 3; object-fit: cover; }
+.wd-reference-booths .wd-ref-feature-rows figure:nth-child(even) img { order: 2; }
+.wd-reference-booths .wd-ref-feature-rows h3 { font-size: clamp(1.6rem, 2.8vw, 2.5rem); }
+.wd-reference-booths .wd-ref-different { background: #061633; color: #fff; }
+.wd-reference-booths .wd-ref-different .wd-section-title { color: #fff; }
+.wd-reference-booths .wd-ref-different .wd-card { background: transparent; border: 2px solid #188bf6; border-radius: 6px; color: #fff; text-align: center; padding: 1.6rem; box-shadow: none; }
+.wd-reference-booths .wd-ref-different .wd-card h3, .wd-reference-booths .wd-ref-different .wd-card p { color: #fff; }
+.wd-reference-booths .wd-ref-events { background: #fff; }
+.wd-reference-booths .wd-ref-events .wd-grid { grid-template-columns: repeat(3, 1fr); }
+.wd-reference-booths .wd-ref-events .wd-card { background: #061633; color: #fff; border: 0; border-radius: 0; min-height: 320px; display: flex; align-items: flex-end; box-shadow: none; }
+.wd-reference-booths .wd-ref-events .wd-card h3, .wd-reference-booths .wd-ref-events .wd-card a, .wd-reference-booths .wd-ref-events .wd-card p { color: #fff; }
+.wd-reference-booths .wd-ref-founder { background: #fff; }
+.wd-reference-booths .wd-ref-founder .wd-section-title { text-align: left; }
+.wd-reference-booths .wd-ref-quote { background: linear-gradient(90deg, #188bf6, #00c9ff); color: #fff; }
+.wd-reference-booths .wd-ref-quote h2, .wd-reference-booths .wd-ref-quote p { color: #fff; text-align: left; }
+.wd-reference-booths .wd-ref-quote .wd-btn-primary { background: #fff; color: #061633; transform: none; }
+.wd-reference-booths .wd-band-testimonials, .wd-reference-booths .wd-ref-reviews { background: #fff; color: #000; --wd-t-bg: #fff; --wd-t-ink: #000; --wd-t-muted: #333; --wd-t-line: #e3e3e3; --wd-a: #075bb3; --wd-card-ink: #111; }
+.wd-reference-booths .wd-review-badge { text-align: center; font: 700 1.1rem var(--wd-font-body); }
+.wd-reference-booths .wd-review-stars { color: #fbbc04; letter-spacing: 0.1em; }
+.wd-reference-booths .wd-ref-areas { background: #061633; color: #fff; }
+.wd-reference-booths .wd-ref-areas .wd-section-title, .wd-reference-booths .wd-ref-areas p { color: #fff; text-align: center; }
+.wd-reference-booths .wd-ref-faq { background: #fff; }
+.wd-reference-booths .wd-footer { background: #061633; color: #fff; }
+.wd-reference-booths .wd-footer a { color: #fff; }
 
-/* Greenbelt-style editorial plum/peach: 900-weight uppercase headings, peach pills. */
+/* ===================================================================================================================
+   GREENBELT — system UI sans 900 UPPERCASE, plum #2a1d45, peach #f4a28f pills, rounded white cards.
+   =================================================================================================================== */
 .wd-reference-greenbelt {
     --wd-font-head: ui-sans-serif, system-ui, sans-serif, "Apple Color Emoji", "Segoe UI Emoji";
     --wd-font-body: ui-sans-serif, system-ui, sans-serif, "Apple Color Emoji", "Segoe UI Emoji";
@@ -1079,31 +1186,108 @@ body.wd h1, body.wd h2, body.wd h3, body.wd h4 { font-family: var(--wd-font-head
     --wd-btn-radius: 9999px;
 }
 .wd-reference-greenbelt .wd-btn { font: 700 0.875rem/1.4 var(--wd-font-body); letter-spacing: 0.05em; padding: 14px 32px; }
-.wd-reference-greenbelt .wd-hero-title { font-size: clamp(2.8rem, 5vw, 4.5rem); line-height: 1; }
-.wd-reference-greenbelt .wd-hero-sub { font-size: 1.125rem; line-height: 1.55; opacity: 0.8; }
-.wd-reference-greenbelt .wd-section-title { font-size: clamp(2rem, 3.4vw, 3rem); line-height: 1; }
-.wd-reference-greenbelt .wd-hero-split-soft { background: linear-gradient(180deg, #e9dcef 0%, #f8dcd2 100%); }
-.wd-reference-greenbelt .wd-hero-media img { border-radius: 24px; box-shadow: 0 24px 48px rgba(42, 29, 69, 0.25); }
-.wd-reference-greenbelt .wd-role-events .wd-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-.wd-reference-greenbelt .wd-role-events .wd-card { min-height: 300px; border-radius: 24px; }
-.wd-reference-greenbelt .wd-packages-pop .wd-card { border-radius: 24px; }
-.wd-reference-greenbelt .website-gallery-item img { aspect-ratio: 4 / 5; object-fit: cover; }
-.wd-reference-greenbelt .wd-band-testimonials { background: #2a1d45; }
-.wd-reference-greenbelt .wd-band-image_text .wd-section-title { text-align: left; }
-.wd-reference-greenbelt .wd-band-image_text .wd-container { padding-top: clamp(3rem, 7vw, 6rem); padding-bottom: clamp(3rem, 7vw, 6rem); }
+.wd-reference-greenbelt .wd-announce { background: #2a1d45; color: #fff; }
+.wd-reference-greenbelt .wd-announce p { margin: 0; font: 500 0.75rem/1.2 var(--wd-font-body); text-align: center; text-transform: uppercase; color: #fff; }
+@media (min-width: 900px) {
+    .wd-reference-greenbelt .wd-nav-list { background: #fff; border-radius: 999px; padding: 0.35rem 1.4rem; box-shadow: 0 2px 8px rgba(42, 29, 69, 0.12); }
+}
+.wd-reference-greenbelt .wd-nav-link { font: 700 0.75rem/1.2 var(--wd-font-body); text-transform: uppercase; letter-spacing: 0.05em; color: #2a1d45; }
+.wd-reference-greenbelt .wd-hero-split-soft, .wd-reference-greenbelt .wd-hero { background: linear-gradient(180deg, #e9dcef 0%, #f8dcd2 100%); color: #2a1d45; }
+.wd-reference-greenbelt .wd-hero-tagline { font: 700 0.8rem/1.2 var(--wd-font-body); letter-spacing: 0.1em; text-transform: uppercase; color: #2a1d45; margin: 0 0 1rem; }
+.wd-reference-greenbelt .wd-hero-title { font-size: clamp(2.8rem, 5vw, 4.5rem); line-height: 1; color: #2a1d45; }
+.wd-reference-greenbelt .wd-hero-title .wd-accent-word { color: inherit; font-style: normal; font-weight: 900; }
+.wd-reference-greenbelt .wd-hero-reviews { margin: 1rem 0 0; font: 700 0.75rem var(--wd-font-body); display: flex; gap: 0.5rem; align-items: center; color: #2a1d45; }
+.wd-reference-greenbelt .wd-hero-reviews .wd-review-stars { color: #f4a28f; letter-spacing: 0.08em; }
+.wd-reference-greenbelt .wd-ref-strip { background: #f4a28f; color: #2a1d45; text-align: center; }
+.wd-reference-greenbelt .wd-ref-strip h2 { color: #2a1d45; font-size: clamp(1.4rem, 2.4vw, 2rem); }
+.wd-reference-greenbelt .wd-ref-strip .wd-btn-primary { background: #a79bc8; border-color: #a79bc8; color: #fff; }
+.wd-reference-greenbelt .wd-ref-intro .website-image-text-body { max-width: 46rem; margin-inline: auto; text-align: center; }
+.wd-reference-greenbelt .wd-hero-sub { font-size: 1.125rem; line-height: 1.55; color: rgba(42, 29, 69, 0.8); }
+.wd-reference-greenbelt .wd-hero-media img { border-radius: 24px; box-shadow: 0 24px 48px rgba(42, 29, 69, 0.25); object-fit: cover; object-position: var(--wd-hero-focus, center); width: 100%; aspect-ratio: 4 / 5; }
+.wd-reference-greenbelt .wd-section-title { font-size: clamp(2rem, 3.4vw, 3rem); line-height: 1; text-align: center; }
+.wd-reference-greenbelt .wd-ref-intro { background: #2a1d45; color: #fff; text-align: center; }
+.wd-reference-greenbelt .wd-ref-intro .website-image-text { display: block; }
+.wd-reference-greenbelt .wd-ref-intro .website-image-text-media { display: none; }
+.wd-reference-greenbelt .wd-ref-intro .wd-section-title { color: #fff; font-size: 1.25rem; text-transform: none; font-weight: 400; }
+.wd-reference-greenbelt .wd-ref-intro p { max-width: 46rem; margin-inline: auto; font-size: 1.25rem; line-height: 1.4; color: rgba(255, 255, 255, 0.9); }
+.wd-reference-greenbelt .wd-ref-events { background: #2a1d45; color: #fff; }
+.wd-reference-greenbelt .wd-ref-events .wd-section-title { color: #fff; }
+.wd-reference-greenbelt .wd-ref-events .wd-grid { grid-template-columns: repeat(3, 1fr); }
+.wd-reference-greenbelt .wd-ref-events .wd-card { background: #fff; color: #2a1d45; border-radius: 24px; overflow: hidden; box-shadow: none; }
+.wd-reference-greenbelt .wd-ref-events .wd-card h3 { text-transform: uppercase; font-size: 1rem; }
+.wd-reference-greenbelt .wd-ref-reviews, .wd-reference-greenbelt .wd-band-testimonials { background: #2a1d45; color: #fff; --wd-t-bg: #2a1d45; --wd-t-ink: #fff; --wd-t-muted: #dcd2ea; --wd-t-line: rgba(255, 255, 255, 0.2); --wd-a: #f4a28f; --wd-card-ink: #2a1d45; }
+.wd-reference-greenbelt .wd-ref-reviews .wd-section-title { color: #fff; text-align: left; text-transform: none; font-size: 2.25rem; }
+.wd-reference-greenbelt .wd-review-badge { color: #fff; margin: 0 0 1rem; font: 700 1rem var(--wd-font-body); }
+.wd-reference-greenbelt .wd-review-stars { color: #f4a28f; letter-spacing: 0.1em; }
+.wd-reference-greenbelt .wd-ref-reviews .website-testimonial-card { background: #fff; color: #2a1d45; border-radius: 12px; text-align: center; font-style: italic; }
+.wd-reference-greenbelt .wd-ref-packages { background: #1c1c1c; color: #fff; }
+.wd-reference-greenbelt .wd-ref-packages .wd-section-title { color: #f4a28f; }
+.wd-reference-greenbelt .wd-ref-packages .wd-card { background: #fff; color: #2a1d45; border-radius: 24px; text-align: center; }
+.wd-reference-greenbelt .wd-ref-packages .wd-card h3 { font-size: 1.1rem; }
+.wd-reference-greenbelt .wd-ref-addons { background: linear-gradient(180deg, #eadfef, #f8dcd2); }
+.wd-reference-greenbelt .wd-ref-addons .wd-section-title { font-weight: 300; letter-spacing: 0.05em; color: #2a1d45; }
+.wd-reference-greenbelt .wd-ref-addons .wd-grid { background: #fff; border-radius: 24px; padding: 2rem; box-shadow: 0 12px 30px rgba(42, 29, 69, 0.12); grid-template-columns: repeat(2, 1fr); }
+.wd-reference-greenbelt .wd-ref-addons .wd-card { background: transparent; border: 0; box-shadow: none; padding: 0.4rem; }
+.wd-reference-greenbelt.wd { background: #2a1e43; }
+.wd-reference-greenbelt .wd-band-gallery { background: #2a1d45; }
+.wd-reference-greenbelt .wd-band-gallery .wd-section-title { color: #fff; }
+.wd-reference-greenbelt .wd-ref-gallery { background: linear-gradient(180deg, #f8dcd2, #eadfef); }
+.wd-reference-greenbelt .wd-ref-gallery .wd-section-title { color: #2a1d45; }
+.wd-reference-greenbelt .website-gallery-item img { border-radius: 12px; border: 6px solid #fff; aspect-ratio: 4 / 5; object-fit: cover; }
+.wd-reference-greenbelt .wd-ref-different { background: #f8dcd2; }
+.wd-reference-greenbelt .wd-ref-different .wd-card { background: transparent; border: 0; box-shadow: none; text-align: left; }
+.wd-reference-greenbelt .wd-ref-founder { background: #f4a28f; color: #fff; }
+.wd-reference-greenbelt .wd-ref-founder .wd-section-title, .wd-reference-greenbelt .wd-ref-founder p { color: #fff; text-align: left; }
+.wd-reference-greenbelt .wd-ref-faq { background: #f8dcd2; }
+.wd-reference-greenbelt .wd-ref-faq details { background: #fff; border-radius: 8px; margin-bottom: 0.5rem; padding: 0.4rem 1rem; }
+.wd-reference-greenbelt .wd-ref-areas { background: #a79bc8; color: #2a1d45; }
+.wd-reference-greenbelt .wd-ref-areas p { text-align: center; }
+.wd-reference-greenbelt .wd-ref-venues { background: #a79bc8; }
+.wd-reference-greenbelt .wd-ref-venues .wd-grid { grid-template-columns: repeat(3, 1fr); }
+.wd-reference-greenbelt .wd-ref-venues .wd-card { background: #fff; border-radius: 12px; padding: 1rem; box-shadow: none; border: 0; }
+.wd-reference-greenbelt .wd-ref-venues .wd-card h3 { font-size: 0.8rem; text-transform: none; }
+.wd-reference-greenbelt .wd-band-cta { background: #3a1626; color: #fff; text-align: center; }
+.wd-reference-greenbelt .wd-band-cta h2 { color: #fff; }
+.wd-reference-greenbelt .wd-footer { background: #2a1d45; color: #fff; }
+.wd-reference-greenbelt .wd-footer a { color: #fff; }
+
+/* Compact hero: the references present Gallery / Backdrops / Check Availability / FAQ / Packages as a plain titled page on white. */
+.wd-reference-kaleb .wd-hero-compact, .wd-reference-booths .wd-hero-compact, .wd-reference-greenbelt .wd-hero-compact { background: #ffffff; color: #000; padding-block: clamp(1.5rem, 3vw, 2.5rem); text-align: center; }
+.wd-reference-greenbelt .wd-hero-compact { background: #2a1d45; color: #fff; }
+.wd-reference-kaleb .wd-hero-compact .wd-hero-bg, .wd-reference-booths .wd-hero-compact .wd-hero-bg, .wd-reference-greenbelt .wd-hero-compact .wd-hero-bg,
+.wd-reference-kaleb .wd-hero-compact .wd-hero-media, .wd-reference-booths .wd-hero-compact .wd-hero-media, .wd-reference-greenbelt .wd-hero-compact .wd-hero-media,
+.wd-reference-kaleb .wd-hero-compact::after, .wd-reference-booths .wd-hero-compact::after, .wd-reference-greenbelt .wd-hero-compact::after { display: none; }
+.wd-reference-kaleb .wd-hero-compact .wd-hero-grid, .wd-reference-greenbelt .wd-hero-compact .wd-hero-grid { display: block; }
+.wd-reference-kaleb .wd-hero-compact .wd-hero-title, .wd-reference-booths .wd-hero-compact .wd-hero-title, .wd-reference-greenbelt .wd-hero-compact .wd-hero-title { color: inherit; font-size: clamp(1.6rem, 3vw, 2.4rem); margin-inline: auto; }
+.wd-reference-kaleb .wd-hero-compact .wd-hero-sub, .wd-reference-booths .wd-hero-compact .wd-hero-sub, .wd-reference-greenbelt .wd-hero-compact .wd-hero-sub { color: inherit; text-align: center; margin-inline: auto; }
+.wd-reference-kaleb .wd-hero-compact .wd-hero-ctas, .wd-reference-booths .wd-hero-compact .wd-hero-ctas, .wd-reference-greenbelt .wd-hero-compact .wd-hero-ctas { display: none; }
+.wd-reference-booths .wd-hero-compact .wd-hero-title .wd-accent-word { color: inherit; }
+
+/* Shared reference behaviours measured on all three sites: no breadcrumb trail; Kaleb's footer is white with a yellow rule and
+   its gallery a dense borderless mosaic. */
+.wd-reference-kaleb .website-breadcrumbs, .wd-reference-booths .website-breadcrumbs, .wd-reference-greenbelt .website-breadcrumbs { display: none; }
+.wd-reference-kaleb .wd-footer { background: #ffffff; color: #000; border-top: 4px solid #fac815; }
+.wd-reference-kaleb .wd-footer a, .wd-reference-kaleb .wd-footer .wd-wordmark, .wd-reference-kaleb .wd-footer-heading { color: #000; }
+.wd-reference-kaleb .website-gallery-grid { grid-template-columns: repeat(5, 1fr); gap: 4px; }
+.wd-reference-kaleb .website-gallery-item img { border-radius: 0; aspect-ratio: 3 / 4; }
+.wd-reference-kaleb .wd-band-gallery { background: #ffffff; }
+.wd-reference-kaleb .wd-band-gallery .wd-section-title { color: #000; }
+.wd-reference-kaleb .wd-band-backdrops .website-backdrops-grid { grid-template-columns: repeat(3, 1fr); }
 
 @media (max-width: 899px) {
-    .wd-reference-booths .wd-role-events .wd-grid,
-    .wd-reference-greenbelt .wd-role-events .wd-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .wd-reference-kaleb .wd-ref-booths .wd-card, .wd-reference-kaleb .wd-ref-feature-rows figure, .wd-reference-booths .wd-ref-feature-rows figure,
+    .wd-reference-booths .wd-ref-intro .website-image-text { grid-template-columns: 1fr; }
+    .wd-reference-booths .wd-ref-addons .wd-grid, .wd-reference-booths .wd-ref-events .wd-grid, .wd-reference-greenbelt .wd-ref-events .wd-grid,
+    .wd-reference-greenbelt .wd-ref-venues .wd-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .wd-reference-kaleb .wd-ref-booths .wd-card:nth-child(even) img, .wd-reference-kaleb .wd-ref-feature-rows figure:nth-child(even) img,
+    .wd-reference-booths .wd-ref-feature-rows figure:nth-child(even) img { order: 0; }
+    .wd-reference-kaleb .wd-hero-tagline { font-size: 3.2rem; }
+    .wd-reference-kaleb .wd-ref-booths .wd-card > *, .wd-reference-kaleb .wd-ref-booths .wd-card:nth-child(even) > * { grid-column: 1; grid-row: auto; }
 }
 @media (max-width: 599px) {
-    .wd-reference-booths .wd-role-events .wd-grid,
-    .wd-reference-greenbelt .wd-role-events .wd-grid { grid-template-columns: minmax(0, 1fr); }
-    .wd-reference-kaleb .wd-hero-title,
-    .wd-reference-booths .wd-hero-title,
-    .wd-reference-greenbelt .wd-hero-title { font-size: clamp(2rem, 9vw, 3rem); }
-    .wd-reference-booths .wd-role-events .wd-card,
-    .wd-reference-greenbelt .wd-role-events .wd-card { min-height: 0; }
-    .wd-reference-kaleb .wd-btn,
-    .wd-reference-booths .wd-btn { padding-inline: 24px; }
+    .wd-reference-booths .wd-ref-addons .wd-grid, .wd-reference-booths .wd-ref-events .wd-grid, .wd-reference-greenbelt .wd-ref-events .wd-grid,
+    .wd-reference-greenbelt .wd-ref-venues .wd-grid, .wd-reference-greenbelt .wd-ref-addons .wd-grid { grid-template-columns: minmax(0, 1fr); }
+    .wd-reference-kaleb .wd-hero-title, .wd-reference-booths .wd-hero-title, .wd-reference-greenbelt .wd-hero-title { font-size: clamp(1.7rem, 8vw, 2.6rem); }
+    .wd-reference-kaleb .wd-btn, .wd-reference-booths .wd-btn { padding-inline: 24px; }
+    .wd-reference-kaleb .wd-hero-sub { text-align: center; }
 }
