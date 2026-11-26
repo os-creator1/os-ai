@@ -80,7 +80,7 @@ describe('composer', () => {
     expect(screen.getByText('Confirmed request')).toBeTruthy();
     // A confirmed operation must never get a second-send Retry just because
     // reading history is temporarily unavailable.
-    expect(screen.queryByText('Retry')).toBeNull();
+    expect(screen.queryByText('Tap to retry')).toBeNull();
     expect(api.reply).toHaveBeenCalledTimes(1);
   });
 
@@ -136,7 +136,7 @@ describe('composer', () => {
     await type('Hi');
     await fireEvent.press(screen.getByLabelText('Send'));
     await waitFor(() => screen.getByText(/opted out/));
-    expect(screen.queryByText('Retry')).toBeNull();
+    expect(screen.queryByText('Tap to retry')).toBeNull();
     expect(api.reply).toHaveBeenCalledTimes(1);
   });
 
@@ -149,7 +149,7 @@ describe('composer', () => {
     await type('Are you free?');
     await fireEvent.press(screen.getByLabelText('Send'));
     await waitFor(() => screen.getByText(/No connection/));
-    await fireEvent.press(screen.getByText('Retry'));
+    await fireEvent.press(screen.getByText('Tap to retry'));
     await waitFor(() => expect(reply).toHaveBeenCalledTimes(2));
     expect(reply.mock.calls[1][3]).toBe(reply.mock.calls[0][3]);
     expect(api.retry).not.toHaveBeenCalled();
@@ -163,7 +163,7 @@ describe('composer', () => {
     await type('Quote attached');
     await fireEvent.press(screen.getByLabelText('Send'));
     await waitFor(() => screen.getByText('Not enough messaging balance.'));
-    await fireEvent.press(screen.getByText('Retry'));
+    await fireEvent.press(screen.getByText('Tap to retry'));
     await waitFor(() => expect(api.retry).toHaveBeenCalledTimes(1));
     expect(api.retry.mock.calls[0][2]).toBe(reply.mock.calls[0][3]);
     expect(api.reply).toHaveBeenCalledTimes(1);
@@ -180,11 +180,11 @@ describe('composer', () => {
       retry: jest.fn(async () => { throw new ApiError(422, 'insufficient_balance', 'Add funds to retry this SMS.', true, key); }),
     });
     await open(api);
-    await fireEvent.press(screen.getByText('Retry'));
+    await fireEvent.press(screen.getByText('Tap to retry'));
     await waitFor(() => screen.getByText('Add funds to retry this SMS.'));
     expect(screen.getByText('Original attempt failed.')).toBeTruthy();
     expect(api.retry).toHaveBeenCalledWith(scope, 'c1', key);
-    expect(screen.getByText('Retry')).toBeTruthy();
+    expect(screen.getByText('Tap to retry')).toBeTruthy();
   });
 
   it('clears an unconfirmed retry warning after refresh confirms the persisted outcome', async () => {
@@ -203,7 +203,7 @@ describe('composer', () => {
     const api = fakeApi({ conversation });
     await open(api);
 
-    fireEvent.press(screen.getByText('Retry'));
+    fireEvent.press(screen.getByText('Tap to retry'));
     await waitFor(() => screen.getByText(/Message accepted, but history could not refresh/));
     expect(api.retry).toHaveBeenCalledTimes(1);
 
@@ -211,7 +211,7 @@ describe('composer', () => {
     await act(async () => { fireEvent(screen.getByTestId('conversation-messages'), 'refresh'); });
     await waitFor(() => screen.getByText('Carrier could not deliver.'));
     await waitFor(() => expect(screen.queryByText(/Message accepted, but history could not refresh/)).toBeNull());
-    expect(screen.getByText('Retry')).toBeTruthy();
+    expect(screen.getByText('Tap to retry')).toBeTruthy();
   });
 
   it('renders a delivery-failed message with its reason and a Retry that calls retry()', async () => {
@@ -220,7 +220,7 @@ describe('composer', () => {
     await open(api);
     expect(screen.getByText(/Delivery failed/)).toBeTruthy();
     expect(screen.getByText('The carrier could not deliver this message.')).toBeTruthy();
-    await fireEvent.press(screen.getByText('Retry'));
+    await fireEvent.press(screen.getByText('Tap to retry'));
     await waitFor(() => expect(api.retry).toHaveBeenCalledWith(scope, 'c1', '22222222-2222-4222-8222-222222222222'));
   });
 });
@@ -265,7 +265,7 @@ describe('switching conversations', () => {
     await waitFor(() => screen.getByText('Hello from B'));
     expect(screen.queryByText('Private note for customer A')).toBeNull();
     expect(screen.queryByText(/No connection/)).toBeNull();
-    expect(screen.queryByText('Retry')).toBeNull();
+    expect(screen.queryByText('Tap to retry')).toBeNull();
     expect(screen.getByLabelText('Message').props.value).toBe('');
     expect(reply).toHaveBeenCalledTimes(1); // nothing was ever sent to B
   });
