@@ -2544,6 +2544,10 @@
             Route::get('/conversations', 'Workspace\AgencyOutreachController@conversations')->name('conversations.index');
             Route::post('/conversations/{member}/pause-ai', 'Workspace\AgencyOutreachController@pauseAi')->name('conversations.pause');
             Route::post('/conversations/{member}/resume-ai', 'Workspace\AgencyOutreachController@resumeAi')->name('conversations.resume');
+            Route::get('/unanswered', 'Workspace\AgencyOutreachUnansweredController@queue')->name('unanswered.index');
+            Route::post('/unanswered/{item}/answer', 'Workspace\AgencyOutreachUnansweredController@addAnswer')->name('unanswered.answer');
+            Route::post('/unanswered/{item}/link', 'Workspace\AgencyOutreachUnansweredController@linkAnswer')->name('unanswered.link');
+            Route::post('/unanswered/{item}/dismiss', 'Workspace\AgencyOutreachUnansweredController@dismiss')->name('unanswered.dismiss');
             Route::get('/script', 'Workspace\AgencyOutreachController@script')->name('script.show');
             Route::post('/script', 'Workspace\AgencyOutreachController@updateScript')->name('script.update');
             Route::post('/script/preview', 'Workspace\AgencyOutreachController@previewScript')->name('script.preview');

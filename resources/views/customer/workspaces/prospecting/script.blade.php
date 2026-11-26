@@ -106,7 +106,7 @@
                         <div class="fl" style="flex:1 1 280px">
                             <label class="sr" for="faq_fallback">When a question is not covered by an approved answer</label>
                             <select id="faq_fallback" name="faq_fallback" class="in">
-                                <option value="ai" @selected(old('faq_fallback', $faqFallback) === 'ai')>Let AI answer in one short sentence using only the facts on this page</option>
+                                <option value="ai" @selected(old('faq_fallback', $faqFallback) === 'ai')>Let AI match the question to one of these approved answers (it never writes its own), otherwise continue</option>
                                 <option value="continue" @selected(old('faq_fallback', $faqFallback) === 'continue')>Skip it and continue with the next message</option>
                                 <option value="handoff" @selected(old('faq_fallback', $faqFallback) === 'handoff')>Do not reply; leave it for me to answer</option>
                             </select>

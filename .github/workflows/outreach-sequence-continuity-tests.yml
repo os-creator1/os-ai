@@ -7,6 +7,18 @@ on:
       - 'app/Library/AgencyOutreach/OutreachSequence.php'
       - 'app/Library/AgencyOutreach/OutreachStageMachine.php'
       - 'app/Library/AgencyOutreach/OutreachReplyComposer.php'
+      - 'app/Library/AgencyOutreach/OutreachQuestionMatcher.php'
+      - 'app/Library/AgencyOutreach/OutreachAnswerPlan.php'
+      - 'app/Library/AgencyOutreach/OutreachComposedReply.php'
+      - 'app/Library/AgencyOutreach/OutreachFaq.php'
+      - 'app/Library/AgencyOutreach/OutreachIntentClassifier.php'
+      - 'app/Library/AgencyOutreach/OutreachUnansweredQuestions.php'
+      - 'app/Http/Controllers/Customer/Workspace/AgencyOutreachUnansweredController.php'
+      - 'app/Models/AgencyProspectUnansweredQuestion.php'
+      - 'resources/views/customer/workspaces/prospecting/unanswered.blade.php'
+      - 'database/migrations/*agency_prospect_unanswered_questions*'
+      - 'tests/Feature/AgencyOutreach/OutreachApprovedAnswerMatcherTest.php'
+      - 'tests/Feature/AgencyOutreach/OutreachClassifiersTest.php'
       - 'app/Library/AgencyOutreach/OutreachStepTone.php'
       - 'app/Library/AgencyOutreach/OutreachCampaignDiagnostics.php'
       - 'app/Jobs/Outreach/**'
@@ -79,4 +91,4 @@ jobs:
       - name: Install dependencies
         run: composer install --no-interaction --prefer-dist --no-progress
       - name: Test campaign contact-group snapshots and sender eligibility
-        run: php artisan test tests/Feature/AgencyOutreach/OutreachSendPacingTest.php tests/Feature/AgencyOutreach/OutreachReplyTimingTest.php tests/Feature/AgencyOutreach/OutreachSequenceContinuityTest.php tests/Feature/AgencyOutreach/OutreachSequenceV2Test.php tests/Feature/AgencyOutreach/OutreachEngineTest.php tests/Feature/AgencyOutreach/OutreachSafetyTest.php --stop-on-failure
+        run: php artisan test tests/Feature/AgencyOutreach/OutreachSendPacingTest.php tests/Feature/AgencyOutreach/OutreachReplyTimingTest.php tests/Feature/AgencyOutreach/OutreachSequenceContinuityTest.php tests/Feature/AgencyOutreach/OutreachSequenceV2Test.php tests/Feature/AgencyOutreach/OutreachEngineTest.php tests/Feature/AgencyOutreach/OutreachSafetyTest.php tests/Feature/AgencyOutreach/OutreachClassifiersTest.php tests/Feature/AgencyOutreach/OutreachApprovedAnswerMatcherTest.php --stop-on-failure

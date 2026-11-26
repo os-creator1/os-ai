@@ -7,6 +7,8 @@ use App\Library\AgencyOutreach\OutreachClassification;
 use App\Library\AgencyOutreach\OutreachDecision;
 use App\Library\AgencyOutreach\OutreachEligibility;
 use App\Library\AgencyOutreach\OutreachInboundLedger;
+use App\Library\AgencyOutreach\OutreachQuestionMatcher;
+use App\Library\AgencyOutreach\OutreachUnansweredQuestions;
 use App\Library\AgencyOutreach\OutreachReplyComposer;
 use App\Library\AgencyOutreach\OutreachFaq;
 use App\Library\AgencyOutreach\OutreachScript;
@@ -27,8 +29,12 @@ use App\Models\AgencyProspectMessage;
  *   read    the member + inbound (the pair must belong to one Workspace, or nothing happens)
  *   decide  deterministic: stop class, question intent, then OutreachStageMachine
  *   write   an opt-out / rejection is applied and NOTHING is sent
- *   compose the exact stage message, preceded by an answer to a question (FAQ field, or the
- *           one bounded model call for a question the FAQ cannot place)
+ *   match   every question in the reply against the Agency's approved answers
+ *           (OutreachQuestionMatcher): deterministic first, then at most ONE bounded model call
+ *           that may only SELECT approved answer ids for what is left
+ *   compose the approved answers in the prospect's order, then the exact stage message
+ *           (or the answers alone when the prospect asked to hold the booking pitch);
+ *           whatever stayed unanswered goes to the Unanswered questions queue, once
  *   send    through OutreachSendPipeline: member row lock, compare-and-set on the stage the
  *           decision was made from, eligibility re-check at send time (AI paused, campaign
  *           active, prospect active, Blacklists, owner already replied by hand ...), ledger
@@ -52,6 +58,8 @@ class OutreachRespondJob extends Base
         OutreachReplyComposer $composer,
         OutreachSendPipeline $pipeline,
         OutreachInboundLedger $ledger,
+        OutreachQuestionMatcher $matcher,
+        OutreachUnansweredQuestions $unansweredQueue,
     ): void {
         $member = AgencyProspectCampaignMember::query()->where('id', $this->campaignMemberId)->first();
 
@@ -111,9 +119,10 @@ class OutreachRespondJob extends Base
 
         $classification = OutreachClassification::of((string) $inbound->body, $linkRepeatUsed);
         $sequence = OutreachSequence::forWorkspace($eligible->workspace);
-        $faqMatched = OutreachFaq::forWorkspace($eligible->workspace)
-            ->match((string) $inbound->body, $classification->intent, (int) $member->campaign_id) !== null;
-        $decision = OutreachStageMachine::decide($member->stage, $classification, $sequence, $sequence->sentIdsFor($member), $faqMatched);
+        $faq = OutreachFaq::forWorkspace($eligible->workspace);
+        $campaignId = $member->campaign_id === null ? null : (int) $member->campaign_id;
+        $plan = $matcher->match($faq, (string) $inbound->body, $campaignId);
+        $decision = OutreachStageMachine::decide($member->stage, $classification, $sequence, $sequence->sentIdsFor($member), $plan->hasRequests());
 
         if ($decision->stops()) {
             $stops->apply($member, $decision->action === OutreachDecision::OPT_OUT, $inbound->id);
@@ -147,6 +156,14 @@ class OutreachRespondJob extends Base
             }
         }
 
+        // The one bounded model call for the whole inbound, only for what deterministic matching
+        // left and only when the Agency lets AI help. It can select approved ids, nothing else.
+        if ($plan->unresolved !== []
+            && $faq->fallback() === OutreachFaq::FALLBACK_AI
+            && OutreachScript::forWorkspace($eligible->workspace)->aiEnabled()) {
+            $plan = $matcher->resolveWithAi($plan, $faq, $eligible->workspace, (string) $inbound->body, $campaignId, (int) $inbound->id);
+        }
+
         $composed = $composer->compose(
             $eligible->workspace,
             $eligible->prospect,
@@ -155,7 +172,12 @@ class OutreachRespondJob extends Base
             (int) $inbound->id,
             $lastOutbound === null ? null : (string) $lastOutbound,
             $sequence->deliveredByContent($member),
+            $plan,
         );
+
+        // Recorded once per (inbound, wording) whatever happens to the reply; teaching from the
+        // queue changes future replies only and never texts this prospect.
+        $unansweredQueue->record($member, $inbound, $composed->unanswered);
 
         if (! $composed->hasText()) {
             $ledger->markHandled($inbound->id, $classification->intent, $composed->reason);
@@ -169,11 +191,12 @@ class OutreachRespondJob extends Base
             source: $composed->source,
             purpose: AgencyProspectMessage::PURPOSE_AI_REPLY,
             stageFrom: $decision->stageFrom,
-            stageTo: $decision->stageTo,
+            // A held booking pitch is not delivered: the stage stays and the step stays pending.
+            stageTo: $composed->stepDeferred ? $decision->stageFrom : $decision->stageTo,
             intent: $decision->action === OutreachDecision::RESEND_LINK ? 'link_resend' : $classification->intent,
             scriptVersion: OutreachScript::forWorkspace($eligible->workspace)->version(),
             suppressAfterManualReply: true,
-            stepId: $decision->stepId,
+            stepId: $composed->stepDeferred ? null : $decision->stepId,
         ), fn () => $this->hasNewerInbound($member->id, $inbound->id) ? 'superseded_by_newer_inbound' : null);
 
         // 'already_claimed' means a concurrent run owns this reply: it is not a reason for silence.

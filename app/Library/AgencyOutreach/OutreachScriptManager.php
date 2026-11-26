@@ -279,6 +279,8 @@ final class OutreachScriptManager
         $errors = [];
         $entries = [];
         $seen = [];
+        // Taught phrasings (aliases) are not on the Script page form: an entry posted without them keeps its own.
+        $storedAliases = array_column(OutreachFaq::forWorkspace($workspace)->all(), 'aliases', 'id');
         $ownCampaigns = \App\Models\AgencyProspectCampaign::query()->where('workspace_id', (int) $workspace->id)->pluck('id')->map(fn ($v) => (int) $v)->all();
         $intents = [
             OutreachIntentClassifier::PRICING, OutreachIntentClassifier::LOCATION, OutreachIntentClassifier::FOUND_YOU,
@@ -320,6 +322,7 @@ final class OutreachScriptManager
                     static fn ($k): string => mb_strtolower(trim((string) $k)),
                     $keywords,
                 ), static fn (string $k): bool => $k !== '' && mb_strlen($k) <= 60)), 0, 20),
+                'aliases' => OutreachFaq::aliases(array_key_exists('aliases', $entry) ? $entry['aliases'] : ($storedAliases[$id] ?? [])),
                 'intent' => in_array((string) ($entry['intent'] ?? ''), $intents, true) ? (string) $entry['intent'] : null,
                 'campaign_ids' => $campaigns === [] ? null : $campaigns,
                 'niche' => trim((string) ($entry['niche'] ?? '')) === '' ? null : mb_substr(trim((string) $entry['niche']), 0, 120),

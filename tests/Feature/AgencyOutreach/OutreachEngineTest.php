@@ -143,46 +143,40 @@ class OutreachEngineTest extends TestCase
         $this->assertSame(0, $ai->callCount(), 'A known FAQ never costs a model call.');
     }
 
-    public function test_an_unplaceable_question_gets_one_bounded_model_answer_then_the_exact_stage_message(): void
+    public function test_an_unplaceable_question_lets_one_bounded_model_call_select_an_approved_answer_never_write_one(): void
     {
         $ai = $this->useFakeAi();
-        $ai->queueResult(AiCompletionResult::success('We do not handle accounting, but we can cover that on a call.', 'fake-model', 60, 14));
+        $ai->queueResult(AiCompletionResult::success('{"matches":[{"n":1,"id":"legacy-what_we_do_answer"}]}', 'fake-model', 60, 14));
         [, $business, $member] = $this->scenario();
 
-        $this->inbound($business, 'Can you do the accounting too?');
+        $this->inbound($business, 'Is there anything else to know about the offer?');
 
-        $this->assertSame(['We do not handle accounting, but we can cover that on a call. ' . self::M1], $this->sentBodies());
+        $this->assertSame(['We get venues photo booth bookings. ' . self::M1], $this->sentBodies(), 'Only the approved wording is sent.');
         $this->assertSame(1, $ai->callCount(), 'Exactly one model call.');
 
         $request = $ai->requests()[0];
-        $this->assertLessThanOrEqual(OutreachReplyComposer::MAX_OUTPUT_TOKENS, $request->maxOutputTokens);
-        $this->assertLessThanOrEqual(1 + OutreachReplyComposer::MAX_HISTORY_MESSAGES, count($request->messages));
-        $this->assertSame('system', $request->messages[0]['role']);
-        $this->assertStringContainsString('Snap Booth Co', $request->messages[0]['content'], 'Only the Agency facts are given to the model.');
-        $this->assertStringContainsString('Our commission is 9%', $request->messages[0]['content']);
-        $this->assertSame('user', $request->messages[array_key_last($request->messages)]['role']);
-        $this->assertSame('Can you do the accounting too?', $request->messages[array_key_last($request->messages)]['content']);
+        $this->assertLessThanOrEqual(\App\Library\AgencyOutreach\OutreachQuestionMatcher::MAX_MATCH_OUTPUT_TOKENS, $request->maxOutputTokens);
+        $this->assertCount(2, $request->messages, 'System instructions and the one inbound, nothing else.');
+        $this->assertStringContainsString('legacy-what_we_do_answer', $request->messages[1]['content'], 'Only approved entries are offered.');
+        $this->assertStringContainsString('Is there anything else to know about the offer?', $request->messages[1]['content']);
 
         $out = $this->ledger($member, 'outbound')[0];
-        $this->assertSame('ai', $out->source);
+        $this->assertSame('ai', $out->source, 'The ledger records that a model selected the answer.');
 
         $entry = AiUsageLedgerEntry::query()->where('category', 'agency_prospect_reply')->sole();
         $this->assertSame('agency_prospect_reply:' . $this->ledger($member, 'inbound')[0]->id, $entry->idempotency_key);
     }
 
-    public function test_the_model_history_is_capped_at_eight_messages(): void
+    public function test_a_model_that_writes_its_own_sentence_is_never_sent_and_the_question_is_queued(): void
     {
         $ai = $this->useFakeAi();
-        $ai->setDefaultResult(AiCompletionResult::success('Best covered on a quick call.', 'fake-model', 40, 10));
-        [$workspace, $business, $member, , $campaign] = $this->scenario();
+        $ai->queueResult(AiCompletionResult::success('Sure, we also do accounting for $99.', 'fake-model', 40, 10));
+        [, $business, $member] = $this->scenario();
 
-        // Stack up a long conversation of FAQ-free replies, then ask the unplaceable question at stage 3.
-        $this->inbound($business, 'yes');
-        $this->inbound($business, 'ok');
         $this->inbound($business, 'Can you do the accounting too?');
 
-        $request = $ai->requests()[0];
-        $this->assertLessThanOrEqual(1 + OutreachReplyComposer::MAX_HISTORY_MESSAGES, count($request->messages));
+        $this->assertSame([self::M1], $this->sentBodies());
+        $this->assertSame(['Can you do the accounting too?'], \App\Models\AgencyProspectUnansweredQuestion::query()->where('campaign_member_id', $member->id)->pluck('question')->all());
     }
 
     public function test_a_failing_refusing_garbage_or_overlong_model_falls_back_to_the_stage_message_alone(): void
