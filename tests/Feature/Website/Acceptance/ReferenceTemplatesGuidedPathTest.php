@@ -148,7 +148,10 @@ final class ReferenceTemplatesGuidedPathTest extends TestCase
         $this->assertNotEmpty(collect($events['data']['items'])->pluck('image')->filter()->all(), 'event cards carry the owner\'s event photos');
 
         $reviews = collect($sections)->firstWhere('type', 'testimonials');
-        $this->assertSame(['rating' => '4.9', 'count' => 31, 'source' => 'Google'], $reviews['data']['badge']);
+        // Compared by content, not key order: MySQL's JSON column normalises key order, MariaDB keeps insertion order.
+        $this->assertEqualsCanonicalizing(['rating' => '4.9', 'count' => 31, 'source' => 'Google'], $reviews['data']['badge']);
+        $this->assertSame('4.9', $reviews['data']['badge']['rating']);
+        $this->assertSame(31, $reviews['data']['badge']['count']);
 
         if ($templateKey !== 'photo_booth_reference_kaleb') {
             $this->assertStringContainsString('Casey', (string) collect($sections)->firstWhere('data.ref', 'founder')['data']['heading']);
@@ -226,7 +229,10 @@ final class ReferenceTemplatesGuidedPathTest extends TestCase
         $this->assertSame('Canonical booths', collect($sections)->firstWhere('type', 'services')['data']['heading']);
         $this->assertSame('Canonical questions', collect($sections)->firstWhere('type', 'faq')['data']['heading']);
         $this->assertStringContainsString('Casey', (string) collect($sections)->firstWhere('type', 'image_text')['data']['heading']);
-        $this->assertSame(['rating' => '4.8', 'count' => 12, 'source' => 'Google'], collect($sections)->firstWhere('type', 'testimonials')['data']['badge']);
+        $badge = collect($sections)->firstWhere('type', 'testimonials')['data']['badge'];
+        $this->assertSame('4.8', $badge['rating']);
+        $this->assertSame(12, $badge['count']);
+        $this->assertSame('Google', $badge['source']);
     }
 
     private function dumpIfRequested(string $templateKey, Website $website): void
