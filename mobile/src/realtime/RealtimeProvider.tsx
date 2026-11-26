@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useEffect, useMemo, useRef } from 'react';
 import { AppState } from 'react-native';
 import { useAuth } from '../auth/AuthContext';
+import { reportRealtimeFailure, type RealtimeStage } from './reportFailure';
 import { channelFor, parseChange, type RealtimeEvent, type TransportFactory } from './types';
 
 type Listener = (e: RealtimeEvent) => void;
@@ -15,6 +16,7 @@ const RealtimeCtx = createContext<Ctx>({ subscribe: () => () => undefined });
  * - On every (re)connect and every return to foreground it emits `resync`, so anything missed while offline is re-read
  *   through the API — the socket is an optimisation, the API is the source of truth.
  * - If realtime is not configured server-side, or the transport throws, the app simply behaves as before (pull-to-refresh).
+ *   A thrown error is reported (see `reportRealtimeFailure`) so the fallback is never silent.
  */
 export function RealtimeProvider({ children, createTransport }: { children: React.ReactNode; createTransport: TransportFactory }) {
   const { api, me, scope, signedIn } = useAuth();
@@ -32,13 +34,16 @@ export function RealtimeProvider({ children, createTransport }: { children: Reac
     let teardown: (() => void) | null = null;
 
     (async () => {
+      let stage: RealtimeStage = 'config';
       try {
         const cfg = await api.realtimeConfig();
         if (cancelled || !cfg.enabled || !cfg.key) return;
+        stage = 'transport';
         const transport = createTransport(cfg, async (socketId, channel) => {
           const res = await api.broadcastAuth(socketId, channel);
           return res as { auth: string };
         });
+        stage = 'subscribe';
         const offConnected = transport.onConnected(() => emitRef.current({ kind: 'resync' }));
         const offChannel = transport.subscribe(channelFor(businessUid, userUid), (payload) => {
           const change = parseChange(payload);
@@ -48,8 +53,9 @@ export function RealtimeProvider({ children, createTransport }: { children: Reac
         const appSub = AppState.addEventListener('change', (s) => { if (s === 'active') emitRef.current({ kind: 'resync' }); });
         teardown = () => { offChannel(); offConnected(); appSub.remove(); transport.disconnect(); };
         if (cancelled) teardown();
-      } catch {
-        /* realtime unavailable: the app keeps working on pull-to-refresh */
+      } catch (error) {
+        // Realtime unavailable: the app keeps working on pull-to-refresh, but say why.
+        if (!cancelled) reportRealtimeFailure(stage, error);
       }
     })();
 
