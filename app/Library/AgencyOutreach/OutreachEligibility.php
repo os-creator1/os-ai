@@ -30,7 +30,7 @@ use App\Models\Workspace;
  *   prospect_not_active                stopped or booked
  *   no_business                        the Agency's own Business is not resolvable
  *   no_sending_number                  managed messaging has no usable number
- *   byo_*                              selected agency-owned Telnyx sender is unusable
+ *   byo_*                              selected agency-owned Telnyx sender is unusable (not pinned yet)
  *   verification_incomplete            the number's messaging verification is not approved yet
  *   opted_out                          the number is on the Agency Business's Blacklists
  *   existing_client                    the number is an active Existing Client exclusion (commercial; STOP is separate)
@@ -123,7 +123,12 @@ final class OutreachEligibility
         // to the platform-paid path.
         $byo = AgencyByoSender::selectedChannel($business);
 
-        if ($byo !== null) {
+        if ($member->sender_channel_id !== null || $campaign->sender_channel_ids !== null) {
+            // Multi-number Outreach: this conversation is (or will be) pinned to ONE of the
+            // agency's own numbers. That number is checked where it matters — at assignment and
+            // again at the send, which HOLDS the message on that number when it cannot send —
+            // never against whichever number happens to be the default.
+        } elseif ($byo !== null) {
             $readiness = AgencyByoSender::sendReadiness($byo);
 
             if (! $readiness['ok']) {

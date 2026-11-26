@@ -3,6 +3,7 @@
 namespace App\Library\AgencyOutreach;
 
 use App\Models\AgencyProspectCampaignMember;
+use App\Models\AgencyProspectingChannel;
 use App\Models\AgencyProspectingSetting;
 use App\Models\AgencyProspectMessage;
 use App\Models\Business;
@@ -45,9 +46,9 @@ final class OutreachSendBudget
      *
      * @return array{granted: bool, reason: ?string, retryAt: ?Carbon}
      */
-    public function reserve(Business $business, AgencyProspectMessage $row): array
+    public function reserve(Business $business, AgencyProspectMessage $row, ?AgencyProspectingChannel $channel = null): array
     {
-        $sender = $this->sender->sendingNumber($business);
+        $sender = $this->sender->sendingNumber($business, $channel);
         $key = substr(($sender['number'] ?? 'default') . ':' . $sender['transport'], 0, 64);
         $interval = $this->interval($sender, $row);
 
@@ -70,12 +71,16 @@ final class OutreachSendBudget
             // The 24h cap is based on ACTUAL successful deliveries, not ledger claim
             // timestamps (which could precede a deferred send by days). Count only
             // genuinely in-flight reservations alongside those deliveries. This is
-            // per sending-number slot, rather than a workspace-wide pooled cap.
+            // per sending-number slot, rather than a workspace-wide pooled cap — EXCEPT for
+            // openers from the agency's own pinned numbers: there the one allowance is shared
+            // by every number, so adding numbers never multiplies it.
             if ($opener && ($cap = $this->openerCap($row)) > 0) {
                 $windowStart = $now->copy()->subDay();
                 $scope = AgencyProspectMessage::query()
                     ->where('workspace_id', $row->workspace_id)
-                    ->where('outreach_send_slot_id', $slot->id)
+                    ->when($row->channel_id !== null,
+                        fn ($q) => $q->whereNotNull('channel_id')->whereNotNull('outreach_send_slot_id'),
+                        fn ($q) => $q->where('outreach_send_slot_id', $slot->id))
                     ->where('direction', AgencyProspectMessage::DIRECTION_OUTBOUND)
                     ->where('purpose', AgencyProspectMessage::PURPOSE_INITIAL)
                     ->where('id', '!=', $row->id);

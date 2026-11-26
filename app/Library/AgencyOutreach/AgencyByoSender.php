@@ -86,6 +86,24 @@ final class AgencyByoSender
     }
 
     /**
+     * One specific agency-owned Telnyx channel, for this agency's own Business only — the number an
+     * Outreach conversation is pinned to. Null when it is not this agency's (cross-tenant refused).
+     */
+    public static function ownedChannel(?Business $business, int $channelId): ?AgencyProspectingChannel
+    {
+        if ($business === null || $business->workspace_id === null || ! self::isOwnBusiness($business)) {
+            return null;
+        }
+
+        return AgencyProspectingChannel::query()
+            ->whereKey($channelId)
+            ->where('workspace_id', (int) $business->workspace_id)
+            ->where('provider', SendingServer::TYPE_TELNYX)
+            ->with('sendingServer')
+            ->first();
+    }
+
+    /**
      * Whether the channel can SEND now. Reason codes are stable; messages are for customers.
      *
      * @return array{ok: bool, code: ?string, message: ?string}

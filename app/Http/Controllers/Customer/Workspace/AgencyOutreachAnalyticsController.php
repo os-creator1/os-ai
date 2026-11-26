@@ -49,6 +49,10 @@ class AgencyOutreachAnalyticsController extends CustomerBaseController
             $data['funnel'] = $analytics->funnel($data['kpis']);
         }
 
+        if ($tab === 'messages') {
+            $data['numbers'] = $analytics->numbers();
+        }
+
         if ($tab === 'performance') {
             $data['segments'] = $analytics->segments('type');
             $data['bestWebsite'] = $analytics->segments('website');

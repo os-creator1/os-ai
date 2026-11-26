@@ -121,7 +121,10 @@ class HandleOutreachInboundMessage implements ShouldQueue
             return;
         }
 
-        $incoming = $this->linker->latestInbound($agencyBusiness, $prospect);
+        // The conversation this inbound was filed under (the receiving number's), else the one
+        // pinned to the member's assigned number — never another number's older thread.
+        $senderNumber = $this->linker->senderNumberFor($member);
+        $incoming = $this->linker->latestInbound($agencyBusiness, $prospect, $senderNumber, $event->conversationBoxId);
 
         if ($incoming === null) {
             return;
@@ -133,7 +136,7 @@ class HandleOutreachInboundMessage implements ShouldQueue
             $this->noteInbound($member);
         }
 
-        $this->linker->link($member, $agencyBusiness, $prospect);
+        $this->linker->link($member, $agencyBusiness, $prospect, $senderNumber);
 
         if ($inbound->status === OutreachInboundLedger::STATUS_HANDLED) {
             return;

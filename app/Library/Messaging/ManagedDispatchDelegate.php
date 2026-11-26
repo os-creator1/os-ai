@@ -121,6 +121,7 @@ class ManagedDispatchDelegate
         ?int $conversationBoxId = null,
         bool $requireManaged = false,
         ?\App\Library\Messaging\DTO\LocationSendContext $location = null,
+        ?int $byoChannelId = null,
     ): ?OutboundMessageResult {
         if ($businessId === null || $toNumber === null || $toNumber === '') {
             return null;
@@ -145,9 +146,19 @@ class ManagedDispatchDelegate
         // switch to the platform-paid managed path or a legacy gateway.
         // A retry of an existing bubble keeps the transport its conversation started on
         // (found from the conversation's own number), not whatever is the default now.
-        $byoChannel = $conversationBoxId !== null
-            ? \App\Library\AgencyOutreach\AgencyByoSender::channelForConversation($business, $conversationBoxId)
-            : \App\Library\AgencyOutreach\AgencyByoSender::selectedChannel($business);
+        // An Outreach conversation pinned to one of the agency's numbers names that number
+        // explicitly; it must be this agency's own, or the send is refused (never re-routed).
+        if ($byoChannelId !== null) {
+            $byoChannel = \App\Library\AgencyOutreach\AgencyByoSender::ownedChannel($business, $byoChannelId);
+
+            if ($byoChannel === null) {
+                throw new \App\Library\Messaging\Exceptions\ByoSenderNotReadyException('not_owned', 'That sender does not belong to this agency.');
+            }
+        } else {
+            $byoChannel = $conversationBoxId !== null
+                ? \App\Library\AgencyOutreach\AgencyByoSender::channelForConversation($business, $conversationBoxId)
+                : \App\Library\AgencyOutreach\AgencyByoSender::selectedChannel($business);
+        }
 
         if ($byoChannel !== null) {
             if ($operationKey === null || $operationKey === '') {

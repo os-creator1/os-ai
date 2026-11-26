@@ -2540,6 +2540,7 @@
             Route::post('/campaigns/{campaign}/recipients/group', 'Workspace\AgencyOutreachController@changeRecipientGroup')->name('campaigns.recipients.group');
 
             Route::post('/campaigns/{campaign}/config', 'Workspace\AgencyProspectingController@updateCampaignConfig')->name('campaigns.config');
+            Route::post('/campaigns/{campaign}/senders', 'Workspace\AgencyOutreachController@updateCampaignSenders')->name('campaigns.senders');
             Route::post('/campaigns/{campaign}/start', 'Workspace\AgencyProspectingController@startCampaign')->name('campaigns.start');
 
             // Agency Outreach V1 — Conversations, Script & Settings, managed campaigns.
@@ -2579,6 +2580,7 @@
                 Route::post('/{channel}/enable', 'Workspace\AgencyProspectingChannelController@enable')->name('enable');
                 Route::post('/{channel}/disable', 'Workspace\AgencyProspectingChannelController@disable')->name('disable');
                 Route::post('/{channel}/disconnect', 'Workspace\AgencyProspectingChannelController@disconnect')->name('disconnect');
+                Route::post('/{channel}/outreach', 'Workspace\AgencyProspectingChannelController@outreach')->name('outreach');
                 // Agency-owned Telnyx Voice (outbound browser calling). Explicit actions only; nothing here changes Telnyx.
                 Route::put('/{channel}/voice', 'Workspace\AgencyVoiceSetupController@save')->name('voice.save');
                 Route::post('/{channel}/voice/verify', 'Workspace\AgencyVoiceSetupController@verify')->name('voice.verify');

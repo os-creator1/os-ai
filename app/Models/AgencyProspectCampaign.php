@@ -26,6 +26,7 @@ class AgencyProspectCampaign extends Model
         'recipients_synced_at',
         'recipient_report',
         'min_send_interval_seconds',
+        'sender_channel_ids',
     ];
 
     /** Recipients come from a Business-scoped CRM contact group. NULL = legacy individual enrollment. */
@@ -51,6 +52,7 @@ class AgencyProspectCampaign extends Model
         'status' => AgencyProspectCampaignStatus::class,
         'recipients_synced_at' => 'datetime',
         'recipient_report' => 'array',
+        'sender_channel_ids' => 'array',
     ];
 
     public function workspace(): BelongsTo

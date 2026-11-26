@@ -33,6 +33,8 @@ class AgencyProspectCampaignMember extends Model
         'sequence_sent_ids',
         'source_contact_id',
         'sequence_evidence',
+        'sender_channel_id',
+        'sender_assigned_at',
     ];
 
     protected $casts = [
@@ -48,6 +50,7 @@ class AgencyProspectCampaignMember extends Model
         'ai_paused_at' => 'datetime',
         'sequence_sent_ids' => 'array',
         'sequence_evidence' => 'array',
+        'sender_assigned_at' => 'datetime',
     ];
 
     public function workspace(): BelongsTo
@@ -63,6 +66,12 @@ class AgencyProspectCampaignMember extends Model
     public function prospect(): BelongsTo
     {
         return $this->belongsTo(AgencyProspect::class, 'prospect_id');
+    }
+
+    /** The one agency-owned number this prospect's conversation is pinned to (null = not assigned yet / managed). */
+    public function senderChannel(): BelongsTo
+    {
+        return $this->belongsTo(AgencyProspectingChannel::class, 'sender_channel_id');
     }
 
     public function isAiPaused(): bool

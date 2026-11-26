@@ -98,6 +98,12 @@ class ConversationSender
         // sending to the second conversation's recipient.
         $input['managed_operation_key'] = 'conversation:' . $box->id . ':' . $sendUid . ':initial';
 
+        // A thread on one of the agency's own Telnyx numbers (Outreach can use several) is
+        // answered from THAT number, exactly as retry() already does — not from the default.
+        if (\App\Library\AgencyOutreach\AgencyByoSender::channelForConversation($business, (int) $box->id) !== null) {
+            $input['conversation_box_id'] = $box->id;
+        }
+
         $campaign = new Campaigns();
         $campaign->business_id = $business->id;
 

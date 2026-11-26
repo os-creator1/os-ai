@@ -6,6 +6,7 @@ use App\Enums\AgencyProspecting\AgencyProspectStage;
 use App\Jobs\Outreach\OutreachFollowUpJob;
 use App\Models\AgencyProspect;
 use App\Models\AgencyProspectCampaignMember;
+use App\Models\AgencyProspectingChannel;
 use App\Models\AgencyProspectMessage;
 use App\Models\Business;
 use Closure;
@@ -34,13 +35,14 @@ use Illuminate\Support\Facades\Log;
 final class OutreachSendPipeline
 {
     /** Eligibility refusals that only HOLD a paused send; anything else cancels it. */
-    private const RECOVERABLE = ['manual_hold', 'campaign_not_active', 'no_business', 'workspace_inactive', 'not_entitled', 'no_sending_number', 'verification_incomplete', 'sequence_paused'];
+    private const RECOVERABLE = ['manual_hold', 'campaign_not_active', 'no_business', 'workspace_inactive', 'not_entitled', 'no_sending_number', 'verification_incomplete', 'sequence_paused', OutreachSenderPool::REASON_NO_SENDER];
 
     public function __construct(
         private readonly OutreachEligibility $eligibility,
         private readonly OutreachMessageSender $sender,
         private readonly OutreachConversationLinker $linker,
         private readonly OutreachSendBudget $budget,
+        private readonly OutreachSenderPool $senders,
     ) {
     }
 
@@ -137,15 +139,23 @@ final class OutreachSendPipeline
                 return 'send_in_flight';
             }
 
-            if ($plan->suppressAfterManualReply && $this->linker->ownerRepliedAfterLatestInbound($eligible->business, $eligible->prospect)) {
+            if ($plan->suppressAfterManualReply && $this->linker->ownerRepliedAfterLatestInbound($eligible->business, $eligible->prospect, $this->linker->senderNumberFor($member))) {
                 return 'manual_reply_sent';
+            }
+
+            // The ONE number this conversation uses, persisted on the member under its lock
+            // before the ledger row and before any provider call; a retry reads it back.
+            $channelId = $this->senders->assign($member, $eligible->campaign, $eligible->business);
+
+            if (is_string($channelId)) {
+                return $channelId;
             }
 
             try {
                 $row = AgencyProspectMessage::create([
                     'workspace_id' => $member->workspace_id,
                     'campaign_member_id' => $member->id,
-                    'channel_id' => null,
+                    'channel_id' => $channelId,
                     'direction' => AgencyProspectMessage::DIRECTION_OUTBOUND,
                     'purpose' => $plan->purpose,
                     'operation_key' => $plan->operationKey,
@@ -274,7 +284,7 @@ final class OutreachSendPipeline
             }
 
             if ($row->purpose === AgencyProspectMessage::PURPOSE_AI_REPLY
-                && $this->linker->ownerRepliedAfterLatestInbound($eligible->business, $eligible->prospect)) {
+                && $this->linker->ownerRepliedAfterLatestInbound($eligible->business, $eligible->prospect, $this->linker->senderNumberFor($member))) {
                 $row->update(['status' => AgencyProspectMessage::STATUS_FAILED, 'failure_reason' => 'manual_reply_sent']);
 
                 return 'manual_reply_sent';
@@ -297,7 +307,17 @@ final class OutreachSendPipeline
                 return 'send_in_flight';
             }
 
-            $row->update(['status' => AgencyProspectMessage::STATUS_PENDING, 'failure_reason' => null, 'deferred_until' => null]);
+            // A row claimed before its member had a sender keeps whatever the member is pinned
+            // to now (assigning one if needed); a row that already names its sender keeps it.
+            $channelId = $row->channel_id !== null
+                ? (int) $row->channel_id
+                : $this->senders->assign($member, $eligible->campaign, $eligible->business);
+
+            if (is_string($channelId)) {
+                return $channelId;
+            }
+
+            $row->update(['status' => AgencyProspectMessage::STATUS_PENDING, 'failure_reason' => null, 'deferred_until' => null, 'channel_id' => $channelId]);
 
             return ['row' => $row->fresh(), 'business' => $eligible->business, 'prospect' => $eligible->prospect];
         });
@@ -311,17 +331,34 @@ final class OutreachSendPipeline
 
     private function deliver(AgencyProspectMessage $row, Business $business, AgencyProspect $prospect): OutreachPipelineResult
     {
+        // The pinned sender is re-checked HERE, at the send, not trusted from settings. One that
+        // cannot send holds the message (paused, with the exact reason) on that same number:
+        // never moved to another number, never retried in a loop — resumed when it recovers.
+        $channel = $row->channel_id === null ? null : AgencyProspectingChannel::query()->with('sendingServer')->find((int) $row->channel_id);
+
+        if ($row->channel_id !== null) {
+            $hold = $channel === null || (int) $channel->workspace_id !== (int) $row->workspace_id
+                ? 'not_owned'
+                : (AgencyByoSender::sendReadiness($channel)['code'] ?? null);
+
+            if ($hold !== null) {
+                $row = $this->settle($row, OutreachSendResult::paused(OutreachSenderPool::REASON_SENDER_UNAVAILABLE . ':' . $hold));
+
+                return new OutreachPipelineResult(null, OutreachSendResult::paused((string) $row->failure_reason), $row);
+            }
+        }
+
         // The shared budget of this sending number. Over budget = the row stays claimed (same operation
         // key, nothing recorded as delivered) and is retried by a delayed job; nothing sleeps.
         if (OutreachSendBudget::enabled()) {
-            $slot = $this->budget->reserve($business, $row);
+            $slot = $this->budget->reserve($business, $row, $channel);
 
             if (! $slot['granted']) {
                 return $this->defer($row, (string) $slot['reason'], $slot['retryAt']);
             }
         }
 
-        $result = $this->sender->send($business, (string) $prospect->phone, (string) $row->body, (string) $row->operation_key);
+        $result = $this->sender->send($business, (string) $prospect->phone, (string) $row->body, (string) $row->operation_key, $channel);
 
         $row = $this->settle($row, $result);
 
@@ -465,7 +502,7 @@ final class OutreachSendPipeline
         $business = AgencyOutreachBusinessResolver::forWorkspace($member->workspace);
 
         if ($prospect !== null && $business !== null) {
-            $this->linker->link($member, $business, $prospect);
+            $this->linker->link($member, $business, $prospect, $this->linker->senderNumberFor($member));
         }
 
         return $followUpAt;

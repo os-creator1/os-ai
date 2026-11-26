@@ -9,6 +9,7 @@ use App\Library\Messaging\Exceptions\MessagingIdentityConflictException;
 use App\Library\Messaging\Exceptions\MessagingInsufficientFundsException;
 use App\Library\Messaging\Exceptions\MessagingProviderNotConfiguredException;
 use App\Library\Messaging\ManagedMessageDispatcher;
+use App\Models\AgencyProspectingChannel;
 use App\Models\Blacklists;
 use App\Models\Business;
 use App\Models\Campaigns;
@@ -57,9 +58,10 @@ final class OutreachMessageSender
      *
      * @return array{number: ?string, transport: string}
      */
-    public function sendingNumber(Business $business): array
+    public function sendingNumber(Business $business, ?AgencyProspectingChannel $channel = null): array
     {
-        $byo = AgencyByoSender::selectedChannel($business);
+        // A conversation pinned to one of the agency's numbers is paced on THAT number.
+        $byo = $channel ?? AgencyByoSender::selectedChannel($business);
 
         if ($byo !== null) {
             return ['number' => preg_replace('/\D/', '', (string) $byo->sender_number) ?: null, 'transport' => 'byo_telnyx'];
@@ -73,8 +75,10 @@ final class OutreachMessageSender
 
     /**
      * @param  string  $toPhone  the prospect's canonical digits-only number
+     * @param  AgencyProspectingChannel|null  $channel  the agency-owned number this conversation is pinned
+     *         to; null = the agency's default sender / managed number, exactly as before
      */
-    public function send(Business $business, string $toPhone, string $body, string $operationKey): OutreachSendResult
+    public function send(Business $business, string $toPhone, string $body, string $operationKey, ?AgencyProspectingChannel $channel = null): OutreachSendResult
     {
         $digits = preg_replace('/\D/', '', $toPhone) ?? '';
 
@@ -106,13 +110,17 @@ final class OutreachMessageSender
         try {
             // The agency's chosen own-Telnyx sender, when it has chosen one: usable or
             // refused with the exact reason — never the platform-paid managed number.
-            $byo = AgencyByoSender::selectedChannel($business);
+            $byo = $channel ?? AgencyByoSender::selectedChannel($business);
 
             if ($byo !== null) {
                 $readiness = AgencyByoSender::sendReadiness($byo);
 
                 if (! $readiness['ok']) {
-                    return OutreachSendResult::blocked('byo_' . $readiness['code']);
+                    // A pinned number that cannot send HOLDS the message on that number; it is
+                    // never sent from another one.
+                    return $channel !== null
+                        ? OutreachSendResult::paused(OutreachSenderPool::REASON_SENDER_UNAVAILABLE . ':' . $readiness['code'])
+                        : OutreachSendResult::blocked('byo_' . $readiness['code']);
                 }
 
                 $senderNumber = (string) $byo->sender_number;
@@ -143,9 +151,13 @@ final class OutreachMessageSender
                 'region_code' => $phone['region_code'],
                 'managed_operation_key' => $operationKey,
                 'require_managed' => $byo === null,
+                // The exact agency-owned channel; re-proven owned and usable by the dispatcher.
+                'byo_channel_id' => $channel?->id,
             ])->getData();
         } catch (ByoSenderNotReadyException $e) {
-            return OutreachSendResult::blocked('byo_' . $e->reasonCode);
+            return $channel !== null
+                ? OutreachSendResult::paused(OutreachSenderPool::REASON_SENDER_UNAVAILABLE . ':' . $e->reasonCode)
+                : OutreachSendResult::blocked('byo_' . $e->reasonCode);
         } catch (MessagingInsufficientFundsException) {
             return OutreachSendResult::paused('insufficient_balance');
         } catch (MessagingIdentityConflictException) {

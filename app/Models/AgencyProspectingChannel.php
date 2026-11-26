@@ -23,6 +23,7 @@ class AgencyProspectingChannel extends Model
         'status',
         'created_by_user_id',
         'is_default_sender',
+        'outreach_enabled',
         'webhook_public_key',
         'credentials_verified_at',
         'webhook_verified_at',
@@ -42,6 +43,7 @@ class AgencyProspectingChannel extends Model
 
     protected $casts = [
         'is_default_sender' => 'boolean',
+        'outreach_enabled' => 'boolean',
         'webhook_public_key' => \App\Casts\SealedSecretCast::class,
         'credentials_verified_at' => 'datetime',
         'webhook_verified_at' => 'datetime',

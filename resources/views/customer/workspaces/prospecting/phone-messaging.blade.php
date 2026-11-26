@@ -32,6 +32,8 @@
             'current' => (bool) $channel->is_default_sender, 'chips' => $chips, 'sender' => $channel->uid,
             'manage' => route('customer.workspaces.prospecting.channels.show', [$workspaceUid, $channel->uid]), 'manageLabel' => 'Manage account',
             'disconnect' => route('customer.workspaces.prospecting.channels.disconnect', [$workspaceUid, $channel->uid]),
+            'outreach' => (bool) $channel->outreach_enabled,
+            'outreachUrl' => route('customer.workspaces.prospecting.channels.outreach', [$workspaceUid, $channel->uid]),
         ];
     }
     if ($business !== null && $hasManagedNumber) {
@@ -70,6 +72,12 @@
                 @endforeach
             </div>
             <a class="btn out" href="{{ $selected['manage'] }}">{{ $selected['manageLabel'] }}</a>
+            @if(($selected['kind'] ?? null) === 'byo')
+                <form method="post" action="{{ $selected['outreachUrl'] }}" data-role="outreach-toggle" data-number="{{ $selected['number'] }}">@csrf
+                    <input type="hidden" name="enabled" value="{{ $selected['outreach'] ? 0 : 1 }}">
+                    <span class="mut">{{ $selected['outreach'] ? 'Used for Outreach campaigns' : 'Not used for Outreach campaigns' }}</span>
+                    <button type="submit" class="btn out sm">{{ $selected['outreach'] ? 'Remove from Outreach' : 'Use for Outreach' }}</button></form>
+            @endif
         </section>
     @else
         <section class="ready no" data-role="no-sender">
@@ -101,6 +109,12 @@
                             <input type="hidden" name="sender" value="{{ $row['sender'] }}">
                             <button type="submit" class="btn pri sm">Use as my sender</button></form>
                         <a class="btn out sm" href="{{ $row['manage'] }}">{{ $row['kind'] === 'byo' ? 'Manage / change account' : $row['manageLabel'] }}</a>
+                        @if(($row['kind'] ?? null) === 'byo')
+                <form method="post" action="{{ $row['outreachUrl'] }}" data-role="outreach-toggle" data-number="{{ $row['number'] }}">@csrf
+                    <input type="hidden" name="enabled" value="{{ $row['outreach'] ? 0 : 1 }}">
+                    <span class="mut">{{ $row['outreach'] ? 'Used for Outreach campaigns' : 'Not used for Outreach campaigns' }}</span>
+                    <button type="submit" class="btn out sm">{{ $row['outreach'] ? 'Remove from Outreach' : 'Use for Outreach' }}</button></form>
+            @endif
                         @if($row['disconnect'])
                             <form method="post" action="{{ $row['disconnect'] }}" onsubmit="return confirm('Disconnect this Telnyx account? Its saved credentials will be erased. Your Telnyx account and number are not changed.');">@csrf
                                 <button type="submit" class="btn out sm">Disconnect</button></form>

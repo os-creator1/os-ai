@@ -51,7 +51,7 @@ class OutreachCampaignService
             return $this->fail('Choose a valid contact group for this campaign before starting it.');
         }
 
-        $reason = $this->readiness->forWorkspace($workspace)->firstBlockingReason();
+        $reason = $this->readiness->forWorkspace($workspace)->firstBlockingReason() ?? $this->senderBlockingReason($workspace, $campaign);
 
         if ($reason !== null) {
             return $this->fail($reason);
@@ -136,7 +136,7 @@ class OutreachCampaignService
     /** @return array{ok: bool, error: ?string, message: ?string} */
     public function resume(Workspace $workspace, AgencyProspectCampaign $campaign): array
     {
-        $reason = $this->readiness->forWorkspace($workspace)->firstBlockingReason();
+        $reason = $this->readiness->forWorkspace($workspace)->firstBlockingReason() ?? $this->senderBlockingReason($workspace, $campaign);
 
         if ($reason !== null) {
             return $this->fail($reason);
@@ -181,7 +181,10 @@ class OutreachCampaignService
             ->whereHas('campaignMember', fn ($q) => $q->where('campaign_id', $campaign->id))
             ->where('direction', AgencyProspectMessage::DIRECTION_OUTBOUND)
             ->where('status', AgencyProspectMessage::STATUS_PAUSED)
-            ->whereIn('failure_reason', [OutreachSendBudget::REASON_RATE, OutreachSendBudget::REASON_OPENER_CAP])
+            ->where(fn ($q) => $q
+                ->whereIn('failure_reason', [OutreachSendBudget::REASON_RATE, OutreachSendBudget::REASON_OPENER_CAP])
+                // Held because its pinned number could not send: re-checked at the send.
+                ->orWhere('failure_reason', 'like', OutreachSenderPool::REASON_SENDER_UNAVAILABLE . ':%'))
             ->get(['id', 'deferred_until']);
 
         foreach ($held as $row) {
@@ -325,6 +328,26 @@ class OutreachCampaignService
             ->where('status', AgencyProspectMessage::STATUS_PAUSED)
             ->where('failure_reason', 'insufficient_balance')
             ->exists();
+    }
+
+    /**
+     * A campaign with its own number selection needs at least one selected number that can take
+     * new conversations. A never-configured campaign is covered by the workspace readiness above.
+     */
+    private function senderBlockingReason(Workspace $workspace, AgencyProspectCampaign $campaign): ?string
+    {
+        $pool = app(OutreachSenderPool::class);
+        $fresh = AgencyProspectCampaign::query()->whereKey($campaign->id)->where('workspace_id', $workspace->id)->first();
+
+        if ($fresh === null || $pool->selection($fresh) === null) {
+            return null;
+        }
+
+        $business = AgencyOutreachBusinessResolver::forWorkspace($workspace);
+
+        return $pool->eligibleChannels($fresh, $business)->isEmpty()
+            ? 'Select at least one available sending number for this campaign in Script & Settings → Sending numbers.'
+            : null;
     }
 
     private function fail(string $error): array

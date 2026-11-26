@@ -165,7 +165,7 @@
                 </section>
 
                 <section class="sec" id="sc-opener-cap" data-role="opener-daily-cap" aria-labelledby="h-opener-cap">
-                    <div class="sec-h"><span class="num">6</span><div><b id="h-opener-cap">New conversations per 24 hours</b><span class="d">Maximum new conversations started by your sending number in any rolling 24-hour period. Applies across all campaigns. Extra first messages wait automatically. Replies and follow-ups are not limited by this setting.</span></div></div>
+                    <div class="sec-h"><span class="num">6</span><div><b id="h-opener-cap">New conversations per 24 hours</b><span class="d">Maximum new conversations started by your sending number in any rolling 24-hour period. Applies across all campaigns, and is shared by all your own sending numbers. Extra first messages wait automatically. Replies and follow-ups are not limited by this setting.</span></div></div>
                     <div>
                         <label class="lbl" for="opener_daily_cap">New conversations per 24 hours</label>
                         <input type="number" inputmode="numeric" min="1" max="500" step="1" id="opener_daily_cap" name="opener_daily_cap" value="{{ old('opener_daily_cap', $openerDailyCap) }}" aria-describedby="opener-cap-help">
@@ -183,6 +183,71 @@
             </div>
         </div>
     </form>
+
+    <section class="sec" id="sc-senders" data-role="sending-numbers" aria-labelledby="h-senders">
+        <div class="sec-h"><span class="num">7</span><div><b id="h-senders">Sending numbers</b><span class="d">Which of your own numbers each campaign starts new conversations from. New prospects are spread evenly across the selected numbers. A prospect keeps the number their conversation started on — changing this never moves them.</span></div></div>
+
+        @if($senders['campaign'] === null)
+            <p class="mut" data-role="senders-empty">Create an Outreach campaign first; its sending numbers are chosen here.</p>
+        @else
+            @if(count($senders['campaigns']) > 1)
+                <form method="get" action="{{ route('customer.workspaces.prospecting.script.show', $workspaceUid) }}#sc-senders" data-role="senders-campaign-picker">
+                    <label class="lbl" for="senders_campaign">Campaign</label>
+                    <select id="senders_campaign" name="senders_campaign" class="in" style="width:auto" onchange="this.form.submit()">
+                        @foreach($senders['campaigns'] as $option)
+                            <option value="{{ $option['uid'] }}" @selected($option['uid'] === $senders['campaign']['uid'])>{{ $option['name'] }}</option>
+                        @endforeach
+                    </select>
+                    <noscript><button type="submit" class="btn">Show</button></noscript>
+                </form>
+            @endif
+
+            <form method="post" action="{{ route('customer.workspaces.prospecting.campaigns.senders', [$workspaceUid, $senders['campaign']['uid']]) }}" data-role="senders-form">
+                @csrf
+                @unless($senders['campaign']['configured'])
+                    <p class="mut" data-role="senders-default-note">“{{ $senders['campaign']['name'] }}” sends from your default sender until you save a selection here.</p>
+                @endunless
+
+                @if(collect($senders['numbers'])->isEmpty())
+                    <p class="mut">You have no Telnyx numbers of your own yet. Connect them in <a class="link" href="{{ route('customer.workspaces.prospecting.phone-messaging', $workspaceUid) }}">Phone &amp; texting</a>.</p>
+                @else
+                    <table class="table" data-role="senders-table">
+                        <thead><tr><th scope="col">Use</th><th scope="col">Number</th><th scope="col">Status</th><th scope="col">Prospects on it</th></tr></thead>
+                        <tbody>
+                        @foreach($senders['numbers'] as $n)
+                            <tr data-role="sender-row" data-number="{{ $n['number'] }}">
+                                <td><input type="checkbox" name="channels[]" value="{{ $n['uid'] }}" id="sender_{{ $n['uid'] }}" aria-label="Use {{ $n['number'] }}" @checked($n['selected']) @disabled(! $n['in_pool'])></td>
+                                <td><label for="sender_{{ $n['uid'] }}">{{ $n['number'] }}</label></td>
+                                <td data-role="sender-status">
+                                    @if($n['available'])
+                                        Available
+                                    @else
+                                        Unavailable — {{ $n['reason'] }}
+                                    @endif
+                                    @if($n['held'] > 0)
+                                        <br><span class="err" role="status">{{ $n['held'] }} {{ \Illuminate\Support\Str::plural('message', $n['held']) }} waiting until this number can send again.</span>
+                                    @endif
+                                </td>
+                                <td>{{ $n['assigned'] }}</td>
+                            </tr>
+                        @endforeach
+                        </tbody>
+                    </table>
+
+                    @if($senders['cap'] !== null && $senders['distribution'] !== [])
+                        <p class="mut" data-role="senders-distribution">Estimated split of your {{ $senders['cap'] }} new conversations per 24 hours (shared by all numbers, never multiplied):
+                            @foreach($senders['distribution'] as $share){{ $share['number'] }}: about {{ $share['share'] }}@if(! $loop->last), @endif @endforeach.
+                        </p>
+                    @endif
+
+                    <div style="display:flex;gap:8px;flex-wrap:wrap">
+                        <button type="submit" class="btn pri">Save sending numbers</button>
+                        <button type="submit" class="btn" name="select_all" value="1">Use all available numbers</button>
+                    </div>
+                @endif
+            </form>
+        @endif
+    </section>
 </div>
 @endsection
 

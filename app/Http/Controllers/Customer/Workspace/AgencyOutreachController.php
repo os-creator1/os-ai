@@ -16,6 +16,7 @@ use App\Library\AgencyOutreach\OutreachScript;
 use App\Library\AgencyOutreach\OutreachScriptDefaults;
 use App\Library\AgencyOutreach\OutreachScriptManager;
 use App\Library\AgencyOutreach\OutreachScriptRenderer;
+use App\Library\AgencyOutreach\OutreachSenderPool;
 use App\Library\AgencyOutreach\OutreachTakeoverService;
 use App\Library\Entitlement\EntitlementManager;
 use App\Library\Merge\MergeFieldRegistry;
@@ -316,6 +317,122 @@ class AgencyOutreachController extends CustomerBaseController
         return $back->with('flash_success', 'Group changed to "' . $group->name . '". Recipients were rebuilt from it.');
     }
 
+    /**
+     * Script & Settings → Sending numbers: which of the agency's own Outreach numbers this
+     * campaign starts new conversations from. Changing it never moves a prospect who already
+     * has a number; it only decides where NEW conversations go. Every submitted number must be
+     * in THIS Workspace's Outreach pool, or nothing is saved.
+     */
+    public function updateCampaignSenders(Request $request, string $workspaceUid, AgencyProspectCampaign $campaign): RedirectResponse
+    {
+        $workspace = $this->resolveEntitledWorkspace($workspaceUid);
+        $this->abortUnlessCampaign($workspace, $campaign);
+        $back = redirect()->to(route('customer.workspaces.prospecting.script.show', $workspaceUid) . '?senders_campaign=' . urlencode((string) $campaign->uid) . '#sc-senders');
+
+        $validated = $request->validate([
+            'channels' => ['array', 'max:500'],
+            'channels.*' => ['string', 'max:64'],
+            'select_all' => ['nullable', 'boolean'],
+        ]);
+
+        $pool = app(OutreachSenderPool::class);
+        $channels = $pool->poolChannels((int) $workspace->id);
+
+        if ($request->boolean('select_all')) {
+            $chosen = $channels->filter(fn ($channel) => $pool->availability($channel)['ok']);
+        } else {
+            $uids = array_values(array_unique($validated['channels'] ?? []));
+            $chosen = $channels->filter(fn ($channel) => in_array((string) $channel->uid, $uids, true));
+
+            if ($chosen->count() !== count($uids)) {
+                return $back->with('flash_error', 'One of those numbers is not one of this agency\'s Outreach numbers. Nothing was changed.');
+            }
+        }
+
+        if ($chosen->isEmpty()) {
+            return $back->with('flash_error', 'Select at least one sending number for this campaign.');
+        }
+
+        $saved = DB::transaction(function () use ($workspace, $campaign, $chosen) {
+            $locked = AgencyProspectCampaign::where('id', $campaign->id)->where('workspace_id', $workspace->id)->lockForUpdate()->first();
+
+            if ($locked === null || ! $locked->isManaged() || $locked->status === AgencyProspectCampaignStatus::Ended) {
+                return false;
+            }
+
+            $locked->update(['sender_channel_ids' => $chosen->pluck('id')->map(fn ($id) => (int) $id)->sort()->values()->all()]);
+
+            return true;
+        });
+
+        if (! $saved) {
+            return $back->with('flash_error', 'An ended campaign\'s sending numbers can no longer be changed.');
+        }
+
+        return $back->with('flash_success', 'Sending numbers saved for "' . $campaign->name . '". Prospects who already have a number keep it.');
+    }
+
+    /** Script & Settings → Sending numbers: what the section shows for one campaign. */
+    private function senderSection(Workspace $workspace, ?\App\Models\Business $business, ?string $campaignUid, ?int $openerCap): array
+    {
+        $pool = app(OutreachSenderPool::class);
+        $campaigns = AgencyProspectCampaign::query()
+            ->where('workspace_id', $workspace->id)
+            ->where('sending_mode', AgencyProspectCampaign::MODE_MANAGED)
+            ->where('status', '!=', AgencyProspectCampaignStatus::Ended->value)
+            ->orderBy('name')
+            ->get();
+        $campaign = $campaigns->firstWhere('uid', $campaignUid) ?? $campaigns->first();
+        $poolIds = $pool->poolChannels((int) $workspace->id)->pluck('id')->map(fn ($id) => (int) $id)->all();
+        $selection = $campaign !== null ? $pool->selection($campaign) : null;
+        $effective = $campaign !== null ? $pool->campaignChannels($campaign, $business)->pluck('id')->map(fn ($id) => (int) $id)->all() : [];
+
+        $assigned = $campaign === null ? collect() : AgencyProspectCampaignMember::query()
+            ->where('campaign_id', $campaign->id)->whereNotNull('sender_channel_id')
+            ->selectRaw('sender_channel_id, COUNT(*) as aggregate')->groupBy('sender_channel_id')
+            ->pluck('aggregate', 'sender_channel_id');
+        $held = \App\Models\AgencyProspectMessage::query()
+            ->where('workspace_id', $workspace->id)
+            ->where('status', \App\Models\AgencyProspectMessage::STATUS_PAUSED)
+            ->where('failure_reason', 'like', OutreachSenderPool::REASON_SENDER_UNAVAILABLE . ':%')
+            ->selectRaw('channel_id, COUNT(*) as aggregate')->groupBy('channel_id')
+            ->pluck('aggregate', 'channel_id');
+
+        $numbers = \App\Models\AgencyProspectingChannel::query()
+            ->where('workspace_id', $workspace->id)
+            ->where('provider', \App\Models\SendingServer::TYPE_TELNYX)
+            ->with('sendingServer')
+            ->orderBy('id')
+            ->get()
+            ->map(function ($channel) use ($pool, $poolIds, $effective, $assigned, $held) {
+                $inPool = in_array((int) $channel->id, $poolIds, true);
+                $state = $pool->availability($channel);
+
+                return [
+                    'uid' => (string) $channel->uid,
+                    'number' => (string) $channel->sender_number,
+                    'in_pool' => $inPool,
+                    'selected' => in_array((int) $channel->id, $effective, true),
+                    'available' => $inPool && $state['ok'],
+                    'reason' => ! $inPool ? 'Not added to Outreach. Add it in Phone & texting.' : ($state['ok'] ? null : $state['message']),
+                    'assigned' => (int) ($assigned[$channel->id] ?? 0),
+                    'held' => (int) ($held[$channel->id] ?? 0),
+                ];
+            })
+            ->values();
+
+        $eligibleSelected = $numbers->filter(fn ($n) => $n['selected'] && $n['available'])->values();
+        $shares = OutreachSenderPool::distribution((int) ($openerCap ?? 0), $eligibleSelected->count());
+
+        return [
+            'campaigns' => $campaigns->map(fn ($c) => ['uid' => (string) $c->uid, 'name' => $c->name])->all(),
+            'campaign' => $campaign === null ? null : ['uid' => (string) $campaign->uid, 'name' => $campaign->name, 'configured' => $selection !== null],
+            'numbers' => $numbers->all(),
+            'cap' => $openerCap,
+            'distribution' => $eligibleSelected->map(fn ($n, $i) => ['number' => $n['number'], 'share' => $shares[$i] ?? 0])->values()->all(),
+        ];
+    }
+
     private function abortUnlessCampaign(Workspace $workspace, AgencyProspectCampaign $campaign): void
     {
         abort_unless((int) $campaign->workspace_id === (int) $workspace->id && $campaign->isManaged(), 404);
@@ -342,7 +459,7 @@ class AgencyOutreachController extends CustomerBaseController
     // Script & Settings
     // -----------------------------------------------------------------
 
-    public function script(string $workspaceUid)
+    public function script(Request $request, string $workspaceUid)
     {
         $workspace = $this->resolveEntitledWorkspace($workspaceUid);
         $business = AgencyOutreachBusinessResolver::forWorkspace($workspace);
@@ -369,8 +486,11 @@ class AgencyOutreachController extends CustomerBaseController
             'extra' => [],
         ];
 
+        $openerCap = $settings?->opener_daily_cap ?? (config('outreach.send_pacing.opener_daily_cap') > 0 ? (int) config('outreach.send_pacing.opener_daily_cap') : null);
+
         return view('customer.workspaces.prospecting.script', [
             'workspaceUid' => $workspaceUid,
+            'senders' => $this->senderSection($workspace, $business, is_string($request->query('senders_campaign')) ? $request->query('senders_campaign') : null, $openerCap),
             'values' => $values,
             'agencyName' => $settings?->agency_name,
             'websiteUrl' => $settings?->website_url,

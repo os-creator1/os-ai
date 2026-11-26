@@ -105,6 +105,17 @@
                 </a>
             @endforeach
         </section>
+
+        @if(! empty($numbers))
+            <section class="card menu-card tw" data-role="number-table" role="region" aria-label="Results by sending number" tabindex="0">
+                <div class="row h" style="grid-template-columns:minmax(0,1.4fr) repeat(4,minmax(60px,.7fr))"><span>Sending number</span><span>Prospects</span><span>Sent</span><span>Replies</span><span>Failed</span></div>
+                @foreach($numbers as $n)
+                    <div class="row" data-number="{{ $n['number'] }}" style="grid-template-columns:minmax(0,1.4fr) repeat(4,minmax(60px,.7fr))">
+                        <span><b>{{ $n['number'] }}</b></span><span>{{ $n['assigned'] }}</span><span>{{ $n['sent'] }}</span><span>{{ $n['replies'] }}</span><span>{{ $n['failed'] }}</span>
+                    </div>
+                @endforeach
+            </section>
+        @endif
     @endif
 
     @if($tab === 'types')

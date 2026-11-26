@@ -6,6 +6,7 @@ use App\Http\Controllers\Customer\CustomerBaseController;
 use App\Http\Controllers\Customer\Workspace\Concerns\ResolvesAgencyProspectingWorkspace;
 use App\Library\AgencyProspecting\AgencyProspectingWebhookToken;
 use App\Library\AgencyOutreach\AgencyByoSender;
+use App\Library\AgencyOutreach\OutreachSenderPool;
 use App\Library\AgencyOutreach\AgencyOutreachBusinessResolver;
 use App\Library\AgencyOutreach\MessagingReadinessReader;
 use App\Library\AgencyProspecting\AgencyProspectPhoneNormalizer;
@@ -437,6 +438,8 @@ class AgencyProspectingChannelController extends CustomerBaseController
             return $back(['sender_number' => 'This number is now connected to another account, so it cannot be reconnected here.']);
         }
 
+        app(OutreachSenderPool::class)->resumeHeldFor($channel);
+
         return redirect()->route('customer.workspaces.prospecting.channels.show', [$workspaceUid, $channel->uid])->with([
             'flash_success' => 'Channel updated.',
         ]);
@@ -476,9 +479,62 @@ class AgencyProspectingChannelController extends CustomerBaseController
 
         $channel->forceFill(['status' => AgencyProspectingChannel::STATUS_ACTIVE])->save();
 
+        // Outreach sends held on this number (pinned conversations) carry on now it can send again.
+        app(OutreachSenderPool::class)->resumeHeldFor($channel);
+
         return redirect()->route('customer.workspaces.prospecting.channels.index', $workspaceUid)->with([
             'flash_success' => 'Channel enabled.',
         ]);
+    }
+
+    /**
+     * Puts one of the agency's own Telnyx numbers into, or takes it out of, the Outreach sending pool.
+     * Adding re-uses the same checks as choosing a sender (usable, webhook key, live Telnyx check).
+     * Removing only stops NEW conversations from being given to it: conversations already pinned to
+     * it keep it while it can send — they are never moved to another number.
+     */
+    public function outreach(Request $request, string $workspaceUid, AgencyProspectingChannel $channel): RedirectResponse
+    {
+        $workspace = $this->resolveEntitledWorkspace($workspaceUid);
+        $this->resolveWorkspaceChannel($workspace, $channel);
+        $back = fn (string $key, string $message) => redirect()->route('customer.workspaces.prospecting.phone-messaging', $workspaceUid)->with([$key => $message]);
+
+        if (! $request->boolean('enabled')) {
+            $channel->forceFill(['outreach_enabled' => false])->save();
+
+            return $back('flash_success', $channel->sender_number . ' will not be given new Outreach conversations. Conversations already on it continue.');
+        }
+
+        if ($channel->provider !== SendingServer::TYPE_TELNYX || $channel->status === AgencyProspectingChannel::STATUS_DISCONNECTED) {
+            return $back('flash_error', 'Only your own connected Telnyx numbers can be used for Outreach.');
+        }
+
+        $state = AgencyByoSender::sendReadiness($channel);
+
+        if (! $state['ok']) {
+            return $back('flash_error', (string) $state['message']);
+        }
+
+        if (! AgencyByoSender::hasWebhookKey($channel)) {
+            return $back('flash_error', 'Add your Telnyx webhook public key first. Without it, replies to your messages could not be received.');
+        }
+
+        $credentials = AgencyByoSender::credentials($channel);
+        $check = $this->telnyxVerifier->verify($credentials['api_key'], $credentials['profile_id'], (string) $channel->sender_number);
+
+        if (! $check['ok']) {
+            $channel->forceFill(['last_error_code' => $check['reason']])->save();
+
+            return $back('flash_error', $check['message']);
+        }
+
+        $channel->forceFill([
+            'outreach_enabled' => true,
+            'last_error_code' => null,
+            'sms_capability_confirmed_at' => $check['sms_confirmed'] ? now() : null,
+        ])->save();
+
+        return $back('flash_success', $channel->sender_number . ' can now be selected for Outreach campaigns.');
     }
 
     /**

@@ -3,6 +3,7 @@
 namespace App\Library\AgencyOutreach\Analytics;
 
 use App\Models\AgencyProspectCampaign;
+use App\Models\AgencyProspectingChannel;
 use App\Models\CustomFieldDefinition;
 use App\Models\AgencyProspectImportBatch;
 use App\Models\Workspace;
@@ -612,6 +613,59 @@ final class OutreachAnalytics
     }
 
     /** @return list<array<string, mixed>> */
+    /**
+     * Per sending number (the agency's own Telnyx numbers): prospects pinned to it, messages it sent
+     * and failed (the ledger's own channel_id), and replies from the prospects pinned to it. Campaign
+     * filter and period apply; read from the existing ledger, nothing new is tracked.
+     *
+     * @return list<array{number: string, assigned: int, sent: int, failed: int, replies: int}>
+     */
+    public function numbers(): array
+    {
+        [$from, $to] = $this->f->window();
+        $campaign = fn ($q, string $col) => $this->campaignId === null ? $q : $q->where($col, (int) $this->campaignId);
+        $window = function ($q, string $col) use ($from, $to) {
+            $from !== null && $q->where($col, '>=', $from);
+            $to !== null && $q->where($col, '<', $to);
+
+            return $q;
+        };
+
+        $assigned = $campaign(DB::table('agency_prospect_campaign_members')->where('workspace_id', $this->ws)->whereNotNull('sender_channel_id'), 'campaign_id')
+            ->selectRaw('sender_channel_id as c, COUNT(*) as n')->groupBy('sender_channel_id')->pluck('n', 'c');
+
+        $outbound = fn (string $status, string $at) => $window($campaign(DB::table('agency_prospect_messages as m')
+            ->join('agency_prospect_campaign_members as cm', 'cm.id', '=', 'm.campaign_member_id')
+            ->where('m.workspace_id', $this->ws)->where('m.direction', 'outbound')->where('m.status', $status)
+            ->whereNotNull('m.channel_id'), 'cm.campaign_id'), $at)
+            ->selectRaw('m.channel_id as c, COUNT(*) as n')->groupBy('m.channel_id')->pluck('n', 'c');
+
+        $sent = $outbound('sent', 'm.sent_at');
+        $failed = $outbound('failed', 'm.created_at');
+
+        $replies = $window($campaign(DB::table('agency_prospect_messages as m')
+            ->join('agency_prospect_campaign_members as cm', 'cm.id', '=', 'm.campaign_member_id')
+            ->where('m.workspace_id', $this->ws)->where('m.direction', 'inbound')
+            ->whereNotNull('cm.sender_channel_id'), 'cm.campaign_id'), 'm.created_at')
+            ->selectRaw('cm.sender_channel_id as c, COUNT(*) as n')->groupBy('cm.sender_channel_id')->pluck('n', 'c');
+
+        $ids = collect([$assigned, $sent, $failed, $replies])->flatMap(fn ($c) => $c->keys())->unique()->all();
+
+        if ($ids === []) {
+            return [];
+        }
+
+        return AgencyProspectingChannel::query()
+            ->where('workspace_id', $this->ws)->whereIn('id', $ids)->orderBy('id')->get(['id', 'sender_number'])
+            ->map(fn ($ch) => [
+                'number' => (string) $ch->sender_number,
+                'assigned' => (int) ($assigned[$ch->id] ?? 0),
+                'sent' => (int) ($sent[$ch->id] ?? 0),
+                'failed' => (int) ($failed[$ch->id] ?? 0),
+                'replies' => (int) ($replies[$ch->id] ?? 0),
+            ])->values()->all();
+    }
+
     private function campaignSegments(): array
     {
         $out = [];

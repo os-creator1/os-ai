@@ -301,7 +301,10 @@
             // could never reach the managed dispatch call past it. Every
             // legacy/BYO Business (this stays false) runs the untouched
             // block that follows exactly as it always has.
-            $managedTransport = \App\Library\Messaging\ManagedDispatchDelegate::isManaged($input['business_id'] ?? null);
+            // Agency Outreach multi-number: an explicitly pinned agency-owned number is tracked
+            // dispatch whatever the agency's current default sender is (the delegate re-proves it).
+            $managedTransport = \App\Library\Messaging\ManagedDispatchDelegate::isManaged($input['business_id'] ?? null)
+                || ! empty($input['byo_channel_id']);
 
             $sending_server = null;
             $db_sms_type    = $sms_type == 'unicode' ? 'plain' : $sms_type;
@@ -683,6 +686,9 @@
                 ($input['location_send_context'] ?? null) instanceof \App\Library\Messaging\DTO\LocationSendContext
                     ? $input['location_send_context']
                     : null,
+                // Agency Outreach multi-number — the exact agency-owned number a prospect's
+                // conversation is pinned to. Only OutreachMessageSender sets it.
+                isset($input['byo_channel_id']) ? (int) $input['byo_channel_id'] : null,
             );
 
             if ($managedResult !== null) {
