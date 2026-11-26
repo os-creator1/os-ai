@@ -384,7 +384,19 @@ class WebsiteBlogRenderer
             'url' => $surface->pageUrl($candidate),
         ])->all();
 
-        $blog = $this->navigationEntry($website, $surface, $snapshot) ?? ($surface->isPreview() ? ['uid' => 'blog', 'title' => 'Blog', 'is_home' => false, 'slug' => 'blog', 'has_form' => false, 'url' => $surface->blogUrl()] : null);
+        $blog = $this->navigationEntry($website, $surface, $snapshot);
+        $referenceDraft = $surface->isPreview() && in_array(
+            (string) ($website->theme['header_variant'] ?? ''),
+            ['reference-kaleb', 'reference-booths', 'reference-greenbelt'],
+            true,
+        );
+
+        // Legacy previews still offer their historical Blog preview link.
+        // Reference previews must honor the Content Articles visibility
+        // policy, including the case where no article is published yet.
+        if ($blog === null && $surface->isPreview() && ! $referenceDraft) {
+            $blog = ['uid' => 'blog', 'title' => 'Blog', 'is_home' => false, 'slug' => 'blog', 'has_form' => false, 'url' => $surface->blogUrl()];
+        }
 
         if ($blog !== null) {
             $pages[] = $blog;
