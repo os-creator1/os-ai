@@ -192,7 +192,7 @@ final class PhotoBoothBlueprint
         $greenbelt = $key === 'photo_booth_reference_greenbelt';
 
         $hero = $this->hero(
-            $this->heroHeadline($f),
+            $this->referenceHeroHeadline($f),
             $this->heroSubline($f),
             $this->primaryCta($f),
             $f['packages'] !== [] ? ['label' => 'View packages', 'url' => '/packages'] : null,
@@ -200,7 +200,9 @@ final class PhotoBoothBlueprint
         $intro = trim((string) $f['about']) === '' ? null : [
             'type' => 'image_text',
             'data' => [
-                'heading' => $greenbelt ? 'An experience for every celebration' : 'Make every event memorable',
+                'heading' => $kaleb ? 'We make every event extraordinary!' :
+                    ($booths ? 'Photo booth rental' . ($f['city'] === null ? '' : ' in ' . $f['city']) :
+                    'Looking for a photo booth rental' . ($f['city'] === null ? '?' : ' in ' . $f['city'] . '?')),
                 'body' => Str::limit((string) $f['about'], 3000, ''),
                 'image' => null,
                 'image_position' => $greenbelt ? 'left' : 'right',
@@ -210,7 +212,7 @@ final class PhotoBoothBlueprint
         $boothCards = $f['services'] === [] ? null : [
             'type' => 'services',
             'data' => [
-                'heading' => $kaleb ? 'Our photo booth experience' : 'Our photo booths',
+                'heading' => $greenbelt ? 'Our photo booths' : 'Our photo booth experience',
                 'role' => 'booths',
                 'items' => $this->serviceItems($f, array_slice($f['services'], 0, 6)),
             ],
@@ -218,7 +220,8 @@ final class PhotoBoothBlueprint
         $featureCards = $f['advantages'] === [] ? null : [
             'type' => 'services',
             'data' => [
-                'heading' => $kaleb ? 'Included with your photo booth' : 'What makes our service special',
+                'heading' => $kaleb ? 'All of our packages include' :
+                    ($booths ? 'Special features & add-ons' : 'What makes our service special'),
                 'role' => 'advantages',
                 'items' => $this->advantageItems(array_slice($f['advantages'], 0, 12)),
             ],
@@ -226,7 +229,8 @@ final class PhotoBoothBlueprint
         $events = $f['events'] === [] ? null : [
             'type' => 'services',
             'data' => [
-                'heading' => $greenbelt ? 'Rentals for every event' : 'Events we cover',
+                'heading' => $greenbelt ? 'Rentals for every event' :
+                    ($booths ? 'What type of event are you planning?' : 'Events we cover'),
                 'role' => 'events',
                 'items' => array_map(
                     fn (BusinessService $e) => array_filter([
@@ -241,20 +245,20 @@ final class PhotoBoothBlueprint
         $packages = $f['packages'] === [] ? null : [
             'type' => 'services',
             'data' => [
-                'heading' => $greenbelt ? 'Our photo booth packages' : 'Packages',
+                'heading' => $greenbelt ? 'Our packages for your next event' : 'Packages',
                 'items' => $this->packageItems($f, array_slice($f['packages'], 0, self::HOME_PACKAGES)),
             ],
         ];
         $gallery = count($f['gallery']) < self::HOME_GALLERY_MIN ? null : [
             'type' => 'gallery',
             'data' => [
-                'heading' => $greenbelt ? 'Real moments from our events' : 'Photo booth gallery',
+                'heading' => $greenbelt ? 'Photo booth event gallery' : 'See some of our favorite events',
                 'items' => array_map(fn (string $uid) => ['image' => $uid], array_slice($f['gallery'], 0, self::HOME_GALLERY)),
             ],
         ];
         $reviews = $f['testimonials'] === [] ? null : [
             'type' => 'testimonials',
-            'data' => ['heading' => 'Customer reviews', 'items' => array_slice($f['testimonials'], 0, 10)],
+            'data' => ['heading' => $greenbelt ? 'Google reviews' : 'Reviews', 'items' => array_slice($f['testimonials'], 0, 10)],
         ];
         $places = $f['areas'] === [] ? null : [
             'type' => 'text',
@@ -276,7 +280,7 @@ final class PhotoBoothBlueprint
         $corporatePanel = $corporate === null ? null : [
             'type' => 'image_text',
             'data' => [
-                'heading' => 'Corporate event photo booths',
+                'heading' => 'Corporate events and brand activations',
                 'body' => Str::limit((string) $corporate->description, 3000, ''),
                 'image' => null,
                 'image_position' => 'right',
@@ -293,6 +297,24 @@ final class PhotoBoothBlueprint
         $sections[] = $this->contactDetails($f['business']);
 
         return array_values(array_filter($sections));
+    }
+
+    /** Exact reference family headline structure from genuine business facts. */
+    private function referenceHeroHeadline(array $f): string
+    {
+        $city = $f['city'];
+        $isLuxury = collect($f['services'])->contains(
+            fn (BusinessService $service) => str_contains(mb_strtolower((string) $service->description), 'luxury')
+        );
+
+        return match ($f['template']) {
+            'photo_booth_reference_booths' => 'Lights, Camera, Memories!',
+            'photo_booth_reference_greenbelt' => ($isLuxury ? 'Luxury photo booth rentals' : 'Photo booth rentals')
+                . ($city === null ? ' for your event' : ' in ' . $city),
+            default => ($isLuxury ? 'Luxury photo booth rentals' : 'Photo booth rentals')
+                . ' for weddings, celebrations and events'
+                . ($city === null ? '' : ' in ' . $city),
+        };
     }
 
     /** @param array<string, mixed> $f */
