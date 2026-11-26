@@ -224,6 +224,30 @@ class WebsiteLeadFormResolverTest extends TestCase
         $this->assertSame(0, WebsiteForm::query()->where('website_id', $this->website->id)->count());
     }
 
+    public function test_reference_inquiry_buttons_downgrade_if_forms_deployment_is_disabled_before_publish(): void
+    {
+        $resolver = app(\App\Library\Website\Design\WebsiteCtaResolver::class);
+        $urls = ['photo-booth-contact' => 'https://example.test/photo-booth-contact'];
+        $savedButton = ['label' => 'Check Availability', 'url' => '/photo-booth-contact'];
+
+        $validForm = ['kind' => 'form', 'label' => 'Check Availability', 'url' => $urls['photo-booth-contact']];
+        $this->assertSame(['label' => 'Check Availability', 'url' => $urls['photo-booth-contact']],
+            $resolver->sectionCta($savedButton, $validForm, $urls));
+
+        foreach ([
+            ['kind' => 'contact_page', 'label' => 'Contact us', 'url' => $urls['photo-booth-contact']],
+            ['kind' => 'booking', 'label' => 'Book now', 'url' => 'https://example.test/booking'],
+            ['kind' => 'phone', 'label' => 'Call us', 'url' => 'tel:+15555550123'],
+        ] as $fallback) {
+            $this->assertSame(['label' => $fallback['label'], 'url' => $fallback['url']],
+                $resolver->sectionCta($savedButton, $fallback, $urls),
+                'Never claim an availability inquiry is operational when the form cannot render');
+        }
+
+        $this->assertNull($resolver->sectionCta($savedButton, null, $urls),
+            'No working contact path means no primary availability button');
+    }
+
     public function test_published_reference_navigation_detects_the_real_form_and_uses_check_availability(): void
     {
         $deployment = $this->offer($this->installed('pb3_form_lead', 'Check Availability'));
