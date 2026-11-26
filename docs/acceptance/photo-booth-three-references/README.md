@@ -10,6 +10,10 @@ These opt-in **reusable** templates follow the visual direction and section orde
 | `photo_booth_reference_booths` | Event Spotlight | https://www.boothstothemax.com/home | Navy/blue, events and booth features |
 | `photo_booth_reference_greenbelt` | Party Editorial | https://greenbeltphotography.com/ | Plum/peach, editorial packages and corporate |
 
+> **Update:** see [`ACCEPTANCE-MATRIX.md`](ACCEPTANCE-MATRIX.md) (page-by-page fixture comparison, screenshots, remaining differences) and
+> [`QUESTIONNAIRE-WALKTHROUGH.md`](QUESTIONNAIRE-WALKTHROUGH.md) (the exact questions and answers used). The statements below that the wizard lacks hero/heading inputs and that
+> no browser comparison exists are superseded; authentic client-account acceptance and pixel-level parity are still **not** certified.
+
 **Status:** Code supplies fixed section order, reusable component styling, and Forms-module inquiry integration. **Pixel-level visual parity, full source-page equivalence, and live account testing are not yet certified.** Completing those requirements is a separate, mandatory browser comparison and production-readiness gate; GitHub CI tests alone cannot prove it.
 
 Source structure already inventoried in the repository:

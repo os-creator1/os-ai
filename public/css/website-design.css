@@ -1072,7 +1072,8 @@ body.wd h1, body.wd h2, body.wd h3, body.wd h4 { font-family: var(--wd-font-head
 .wd-reference-kaleb .wd-ref-events .wd-card { background: transparent; border: 0; box-shadow: none; padding: 0; text-align: center; }
 .wd-reference-kaleb .wd-ref-events .wd-card h3, .wd-reference-kaleb .wd-ref-events .wd-card a { color: #fac815; font-family: var(--wd-font-body); font-size: 1rem; font-weight: 400; text-decoration: underline; }
 .wd-reference-kaleb .wd-ref-events .wd-card p { color: #fff; }
-.wd-reference-kaleb .wd-ref-areas p { text-align: center; color: #fff; }
+.wd-reference-kaleb .wd-ref-areas p, .wd-reference-kaleb .wd-ref-areas .website-text-body p { text-align: center; color: #fff; }
+.wd-reference-kaleb .wd-ref-faq summary { font: 400 0.8rem/1.4 var(--wd-font-head); text-transform: uppercase; letter-spacing: 0.04em; }
 .wd-reference-kaleb .wd-ref-faq { background: #fff; }
 .wd-reference-kaleb .wd-ref-faq details { border-bottom: 1px solid #e3e3e3; }
 .wd-reference-kaleb .wd-band-cta { background: #232323; color: #fff; text-align: center; }
@@ -1159,7 +1160,12 @@ body.wd h1, body.wd h2, body.wd h3, body.wd h4 { font-family: var(--wd-font-head
 .wd-reference-booths .wd-review-badge { text-align: center; font: 700 1.1rem var(--wd-font-body); }
 .wd-reference-booths .wd-review-stars { color: #fbbc04; letter-spacing: 0.1em; }
 .wd-reference-booths .wd-ref-areas { background: #061633; color: #fff; }
-.wd-reference-booths .wd-ref-areas .wd-section-title, .wd-reference-booths .wd-ref-areas p { color: #fff; text-align: center; }
+.wd-reference-booths .wd-ref-areas .wd-section-title, .wd-reference-booths .wd-ref-areas p, .wd-reference-booths .wd-ref-areas .website-text-body p { color: #fff; text-align: center; }
+.wd-reference-booths .wd-ref-quote .wd-cta { display: grid; grid-template-columns: 2fr 1fr; align-items: center; gap: 2rem; text-align: left; }
+.wd-reference-booths .wd-ref-quote .website-cta-buttons { justify-content: flex-end; }
+.wd-reference-booths .wd-ref-events .wd-card img, .wd-reference-greenbelt .wd-ref-events .wd-card img { width: 100%; aspect-ratio: 3 / 4; object-fit: cover; }
+.wd-reference-booths .wd-ref-events .wd-card { display: block; padding: 0; }
+.wd-reference-booths .wd-ref-events .wd-card h3 { padding: 0.8rem 1rem 0; font-size: 1.6rem; }
 .wd-reference-booths .wd-ref-faq { background: #fff; }
 .wd-reference-booths .wd-footer { background: #061633; color: #fff; }
 .wd-reference-booths .wd-footer a { color: #fff; }

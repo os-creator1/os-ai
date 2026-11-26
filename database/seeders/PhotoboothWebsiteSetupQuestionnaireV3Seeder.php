@@ -197,7 +197,7 @@ class PhotoboothWebsiteSetupQuestionnaireV3Seeder extends Seeder
                 presets: self::boothPresets(), rowFields: ['name', 'description', 'cover', 'extra_images', 'features', 'price', 'visible'], itemKind: 'service'),
             self::step('event_types', 'What types of events do you serve?', 'repeatable_group', true, 'business_service', null,
                 helpText: 'Tap the events you serve. We write the wording for you — change it any time.',
-                presets: self::eventPresets(), rowFields: ['name', 'description', 'visible'], itemKind: 'event'),
+                presets: self::eventPresets(), rowFields: ['name', 'description', 'cover', 'visible'], itemKind: 'event'),
 
             self::step('pricing_strategy', 'How do you price your photo booth services?', 'select', true, 'answers', null,
                 helpText: 'This decides how prices appear across your website. We never show a price you haven\'t entered.',

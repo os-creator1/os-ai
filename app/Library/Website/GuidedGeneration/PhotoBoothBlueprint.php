@@ -275,7 +275,9 @@ final class PhotoBoothBlueprint
                     fn (BusinessService $e) => array_filter([
                         'name' => Str::limit($e->name, 120, ''),
                         'description' => $this->prose($e->description),
-                        'service_uid' => in_array($e->uid, $f['event_page_uids'] ?? [], true) ? $e->uid : null,
+                        // Always the event's own record: its photo (when the owner added one) is attached by the media binder;
+                        // a LINK is added only for events that have their own page.
+                        'service_uid' => $e->uid,
                     ]),
                     array_slice($f['events'], 0, 12),
                 ),

@@ -89,7 +89,11 @@ final class ReferenceTemplatesGuidedPathTest extends TestCase
     public function test_reference_template_maps_questionnaire_answers_to_its_fixed_homepage(string $templateKey, string $name): void
     {
         $this->tenant(['name' => $name], ['city' => 'Boise', 'region' => 'ID']);
-        $this->completeGuidedSetup();
+        // Event types carry their own photo (the cards of the Booths and Greenbelt references are photographic).
+        $this->completeGuidedSetup(['event_types' => fn () => $this->continueStep('event_types', ['items' => [
+            ['key' => 'e-w', 'name' => 'Weddings', 'description' => 'Wedding fun.', 'preset' => 'weddings', 'visible' => '1', 'image_path' => $this->uploadPhoto('wedding-event')],
+            ['key' => 'e-c', 'name' => 'Corporate Events', 'description' => 'Company parties.', 'preset' => 'corporate', 'visible' => '1', 'image_path' => $this->uploadPhoto('corporate-event')],
+        ]])]);
         $this->uploadGalleryPhotos(6);
 
         $headline = 'Headline from the owner for ' . $name;
@@ -138,6 +142,10 @@ final class ReferenceTemplatesGuidedPathTest extends TestCase
             $pageHero = collect($page->sections)->firstWhere('type', 'hero');
             $this->assertSame('Now booking 2026 and 2027', $pageHero['data']['announcement'] ?? null, "Page {$page->slug} lost the announcement");
         }
+
+        $events = collect($sections)->firstWhere('data.ref', 'events');
+        $this->assertNotNull($events);
+        $this->assertNotEmpty(collect($events['data']['items'])->pluck('image')->filter()->all(), 'event cards carry the owner\'s event photos');
 
         $reviews = collect($sections)->firstWhere('type', 'testimonials');
         $this->assertSame(['rating' => '4.9', 'count' => 31, 'source' => 'Google'], $reviews['data']['badge']);

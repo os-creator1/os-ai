@@ -134,19 +134,26 @@ class KalebV3VisualFidelityAcceptanceTest extends TestCase
 
         $this->assertStringContainsString('wd wd-' . $variant . ' wd-' . $base, $html);
         $this->assertSame(1, substr_count($html, '<h1'));
-        $this->assertStringContainsString('data-section="image_text"', $html);
         $this->assertStringContainsString('data-section="testimonials"', $html);
         $this->assertStringContainsString('data-section="faq"', $html);
         $this->assertStringContainsString('data-section="cta"', $html);
-        $this->assertSame(1, substr_count($html, 'data-section="cta"'));
 
-        // The design must not group every service block before the story:
-        // the authored image/text section stays between hero and booths/events.
+        // The references carry more than one inquiry band (an in-page "check availability" band plus the closing one), but the
+        // funnel is never stacked: no two inquiry bands are adjacent, and the last one closes the page just before the contact block.
+        $this->assertLessThanOrEqual(3, substr_count($html, 'data-section="cta"'));
+        preg_match_all('/data-section="([a-z_]+)"/', $html, $sequence);
+        $types = $sequence[1];
+        foreach ($types as $i => $type) {
+            $this->assertFalse($type === 'cta' && ($types[$i + 1] ?? null) === 'cta', 'two inquiry bands must never be adjacent');
+        }
+        $this->assertSame('cta', $types[array_search('contact_details', $types, true) - 1] ?? null, 'the closing inquiry band sits right before the contact block');
+
+        // The authored introduction (image/text, or Kaleb's centred story band with its one button) stays between hero and booths/events.
         $hero = strpos($html, 'data-section="hero"');
-        $story = strpos($html, 'data-section="image_text"');
+        $story = strpos($html, 'wd-ref-intro');
         $services = strpos($html, 'data-section="services"');
         $this->assertNotFalse($hero);
-        $this->assertNotFalse($story);
+        $this->assertNotFalse($story, 'the reference introduction band is missing');
         $this->assertNotFalse($services);
         $this->assertLessThan($story, $hero);
         $this->assertLessThan($services, $story);

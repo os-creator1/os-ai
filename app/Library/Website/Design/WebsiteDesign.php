@@ -108,8 +108,13 @@ final class WebsiteDesign
     {
         $heading = trim($heading);
 
-        if ($this->variant('accent') === 'none' || ! str_contains($heading, ' ')) {
+        if ($this->variant('accent') === 'none') {
             return new HtmlString(e($heading));
+        }
+
+        if (! str_contains($heading, ' ')) {
+            // A single word: the Kaleb reference sets it entirely in its script face; every other design leaves it plain.
+            return new HtmlString(($this->variants['accent_titles'] ?? false) ? '<span class="wd-accent-word">' . e($heading) . '</span>' : e($heading));
         }
 
         $cut = (int) mb_strrpos($heading, ' ');
