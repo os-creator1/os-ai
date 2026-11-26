@@ -9,7 +9,7 @@ These opt-in **reusable** templates follow the visual direction and section orde
 | `photo_booth_reference_kaleb` | Luxury Photo Booth | https://kalebhillphotobooth.com/ | Black/gold, cinematic events |
 | `photo_booth_reference_booths` | Event Spotlight | https://www.boothstothemax.com/home | Navy/blue, events and booth features |
 | `photo_booth_reference_greenbelt` | Party Editorial | https://greenbeltphotography.com/ | Plum/peach, editorial packages and corporate |
-  
+
 **Status:** Code supplies fixed section order, reusable component styling, and Forms-module inquiry integration. **Pixel-level visual parity, full source-page equivalence, and live account testing are not yet certified.** Completing those requirements is a separate, mandatory browser comparison and production-readiness gate; GitHub CI tests alone cannot prove it.
 
 Source structure already inventoried in the repository:
