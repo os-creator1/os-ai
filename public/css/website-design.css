@@ -1002,7 +1002,9 @@ body.wd h1, body.wd h2, body.wd h3, body.wd h4 { font-family: var(--wd-font-head
 }
 .wd-reference-kaleb .wd-btn { font: 400 1rem/1.2 var(--wd-font-body); letter-spacing: 0; padding: 15px 40px; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.25); }
 .wd-reference-kaleb .wd-btn-lg { padding: 20px 40px; }
-.wd-reference-kaleb .wd-hero-title { font-size: clamp(2.2rem, 4.2vw, 3.4rem); line-height: 1.15; text-align: center; }
+.wd-reference-kaleb .wd-hero-title { font-size: clamp(2.2rem, 4.2vw, 3.4rem); font-weight: 700; line-height: 1.15; text-align: center; }
+.wd-reference-kaleb .wd-hero { background: #ffffff; color: #000000; }
+.wd-reference-kaleb .wd-hero::before, .wd-reference-kaleb .wd-hero::after { display: none; }
 .wd-reference-kaleb .wd-hero-sub { font-size: 1.375rem; font-weight: 500; line-height: 1.3; color: #000; }
 .wd-reference-kaleb .wd-hero-is-split .wd-hero-copy { text-align: center; }
 .wd-reference-kaleb .wd-band-image_text .wd-container { padding-top: clamp(4rem, 8vw, 7rem); padding-bottom: clamp(4rem, 8vw, 7rem); }
@@ -1048,7 +1050,7 @@ body.wd h1, body.wd h2, body.wd h3, body.wd h4 { font-family: var(--wd-font-head
 .wd-reference-booths .wd-btn { font: 400 1rem/1.2 var(--wd-font-body); letter-spacing: 2px; padding: 15px 25px; }
 .wd-reference-booths .wd-btn-primary { background: linear-gradient(90deg, #188bf6, #00c9ff); border-color: transparent; transform: rotate(-2deg); box-shadow: 3px 4px 0 rgba(0, 0, 0, 0.25); }
 .wd-reference-booths .wd-hero-fullbleed { background: #000; text-align: center; }
-.wd-reference-booths .wd-hero-title { font-size: clamp(2.2rem, 4.9vw, 4.4rem); max-width: 1100px; margin-inline: auto; line-height: 0.9; }
+.wd-reference-booths .wd-hero-title { font-weight: 700; font-size: clamp(2.2rem, 4.9vw, 4.4rem); max-width: 1100px; margin-inline: auto; line-height: 0.9; }
 .wd-reference-booths .wd-band-image_text .wd-container { padding-top: clamp(3.5rem, 6vw, 6rem); padding-bottom: clamp(3.5rem, 6vw, 6rem); }
 .wd-reference-booths .wd-section-title { font-size: clamp(2rem, 3.8vw, 3.3rem); font-weight: 700; }
 .wd-reference-booths .wd-role-events .wd-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }

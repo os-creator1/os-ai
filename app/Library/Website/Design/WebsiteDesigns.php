@@ -147,6 +147,10 @@ final class WebsiteDesigns
 
         foreach ($specs as $templateKey => [$from, $key, $number, $label, $tagline, $bestFor, $swatch]) {
             $design = $base[$from];
+            // Measured structure differences from the shared visual base: Kaleb's hero is a split (copy left, photo right)
+            // on a light field; its feature band below stays dark.
+            $variantOverrides = $templateKey === 'photo_booth_reference_kaleb' ? ['hero' => 'split'] : [];
+            $toneOverrides = $templateKey === 'photo_booth_reference_kaleb' ? ['hero' => 'light'] : [];
             $out[$templateKey] = new WebsiteDesign(
                 key: $key,
                 templateKey: $templateKey,
@@ -154,8 +158,8 @@ final class WebsiteDesigns
                 label: $label,
                 tagline: $tagline,
                 bestFor: $bestFor,
-                variants: $design->variants + ['visual_base' => $design->key, 'home_sequence' => 'authored'],
-                tones: $design->tones,
+                variants: $variantOverrides + $design->variants + ['visual_base' => $design->key, 'home_sequence' => 'authored'],
+                tones: $toneOverrides + $design->tones,
                 homeOrder: $design->homeOrder,
                 swatch: $swatch,
                 announcementBar: $design->announcementBar,
