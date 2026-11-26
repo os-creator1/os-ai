@@ -955,3 +955,100 @@ body.wd h1, body.wd h2, body.wd h3, body.wd h4 { font-family: var(--wd-font-head
 .wd-emerald .wd-footer-more summary::after { content: " +"; }
 .wd-emerald .wd-footer-more details[open] summary::after { content: " \2212"; }
 .wd-emerald .wd-footer-more ul { margin-top: 0.45rem; }
+
+
+/*
+ * Photo Booth reference families (opt-in). The safe component skeleton is
+ * inherited from Modern/Conversion, but typography, rhythm and spacing are
+ * fixed for each family. These classes never touch older published designs.
+ * Final photographic fidelity requires real owner uploads and browser QA.
+ */
+
+/* Kaleb-style cinematic black/gold event experience. */
+.wd-reference-kaleb {
+    --wd-font-head: Georgia, "Times New Roman", serif;
+    --wd-head-weight: 500;
+    --wd-head-transform: none;
+    --wd-head-track: -0.028em;
+    --wd-dark: #181818;
+    --wd-dark-2: #242424;
+    --wd-tint: #f8f5ed;
+    --wd-ink: #1c1b19;
+    --wd-muted: #555046;
+    --wd-accent: #fac815;
+    --wd-accent-text: #846200;
+    --wd-announce-bg: #161616;
+    --wd-header-line: #ded8cb;
+    --wd-btn-radius: 3px;
+}
+.wd-reference-kaleb .wd-hero-fullbleed .wd-hero-title {
+    font-size: clamp(2.85rem, 6.3vw, 6.65rem);
+    line-height: 0.99;
+    max-width: 880px;
+}
+.wd-reference-kaleb .wd-hero-fullbleed .wd-hero-sub { max-width: 720px; }
+.wd-reference-kaleb .wd-band-image_text .wd-container { padding-top: clamp(4rem, 8vw, 7.25rem); padding-bottom: clamp(4rem, 8vw, 7.25rem); }
+.wd-reference-kaleb .website-image-text-media img { aspect-ratio: 5 / 4; object-fit: cover; }
+.wd-reference-kaleb .wd-services-tiles .wd-card { border-radius: 0; }
+.wd-reference-kaleb .website-gallery-item img { aspect-ratio: 4 / 5; object-fit: cover; }
+.wd-reference-kaleb .wd-band-testimonials { background: #f9f4e8; }
+.wd-reference-kaleb .wd-section-title { font-size: clamp(2.05rem, 3.8vw, 3.5rem); }
+
+/* Booths-style high-impact blue event imagery and service spotlights. */
+.wd-reference-booths {
+    --wd-accent: #188bf6;
+    --wd-accent-glow: #66b4ff;
+    --wd-accent-ink: #ffffff;
+    --wd-accent-text: #075bb3;
+    --wd-dark: #061633;
+    --wd-dark-2: #102e61;
+    --wd-tint: #edf5ff;
+    --wd-header-bg: #ffffff;
+    --wd-head-track: -0.028em;
+    --wd-head-leading: 1.01;
+    --wd-btn-radius: 4px;
+}
+.wd-reference-booths .wd-hero-fullbleed .wd-hero-title {
+    font-size: clamp(2.75rem, 6.7vw, 6.8rem);
+    max-width: 1000px;
+}
+.wd-reference-booths .wd-band-image_text .wd-container { padding-top: clamp(3.5rem, 6vw, 6rem); padding-bottom: clamp(3.5rem, 6vw, 6rem); }
+.wd-reference-booths .wd-role-events .wd-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.wd-reference-booths .wd-role-events .wd-card { border-radius: 0; }
+.wd-reference-booths .website-image-text-media img { aspect-ratio: 4 / 3; object-fit: cover; }
+.wd-reference-booths .wd-band-testimonials { background: #0b2856; }
+.wd-reference-booths .website-gallery-item img { aspect-ratio: 3 / 4; object-fit: cover; }
+
+/* Greenbelt-style editorial plum/peach, emphatic headings and pricing. */
+.wd-reference-greenbelt {
+    --wd-accent: #f4a28f;
+    --wd-accent-glow: #ffc6aa;
+    --wd-accent-ink: #28183f;
+    --wd-dark: #2a1d45;
+    --wd-dark-2: #382456;
+    --wd-tint: #eee2ed;
+    --wd-tint-2: #f8e1d9;
+    --wd-head-leading: 0.96;
+}
+.wd-reference-greenbelt .wd-hero-split-soft .wd-hero-title { font-size: clamp(3rem, 6.8vw, 7rem); }
+.wd-reference-greenbelt .wd-role-events .wd-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.wd-reference-greenbelt .wd-role-events .wd-card { min-height: 300px; }
+.wd-reference-greenbelt .wd-packages-pop .wd-card { border-radius: 10px; }
+.wd-reference-greenbelt .website-gallery-item img { aspect-ratio: 4 / 5; object-fit: cover; }
+.wd-reference-greenbelt .wd-band-testimonials { background: #2a1d45; }
+.wd-reference-greenbelt .wd-band-image_text .wd-section-title { text-align: left; }
+.wd-reference-greenbelt .wd-band-image_text .wd-container { padding-top: clamp(3rem, 7vw, 6rem); padding-bottom: clamp(3rem, 7vw, 6rem); }
+
+@media (max-width: 899px) {
+    .wd-reference-booths .wd-role-events .wd-grid,
+    .wd-reference-greenbelt .wd-role-events .wd-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 599px) {
+    .wd-reference-booths .wd-role-events .wd-grid,
+    .wd-reference-greenbelt .wd-role-events .wd-grid { grid-template-columns: minmax(0, 1fr); }
+    .wd-reference-kaleb .wd-hero-fullbleed .wd-hero-title,
+    .wd-reference-booths .wd-hero-fullbleed .wd-hero-title,
+    .wd-reference-greenbelt .wd-hero-split-soft .wd-hero-title { font-size: clamp(2.2rem, 10vw, 3.5rem); }
+    .wd-reference-booths .wd-role-events .wd-card,
+    .wd-reference-greenbelt .wd-role-events .wd-card { min-height: 0; }
+}
