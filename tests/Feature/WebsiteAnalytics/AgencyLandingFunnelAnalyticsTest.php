@@ -557,6 +557,35 @@ class AgencyLandingFunnelAnalyticsTest extends TestCase
         $this->assertSame((int) $a['business']->id, (int) $property->fresh()->business_id);
     }
 
+    public function test_a_tagged_pricing_link_keeps_its_campaign_through_the_call_only_redirect(): void
+    {
+        // Embedded calendar: Pricing redirects to the on-page calendar.
+        $a = $this->agencyWithLanding('Motion Grove Photo Booth');
+        $campaign = $this->managedCampaign($a['workspace'], ['name' => 'Pricing blast']);
+        $token = app(AnalyticsCampaignLinks::class)->tokenFor($campaign)->token;
+        $to = $this->get('/photobooth/pricing?mgc=' . $token)->assertRedirect()->headers->get('Location');
+        $this->assertStringContainsString('mgc=' . $token, $to);
+        $this->assertStringContainsString('#book', $to, 'fragment preserved after the added value');
+        $this->assertStringNotContainsString('mgp=', $to, 'the landing page itself emits its own config');
+
+        // No embedded calendar: Pricing redirects to the standalone calendar, which also gets the property handoff.
+        $b = $this->agencyWithLanding('Beta Booth', 'dogs', false);
+        $campaignB = $this->managedCampaign($b['workspace'], ['name' => 'Beta blast']);
+        $tokenB = app(AnalyticsCampaignLinks::class)->tokenFor($campaignB)->token;
+        $toB = $this->get('/dogs/pricing?mgc=' . $tokenB)->assertRedirect()->headers->get('Location');
+        $this->assertStringContainsString('/book/' . $b['type']->public_booking_uuid, $toB);
+        $this->assertStringContainsString('mgc=' . $tokenB, $toB);
+        parse_str((string) parse_url($toB, PHP_URL_QUERY), $q);
+        $this->assertSame(WebsiteAnalyticsProperty::query()->where('agency_site_id', $b['site']->id)->value('public_key'), $q['mgp']);
+        $calendar = $this->get($toB)->assertOk()->getContent();
+        $this->assertSame('handoff', $this->pageConfig($calendar)['mode'], 'the calendar page can report the visit');
+
+        // Only a well-formed opaque value is carried; nothing else from the request is copied.
+        $plain = $this->get('/photobooth/pricing?utm=x&mgc=bad%0d%0aX')->assertRedirect()->headers->get('Location');
+        $this->assertStringNotContainsString('mgc', $plain);
+        $this->assertStringNotContainsString('utm', $plain);
+    }
+
     public function test_a_legacy_follow_up_link_is_tagged_with_its_campaign(): void
     {
         $a = $this->agencyWithLanding('Motion Grove Photo Booth');

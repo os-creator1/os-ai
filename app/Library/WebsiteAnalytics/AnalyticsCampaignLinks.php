@@ -118,6 +118,12 @@ final class AnalyticsCampaignLinks
 
     public function withToken(string $url, string $token): string
     {
+        return $this->withParam($url, self::PARAM, $token);
+    }
+
+    /** Appends one query parameter (before any #fragment), never replacing one that is already there. */
+    public function withParam(string $url, string $name, string $value): string
+    {
         $fragment = '';
 
         if (($hash = strpos($url, '#')) !== false) {
@@ -128,11 +134,11 @@ final class AnalyticsCampaignLinks
         $query = (string) parse_url($url, PHP_URL_QUERY);
         parse_str($query, $params);
 
-        if (array_key_exists(self::PARAM, $params)) {
+        if (array_key_exists($name, $params)) {
             return $url . $fragment;
         }
 
-        return $url . (str_contains($url, '?') ? (str_ends_with($url, '?') || str_ends_with($url, '&') ? '' : '&') : '?') . self::PARAM . '=' . $token . $fragment;
+        return $url . (str_contains($url, '?') ? (str_ends_with($url, '?') || str_ends_with($url, '&') ? '' : '&') : '?') . $name . '=' . rawurlencode($value) . $fragment;
     }
 
     private function eligible(string $url, Workspace $agency): bool
