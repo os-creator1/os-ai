@@ -991,7 +991,18 @@ body.wd h1, body.wd h2, body.wd h3, body.wd h4 { font-family: var(--wd-font-head
 .wd-reference-kaleb .website-image-text-media img { aspect-ratio: 5 / 4; object-fit: cover; }
 .wd-reference-kaleb .wd-services-tiles .wd-card { border-radius: 0; }
 .wd-reference-kaleb .website-gallery-item img { aspect-ratio: 4 / 5; object-fit: cover; }
-.wd-reference-kaleb .wd-band-testimonials { background: #f9f4e8; }
+.wd-reference-kaleb .wd-band-testimonials {
+    /* This light editorial band inherits a dark tone from Modern; override
+       the complete foreground palette, not only its background. */
+    --wd-t-bg: #f9f4e8;
+    --wd-t-ink: #1c1b19;
+    --wd-t-muted: #555046;
+    --wd-t-line: #ded8cb;
+    --wd-a: #846200;
+    --wd-card-ink: #1c1b19;
+    background: var(--wd-t-bg);
+    color: var(--wd-t-ink);
+}
 .wd-reference-kaleb .wd-section-title { font-size: clamp(2.05rem, 3.8vw, 3.5rem); }
 
 /* Booths-style high-impact blue event imagery and service spotlights. */
