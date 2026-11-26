@@ -212,6 +212,13 @@ class WebsiteLeadFormResolverTest extends TestCase
                 $key,
             );
             $this->assertSame(['kind' => 'form', 'label' => 'Check Availability', 'url' => 'https://example.test/photo-booth-contact'], $cta);
+            $button = app(\App\Library\Website\Design\WebsiteCtaResolver::class)->sectionCta(
+                ['label' => 'Contact us', 'url' => '/photo-booth-contact'],
+                $cta,
+                ['photo-booth-contact' => 'https://example.test/photo-booth-contact'],
+            );
+            $this->assertSame(['label' => 'Check Availability', 'url' => 'https://example.test/photo-booth-contact'], $button,
+                'All generated primary inquiry buttons must use the actual active Forms funnel label');
         }
 
         $this->assertSame(0, WebsiteForm::query()->where('website_id', $this->website->id)->count());
