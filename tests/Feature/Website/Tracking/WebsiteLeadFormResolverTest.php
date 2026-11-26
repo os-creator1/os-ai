@@ -217,6 +217,43 @@ class WebsiteLeadFormResolverTest extends TestCase
         $this->assertSame(0, WebsiteForm::query()->where('website_id', $this->website->id)->count());
     }
 
+    public function test_published_reference_navigation_detects_the_real_form_and_uses_check_availability(): void
+    {
+        $deployment = $this->offer($this->installed('pb3_form_lead', 'Check Availability'));
+        $this->website->forceFill(['template_key' => 'photo_booth_reference_kaleb'])->save();
+        $embed = $this->resolver()->resolve($this->business);
+
+        $snapshot = [
+            'website' => ['theme' => ['header_variant' => 'reference-kaleb']],
+            'pages' => [[
+                'uid' => 'inquiry-page',
+                'title' => 'Check Availability',
+                'is_home' => false,
+                'slug' => 'photo-booth-contact',
+                'sections' => [['type' => 'forms_module_form', 'data' => [
+                    'forms_module_deployment_uid' => $deployment->uid,
+                    'resolved' => $embed,
+                ]]],
+            ]],
+        ];
+        $surface = \App\Library\Website\Blog\WebsiteBlogSurface::custom($this->website->fresh(), 'example.test');
+        $pages = app(\App\Library\Website\Blog\WebsiteBlogRenderer::class)
+            ->navigationPages($this->website->fresh(), $snapshot, $surface);
+        $formPage = collect($pages)->firstWhere('slug', 'photo-booth-contact');
+
+        $this->assertTrue($formPage['has_form'], 'The real published navigation must see the Forms-module section');
+        $cta = app(\App\Library\Website\Design\WebsiteCtaResolver::class)
+            ->resolve($this->business, $pages, false, 'photo_booth_reference_kaleb');
+        $this->assertSame('Check Availability', $cta['label']);
+        $this->assertSame('https://example.test/photo-booth-contact', $cta['url']);
+
+        $snapshot['pages'][0]['sections'][0]['data'] = ['forms_module_deployment_uid' => $deployment->uid];
+        $stale = app(\App\Library\Website\Blog\WebsiteBlogRenderer::class)
+            ->navigationPages($this->website->fresh(), $snapshot, $surface);
+        $this->assertFalse(collect($stale)->firstWhere('slug', 'photo-booth-contact')['has_form'],
+            'An unrenderable published form is not falsely advertised as ready');
+    }
+
     public function test_reference_templates_never_create_a_legacy_quote_form_when_the_forms_module_is_not_ready(): void
     {
         foreach (['photo_booth_reference_kaleb', 'photo_booth_reference_booths', 'photo_booth_reference_greenbelt'] as $key) {
