@@ -93,8 +93,9 @@ final class ThreeReferenceTemplatesTest extends TestCase
         }
 
         $this->assertSame(['center', 'top', 'bottom', 'left', 'right'], array_keys($steps['hero_focus']['options']));
-        $this->assertSame('hero_copy', $steps['hero_headline']['screen']);
-        $this->assertSame('section_headings', $steps['faq_heading']['screen']);
+        foreach ($keys as $key) {
+            $this->assertArrayNotHasKey('screen', $steps[$key], 'one question per page outside the basics');
+        }
     }
 
     public function test_reference_css_uses_the_measured_reference_values(): void
