@@ -190,6 +190,49 @@ class WebsiteLeadFormResolverTest extends TestCase
         $this->assertTrue(collect($bound['warnings'])->contains(fn ($w) => str_contains($w, 'not live on your website yet')));
     }
 
+    public function test_all_three_reference_templates_embed_the_real_form_immediately_after_the_hero(): void
+    {
+        $deployment = $this->offer($this->installed('pb3_form_lead', 'Check Availability'));
+        $keys = ['photo_booth_reference_kaleb', 'photo_booth_reference_booths', 'photo_booth_reference_greenbelt'];
+
+        foreach ($keys as $key) {
+            $this->website->forceFill(['template_key' => $key])->save();
+
+            $bound = app(MediaBindingService::class)->bind($this->website->fresh(), [$this->contactPage()]);
+            $sections = $bound['pages'][0]['sections'];
+
+            $this->assertSame(['hero', 'forms_module_form'], array_slice(array_column($sections, 'type'), 0, 2), $key);
+            $this->assertSame($deployment->uid, $sections[1]['data']['forms_module_deployment_uid']);
+            $this->assertNotContains('form', array_column($sections, 'type'));
+
+            $cta = app(\App\Library\Website\Design\WebsiteCtaResolver::class)->resolve(
+                $this->business,
+                [['slug' => 'photo-booth-contact', 'url' => 'https://example.test/photo-booth-contact', 'has_form' => true]],
+                false,
+                $key,
+            );
+            $this->assertSame(['kind' => 'form', 'label' => 'Check Availability', 'url' => 'https://example.test/photo-booth-contact'], $cta);
+        }
+
+        $this->assertSame(0, WebsiteForm::query()->where('website_id', $this->website->id)->count());
+    }
+
+    public function test_reference_templates_never_create_a_legacy_quote_form_when_the_forms_module_is_not_ready(): void
+    {
+        foreach (['photo_booth_reference_kaleb', 'photo_booth_reference_booths', 'photo_booth_reference_greenbelt'] as $key) {
+            $this->website->forceFill(['template_key' => $key])->save();
+            $bound = app(MediaBindingService::class)->bind($this->website->fresh(), [$this->contactPage()]);
+
+            $types = array_column($bound['pages'][0]['sections'], 'type');
+            $this->assertContains('contact_details', $types);
+            $this->assertNotContains('forms_module_form', $types);
+            $this->assertNotContains('form', $types);
+            $this->assertTrue(collect($bound['warnings'])->contains(fn ($warning) => str_contains($warning, 'Check Availability is not configured')));
+        }
+
+        $this->assertSame(0, WebsiteForm::query()->where('website_id', $this->website->id)->count());
+    }
+
     public function test_a_business_with_no_niche_lead_form_keeps_the_existing_quote_form(): void
     {
         $bound = app(MediaBindingService::class)->bind($this->website->fresh(), [$this->contactPage()]);
