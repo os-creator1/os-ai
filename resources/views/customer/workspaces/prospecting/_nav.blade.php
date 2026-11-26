@@ -11,6 +11,7 @@
         'overview' => ['Overview', route('customer.workspaces.prospecting.overview', $workspaceUid)],
         'prospects' => ['Prospects', route('customer.workspaces.prospecting.prospects.index', $workspaceUid)],
         'conversations' => ['Conversations', route('customer.workspaces.prospecting.conversations.index', $workspaceUid)],
+        'unanswered' => ['Unanswered questions', route('customer.workspaces.prospecting.unanswered.index', $workspaceUid)],
         'campaigns' => ['Campaigns', route('customer.workspaces.prospecting.campaigns.index', $workspaceUid)],
         'analytics' => ['Analytics', route('customer.workspaces.prospecting.analytics.index', $workspaceUid)],
         'script' => ['Script', route('customer.workspaces.prospecting.script.show', $workspaceUid)],

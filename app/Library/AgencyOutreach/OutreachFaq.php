@@ -7,7 +7,10 @@ use App\Models\Workspace;
 /**
  * One Agency's approved questions and answers (Outreach V2).
  *
- * An entry is {id, question, answer, keywords[], intent?, campaign_ids?, niche?}.
+ * An entry is {id, question, answer, keywords[], aliases[], intent?, campaign_ids?, niche?}.
+ * `aliases` are prospect phrasings the owner linked to the entry from the Unanswered
+ * questions queue, stored normalised (aliasKey) and matched only EXACTLY, never as
+ * substrings, so teaching one wording never widens the entry to unrelated messages.
  * Entries are the ONLY facts the engine (and the one bounded AI call) may answer
  * from. An Agency that never customised gets its six legacy answer fields as entries
  * mapped to their classifier intent, so the old behaviour is unchanged.
@@ -60,6 +63,7 @@ final class OutreachFaq
                 'question' => $question,
                 'answer' => $script->get($field),
                 'keywords' => [],
+                'aliases' => [],
                 'intent' => $intent,
                 'campaign_ids' => null,
                 'niche' => null,
@@ -103,6 +107,7 @@ final class OutreachFaq
                     static fn ($k): string => mb_strtolower(trim((string) $k)),
                     (array) $keywords,
                 ), static fn (string $k): bool => $k !== '')),
+                'aliases' => self::aliases($entry['aliases'] ?? []),
                 'intent' => isset($entry['intent']) && $entry['intent'] !== '' ? (string) $entry['intent'] : null,
                 'campaign_ids' => is_array($campaigns) && $campaigns !== [] ? array_values(array_map('intval', $campaigns)) : null,
                 'niche' => trim((string) ($entry['niche'] ?? '')) !== '' ? trim((string) $entry['niche']) : null,
@@ -110,6 +115,42 @@ final class OutreachFaq
         }
 
         return $out;
+    }
+
+    public const MAX_ALIASES = 50;
+
+    /** The exact-match form of a prospect's wording: lower case, punctuation and extra spaces dropped. */
+    public static function aliasKey(string $text): string
+    {
+        return mb_substr(OutreachIntentClassifier::normalise($text), 0, 300);
+    }
+
+    /** @return list<string> */
+    public static function aliases(mixed $raw): array
+    {
+        $out = [];
+
+        foreach (is_array($raw) ? $raw : [] as $alias) {
+            $key = is_scalar($alias) ? self::aliasKey((string) $alias) : '';
+
+            if ($key !== '' && ! in_array($key, $out, true)) {
+                $out[] = $key;
+            }
+        }
+
+        return array_slice($out, 0, self::MAX_ALIASES);
+    }
+
+    /** One applicable entry by id, or null when it is unknown or out of scope for this campaign. @return array<string, mixed>|null */
+    public function applicableById(string $id, ?int $campaignId = null): ?array
+    {
+        foreach ($this->applicable($campaignId) as $entry) {
+            if ($entry['id'] === $id) {
+                return $entry;
+            }
+        }
+
+        return null;
     }
 
     public function fallback(): string
@@ -138,34 +179,5 @@ final class OutreachFaq
             return $e['niche'] === null
                 || ($this->niche !== null && mb_strtolower($e['niche']) === mb_strtolower($this->niche));
         }));
-    }
-
-    /**
-     * The approved entry that answers this reply, if any: a classifier-intent match
-     * first, then the entry whose keywords appear in the message.
-     *
-     * @return array<string, mixed>|null
-     */
-    public function match(string $inboundBody, string $intent, ?int $campaignId = null): ?array
-    {
-        $candidates = $this->applicable($campaignId);
-
-        foreach ($candidates as $entry) {
-            if ($entry['intent'] !== null && $entry['intent'] === $intent) {
-                return $entry;
-            }
-        }
-
-        $haystack = mb_strtolower($inboundBody);
-
-        foreach ($candidates as $entry) {
-            foreach ($entry['keywords'] as $keyword) {
-                if ($keyword !== '' && str_contains($haystack, $keyword)) {
-                    return $entry;
-                }
-            }
-        }
-
-        return null;
     }
 }

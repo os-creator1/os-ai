@@ -433,6 +433,10 @@ class AgencyOutreachController extends CustomerBaseController
             $fields['faq_entries'] = $fields['faq_entries'] ?? [];
         }
 
+        if ($request->filled('faq_snapshot') && array_key_exists('faq_entries', $fields)) {
+            $fields['faq_snapshot'] = (string) $request->input('faq_snapshot');
+        }
+
         OutreachScriptManager::save($workspace, $fields, Auth::user());
 
         $warnings = [];

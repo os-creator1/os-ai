@@ -2,63 +2,43 @@
 
 namespace App\Library\AgencyOutreach;
 
-use App\Library\AgencyProspecting\AgencyProspectUrlPolicy;
-use App\Library\Ai\AiGateway;
-use App\Library\Ai\AiModelRouter;
-use App\Library\Ai\AiRequest;
-use App\Library\Ai\Enums\AiLane;
-use App\Library\Ai\Enums\AiUsageCategory;
 use App\Models\AgencyProspect;
 use App\Models\AgencyProspectMessage;
 use App\Models\Workspace;
-use Throwable;
 
 /**
- * Builds the text of one reply (contract §5): the answer to the prospect's question
- * first, then the EXACT current-stage message from the Agency's script.
+ * Builds the text of one reply (contract §5): the Agency's approved answers to EVERY
+ * question the prospect asked, in the prospect's order, then the EXACT current-stage
+ * message from the Agency's script.
  *
- *   known FAQ        the Agency's own field, rendered. No model call, ever.
- *   other question   ONE bounded gateway call (when the Agency has AI on): the last <= 8
- *                    messages, <= 80 output tokens, must return one short sentence using
- *                    only the supplied Agency facts. URLs in the model's text are stripped.
- *   no question      the stage message alone.
- *
- * THE MODEL CAN NEVER REPLACE THE SCRIPT. The final text must contain the exact stage
- * message; a refusal, failure, empty / over-long / multi-line answer or any doubt falls
- * back to the stage message alone. For a stage with no scripted message (booking) a
- * failed answer means there is nothing to send, never an invented reply.
+ *   answers     OutreachQuestionMatcher's plan: approved entries only, each rendered through
+ *               the token renderer, each at most once. A model may have SELECTED an entry;
+ *               no model ever writes customer-facing text.
+ *   stacked     two or more answers go on their own lines, the stage message after a blank line.
+ *   duplicates  an identical answer, or a sentence repeating a URL already in the reply
+ *               (including the stage message's own calendar link), is not repeated.
+ *   deferral    "Before we do that, can I get ..." answers the questions and holds the booking
+ *               pitch: the step is NOT sent, so it stays pending for the next reply.
+ *   unanswered  a reply whose questions none of the approved answers covers never gets a
+ *               booking pitch as if it were the answer: a pitch step waits (the questions go to
+ *               the Unanswered queue); a non-pitch step continues; "handoff" sends nothing.
  *
  * The duplicate guard is here too: a reply identical to the last outbound message is
  * not produced (the link repeat is the one deliberate exception — it repeats text by design).
  */
 final class OutreachReplyComposer
 {
-    /** Hard bounds of the one model call (contract §5.3). */
-    public const MAX_OUTPUT_TOKENS = 80;
+    /** A step that asks for the call / carries the calendar link. */
+    private const PITCH = '/\b(quick call|a call|on a call|hop on|jump on|book a|book your|schedule a|grab a time|set up a (call|time|meeting))\b/iu';
 
-    public const MAX_HISTORY_MESSAGES = 8;
-
-    /** An answer sentence longer than this is a rambling model, not a sentence. */
-    public const MAX_ANSWER_CHARS = 220;
-
-    private const FAQ_FIELDS = [
-        OutreachIntentClassifier::PRICING => 'pricing_answer',
-        OutreachIntentClassifier::LOCATION => 'location_answer',
-        OutreachIntentClassifier::FOUND_YOU => 'found_you_answer',
-        OutreachIntentClassifier::WEBSITE => 'website_answer',
-        OutreachIntentClassifier::WHAT_WE_DO => 'what_we_do_answer',
-        OutreachIntentClassifier::CLARIFY => 'clarify_answer',
-    ];
-
-    public function __construct(
-        private readonly AiGateway $gateway,
-        private readonly AiModelRouter $router,
-    ) {
+    public function __construct(private readonly OutreachQuestionMatcher $matcher)
+    {
     }
 
     /**
      * @param  string|null  $lastOutboundBody  the last text sent to this prospect, for the duplicate guard
      * @param  array<int, string>  $deliveredStepIds  steps this prospect already has (OutreachSequence::deliveredByContent), for the step guard
+     * @param  OutreachAnswerPlan|null  $plan  the matcher's plan for this inbound (deterministic matching when omitted)
      */
     public function compose(
         Workspace $workspace,
@@ -68,242 +48,185 @@ final class OutreachReplyComposer
         int $inboundMessageId,
         ?string $lastOutboundBody = null,
         array $deliveredStepIds = [],
+        ?OutreachAnswerPlan $plan = null,
     ): OutreachComposedReply {
         $script = OutreachScript::forWorkspace($workspace);
+        $faq = OutreachFaq::forWorkspace($workspace);
 
         $inbound = AgencyProspectMessage::query()->with('campaignMember')->find($inboundMessageId);
         $campaignId = $inbound?->campaignMember?->campaign_id === null ? null : (int) $inbound->campaignMember->campaign_id;
         $inboundBody = (string) $inbound?->body;
-        $faq = OutreachFaq::forWorkspace($workspace);
+        $plan ??= $this->matcher->match($faq, $inboundBody, $campaignId);
+
+        $stageTemplate = null;
 
         if ($decision->stepId !== null) {
-            $stepBody = OutreachSequence::forWorkspace($workspace)->find($decision->stepId)['body'] ?? '';
-            $stageText = OutreachScriptRenderer::render(OutreachScriptTokens::canonicalise((string) $stepBody), $workspace, $prospect);
-        } else {
-            $stageText = $decision->messageNumber === null
-                ? null
-                : OutreachScriptRenderer::render($script->get('message_' . $decision->messageNumber), $workspace, $prospect);
+            $stageTemplate = OutreachScriptTokens::canonicalise((string) (OutreachSequence::forWorkspace($workspace)->find($decision->stepId)['body'] ?? ''));
+        } elseif ($decision->messageNumber !== null) {
+            $stageTemplate = OutreachScriptTokens::canonicalise($script->get('message_' . $decision->messageNumber));
         }
+
+        $stageText = $stageTemplate === null ? null : OutreachScriptRenderer::render($stageTemplate, $workspace, $prospect);
 
         if ($stageText === '') {
             $stageText = null;
         }
 
-        $answer = null;
-        $source = AgencyProspectMessage::SOURCE_DETERMINISTIC;
+        $answers = $decision->answerFirst ? $this->answers($workspace, $prospect, $faq, $plan, $campaignId) : [];
+        $unanswered = $plan->unansweredQuestions();
+        $pitch = $stageTemplate !== null
+            && $decision->action !== OutreachDecision::RESEND_LINK
+            && (OutreachSequence::stepHasCalendarLink(['body' => $stageTemplate]) || preg_match(self::PITCH, $stageTemplate) === 1);
+        $deferred = false;
 
-        if ($decision->answerFirst) {
-            [$answer, $usedAi] = $this->answer($workspace, $prospect, $script, $intent, $inboundMessageId, $faq, $inboundBody, $campaignId);
-
-            // The Agency chose to answer only what it has approved: a question none of its
-            // answers covers is left for a person rather than guessed at.
-            if ($answer === null
-                && $intent !== OutreachIntentClassifier::NAME
-                && $faq->fallback() === OutreachFaq::FALLBACK_HANDOFF) {
-                return OutreachComposedReply::nothing($intent, 'needs_human');
+        if ($answers === [] && $unanswered !== [] && $decision->answerFirst) {
+            // Nothing approved covers what was asked: never guess, never pitch as if that answered it.
+            if ($faq->fallback() === OutreachFaq::FALLBACK_HANDOFF) {
+                return OutreachComposedReply::nothing($intent, 'needs_human', $unanswered);
             }
 
-            if ($usedAi && $answer !== null) {
-                $source = AgencyProspectMessage::SOURCE_AI;
+            if ($pitch) {
+                return OutreachComposedReply::nothing($intent, 'question_unanswered', $unanswered, stepDeferred: true);
             }
         }
 
-        $text = $this->join($answer, $stageText);
-
-        // The model may only ADD a sentence in front of the exact stage message; if the
-        // result somehow lost it, the stage message alone is what goes out.
-        if ($stageText !== null && ! str_contains((string) $text, $stageText)) {
-            $text = $stageText;
-            $source = AgencyProspectMessage::SOURCE_DETERMINISTIC;
+        if ($answers !== [] && $pitch && OutreachQuestionMatcher::defersBooking($inboundBody)) {
+            $stageText = null;
+            $deferred = true;
         }
+
+        $answers = self::withoutRepeatedUrls($answers, $stageText);
+        $text = $this->join($answers, $stageText);
 
         if ($text === null || trim($text) === '') {
-            return OutreachComposedReply::nothing($intent, 'no_reply_text');
+            return OutreachComposedReply::nothing($intent, $unanswered !== [] ? 'question_unanswered' : 'no_reply_text', $unanswered, $deferred);
         }
 
         if ($decision->action !== OutreachDecision::RESEND_LINK
             && $lastOutboundBody !== null
             && self::same($text, $lastOutboundBody)) {
-            return OutreachComposedReply::nothing($intent, 'duplicate_of_last_outbound');
+            return OutreachComposedReply::nothing($intent, 'duplicate_of_last_outbound', $unanswered);
         }
 
         // Backstop: THIS step must not go out twice, however the answer in front of it makes the
         // text differ (a person may have sent it by hand). It asks the same one-delivery-per-step
         // question selection does, so a repeated wording later in the sequence (A, B, A) is a
         // different step and still sends, while a copy already delivered never satisfies two steps.
-        if ($decision->action !== OutreachDecision::RESEND_LINK
+        if (! $deferred
+            && $decision->action !== OutreachDecision::RESEND_LINK
             && $decision->stepId !== null
             && in_array($decision->stepId, $deliveredStepIds, true)) {
-            return OutreachComposedReply::nothing($intent, 'step_already_delivered');
+            return OutreachComposedReply::nothing($intent, 'step_already_delivered', $unanswered);
         }
 
-        return new OutreachComposedReply($text, $source, $intent);
+        $source = $plan->usedAi && $answers !== [] ? AgencyProspectMessage::SOURCE_AI : AgencyProspectMessage::SOURCE_DETERMINISTIC;
+
+        return new OutreachComposedReply($text, $source, $intent, '', $unanswered, $deferred);
     }
 
     /**
-     * @return array{0: ?string, 1: bool} the answer sentence and whether a model produced it
-     */
-    private function answer(
-        Workspace $workspace,
-        AgencyProspect $prospect,
-        OutreachScript $script,
-        string $intent,
-        int $inboundMessageId,
-        OutreachFaq $faq,
-        string $inboundBody,
-        ?int $campaignId,
-    ): array {
-        if ($intent === OutreachIntentClassifier::NAME) {
-            return [OutreachScriptRenderer::render("We're {{agency.name}}.", $workspace, $prospect) ?: null, false];
-        }
-
-        $entry = $faq->match($inboundBody, $intent, $campaignId);
-
-        if ($entry !== null) {
-            $rendered = OutreachScriptRenderer::render(OutreachScriptTokens::canonicalise((string) $entry['answer']), $workspace, $prospect);
-
-            return [$rendered === '' ? null : $rendered, false];
-        }
-
-        if ($faq->fallback() === OutreachFaq::FALLBACK_AI
-            && $intent === OutreachIntentClassifier::QUESTION_OTHER
-            && $script->aiEnabled()) {
-            $sentence = $this->askModel($workspace, $prospect, $script, $inboundMessageId);
-
-            return [$sentence, $sentence !== null];
-        }
-
-        return [null, false];
-    }
-
-    /**
-     * The one bounded model call. Any failure — refusal, provider error, an exception, an
-     * unusable answer — is null, and the caller falls back to the script.
-     */
-    private function askModel(Workspace $workspace, AgencyProspect $prospect, OutreachScript $script, int $inboundMessageId): ?string
-    {
-        try {
-            $category = AiUsageCategory::AgencyProspectReply;
-            $route = $this->router->defaultRouteFor($category);
-            $routeConfig = $this->router->config($route);
-
-            $result = $this->gateway->complete(AiRequest::forWorkspace(
-                workspace: $workspace,
-                business: null,
-                category: $category,
-                lane: AiLane::Product,
-                route: $route,
-                messages: $this->messages($workspace, $prospect, $script, $inboundMessageId),
-                maxOutputTokens: min(self::MAX_OUTPUT_TOKENS, (int) $routeConfig['max_output_tokens']),
-                idempotencyKey: 'agency_prospect_reply:' . $inboundMessageId,
-                actorUserId: null,
-            ));
-        } catch (Throwable) {
-            return null;
-        }
-
-        if (! $result->ok) {
-            return null;
-        }
-
-        return self::usableSentence((string) $result->content);
-    }
-
-    /**
-     * One short, single-line, URL-free sentence — or null.
-     */
-    public static function usableSentence(string $raw): ?string
-    {
-        $text = trim(preg_replace('/\s+/', ' ', $raw) ?? '');
-        $text = trim($text, "\"' ");
-
-        // Empty, multi-line, token-bearing, or structured output (JSON / code fences) is a model
-        // misbehaving, not an answer.
-        if ($text === ''
-            || str_contains($text, '{{')
-            || str_contains(trim($raw), "\n")
-            || str_contains($text, '```')
-            || in_array($text[0], ['{', '[', '<'], true)) {
-            return null;
-        }
-
-        $text = AgencyProspectUrlPolicy::sanitizeAiText($text);
-
-        if ($text === '' || mb_strlen($text) > self::MAX_ANSWER_CHARS) {
-            return null;
-        }
-
-        return $text;
-    }
-
-    /**
-     * System facts + at most the last MAX_HISTORY_MESSAGES ledger messages.
+     * The approved answers, rendered, in the prospect's order, each distinct text once.
      *
-     * @return list<array{role: string, content: string}>
+     * @return list<string>
      */
-    private function messages(Workspace $workspace, AgencyProspect $prospect, OutreachScript $script, int $inboundMessageId): array
+    private function answers(Workspace $workspace, AgencyProspect $prospect, OutreachFaq $faq, OutreachAnswerPlan $plan, ?int $campaignId): array
     {
-        $settings = $script->settings();
-        $render = static fn (string $t): string => OutreachScriptRenderer::render($t, $workspace, $prospect);
+        $out = [];
 
-        $facts = [
-            'Agency name: ' . ($script->agencyName() ?: 'not given'),
-            'What the agency offers: ' . (trim((string) $settings?->offer) ?: 'not given'),
-            'Who it is for: ' . (trim((string) $settings?->niche) ?: 'not given'),
-            ...array_map(
-                static fn (array $e): string => 'Approved answer to "' . ($e['question'] ?: 'a question') . '": ' . $render($e['answer']),
-                OutreachFaq::forWorkspace($workspace)->applicable($this->campaignOf($inboundMessageId)),
-            ),
-            'Website: ' . ($script->settings()?->website_url ?: 'not given'),
-            'Booking link: ' . ($script->calendarUrl() ?: 'not given'),
-        ];
+        foreach ($plan->orderedAnswerIds() as $id) {
+            if ($id === OutreachQuestionMatcher::NAME_ANSWER) {
+                $text = OutreachScriptRenderer::render("We're {{agency.name}}.", $workspace, $prospect);
+            } else {
+                // Only an approved entry that applies to this campaign/niche is ever rendered.
+                $entry = $faq->applicableById($id, $campaignId);
+                $text = $entry === null ? '' : OutreachScriptRenderer::render(OutreachScriptTokens::canonicalise((string) $entry['answer']), $workspace, $prospect);
+            }
 
-        $system = 'You answer ONE question from a business owner who replied to a text from an agency. '
-            . 'Reply with exactly ONE short sentence, plain text, no links, no markdown, under 200 characters. '
-            . 'Use ONLY the facts below. If the answer is not in the facts, reply with one sentence saying it is best covered on a quick call. '
-            . "Never invent prices, places, names or promises.\n\nFacts:\n" . implode("\n", $facts);
+            $text = trim($text);
 
-        $history = AgencyProspectMessage::query()
-            ->where('campaign_member_id', function ($q) use ($inboundMessageId): void {
-                $q->select('campaign_member_id')->from('agency_prospect_messages')->where('id', $inboundMessageId);
-            })
-            ->whereIn('direction', [AgencyProspectMessage::DIRECTION_INBOUND, AgencyProspectMessage::DIRECTION_OUTBOUND])
-            ->where('id', '<=', $inboundMessageId)
-            ->whereIn('status', [AgencyProspectMessage::STATUS_SENT, AgencyProspectMessage::STATUS_RECEIVED, 'handled'])
-            ->orderByDesc('id')
-            ->limit(self::MAX_HISTORY_MESSAGES)
-            ->get()
-            ->reverse()
-            ->map(fn (AgencyProspectMessage $m): array => [
-                'role' => $m->direction === AgencyProspectMessage::DIRECTION_INBOUND ? 'user' : 'assistant',
-                'content' => mb_substr((string) $m->body, 0, 400),
-            ])
-            ->values()
-            ->all();
+            if ($text !== '' && ! in_array(self::key($text), array_map([self::class, 'key'], $out), true)) {
+                $out[] = $text;
+            }
+        }
 
-        return array_merge([['role' => 'system', 'content' => $system]], $history);
+        return $out;
     }
 
-    private function campaignOf(int $inboundMessageId): ?int
+    /**
+     * A sentence that repeats a URL already in the reply is dropped (the stage message keeps its
+     * own link; an earlier answer keeps a URL a later one repeats). Different URLs all stay.
+     *
+     * @param  list<string>  $answers
+     * @return list<string>
+     */
+    public static function withoutRepeatedUrls(array $answers, ?string $stageText): array
     {
-        $id = AgencyProspectMessage::query()->with('campaignMember')->find($inboundMessageId)?->campaignMember?->campaign_id;
+        $seen = $stageText === null ? [] : self::urls($stageText);
+        $out = [];
 
-        return $id === null ? null : (int) $id;
+        foreach ($answers as $answer) {
+            $kept = [];
+            foreach (preg_split('/(?<=[.!?])\s+/u', $answer) ?: [] as $sentence) {
+                $removed = false;
+                $clean = preg_replace_callback('~(?:https?://|www\\.)[^\\s<>"\']+~iu', static function (array $match) use (&$seen, &$removed): string {
+                    $url = rtrim($match[0], '.,;:!?)');
+                    if (in_array($url, $seen, true)) {
+                        $removed = true;
+                        return substr($match[0], strlen($url));
+                    }
+                    $seen[] = $url;
+                    return $match[0];
+                }, $sentence) ?? $sentence;
+                $clean = trim($clean);
+                // A link-only instruction adds nothing once its link is already in the reply.
+                if ($removed && preg_match('/^(?:[^:]{0,20}:\s*)?(?:(?:our |the )?(?:web ?site|link|details)(?: is| here)?|(?:you can )?book (?:a )?(?:quick )?call here)?[\s:.,!]*$/iu', $clean)) {
+                    continue;
+                }
+                if ($clean !== '') {
+                    $kept[] = $clean;
+                }
+            }
+            $text = implode(' ', $kept);
+
+            if ($text !== '') {
+                $out[] = $text;
+            }
+        }
+
+        return $out;
     }
 
-    private function join(?string $answer, ?string $stageText): ?string
+    /** @return list<string> */
+    private static function urls(string $text): array
     {
-        $answer = $answer === null ? null : trim($answer);
+        preg_match_all('~(?:https?://|www\.)[^\s<>"\']+~iu', $text, $m);
 
-        if ($answer === null || $answer === '') {
+        return array_map(static fn (string $u): string => rtrim($u, '.,;:!?)'), $m[0]);
+    }
+
+    /** @param list<string> $answers */
+    private function join(array $answers, ?string $stageText): ?string
+    {
+        if ($answers === []) {
             return $stageText;
         }
 
-        return $stageText === null ? $answer : $answer . ' ' . $stageText;
+        if (count($answers) === 1) {
+            return $stageText === null ? $answers[0] : $answers[0] . ' ' . $stageText;
+        }
+
+        $block = implode("\n", $answers);
+
+        return $stageText === null ? $block : $block . "\n\n" . $stageText;
+    }
+
+    private static function key(string $text): string
+    {
+        return mb_strtolower(trim(preg_replace('/\s+/', ' ', $text) ?? $text));
     }
 
     private static function same(string $a, string $b): bool
     {
-        return mb_strtolower(trim(preg_replace('/\s+/', ' ', $a) ?? $a)) === mb_strtolower(trim(preg_replace('/\s+/', ' ', $b) ?? $b));
+        return self::key($a) === self::key($b);
     }
 }

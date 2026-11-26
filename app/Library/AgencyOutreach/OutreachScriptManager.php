@@ -121,11 +121,6 @@ final class OutreachScriptManager
             $errors += $stepErrors;
         }
 
-        if (array_key_exists('faq_entries', $fields)) {
-            [$changes['faq_entries'], $faqErrors] = self::faq($fields['faq_entries'], $workspace);
-            $errors += $faqErrors;
-        }
-
         if (array_key_exists('faq_fallback', $fields)) {
             if (in_array($fields['faq_fallback'], [OutreachFaq::FALLBACK_AI, OutreachFaq::FALLBACK_CONTINUE, OutreachFaq::FALLBACK_HANDOFF], true)) {
                 $changes['faq_fallback'] = $fields['faq_fallback'];
@@ -141,7 +136,20 @@ final class OutreachScriptManager
         // V1 is calendar-link only; whatever was asked for, this is what is stored.
         $changes['scheduling_mode'] = 'calendar_link';
 
-        return DB::transaction(function () use ($workspace, $changes): AgencyProspectingSetting {
+        return DB::transaction(function () use ($workspace, $changes, $fields): AgencyProspectingSetting {
+            if (array_key_exists('faq_entries', $fields)) {
+                Workspace::whereKey($workspace->id)->lockForUpdate()->firstOrFail();
+                $current = OutreachFaq::forWorkspace($workspace)->all();
+                if (isset($fields['faq_snapshot']) && $fields['faq_snapshot'] !== hash('sha256', serialize($current))) {
+                    throw ValidationException::withMessages(['faq_entries' => 'Approved answers changed while you were editing. Review them and save again.']);
+                }
+
+                [$changes['faq_entries'], $faqErrors] = self::faq($fields['faq_entries'], $workspace);
+                if ($faqErrors !== []) {
+                    throw ValidationException::withMessages($faqErrors);
+                }
+            }
+
             $settings = AgencyProspectingSetting::query()
                 ->where('workspace_id', (int) $workspace->id)
                 ->lockForUpdate()
@@ -279,6 +287,8 @@ final class OutreachScriptManager
         $errors = [];
         $entries = [];
         $seen = [];
+        // Taught phrasings (aliases) are not on the Script page form: an entry posted without them keeps its own.
+        $storedAliases = array_column(OutreachFaq::forWorkspace($workspace)->all(), 'aliases', 'id');
         $ownCampaigns = \App\Models\AgencyProspectCampaign::query()->where('workspace_id', (int) $workspace->id)->pluck('id')->map(fn ($v) => (int) $v)->all();
         $intents = [
             OutreachIntentClassifier::PRICING, OutreachIntentClassifier::LOCATION, OutreachIntentClassifier::FOUND_YOU,
@@ -320,6 +330,7 @@ final class OutreachScriptManager
                     static fn ($k): string => mb_strtolower(trim((string) $k)),
                     $keywords,
                 ), static fn (string $k): bool => $k !== '' && mb_strlen($k) <= 60)), 0, 20),
+                'aliases' => OutreachFaq::aliases(array_key_exists('aliases', $entry) ? $entry['aliases'] : ($storedAliases[$id] ?? [])),
                 'intent' => in_array((string) ($entry['intent'] ?? ''), $intents, true) ? (string) $entry['intent'] : null,
                 'campaign_ids' => $campaigns === [] ? null : $campaigns,
                 'niche' => trim((string) ($entry['niche'] ?? '')) === '' ? null : mb_substr(trim((string) $entry['niche']), 0, 120),
