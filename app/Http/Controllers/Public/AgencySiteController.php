@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Public;
 
 use App\Http\Controllers\Controller;
 use App\Library\AgencySite\SiteRenderer;
+use App\Library\WebsiteAnalytics\AnalyticsClientConfig;
 use App\Library\Branding\AgencyWhiteLabelManager;
 use App\Library\Workspace\AgencyClientRelationshipManager;
 use App\Library\AgencySite\OfficialDomainPaths;
@@ -40,10 +41,10 @@ class AgencySiteController extends Controller
 
         // Call-only: the old Pricing URL never shows prices; it goes to the booking page instead.
         if (($to = $this->renderer->redirectFor($site, $values, $page)) !== null) {
-            return redirect()->away($to, 302)->header('Cache-Control', 'no-store');
+            return redirect()->away($this->carryAttribution($to, $site), 302)->header('Cache-Control', 'no-store');
         }
 
-        $html = $this->renderer->page($site, $values, $page);
+        $html = $this->renderer->page($site, $values, $page, null, null, app(AnalyticsClientConfig::class)->forAgencySite($site, false));
         abort_if($html === null, 404);
 
         return response($html)->header('Content-Type', 'text/html; charset=UTF-8')
@@ -71,16 +72,37 @@ class AgencySiteController extends Controller
         abort_if($this->renderer->site($site, $values, null, $base)->bookDemoUrl() === null, 404);
 
         if (($to = $this->renderer->redirectFor($site, $values, $page, null, $base)) !== null) {
-            return redirect()->away($to, 302)->header('Cache-Control', 'no-store')->header('X-Robots-Tag', 'noindex, nofollow');
+            return redirect()->away($this->carryAttribution($to, $site), 302)->header('Cache-Control', 'no-store')->header('X-Robots-Tag', 'noindex, nofollow');
         }
 
-        $html = $this->renderer->page($site, $values, $page, null, $base);
+        $html = $this->renderer->page($site, $values, $page, null, $base, app(AnalyticsClientConfig::class)->forAgencySite($site, false));
         abort_if($html === null, 404);
 
         return response($html)->header('Content-Type', 'text/html; charset=UTF-8')
             ->header('X-Robots-Tag', 'noindex, nofollow')
             ->header('X-Content-Type-Options', 'nosniff')
             ->header('Referrer-Policy', 'strict-origin-when-cross-origin');
+    }
+
+    /**
+     * A redirect (Pricing on a call-only site) must not lose the SMS campaign: the visitor's first and only page request carried
+     * it. The opaque campaign value (shape-checked) rides along; when the destination is the standalone calendar page, the site's
+     * own property key rides along too so that page can report the visit. Nothing else from the request is copied.
+     */
+    private function carryAttribution(string $to, AgencySite $site): string
+    {
+        $links = app(\App\Library\WebsiteAnalytics\AnalyticsCampaignLinks::class);
+        $mgc = request()->query($links::PARAM);
+
+        if (is_string($mgc) && preg_match('/^c[a-z0-9]{9}$/', $mgc) === 1) {
+            $to = $links->withToken($to, $mgc);
+
+            if (preg_match('#/book/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}#i', $to) === 1) {
+                $to = $links->withParam($to, 'mgp', app(\App\Library\WebsiteAnalytics\AnalyticsProperties::class)->ensureForAgencySite($site)->public_key);
+            }
+        }
+
+        return $to;
     }
 
     /** The marketing stylesheet in the Agency's colours. */

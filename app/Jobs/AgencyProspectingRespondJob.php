@@ -164,6 +164,7 @@ class AgencyProspectingRespondJob extends Base
 
             if ($decision->sendBookingLink) {
                 $body = rtrim($body) . ' ' . $currentSettings->booking_url;
+                $body = app(\App\Library\WebsiteAnalytics\AnalyticsCampaignLinks::class)->tagForWorkspace($body, (int) $eligible['workspace_id'], $eligible['campaign'] ?? null);
             }
 
             try {

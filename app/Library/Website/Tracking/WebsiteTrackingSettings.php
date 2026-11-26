@@ -160,6 +160,27 @@ final class WebsiteTrackingSettings
     }
 
     /**
+     * Does this page's consent configuration require consent before anything is measured? The same rows `effective()` merges
+     * (site-wide + this page), but answered even when no third-party tag is configured — native Analytics must respect the
+     * owner's consent choice whether or not Google or Meta is connected. No enabled setting means no consent bar was
+     * configured, so none is required.
+     */
+    public function requiresConsent(Website $website, string $pageScopeKey): bool
+    {
+        $scopeKeys = [WebsiteTrackingSetting::GLOBAL_SCOPE, $pageScopeKey];
+        if (str_starts_with($pageScopeKey, self::ARTICLE_SCOPE_PREFIX)) {
+            $scopeKeys[] = self::BLOG_SCOPE;
+        }
+
+        return WebsiteTrackingSetting::query()
+            ->where('website_id', $website->id)
+            ->whereIn('scope_key', array_unique($scopeKeys))
+            ->where('is_enabled', true)
+            ->where('require_consent', true)
+            ->exists();
+    }
+
+    /**
      * @param  array<string, mixed>  $input
      * @return array<string, mixed>
      * @throws ValidationException

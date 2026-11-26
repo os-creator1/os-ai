@@ -1047,6 +1047,9 @@
 
         Route::get('{workspaceUid}/agency/white-label', 'Agency\AgencyWhiteLabelController@show')
             ->name('agency.white-label.show');
+        // White Label → Analytics: the Agency's own landing-page funnel (read-only, same authority as the other tabs).
+        Route::get('{workspaceUid}/agency/white-label/analytics', 'Agency\AgencyWebsiteAnalyticsController@show')
+            ->name('agency.white-label.analytics');
         Route::post('{workspaceUid}/agency/white-label', 'Agency\AgencyWhiteLabelController@update')
             ->middleware('throttle:30,1')->name('agency.white-label.update');
         Route::post('{workspaceUid}/agency/white-label/domain', 'Agency\AgencyWhiteLabelController@attachDomain')
@@ -2328,6 +2331,9 @@
             Route::get('/forms/{formUid}/edit', 'Business\WebsiteFormsController@edit')->name('forms.edit');
             Route::put('/forms/{formUid}', 'Business\WebsiteFormsController@update')->name('forms.update');
             Route::get('/forms/{formUid}/submissions', 'Business\WebsiteFormsController@submissions')->name('forms.submissions');
+
+            // Website → Analytics: native funnel analytics of the published website (read-only).
+            Route::get('/analytics', 'Business\WebsiteAnalyticsController@home')->name('analytics.index');
 
             // Website → Tracking: site-wide and page-specific marketing/conversion tracking (published pages only).
             Route::get('/tracking', 'Business\WebsiteTrackingController@home')->name('tracking.index');

@@ -56,7 +56,7 @@ class AgencyProspectingInitialSendJob extends Base
         }
 
         $settings = AgencyProspectingSetting::where('workspace_id', $snapshot['workspace_id'])->first();
-        $body = AgencyProspectMessageTemplate::render($snapshot['campaign']->opening_message, $snapshot['prospect'], $settings);
+        $body = AgencyProspectMessageTemplate::render($snapshot['campaign']->opening_message, $snapshot['prospect'], $settings, $snapshot['campaign']);
 
         $claim = DB::transaction(function () use ($operationKey, $entitlementManager, $body) {
             if ($this->operationClaimed($operationKey)) {

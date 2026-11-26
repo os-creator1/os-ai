@@ -85,6 +85,8 @@ class PublicBookingController extends Controller
             'day' => $day ?? null,
             'slots' => $slots,
             'brand' => $this->brand($type, $business, $location, $staffIds),
+            // Native website analytics: only when this calendar was opened from a measured site's link (handoff params).
+            'analytics' => is_string($request->query('mgp')) ? app(\App\Library\WebsiteAnalytics\AnalyticsClientConfig::class)->forHandoff($request->query('mgp'), $type) : null,
             'timezones' => $this->timezoneOptions(),
             // The transactional-SMS consent box is offered only when texting is enabled for this
             // Booking Type AND the Business could actually text (never a consent for a dead channel).
@@ -228,6 +230,10 @@ class PublicBookingController extends Controller
             LeadAttributionEntrySurface::Booking,
             $request,
         );
+        // Native website analytics — the booking is STORED (the appointment row is committed above), so it is counted now,
+        // once per appointment. A retried request, a refreshed confirmation or a replay never reaches this line again; the
+        // recorder's unique dedupe key is the backstop. It can never fail the booking.
+        app(\App\Library\WebsiteAnalytics\AnalyticsRecorder::class)->bookingConfirmed($request, $appointment, $type);
         // Booking Notifications V1 — the Calendar's built-in confirmation and reminders, owed from
         // the details the guest gave for THIS booking. Best-effort by design: the booking is already
         // committed, so nothing here may fail it (a failure is logged and the due-sweep recovers).

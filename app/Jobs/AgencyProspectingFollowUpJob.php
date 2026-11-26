@@ -56,6 +56,7 @@ class AgencyProspectingFollowUpJob extends Base
         $body = $bookingUrl
             ? "Just following up — here's the booking link again: {$bookingUrl}"
             : 'Just following up on my last message — let me know if you have any questions!';
+        $body = app(\App\Library\WebsiteAnalytics\AnalyticsCampaignLinks::class)->tagForWorkspace($body, $snapshot['workspace_id'], $snapshot['campaign']);
 
         $claim = DB::transaction(function () use ($operationKey, $entitlementManager, $body) {
             if ($this->operationClaimed($operationKey)) {
@@ -122,7 +123,7 @@ class AgencyProspectingFollowUpJob extends Base
     }
 
     /**
-     * @return array{workspace_id: int, channel: \App\Models\AgencyProspectingChannel, prospect: \App\Models\AgencyProspect}|null
+     * @return array{workspace_id: int, channel: \App\Models\AgencyProspectingChannel, prospect: \App\Models\AgencyProspect, campaign: \App\Models\AgencyProspectCampaign}|null
      */
     private function readEligibleSnapshot(EntitlementManager $entitlementManager): ?array
     {
@@ -161,7 +162,7 @@ class AgencyProspectingFollowUpJob extends Base
      * The authoritative re-check, performed only inside the claim
      * transaction against a freshly locked member row.
      *
-     * @return array{workspace_id: int, channel: \App\Models\AgencyProspectingChannel, prospect: \App\Models\AgencyProspect}|null
+     * @return array{workspace_id: int, channel: \App\Models\AgencyProspectingChannel, prospect: \App\Models\AgencyProspect, campaign: \App\Models\AgencyProspectCampaign}|null
      */
     private function lockAndCheckEligibility(EntitlementManager $entitlementManager): ?array
     {
@@ -194,7 +195,7 @@ class AgencyProspectingFollowUpJob extends Base
     }
 
     /**
-     * @return array{workspace_id: int, channel: \App\Models\AgencyProspectingChannel, prospect: \App\Models\AgencyProspect}|null
+     * @return array{workspace_id: int, channel: \App\Models\AgencyProspectingChannel, prospect: \App\Models\AgencyProspect, campaign: \App\Models\AgencyProspectCampaign}|null
      */
     private function checkCommonEligibility(AgencyProspectCampaignMember $member, EntitlementManager $entitlementManager): ?array
     {
@@ -230,6 +231,7 @@ class AgencyProspectingFollowUpJob extends Base
             'workspace_id' => $workspace->id,
             'channel' => $channel,
             'prospect' => $prospect,
+            'campaign' => $campaign,
         ];
     }
 

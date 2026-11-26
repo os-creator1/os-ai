@@ -62,6 +62,13 @@ final class WebsitePageComposer
             ? array_merge($assets[$logoUid], ['alt_text' => ($assets[$logoUid]['alt_text'] ?? null) ?: ((string) ($meta['name'] ?? '') . ' logo')])
             : null;
 
+        $tracking = $website === null || $page === null ? null : app(\App\Library\Website\Tracking\WebsiteTrackingSettings::class)->effective(
+            $website,
+            $data['blog']['tracking_scope_key'] ?? \App\Library\Website\Tracking\WebsiteTrackingSettings::scopeKeyForPage((bool) ($page->is_home ?? $isHome), $page->slug ?? null, ($page->uid ?? null) === 'blog'),
+            ! $isPreview,
+            (bool) ($data['allowIndexing'] ?? false),
+        );
+
         $view->with([
             'design' => $design,
             'nav' => $this->navigation->build($pages, $currentUid),
@@ -77,11 +84,13 @@ final class WebsitePageComposer
             'siteContact' => $this->contact($meta, $business, $isPreview),
             'isHomePage' => $isHome,
             // Owner tracking (Website → Tracking): published pages only — never the dashboard, editor or any preview.
-            'tracking' => $website === null || $page === null ? null : app(\App\Library\Website\Tracking\WebsiteTrackingSettings::class)->effective(
+            'tracking' => $tracking,
+            // Native Analytics (Website → Analytics): the same published-only rule — null for any preview, editor or internal render.
+            'analytics' => $website === null || $page === null || $isPreview || ! $website->exists ? null : app(\App\Library\WebsiteAnalytics\AnalyticsClientConfig::class)->forWebsite(
                 $website,
                 $data['blog']['tracking_scope_key'] ?? \App\Library\Website\Tracking\WebsiteTrackingSettings::scopeKeyForPage((bool) ($page->is_home ?? $isHome), $page->slug ?? null, ($page->uid ?? null) === 'blog'),
-                ! $isPreview,
-                (bool) ($data['allowIndexing'] ?? false),
+                $isPreview,
+                $tracking !== null,
             ),
             // A blog article's trail (Home > Blog > article) comes from the blog renderer; every other page derives its own.
             'breadcrumbs' => $data['breadcrumbsOverride'] ?? ($currentNav !== null ? WebsiteBreadcrumbStructuredData::trail($currentNav, $pages) : []),

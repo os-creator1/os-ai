@@ -44,7 +44,7 @@ final class SiteRenderer
     }
 
     /** @return string|null the HTML, or null when this site does not offer that page */
-    public function page(AgencySite $site, array $values, string $page, ?string $previewWorkspaceUid = null, ?string $pageBase = null): ?string
+    public function page(AgencySite $site, array $values, string $page, ?string $previewWorkspaceUid = null, ?string $pageBase = null, ?array $analytics = null): ?string
     {
         if (! in_array($page, SiteSchema::PAGES, true)) {
             return null;
@@ -63,9 +63,10 @@ final class SiteRenderer
             $html = view('marketing.pages.consultation', [
                 'mg' => $mg, 'page' => 'book-demo', 'meta' => $mg->meta('home'),
                 'embed' => $this->booking->embed($agency, $values['x.booking_type_uid'] ?? null),
+                'analytics' => $analytics,
             ])->render();
         } else {
-            $data = ['mg' => $mg, 'page' => $page, 'meta' => $mg->meta($page)];
+            $data = ['mg' => $mg, 'page' => $page, 'meta' => $mg->meta($page), 'analytics' => $analytics];
 
             if ($page === 'home' && $mg->hasConsultationSection()) {
                 $data['embed'] = $this->booking->embed(\App\Models\Workspace::query()->findOrFail($site->agency_workspace_id), $values['x.booking_type_uid'] ?? null);
