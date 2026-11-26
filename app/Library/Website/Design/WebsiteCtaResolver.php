@@ -104,10 +104,23 @@ final class WebsiteCtaResolver
             // CTA band authored earlier may still say "Contact us"; once a
             // valid form is on the published page all buttons targeting the
             // same URL consistently read "Check Availability".
-            if (($siteCta['kind'] ?? null) === 'form'
-                && ($siteCta['label'] ?? null) === 'Check Availability'
-                && $url === ($siteCta['url'] ?? null)) {
-                return ['label' => 'Check Availability', 'url' => $url];
+            if ($url === ($pageUrls['photo-booth-contact'] ?? null)) {
+                if (($siteCta['kind'] ?? null) === 'form'
+                    && ($siteCta['label'] ?? null) === 'Check Availability'
+                    && $url === ($siteCta['url'] ?? null)) {
+                    return ['label' => 'Check Availability', 'url' => $url];
+                }
+
+                // A previously authored Check Availability CTA must NEVER
+                // advertise a submittable form after its Forms deployment is
+                // disabled or removed. Revert to the currently functional
+                // contact/booking fallback, or hide the CTA entirely.
+                if (strcasecmp(trim((string) ($cta['label'] ?? '')), 'Check Availability') === 0) {
+                    return $siteCta === null ? null : [
+                        'label' => $siteCta['label'],
+                        'url' => $siteCta['url'],
+                    ];
+                }
             }
 
             return ['label' => (string) (($cta['label'] ?? '') !== '' ? $cta['label'] : ($siteCta['label'] ?? 'Get in touch')), 'url' => $url];
