@@ -92,11 +92,23 @@ final class WebsiteFormsModuleReferences
      */
     public function renderable(array $data, Website $website, bool $isPreview): ?array
     {
+        $uid = (string) ($data['forms_module_deployment_uid'] ?? '');
+
         if ($isPreview) {
-            return $this->resolve($website->business, (string) ($data['forms_module_deployment_uid'] ?? ''));
+            return $uid === '' ? null : $this->resolve($website->business, $uid);
         }
 
-        return is_array($data['resolved'] ?? null) ? $data['resolved'] : null;
+        $frozen = $data['resolved'] ?? null;
+
+        if ($uid === '' || ! is_array($frozen) || (string) ($frozen['uid'] ?? '') !== $uid) {
+            return null;
+        }
+
+        // Keep the published embed's frozen presentation, but verify that
+        // this EXACT deployment still accepts submissions for this Business.
+        // An alternative live deployment must never make a disabled form
+        // on a previously published page look operational.
+        return $this->resolve($website->business, $uid) !== null ? $frozen : null;
     }
 
     /** @return ?array{uid: string, url: string, title: string, height: int, form_uid: string, location_uid: string} */
