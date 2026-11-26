@@ -272,6 +272,25 @@ class OutreachApprovedAnswerMatcherTest extends TestCase
         $this->assertSame([], \App\Library\AgencyOutreach\OutreachQuestionMatcher::requests('ok?'));
     }
 
+    public function test_explicit_info_site_and_pricing_and_reverse_order_coverage(): void
+    {
+        $ai = $this->useFakeAi();
+        [$workspace, $business, , $campaign] = $this->scenario([
+            ['id' => 'info', 'question' => 'What do you do?', 'answer' => 'Fixture: we help agencies.'],
+            ['id' => 'site', 'question' => 'Website?', 'answer' => 'Fixture: our website.'],
+            self::FAQ[0],
+            ['id' => 'term', 'question' => 'How long is the contract?', 'answer' => 'Fixture: a 12-month contract, cancel with 30 days notice.'],
+        ]);
+        $this->inbound($business, 'Can you send more info and your website and pricing?');
+        $this->assertStringContainsString("Fixture: we help agencies.\nFixture: our website.\nFixture: the monthly fee", $this->sentBodies()[0]);
+
+        $this->enroll($workspace, $campaign, $this->prospect($workspace, '12025555008'));
+        $this->inbound($business, 'Can I cancel? Is there a contract?', '12025555008');
+        $this->assertSame(1, substr_count($this->sentBodies()[1], '12-month contract'));
+        $this->assertSame([], $this->openQuestions($workspace));
+        $this->assertSame(0, $ai->callCount());
+    }
+
     public function test_a_stale_script_save_cannot_remove_an_answer_taught_after_the_editor_opened(): void
     {
         [$workspace] = $this->scenario();

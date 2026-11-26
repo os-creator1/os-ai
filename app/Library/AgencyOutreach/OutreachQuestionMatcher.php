@@ -146,6 +146,18 @@ final class OutreachQuestionMatcher
             }
         }
 
+        // A later answer may also cover an earlier question. Keep it at its first applicable position.
+        foreach ($unresolved as $index => $request) {
+            $missing = false;
+            $found = $this->matchRequest($request, $entries, $answers, $missing);
+            foreach ($found as $id => $offset) {
+                $answers[$id] = min($answers[$id] ?? PHP_INT_MAX, $index * 10_000 + $offset);
+            }
+            if (! $missing) {
+                unset($unresolved[$index]);
+            }
+        }
+
         return new OutreachAnswerPlan($requests, $answers, $unresolved, false, false);
     }
 
@@ -223,10 +235,12 @@ final class OutreachQuestionMatcher
             }
 
             // Covered after all if an answer already chosen for this reply addresses it explicitly.
-            if ($this->addressedBy($topic, array_keys($found + $chosen), $entries)) {
-                continue;
+            foreach (array_keys($found + $chosen) as $id) {
+                if ($this->addressedBy($topic, [$id], $entries)) {
+                    $found[$id] ??= $offset;
+                    continue 2;
+                }
             }
-
             $missing = true;
         }
 
@@ -286,7 +300,7 @@ final class OutreachQuestionMatcher
 
         if (isset($topics[OutreachIntentClassifier::WHAT_WE_DO]) && array_diff_key($topics, array_flip([
             OutreachIntentClassifier::WHAT_WE_DO, OutreachIntentClassifier::WEBSITE, OutreachIntentClassifier::LOCATION, OutreachIntentClassifier::NAME,
-        ])) !== []) {
+        ])) !== [] && preg_match('/\\b(?:info(?:rmation)?|what (?:you|you guys) do|what do you do) (?:and|plus|also)\\b|\\b(?:and|also|plus) (?:more |your )?(?:info(?:rmation)?|what you do)\\b/u', $norm) !== 1) {
             unset($topics[OutreachIntentClassifier::WHAT_WE_DO]);
         }
 
