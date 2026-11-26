@@ -1,5 +1,5 @@
 import type {
-  CallingCapability, ContactProfile, ConversationDetail, ConversationSummary, LoginResult, Me, RealtimeConfig, Scope, SendResult,
+  CallingCapability, ContactProfile, ConversationDetail, ConversationSummary, LoginResult, Me, RealtimeConfig, Scope, SendResult, TwoFactorChallenge, TwoFactorMethod,
 } from './types';
 
 export class ApiError extends Error {
@@ -56,7 +56,13 @@ export function createApi({ baseUrl, getToken, onUnauthorized, fetchImpl }: Deps
   const base = (s: Scope) => `workspaces/${encodeURIComponent(s.workspaceUid)}/businesses/${encodeURIComponent(s.businessUid)}`;
 
   return {
-    login: (email: string, password: string, device: DeviceInfo) => call<LoginResult>('POST', 'auth/login', { email, password, device }, false),
+    /** A two-factor account gets a TwoFactorChallenge instead of a token; finish it with verifyTwoFactor. */
+    login: (email: string, password: string, device: DeviceInfo) =>
+      call<LoginResult | TwoFactorChallenge>('POST', 'auth/login', { email, password, device }, false),
+    verifyTwoFactor: (challenge: string, code: string, method: TwoFactorMethod = 'code') =>
+      call<LoginResult>('POST', 'auth/two-factor', { challenge, code, method }, false),
+    resendTwoFactor: (challenge: string) =>
+      call<{ sent: boolean; expires_at: string }>('POST', 'auth/two-factor/resend', { challenge }, false),
     logout: () => call<{ signed_out: boolean }>('POST', 'auth/logout'),
     refresh: () => call<LoginResult>('POST', 'auth/refresh'),
     me: () => call<Me>('GET', 'businesses'),

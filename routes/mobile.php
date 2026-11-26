@@ -19,6 +19,8 @@ use Illuminate\Support\Facades\Route;
 */
 
 Route::post('auth/login', [MobileAuthController::class, 'login'])->middleware('throttle:20,1')->name('auth.login');
+Route::post('auth/two-factor', [MobileAuthController::class, 'verifyTwoFactor'])->middleware('throttle:20,1')->name('auth.two-factor');
+Route::post('auth/two-factor/resend', [MobileAuthController::class, 'resendTwoFactor'])->middleware('throttle:5,1')->name('auth.two-factor.resend');
 
 Route::middleware(['auth:sanctum', EnsureMobileToken::class])->group(function () {
     Route::post('auth/logout', [MobileAuthController::class, 'logout'])->name('auth.logout');

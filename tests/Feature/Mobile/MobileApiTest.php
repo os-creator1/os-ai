@@ -13,6 +13,7 @@ use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Notification;
 use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\Str;
 use Tests\Feature\Workspace\Concerns\CreatesCustomerContextFixtures;
@@ -113,15 +114,18 @@ class MobileApiTest extends TestCase
         $this->assertSame($wrong->getContent(), $disabled->getContent());
     }
 
-    public function test_two_factor_accounts_are_refused_not_bypassed(): void
+    public function test_two_factor_accounts_get_a_challenge_not_a_token(): void
     {
+        Notification::fake();
         $this->a[0]->user->forceFill(['two_factor' => true])->save();
 
-        $this->postJson($this->url('auth/login'), [
+        $res = $this->postJson($this->url('auth/login'), [
             'email' => $this->a[0]->user->email, 'password' => self::PASSWORD,
             'device' => ['installation_id' => 'install-aaaa-0003', 'platform' => 'ios'],
-        ])->assertStatus(403)->assertJsonPath('error.code', 'two_factor_unsupported');
+        ])->assertStatus(202)->assertJsonPath('data.two_factor_required', true);
+        $this->assertNull($res->json('data.token'));
         $this->assertSame(0, DB::table('personal_access_tokens')->count());
+        // The exchange itself is covered by MobileTwoFactorTest.
     }
 
     public function test_repeated_failures_are_throttled(): void

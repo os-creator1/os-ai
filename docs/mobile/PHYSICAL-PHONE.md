@@ -5,8 +5,12 @@ The app talks to a Laravel deployment you choose (**staging or a local dev serve
 
 ## Backend prerequisites (once)
 1. Deploy/serve this branch on a **non-production** host and run the migration `2026_11_21_100001_create_mobile_devices_table`.
-2. A test user that: is enabled, has **no two-factor**, belongs to a Workspace with an Active Business, holds the `chat_box`
+2. A test user that: is enabled, belongs to a Workspace with an Active Business, holds the `chat_box`
    and `view_contact` permissions, and whose plan entitles `conversations` and `crm`. Use seeded/fake data only.
+   Two-factor is supported: a 2FA user is asked for the 6-digit code after the password. The code goes out by **mail**
+   (and SMS if a notification SMS gateway is set), so the server needs a working mailer you can read — for a local server
+   e.g. `MAIL_MAILER=log` and read `storage/logs/laravel.log`, or a Mailpit-style catcher. A backup code from the user's
+   `two_factor_backup_code` also works (once).
 3. Reachable from the phone (same Wi-Fi for a LAN server, or a public staging URL). Android cleartext http is **off**; use https.
 
 ## Android (any OS, USB cable or file transfer)
@@ -34,5 +38,6 @@ account, which owns the EAS project in `app.config.ts`). Push additionally needs
 * iOS builds cannot be produced on Linux; this branch ships the configuration only.
 
 ## Verify on the phone
-Sign in → pick the Business → conversations list shows only that Business → open a thread → contact profile → Calls shows
+Sign in (for a 2FA user: enter the emailed code; try a wrong code, *Send a new code*, *Use a backup code* and
+*Back to sign in*) → pick the Business → conversations list shows only that Business → open a thread → contact profile → Calls shows
 "coming in the next milestone". Sign out and confirm the token is rejected (`401`) on the server.
