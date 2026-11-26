@@ -162,18 +162,22 @@ class WebsiteBlogRenderer
     }
 
     /** The "Blog" navigation entry, or null when the site has no published article yet. */
-    public function navigationEntry(Website $website, WebsiteBlogSurface $surface): ?array
+    public function navigationEntry(Website $website, WebsiteBlogSurface $surface, ?array $snapshot = null): ?array
     {
-        // In these three opt-in reference templates the Content Articles
-        // Autopilot switch also controls Blog *discovery* (nav and homepage
-        // guides). Published article URLs and sitemap records are deliberately
-        // not deleted when the switch goes off: doing that would break
-        // existing links and indexed articles.
-        if (in_array((string) $website->template_key, [
-            'photo_booth_reference_kaleb',
-            'photo_booth_reference_booths',
-            'photo_booth_reference_greenbelt',
-        ], true) && ! (bool) \App\Models\ContentAutopilotSetting::query()
+        // Draft changes never alter a published site's Blog policy. The
+        // public site uses the design frozen inside the published revision;
+        // only the owner's preview may use the draft's template selection.
+        $frozenVariant = $surface->isPreview()
+            ? (string) ($website->theme['header_variant'] ?? '')
+            : (string) (($snapshot ?? \App\Models\WebsiteRevision::find($website->published_revision_id)?->snapshot ?? [])['website']['theme']['header_variant'] ?? '');
+
+        $usesReferencePolicy = in_array($frozenVariant, [
+            'reference-kaleb',
+            'reference-booths',
+            'reference-greenbelt',
+        ], true);
+
+        if ($usesReferencePolicy && ! (bool) \App\Models\ContentAutopilotSetting::query()
             ->where('business_id', $website->business_id)->value('enabled')) {
             return null;
         }
@@ -380,7 +384,7 @@ class WebsiteBlogRenderer
             'url' => $surface->pageUrl($candidate),
         ])->all();
 
-        $blog = $this->navigationEntry($website, $surface) ?? ($surface->isPreview() ? ['uid' => 'blog', 'title' => 'Blog', 'is_home' => false, 'slug' => 'blog', 'has_form' => false, 'url' => $surface->blogUrl()] : null);
+        $blog = $this->navigationEntry($website, $surface, $snapshot) ?? ($surface->isPreview() ? ['uid' => 'blog', 'title' => 'Blog', 'is_home' => false, 'slug' => 'blog', 'has_form' => false, 'url' => $surface->blogUrl()] : null);
 
         if ($blog !== null) {
             $pages[] = $blog;
