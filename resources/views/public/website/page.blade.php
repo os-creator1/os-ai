@@ -130,7 +130,7 @@
     @include('public.analytics._script', ['analytics' => $analytics ?? null])
 </head>
 {{-- A template-driven site is styled by its design only; the legacy variant classes (header/button/font) would leak the old generic styles into it. --}}
-<body class="website-body @if ($design ?? null) wd wd-{{ $design->key }}@if (! empty($hasSecondaryBrand)) wd-has-secondary @endif @if (! empty($paletteClasses)) {{ $paletteClasses }} @endif @else website-header-{{ $theme['header_variant'] ?? 'default' }} website-button-{{ $theme['button_style'] ?? 'solid' }} website-font-{{ $theme['font'] ?? 'system' }} @endif"
+<body class="website-body @if ($design ?? null) wd wd-{{ $design->key }}@if (! empty($design->variants['visual_base'] ?? null)) wd-{{ $design->variants['visual_base'] }}@endif @if (! empty($hasSecondaryBrand)) wd-has-secondary @endif @if (! empty($paletteClasses)) {{ $paletteClasses }} @endif @else website-header-{{ $theme['header_variant'] ?? 'default' }} website-button-{{ $theme['button_style'] ?? 'solid' }} website-font-{{ $theme['font'] ?? 'system' }} @endif"
     @if (($design ?? null) && ! empty($brandStyle)) style="{{ $brandStyle }}" @endif>
     @if ($isPreview)
         <div class="website-preview-banner">{{ $previewBannerText ?? 'Preview — draft content, not yet published' }}</div>
