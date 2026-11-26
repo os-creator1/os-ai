@@ -154,11 +154,19 @@ class PublicBlogTest extends TestCase
         $referenceRevision = ['website' => ['theme' => ['header_variant' => 'reference-kaleb']]];
         $this->assertNull($renderer->navigationEntry($website->fresh(), $surface, $referenceRevision));
 
+        $previewWebsite = $website->fresh();
+        $previewWebsite->theme = array_merge((array) $previewWebsite->theme, ['header_variant' => 'reference-kaleb']);
+        $previewSurface = \App\Library\Website\Blog\WebsiteBlogSurface::preview($previewWebsite);
+        $previewNav = fn () => $renderer->navigationPages($previewWebsite, ['pages' => []], $previewSurface);
+        $this->assertSame([], $previewNav(), 'A reference draft must not show Blog while Content Articles is disabled');
+
         $setting = \App\Models\ContentAutopilotSetting::query()->create(['business_id' => $business->id, 'enabled' => true]);
         $this->assertSame('Blog', $renderer->navigationEntry($website->fresh(), $surface, $referenceRevision)['title']);
+        $this->assertSame('Blog', $previewNav()[0]['title'], 'A published article appears in enabled reference preview navigation');
 
         $setting->update(['enabled' => false]);
         $this->assertNull($renderer->navigationEntry($website->fresh(), $surface, $referenceRevision));
+        $this->assertSame([], $previewNav(), 'Disabling Content Articles hides Blog in reference preview');
 
         // Hiding the Blog navigation is not an instruction to delete or
         // unpublish already indexed customer articles.
