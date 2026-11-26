@@ -1,5 +1,9 @@
 import type { ExpoConfig } from 'expo/config';
 
+// Android push: path to Firebase's google-services.json. EAS supplies it from the file-type environment variable
+// GOOGLE_SERVICES_JSON; the file itself is gitignored. Without it the build runs but cannot obtain a push token.
+const googleServicesFile = process.env.GOOGLE_SERVICES_JSON;
+
 /**
  * MotionGrove Mobile. The API origin is the ONLY environment-specific value and is public by nature.
  * No provider key, Telnyx credential or SIP secret is ever read here or bundled: the phone only ever holds a
@@ -8,6 +12,7 @@ import type { ExpoConfig } from 'expo/config';
 const config: ExpoConfig = {
   name: 'MotionGrove',
   slug: 'motiongrove-mobile',
+  owner: 'getmotiongrove', // Expo account that owns the EAS project below
   scheme: 'motiongrove',
   version: '0.1.0',
   orientation: 'portrait',
@@ -30,6 +35,8 @@ const config: ExpoConfig = {
       monochromeImage: './assets/android-icon-monochrome.png',
     },
     permissions: ['android.permission.POST_NOTIFICATIONS'],
+    // Firebase client config for FCM (public client identifiers, not a server credential). Only set when provided.
+    ...(googleServicesFile ? { googleServicesFile } : {}),
   },
   plugins: [
     'expo-dev-client',
@@ -39,6 +46,7 @@ const config: ExpoConfig = {
   ],
   extra: {
     apiUrl: process.env.EXPO_PUBLIC_API_URL ?? '',
+    eas: { projectId: '79fd85a8-386a-49e2-ab53-35421cb09bbb' }, // @getmotiongrove/motiongrove-mobile; required for Expo push tokens
   },
 };
 
