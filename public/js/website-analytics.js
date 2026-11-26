@@ -91,11 +91,11 @@
         if (handed && store('session', HANDOFF_KEY) !== handed) {
             // First time this handoff is seen in this tab: it wins over unrelated storage. Reusing the SAME handoff URL later
             // (refresh, revisit) is not a new handoff, so that visit can expire like any other.
-            s = handed; store('session', HANDOFF_KEY, handed);
+            s = handed; fresh = true; store('session', HANDOFF_KEY, handed);
         } else if (!HEX32.test(s || '') || (now - at) > IDLE_MS) {
             s = randomHex(); fresh = true;
         }
-        // A NEW visit starts with no inherited campaign: only an incoming mgc (read by campaign()) can give it one.
+        // A NEW visit (expired, or an adopted handoff) starts with no inherited campaign: only an incoming mgc (read by campaign()) can give it one.
         if (fresh) { store('session', CAMPAIGN_KEY, ''); }
         store('session', SESSION_KEY, s);
         store('session', SESSION_AT_KEY, String(now));
