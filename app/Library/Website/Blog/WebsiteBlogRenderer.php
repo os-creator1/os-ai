@@ -362,7 +362,12 @@ class WebsiteBlogRenderer
             'title' => $candidate['title'],
             'is_home' => $candidate['is_home'],
             'slug' => $candidate['slug'] ?? null,
-            'has_form' => collect($candidate['sections'] ?? [])->contains(fn ($section) => ($section['type'] ?? null) === 'form'),
+            'has_form' => collect($candidate['sections'] ?? [])->contains(fn ($section) =>
+                ($section['type'] ?? null) === 'form' ||
+                (($section['type'] ?? null) === 'forms_module_form' &&
+                    app(\App\Library\Website\Forms\WebsiteFormsModuleReferences::class)
+                        ->renderable((array) ($section['data'] ?? []), $website, $surface->isPreview()) !== null)
+            ),
             // A service-detail page names the catalog service it presents, so a booth card can link to it by id —
             // never by a guessed address.
             'service_uid' => ($candidate['intent']['service_uid'] ?? null)
