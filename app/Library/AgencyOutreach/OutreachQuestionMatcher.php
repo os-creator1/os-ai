@@ -282,9 +282,8 @@ final class OutreachQuestionMatcher
                 if ($needle === '') {
                     continue;
                 }
-                $at = mb_strpos(' ' . $norm . ' ', ' ' . $needle . ' ');
-                if ($at !== false) {
-                    $found[$entry['id']] = $at;
+                if (preg_match('/\\b' . preg_quote($needle, '/') . 's?\\b/u', $norm, $match, PREG_OFFSET_CAPTURE) === 1) {
+                    $found[$entry['id']] = $match[0][1];
                     break;
                 }
             }
