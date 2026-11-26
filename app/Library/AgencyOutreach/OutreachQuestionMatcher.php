@@ -251,17 +251,21 @@ final class OutreachQuestionMatcher
         if (count($exact) === 1) {
             $found[array_key_first($exact)] ??= strlen($norm);
         }
-        foreach ($topics === [] ? $entries : [] as $entry) {
-            $about = $this->topicsOf($entry);
-
-            // An owner keyword matches unless the request is about topics this entry is not about.
-            if (isset($found[$entry['id']]) || ($topics !== [] && array_intersect_key($topics, $about) === [])) {
+        foreach ($entries as $entry) {
+            if (isset($found[$entry['id']])) {
                 continue;
             }
-
+            // Known topics already chose their most specific entry above. An owner-defined
+            // topic such as "refund policy" can still appear beside a recognized question.
+            if ($topics !== [] && $this->topicsOf($entry) !== []) {
+                continue;
+            }
             foreach ($entry['keywords'] as $keyword) {
-                $at = $keyword === '' ? false : mb_strpos($norm, OutreachIntentClassifier::normalise($keyword));
-
+                $needle = OutreachIntentClassifier::normalise($keyword);
+                if ($needle === '') {
+                    continue;
+                }
+                $at = mb_strpos(' ' . $norm . ' ', ' ' . $needle . ' ');
                 if ($at !== false) {
                     $found[$entry['id']] = $at;
                     break;
