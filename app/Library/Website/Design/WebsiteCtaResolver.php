@@ -99,12 +99,11 @@ final class WebsiteCtaResolver
         $url = $this->resolveLink(trim((string) ($cta['url'] ?? '')), $pageUrls);
 
         if ($url !== '' && $url !== '#' && preg_match('#^(https?://|tel:|mailto:|/)#i', $url) === 1) {
-            // In the reference templates the live Forms-module inquiry
-            // destination owns the primary label. This also fixes an older
-            // generated hero/CTA that said "Contact us" before the owner
-            // activated the form: activating the form makes every primary
-            // link to that exact page read "Check Availability" without a
-            // destructive website regeneration.
+            // For reference templates with a *renderable* Forms-module
+            // inquiry page, the resolved site CTA owns the label. A hero or
+            // CTA band authored earlier may still say "Contact us"; once a
+            // valid form is on the published page all buttons targeting the
+            // same URL consistently read "Check Availability".
             if (($siteCta['kind'] ?? null) === 'form'
                 && ($siteCta['label'] ?? null) === 'Check Availability'
                 && $url === ($siteCta['url'] ?? null)) {
