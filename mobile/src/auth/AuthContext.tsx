@@ -2,7 +2,7 @@ import React, { createContext, useCallback, useContext, useEffect, useMemo, useR
 import { Platform } from 'react-native';
 import Constants from 'expo-constants';
 import { createApi, type Api } from '../api/client';
-import type { Business, Me, Scope } from '../api/types';
+import type { Business, LoginResult, Me, Scope, TwoFactorChallenge, TwoFactorMethod } from '../api/types';
 import { apiBaseUrl, assertSecureOrigin } from '../config';
 import { registerForPush } from '../notifications/registerDevice';
 import * as store from './storage';
@@ -17,13 +17,22 @@ type State = {
   scope: Scope | null;
   business: Business | null;
   api: Api;
-  signIn: (email: string, password: string) => Promise<void>;
+  /** Resolves to a challenge when the account uses two-factor sign-in (no session yet); otherwise signs in. */
+  signIn: (email: string, password: string) => Promise<SignInOutcome>;
+  /** Second step: exchanges the challenge and a code (emailed/SMS, or a backup code) for the session. */
+  completeTwoFactor: (challenge: TwoFactorChallenge, code: string, method?: TwoFactorMethod) => Promise<void>;
+  resendTwoFactor: (challenge: TwoFactorChallenge) => Promise<void>;
   signOut: () => Promise<void>;
   selectBusiness: (b: Business) => Promise<void>;
   clearBusiness: () => Promise<void>;
   /** Re-asks the SERVER which Businesses this person may open right now (used before honouring a notification tap). */
   refreshAccess: () => Promise<Me | null>;
 };
+
+export type SignInOutcome = { status: 'signed_in' } | { status: 'two_factor'; challenge: TwoFactorChallenge };
+
+const isChallenge = (r: LoginResult | TwoFactorChallenge): r is TwoFactorChallenge =>
+  (r as TwoFactorChallenge).two_factor_required === true;
 
 const Ctx = createContext<State | null>(null);
 export const useAuth = () => {
@@ -100,18 +109,33 @@ export function AuthProvider({ children, apiOverride }: { children: React.ReactN
     void retryRestore();
   }, [retryRestore]);
 
-  const signIn = useCallback(async (email: string, password: string) => {
+  const adopt = useCallback(async (res: LoginResult) => {
+    sessionEpoch.current++;
+    tokenRef.current = res.token;
+    await store.saveSession(res.token, res.expires_at);
+    await hydrate();
+  }, [hydrate]);
+
+  const signIn = useCallback(async (email: string, password: string): Promise<SignInOutcome> => {
     const res = await api.login(email.trim(), password, {
       installation_id: await store.installationId(),
       platform: Platform.OS === 'ios' ? 'ios' : 'android',
       name: Constants.deviceName ?? undefined,
       app_version: Constants.expoConfig?.version,
     });
-    sessionEpoch.current++;
-    tokenRef.current = res.token;
-    await store.saveSession(res.token, res.expires_at);
-    await hydrate();
-  }, [api, hydrate]);
+    // The challenge is held only in the login screen's memory, never persisted: leaving the screen abandons it.
+    if (isChallenge(res)) return { status: 'two_factor', challenge: res };
+    await adopt(res);
+    return { status: 'signed_in' };
+  }, [api, adopt]);
+
+  const completeTwoFactor = useCallback(async (challenge: TwoFactorChallenge, code: string, method: TwoFactorMethod = 'code') => {
+    await adopt(await api.verifyTwoFactor(challenge.challenge, code.trim(), method));
+  }, [api, adopt]);
+
+  const resendTwoFactor = useCallback(async (challenge: TwoFactorChallenge) => {
+    await api.resendTwoFactor(challenge.challenge);
+  }, [api]);
 
   const signOut = useCallback(async () => {
     try { await api.logout(); } catch { /* the token is dropped locally either way */ }
@@ -145,7 +169,7 @@ export function AuthProvider({ children, apiOverride }: { children: React.ReactN
 
   const value: State = {
     ready, restoreError, retryRestore, discardStoredSession: wipe,
-    signedIn: me !== null, me, scope, business, api, signIn, signOut, selectBusiness, clearBusiness, refreshAccess,
+    signedIn: me !== null, me, scope, business, api, signIn, completeTwoFactor, resendTwoFactor, signOut, selectBusiness, clearBusiness, refreshAccess,
   };
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

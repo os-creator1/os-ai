@@ -10,7 +10,7 @@ Governance: built under `CLAUDE.md` route 3 (explicitly human-authorized manual 
 
 | Area | Existing, reusable | Genuinely missing (added or deferred) |
 |---|---|---|
-| Auth | Laravel Sanctum is installed; `/api/v3` uses `auth:sanctum` but is a **legacy, pre-Workspace** surface (SMS send, contact writes) behind `CustomerAccountAccessApiGate`. Web login is session + email/password + optional 2FA. | A phone token login. **Added** `POST /api/mobile/v1/auth/login` (Sanctum token, ability `mobile`, 30-day expiry), logout, refresh. |
+| Auth | Laravel Sanctum is installed; `/api/v3` uses `auth:sanctum` but is a **legacy, pre-Workspace** surface (SMS send, contact writes) behind `CustomerAccountAccessApiGate`. Web login is session + email/password + optional 2FA. | A phone token login. **Added** `POST /api/mobile/v1/auth/login` (Sanctum token, ability `mobile`, 30-day expiry), the two-factor step `auth/two-factor` (+ `/resend`), logout, refresh. |
 | Conversations read | `ChatBoxController` (`loadChatUsers`, `messages`, `timeline`), tables `chat_boxes` / `chat_box_messages`, `BusinessConversationReadModel`, `UnifiedConversationList`. All web/session, HTML or ad-hoc JSON. | A JSON API. **Added** list + detail endpoints over the same rows and rules. |
 | Conversations write | `reply`, `retry`, managed-send state machine, opt-out/DNC, wallet/billing, Telnyx/10DLC provider gating. | **Deferred** (Phase 2). These must be *extracted into a service the web and mobile both call*, not duplicated: see §8. |
 | Real time | `MessageReceived` broadcasts on private channel `chat.business.{businessUid}`; authorized in `routes/channels.php` with the same chain as the inbox. `Broadcast::routes()` is session-guarded; `BROADCAST_DRIVER` defaults to `null`. | A token-authenticated broadcast auth route and a Pusher-protocol client. **Deferred** (Phase 2). Phase 1 uses pull-to-refresh. |
@@ -67,12 +67,39 @@ Package: `@telnyx/react-voice-commons-sdk` 1.2.2 (MIT) over `@telnyx/react-nativ
   phone stores it in Keychain/Keystore only.
 * Same credential rules as the web login (account must be enabled). Unknown email, wrong password and disabled account
   return **one identical 401** `invalid_credentials`. 5 failures per (email,IP) → 429 (lock covers the correct password too).
-* **Two-factor accounts are refused** (`403 two_factor_unsupported`), never bypassed. A mobile 2FA challenge is a Phase 2 item.
+* **Two-factor accounts get a challenge, never a token** — see "Two-factor sign-in" below.
 * One live token per installation: signing in or refreshing retires the previous token and device row.
 * `auth/refresh` rotates the token; `auth/logout` deletes the token **and** the device row (the phone stops being a push target).
 * `EnsureMobileToken` requires the explicit `mobile` ability (a `*` wildcard token does **not** qualify) and re-checks
   `users.status` on every request, so disabling an account ends the phone session immediately.
 * `RejectMobileTokenOnLegacyApi` is added to `/api/v3`: a mobile token can never call the legacy SMS/contact-write API.
+
+### Two-factor sign-in
+The web's second factor is **not TOTP**: after the password it mails (and, if an SMS gateway is configured, texts) a
+6-digit code that expires in 10 minutes (`TwoFactorCode`), and it also accepts one of the account's 8 single-use backup
+codes (`users.two_factor_backup_code`). Mobile reuses exactly that scheme.
+
+1. `POST auth/login` with the right password for a `users.two_factor` account → **`202`**
+   `{"data":{"two_factor_required":true,"challenge","expires_at","methods":["code","backup_code"]}}`. No token, no device
+   row. A fresh code is sent through the web's channels (`MobileTwoFactorCode`, a subclass of `TwoFactorCode` whose mail
+   has no web "Verify" link). The phone keeps the challenge in memory only.
+2. `POST auth/two-factor {challenge, code, method?: code|backup_code}` → the **same 200 payload as a plain login**.
+   `POST auth/two-factor/resend {challenge}` sends a new code (the old one stops working).
+
+Rules (`App\Library\Mobile\MobileTwoFactorChallenge`, `MobileAuthController`):
+* The challenge is 64 random characters; only its SHA-256 is a cache key, and the code is stored as an HMAC. It lives
+  **10 minutes**, allows **5 wrong guesses** then is destroyed, and is **consumed under a cache lock** before the token is
+  minted, so it can never be redeemed twice. Expired, used, burned, unknown, or account-disabled → one `401
+  two_factor_challenge_invalid` ("sign in again"). Wrong code → `422 invalid_two_factor_code`.
+* Per account: 10 wrong second-factor guesses (across challenges) lock verification for 15 minutes (`429`, even for the
+  right code), and at most 5 challenges per 10 minutes are issued (each one sends a message). Per challenge: 3 resends.
+  Routes are throttled (`two-factor` 20/min, `resend` 5/min per IP). A wrong *password* never reaches step 2 and still
+  counts toward the login lock.
+* The mobile code is deliberately **not** written to `users.two_factor_code`: the web `TwoFactor` middleware treats a
+  pending code there as "this browser session must re-verify" and would log out an already-open web session of the same
+  person. Backup codes *are* shared with the web: one used on the phone is gone on the web too.
+* Mobile requires the second factor whenever the account has `two_factor` on, even if the global `TWO_FACTOR` setting is
+  off (the web would then skip it) — stricter, never weaker.
 
 ### Tenant isolation
 Every Business route is `workspaces/{workspaceUid}/businesses/{businessUid}/…` and runs `MobileBusinessAccess::resolve`,
@@ -99,7 +126,8 @@ Errors: `{"error":{"code","message"}}` with a real HTTP status. Success: `{"data
 
 | Method & path | Purpose | Reuses |
 |---|---|---|
-| `POST auth/login` | token login (public, throttled) | `Hash`, Sanctum |
+| `POST auth/login` | token login, or a 2FA challenge (`202`) (public, throttled) | `Hash`, Sanctum |
+| `POST auth/two-factor` · `POST auth/two-factor/resend` | finish a 2FA sign-in / send a new code (public, throttled) | `TwoFactorCode` channels, `two_factor_backup_code`, cache |
 | `POST auth/refresh` · `POST auth/logout` | rotate / end session | Sanctum |
 | `GET businesses` | the switcher: Businesses + feature flags | `WorkspaceRepository`, `WorkspaceManager`, `EntitlementManager` |
 | `PUT/DELETE devices/current` | register / clear push token for **this** token's device | new `mobile_devices` |
@@ -131,7 +159,7 @@ M2 (messaging), in order:
 3. Push **sender**: a `MobilePushNotifier` (Expo push API via a fakeable HTTP port) fired from the inbound-message path
    with a payload of `{business_uid, conversation_uid}` only (no message text on the lock screen by default), plus
    token-hygiene on `DeviceNotRegistered`.
-4. Mobile 2FA challenge.
+4. ~~Mobile 2FA challenge.~~ Done — see §5 "Two-factor sign-in".
 
 M3 (calling): `POST …/calls/session` wrapping `BrowserCredentialProvisioner::loginSession` (→ JWT only); mobile wrappers
 over place / answer / decline / hangup / wrap-up; `isLaunchedFromPushNotification` guard; install the Telnyx SDK + config
@@ -216,4 +244,4 @@ shows "not found"). Notification permission is requested only on an explicit tap
 ### Limits
 Expo push *receipts* (delayed delivery errors) are not polled; `DeviceNotRegistered` is handled from the immediate ticket. Existing socket
 subscriptions at the provider cannot be revoked server-side on logout/lock — they receive only content-free notices and any re-read is
-refused by the API; the app disconnects locally. Inbound MMS media is not previewed. Mobile 2FA and native calling are later phases.
+refused by the API; the app disconnects locally. Inbound MMS media is not previewed. Native calling is a later phase.

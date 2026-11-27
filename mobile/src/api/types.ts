@@ -7,6 +7,9 @@ export type Business = {
 };
 export type Me = { user: { uid: string; name: string; email: string }; businesses: Business[] };
 export type LoginResult = { token: string; token_type: 'Bearer'; expires_at: string; user: Me['user'] };
+/** A correct password for a two-factor account: no token yet, only a short-lived, single-use challenge. */
+export type TwoFactorChallenge = { two_factor_required: true; challenge: string; expires_at: string; methods: TwoFactorMethod[] };
+export type TwoFactorMethod = 'code' | 'backup_code';
 export type Direction = 'inbound' | 'outbound';
 export type ConversationSummary = {
   uid: string;
