@@ -359,14 +359,14 @@ describe('live conversation detail: window and focus', () => {
       .mockImplementation(() => new Promise((r) => { deferred.push(r); }));
     const api = fakeApi({ conversation, retry: jest.fn(async () => ({ message: { send_uid: 'su-1', status: 'sent' } })) });
     const t = await open(api, nav());
-    fireEvent.press(screen.getByText('Retry'));
+    fireEvent.press(screen.getByText('Tap to retry'));
     await waitFor(() => expect(deferred).toHaveLength(1));              // post-retry load() in flight
     await act(async () => { t.emit(ch, evt); });                          // a live refresh starts after it
     await waitFor(() => expect(deferred).toHaveLength(2));
     await act(async () => { deferred[1](detail([sent])); });              // live applies first
     await act(async () => { deferred[0](detail([sent])); });              // the superseded load answers last
     expect(screen.queryByText(/could not refresh/)).toBeNull();
-    expect(screen.getByText('Retry')).toBeTruthy();                       // and Retry is not hidden
+    expect(screen.getByText('Tap to retry')).toBeTruthy();                       // and Retry is not hidden
   });
 
   it('a live signal that arrives during the initial thread load is kept and acted on once that load has applied', async () => {
@@ -401,7 +401,7 @@ describe('live conversation detail: window and focus', () => {
     phase = 'failed';
     await act(async () => { t.emit(ch, { type: 'status', business_uid: 'biz-aaaaaaaa', conversation_uid: 'c1' }); });
     await waitFor(() => screen.getByText('Carrier rejected it.'));
-    expect(screen.getByText('Retry')).toBeTruthy();
+    expect(screen.getByText('Tap to retry')).toBeTruthy();
   });
 
   it('does not yank the user to the bottom on a live update after they scrolled up to read history', async () => {

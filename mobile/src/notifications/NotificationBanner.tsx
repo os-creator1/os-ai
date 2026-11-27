@@ -1,9 +1,9 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { AppState, Linking, StyleSheet, Text, View } from 'react-native';
+import { AppState, Linking, StyleSheet } from 'react-native';
 import Constants from 'expo-constants';
 import { useAuth } from '../auth/AuthContext';
-import { colors, space } from '../theme';
-import { Button } from '../screens/ui';
+import { Banner } from '../components';
+import { space } from '../theme';
 import { getPushPermission, requestPushPermission, type PushPermission } from './permission';
 import { registerForPush } from './registerDevice';
 
@@ -35,16 +35,27 @@ export function NotificationBanner() {
   const enable = useCallback(async () => { await apply(await requestPushPermission()); }, [apply]);
 
   if (perm === 'granted' || perm === 'unavailable') return null;
-  return (
-    <View style={s.wrap} accessibilityRole="alert">
-      <Text style={s.text}>{perm === 'denied' ? 'Notifications are turned off, so you will not hear about new messages.' : 'Get notified when a customer texts you.'}</Text>
-      {perm === 'denied'
-        ? <Button title="Open settings" variant="plain" onPress={() => { void Linking.openSettings(); }} />
-        : <Button title="Turn on notifications" variant="plain" onPress={() => { void enable(); }} />}
-    </View>
+  return perm === 'denied' ? (
+    <Banner
+      testID="notification-banner"
+      tone="warning"
+      icon="bell-off"
+      title="Notifications are turned off"
+      message="You will not hear about new messages until you allow them in Settings."
+      action={{ label: 'Open settings', onPress: () => { void Linking.openSettings(); } }}
+      style={s.wrap}
+    />
+  ) : (
+    <Banner
+      testID="notification-banner"
+      tone="promo"
+      title="Get a ping for new messages"
+      message="Turn on notifications so you never miss a lead."
+      action={{ label: 'Turn on', onPress: () => { void enable(); } }}
+      style={s.wrap}
+    />
   );
 }
 const s = StyleSheet.create({
-  wrap: { marginHorizontal: space.md, marginBottom: space.sm, padding: space.sm, borderRadius: 10, backgroundColor: colors.card, borderColor: colors.line, borderWidth: 1 },
-  text: { color: colors.text },
+  wrap: { marginHorizontal: space.md, marginTop: 10, marginBottom: 6 },
 });

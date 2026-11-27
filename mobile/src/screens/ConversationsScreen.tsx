@@ -1,21 +1,29 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { FlatList, Pressable, RefreshControl, StyleSheet, Text, TextInput, View } from 'react-native';
+import { FlatList, Pressable, RefreshControl, StyleSheet, View } from 'react-native';
+import type { CompositeScreenProps } from '@react-navigation/native';
+import type { BottomTabScreenProps } from '@react-navigation/bottom-tabs';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { ApiError } from '../api/client';
 import type { ConversationSummary } from '../api/types';
 import { useAuth } from '../auth/AuthContext';
+import { Banner, Button, EmptyState, ErrorState, Icon, SearchField, SegmentedControl, SkeletonList, Text, UnreadDot, Avatar } from '../components';
+import { listStamp } from '../format/time';
+import { useOnline } from '../net/useOnline';
 import { NotificationBanner } from '../notifications/NotificationBanner';
 import { useRealtime } from '../realtime/RealtimeProvider';
 import { colors, space } from '../theme';
-import type { RootStack } from '../navigation/types';
-import { Button, ErrorState, Loading, useBottomInset } from './ui';
+import type { MainTabs, RootStack } from '../navigation/types';
+import { useUnread } from '../navigation/unread';
+import { useTopInset } from './ui';
 
-type Props = NativeStackScreenProps<RootStack, 'Conversations'>;
+type Props = CompositeScreenProps<BottomTabScreenProps<MainTabs, 'Conversations'>, NativeStackScreenProps<RootStack>>;
 type Filter = 'all' | 'unread';
 
 export function ConversationsScreen({ navigation }: Props) {
-  const { api, scope, business, clearBusiness, signOut } = useAuth();
-  const bottomInset = useBottomInset();
+  const { api, scope, business, clearBusiness } = useAuth();
+  const topInset = useTopInset();
+  const online = useOnline();
+  const { setHasUnread } = useUnread();
   const [items, setItems] = useState<ConversationSummary[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
@@ -184,77 +192,120 @@ export function ConversationsScreen({ navigation }: Props) {
     }
   }, [api, scope, filter, search, nextPage, items, refreshing]);
 
+  // Tab-bar dot: only the unfiltered list (or the Unread filter itself) says anything about unread conversations.
   useEffect(() => {
-    navigation.setOptions({ title: business?.name ?? 'Conversations' });
-  }, [navigation, business]);
+    if (items === null || search.trim() !== '') return;
+    if (filter === 'unread') setHasUnread(items.length > 0);
+    else setHasUnread(items.some((c) => c.unread));
+  }, [items, filter, search, setHasUnread]);
 
   if (!scope) return null;
+
+  const query = search.trim();
+  const open = (item: ConversationSummary) =>
+    navigation.navigate('ConversationDetail', { uid: item.uid, title: item.display_name ?? item.phone ?? 'Conversation' });
+
+  const empty = items === null
+    ? error
+      ? <ErrorState title="Conversations didn't load" message={error} retryLabel="Retry" onRetry={() => { void load(); }} />
+      : <SkeletonList />
+    : query !== ''
+      ? <EmptyState icon="search" tone="neutral" title="No results" message={`Nothing matches “${query}”. Try a name, a number or words from a message.`}
+          action={{ label: 'Clear search', onPress: () => setSearch('') }} />
+      : filter === 'unread'
+        ? <EmptyState icon="check" title="You're all caught up" message="No unread conversations. New messages land here."
+            action={{ label: 'Show all conversations', onPress: () => setFilter('all') }} />
+        : <EmptyState icon="message-circle" title="No conversations yet" message="When a customer texts this business, the conversation shows up here." />;
 
   // Keep search and filter controls mounted while a new query is loading:
   // replacing the entire screen here would blur the TextInput on every key.
   return (
     <View style={s.wrap}>
-      <NotificationBanner />
-      <TextInput style={s.search} placeholder="Search name or number" accessibilityLabel="Search" value={search}
-        onChangeText={setSearch} autoCapitalize="none" returnKeyType="search" />
-      <View style={s.tabs}>
-        {(['all', 'unread'] as Filter[]).map((f) => (
-          <Pressable key={f} accessibilityRole="tab" accessibilityState={{ selected: filter === f }} onPress={() => setFilter(f)}
-            style={[s.tab, filter === f && s.tabOn]}>
-            <Text style={filter === f ? s.tabOnText : s.tabText}>{f === 'all' ? 'All' : 'Unread'}</Text>
+      {!online ? (
+        <Banner testID="offline-banner" tone="dark" message="You're offline. Showing the conversations already loaded." style={[s.offline, { top: topInset + 6 }]} />
+      ) : null}
+      <View style={[s.top, { paddingTop: topInset + 8 }]}>
+        <View style={s.switchRow}>
+          <Pressable accessibilityRole="button" accessibilityLabel={`Switch business, current: ${business?.name ?? ''}`} hitSlop={6}
+            onPress={() => { void clearBusiness(); }} style={s.switcher}>
+            <Text size={15} weight="600" color={colors.textTertiary} numberOfLines={1} style={s.switcherText}>{business?.name ?? 'Business'}</Text>
+            <Icon name="chevron-down" size={16} color={colors.textTertiary} />
           </Pressable>
-        ))}
-        <Button title="Calls" variant="plain" onPress={() => navigation.navigate('Calls')} />
+        </View>
+        <Text variant="largeTitle" accessibilityRole="header" style={s.title}>Conversations</Text>
+        <SearchField placeholder="Search names, numbers, messages" value={search} onChangeText={setSearch} />
+        <SegmentedControl
+          options={[{ value: 'all', label: 'All' }, { value: 'unread', label: 'Unread' }]}
+          value={filter}
+          onChange={setFilter}
+        />
       </View>
+      <NotificationBanner />
       <FlatList
         testID="conversation-list"
+        style={s.list}
+        contentContainerStyle={items !== null && items.length === 0 ? s.grow : undefined}
         data={items ?? []}
         keyExtractor={(c) => c.uid}
+        keyboardShouldPersistTaps="handled"
         onEndReached={() => { void loadMore(); }}
         onEndReachedThreshold={0.3}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={async () => { setRefreshing(true); await load(true); setRefreshing(false); }} />}
-        ListEmptyComponent={
-          items === null
-            ? error
-              ? <ErrorState message={error} onRetry={() => { void load(); }} />
-              : <Loading />
-            : <Text style={s.empty}>No conversations yet.</Text>
-        }
+        refreshControl={<RefreshControl tintColor={colors.brand} colors={[colors.brand]} refreshing={refreshing} onRefresh={async () => { setRefreshing(true); await load(true); setRefreshing(false); }} />}
+        ListEmptyComponent={<View style={s.grow}>{empty}</View>}
         ListFooterComponent={nextPage !== null ? (
-          loadingMore ? <Text style={s.empty}>Loading older conversations…</Text>
+          loadingMore ? <Text size={14} color={colors.textSecondary} align="center" style={s.more}>Loading older conversations…</Text>
             : <View style={s.footer}>
-                {moreError ? <Text style={s.preview}>{moreError}</Text> : null}
-                <Button title={moreError ? 'Retry older leads' : 'Load older leads'} variant="plain" onPress={() => { void loadMore(); }} />
+                {moreError ? <Text size={14} color={colors.danger} align="center">{moreError}</Text> : null}
+                <Button title={moreError ? 'Retry older leads' : 'Load older leads'} variant="plain" compact onPress={() => { void loadMore(); }} />
               </View>
         ) : undefined}
-        renderItem={({ item }) => (
-          <Pressable accessibilityRole="button" style={s.row} onPress={() => navigation.navigate('ConversationDetail', { uid: item.uid, title: item.display_name ?? item.phone ?? 'Conversation' })}>
-            <View style={{ flex: 1 }}>
-              <Text style={[s.name, item.unread && s.bold]} numberOfLines={1}>{item.display_name ?? item.phone ?? 'Unknown'}</Text>
-              <Text style={s.preview} numberOfLines={1}>{item.last_message?.preview ?? ''}</Text>
-            </View>
-            {item.unread ? <View accessibilityLabel="Unread" style={s.dot} /> : null}
-          </Pressable>
-        )}
+        renderItem={({ item }) => <ConversationRow item={item} onPress={() => open(item)} />}
       />
-      <View testID="conversations-bottom-bar" style={[s.footer, { paddingBottom: space.sm + bottomInset }]}>
-        <Button title="Switch business" variant="plain" onPress={() => void clearBusiness()} />
-        <Button title="Sign out" variant="plain" onPress={signOut} />
-      </View>
     </View>
   );
 }
+
+/** One conversation: avatar, name + time, preview + unread dot. Unread rows are bolder and the time turns brand. */
+function ConversationRow({ item, onPress }: { item: ConversationSummary; onPress: () => void }) {
+  const name = item.display_name ?? item.phone ?? 'Unknown';
+  const preview = item.last_message
+    ? `${item.last_message.direction === 'outbound' ? 'You: ' : ''}${item.last_message.preview}`
+    : '';
+  const stamp = listStamp(item.last_message?.at ?? item.updated_at);
+  const u = item.unread;
+  return (
+    <Pressable accessibilityRole="button" accessibilityHint={u ? 'Unread conversation' : undefined}
+      onPress={onPress} style={({ pressed }) => [s.row, pressed && s.rowPressed]}>
+      <Avatar name={item.display_name} />
+      <View style={s.rowMain}>
+        <View style={s.line}>
+          <Text size={16} weight={u ? '800' : '600'} numberOfLines={1} style={s.flex}>{name}</Text>
+          {stamp ? <Text size={13} weight={u ? '700' : '400'} color={u ? colors.brandPressed : colors.textSecondary}>{stamp}</Text> : null}
+        </View>
+        <View style={s.line}>
+          <Text size={14.5} weight={u ? '500' : '400'} color={u ? colors.textPrimary : colors.textSecondary} numberOfLines={1} style={s.flex}>{preview}</Text>
+          {u ? <UnreadDot /> : null}
+        </View>
+      </View>
+    </Pressable>
+  );
+}
+
 const s = StyleSheet.create({
-  wrap: { flex: 1, backgroundColor: colors.bg },
-  search: { margin: space.md, backgroundColor: colors.card, borderRadius: 10, borderColor: colors.line, borderWidth: 1, padding: 10 },
-  tabs: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: space.md, gap: space.sm },
-  tab: { paddingVertical: 6, paddingHorizontal: 14, borderRadius: 16, borderColor: colors.line, borderWidth: 1 },
-  tabOn: { backgroundColor: colors.brand, borderColor: colors.brand },
-  tabText: { color: colors.text }, tabOnText: { color: colors.brandText, fontWeight: '600' },
-  row: { flexDirection: 'row', alignItems: 'center', padding: space.md, borderBottomColor: colors.line, borderBottomWidth: StyleSheet.hairlineWidth, backgroundColor: colors.card },
-  name: { fontSize: 16, color: colors.text }, bold: { fontWeight: '700' },
-  preview: { color: colors.muted, marginTop: 2 },
-  dot: { width: 10, height: 10, borderRadius: 5, backgroundColor: colors.unread },
-  empty: { textAlign: 'center', color: colors.muted, marginTop: space.lg },
-  footer: { flexDirection: 'row', justifyContent: 'space-between', padding: space.sm },
+  wrap: { flex: 1, backgroundColor: colors.surface },
+  top: { paddingHorizontal: space.md, paddingBottom: space.sm, gap: space.mid, backgroundColor: colors.surface },
+  switchRow: { flexDirection: 'row', alignItems: 'center', minHeight: 44 },
+  switcher: { flexDirection: 'row', alignItems: 'center', gap: 6, flexShrink: 1, minHeight: 44, paddingHorizontal: 4 },
+  switcherText: { flexShrink: 1 },
+  title: { marginTop: -10 },
+  offline: { position: 'absolute', left: 12, right: 12, zIndex: 2, paddingVertical: 12, alignItems: 'center' },
+  list: { flex: 1, backgroundColor: colors.surface },
+  grow: { flexGrow: 1 },
+  row: { flexDirection: 'row', alignItems: 'center', gap: 12, minHeight: 76, paddingLeft: space.md, backgroundColor: colors.surface },
+  rowPressed: { backgroundColor: colors.background },
+  rowMain: { flex: 1, minWidth: 0, gap: 3, paddingVertical: 14, paddingRight: space.md, borderBottomWidth: 1, borderBottomColor: colors.divider },
+  line: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  flex: { flex: 1, minWidth: 0 },
+  more: { padding: space.md },
+  footer: { alignItems: 'center', padding: space.sm, gap: space.xs },
 });

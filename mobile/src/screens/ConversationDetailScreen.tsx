@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { FlatList, KeyboardAvoidingView, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { FlatList, KeyboardAvoidingView, Platform, Pressable, StyleSheet, TextInput, View } from 'react-native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { ApiError } from '../api/client';
 import type { ConversationDetail, Message } from '../api/types';
@@ -9,8 +9,10 @@ import { uuidv4 } from '../conversations/uuid';
 import { setActiveConversation } from '../notifications/target';
 import { useRealtime } from '../realtime/RealtimeProvider';
 import type { RootStack } from '../navigation/types';
-import { colors, space } from '../theme';
-import { Button, ErrorState, Loading, useBottomInset } from './ui';
+import { Button, ErrorState, Icon, IconButton, Text } from '../components';
+import { clockTime, dayLabel, sameDay } from '../format/time';
+import { colors, fontFamilyFor, space } from '../theme';
+import { Loading, useBottomInset, useTopInset } from './ui';
 
 type Props = NativeStackScreenProps<RootStack, 'ConversationDetail'>;
 
@@ -26,6 +28,8 @@ type Pending = {
 };
 type Row = (Message & { pending?: false }) | { pending: true; key: string; body: string; state: Pending['state']; error?: string; canRetry: boolean; mode: Pending['mode'] };
 type RetryAttempt = { state: 'sending' | 'failed' | 'unconfirmed'; error?: string };
+/** A list entry: a message (sent or pending) or a day separator. */
+type Item = Row | { day: true; key: string; label: string };
 
 /**
  * Keyed by conversation: opening another conversation (a notification tap while one is already open reuses the route and only
@@ -39,6 +43,7 @@ export function ConversationDetailScreen(props: Props) {
 function ConversationThread({ route, navigation }: Props) {
   const { api, scope } = useAuth();
   const bottomInset = useBottomInset();
+  const topInset = useTopInset();
   const uid = route.params.uid;
   const [data, setData] = useState<ConversationDetail | null>(null);
   const [older, setOlder] = useState<Message[]>([]);
@@ -51,7 +56,7 @@ function ConversationThread({ route, navigation }: Props) {
   // Keep its attempted retry/error state separately so refusals are visible.
   const [retryAttempts, setRetryAttempts] = useState<Record<string, RetryAttempt>>({});
   const inflight = useRef(new Set<string>());
-  const listRef = useRef<FlatList<Row>>(null);
+  const listRef = useRef<FlatList<Item>>(null);
   const stick = useRef(true);
   const readSent = useRef(false);
   const dataRef = useRef<ConversationDetail | null>(null);
@@ -308,20 +313,57 @@ function ConversationThread({ route, navigation }: Props) {
     return [...server, ...extra];
   }, [older, data, pending]);
 
-  if (error && !data) return <ErrorState message={error} onRetry={load} />;
-  if (!data) return <Loading />;
+  // Day separators ("Yesterday", "Today") between messages from different days. Unsent bubbles belong to today.
+  const items = useMemo<Item[]>(() => {
+    const out: Item[] = [];
+    let lastDay: string | null = null;
+    const today = new Date().toISOString();
+    for (const r of rows) {
+      const at = 'pending' in r && r.pending ? today : (r as Message).created_at;
+      if (lastDay === null || !sameDay(lastDay, at)) out.push({ day: true, key: `d-${at}`, label: dayLabel(at) });
+      lastDay = at;
+      out.push(r);
+    }
+    return out;
+  }, [rows]);
 
+  const title = data?.conversation?.display_name ?? data?.conversation?.phone ?? route.params.title;
+  const phone = data?.conversation?.display_name ? data?.conversation?.phone : null;
+  const header = (
+    <View style={[s.header, { paddingTop: topInset + space.sm }]}>
+      <IconButton icon="chevron-left" size={26} accessibilityLabel="Back" onPress={() => navigation.goBack()} />
+      {data?.contact_uid ? (
+        <Pressable accessibilityRole="button" accessibilityLabel={`${title}. Contact profile`} style={s.titleBox} hitSlop={4}
+          onPress={() => navigation.navigate('ContactProfile', { uid: data.contact_uid! })}>
+          <Text variant="headline" numberOfLines={1}>{title}</Text>
+          <View style={s.subRow}>
+            <Text size={12.5} weight="500" color={colors.textSecondary} numberOfLines={1}>{phone ?? 'Contact profile'}</Text>
+            <Icon name="chevron-right" size={13} color={colors.textSecondary} />
+          </View>
+        </Pressable>
+      ) : (
+        <View style={s.titleBox}>
+          <Text variant="headline" numberOfLines={1} accessibilityRole="header">{title}</Text>
+          {phone ? <Text size={12.5} weight="500" color={colors.textSecondary} numberOfLines={1}>{phone}</Text> : null}
+        </View>
+      )}
+      <View style={s.headerSpacer} />
+    </View>
+  );
+
+  if (error && !data) return <View style={s.wrap}>{header}<ErrorState title="Conversation didn't load" message={error} onRetry={load} /></View>;
+  if (!data) return <View style={s.wrap}>{header}<Loading /></View>;
+
+  const canSend = text.trim() !== '';
   return (
-    <KeyboardAvoidingView style={s.wrap} behavior={Platform.OS === 'ios' ? 'padding' : undefined} keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}>
-      {data.contact_uid ? (
-        <Button title="Contact profile" variant="plain" onPress={() => navigation.navigate('ContactProfile', { uid: data.contact_uid! })} />
-      ) : null}
+    <KeyboardAvoidingView style={s.wrap} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+      {header}
       <FlatList
         ref={listRef}
         testID="conversation-messages"
-        data={rows}
-        keyExtractor={(r) => ('pending' in r && r.pending ? `p-${r.key}` : `m-${(r as Message).id}`)}
-        contentContainerStyle={{ padding: space.md }}
+        data={items}
+        keyExtractor={(r) => ('day' in r ? r.key : 'pending' in r && r.pending ? `p-${r.key}` : `m-${(r as Message).id}`)}
+        contentContainerStyle={s.thread}
         refreshing={refreshing}
         onRefresh={async () => { setRefreshing(true); await load(); setRefreshing(false); }}
         scrollEventThrottle={100}
@@ -332,27 +374,30 @@ function ConversationThread({ route, navigation }: Props) {
         }}
         onContentSizeChange={() => { if (stick.current) listRef.current?.scrollToEnd({ animated: true }); }}
         ListHeaderComponent={hasMore
-          ? <Button title={loadingEarlier ? 'Loading earlier messages…' : 'Load earlier messages'} variant="plain" disabled={loadingEarlier} onPress={() => { void loadEarlier(); }} />
+          ? <Button title={loadingEarlier ? 'Loading earlier messages…' : 'Load earlier messages'} variant="plain" compact disabled={loadingEarlier} onPress={() => { void loadEarlier(); }} />
           : undefined}
-        renderItem={({ item }) => <Bubble
-          item={item}
-          retryAttempt={'pending' in item && item.pending ? undefined : retryAttempts[(item as Message).send_uid ?? '']}
-          onRetry={dispatch}
-        />}
+        renderItem={({ item }) => ('day' in item
+          ? <View style={s.day}><Text variant="caption" color={colors.textSecondary}>{item.label}</Text></View>
+          : <Bubble
+              item={item}
+              retryAttempt={'pending' in item && item.pending ? undefined : retryAttempts[(item as Message).send_uid ?? '']}
+              onRetry={dispatch}
+            />)}
       />
       <View testID="composer" style={[s.composer, { paddingBottom: space.sm + bottomInset }]}>
         <TextInput
-          style={s.input}
+          style={[s.input, fontFamilyFor('400')]}
           placeholder="Message"
+          placeholderTextColor={colors.textSecondary}
           accessibilityLabel="Message"
           value={text}
           onChangeText={setText}
           multiline
           maxLength={1600}
         />
-        <Pressable accessibilityRole="button" accessibilityLabel="Send" onPress={send} disabled={text.trim() === ''}
-          style={[s.send, text.trim() === '' && { opacity: 0.4 }]}>
-          <Text style={s.sendText}>Send</Text>
+        <Pressable accessibilityRole="button" accessibilityLabel="Send" accessibilityState={{ disabled: !canSend }} onPress={send} disabled={!canSend}
+          style={({ pressed }) => [s.send, pressed && { backgroundColor: colors.brandPressed }, !canSend && { opacity: 0.45 }]}>
+          <Icon name="send" size={19} color={colors.onBrand} />
         </Pressable>
       </View>
     </KeyboardAvoidingView>
@@ -367,27 +412,42 @@ function Bubble({ item, retryAttempt, onRetry }: {
   if ('pending' in item && item.pending) {
     const failed = item.state === 'failed';
     return (
-      <View style={[s.bubble, s.out]}>
-        <Text style={s.outText}>{item.body}</Text>
-        <Text style={s.meta}>{failed ? item.error : 'Sending…'}</Text>
-        {failed && item.canRetry ? <Pressable accessibilityRole="button" onPress={() => onRetry(item.key, item.body, item.mode)}><Text style={s.retry}>Retry</Text></Pressable> : null}
+      <View style={s.group}>
+        <View style={[s.bubble, s.out]}><Text color={colors.onBrand} style={s.bodyText}>{item.body}</Text></View>
+        <View style={[s.metaRow, s.metaOut]}>
+          {failed ? <Icon name="alert-circle" size={13} color={colors.danger} /> : null}
+          <Text size={12} weight={failed ? '600' : '400'} color={failed ? colors.danger : colors.textSecondary} style={s.metaText}>
+            {failed ? item.error : 'Sending…'}
+          </Text>
+        </View>
+        {failed && item.canRetry ? <RetryLink onPress={() => onRetry(item.key, item.body, item.mode)} /> : null}
       </View>
     );
   }
   const m = item as Message;
   const out = m.direction === 'outbound';
   const label = out ? statusLabel(m) : null;
+  const failed = out && isFailed(m.status);
+  const time = clockTime(m.created_at);
   return (
-    <View style={[s.bubble, out ? s.out : s.in]}>
-      <Text style={out ? s.outText : s.inText}>{m.body ?? (m.media_url ? '[media]' : '')}</Text>
-      <Text style={s.meta}>{new Date(m.created_at).toLocaleString()}{label ? `  ·  ${label}` : ''}</Text>
-      {out && isFailed(m.status) ? (
+    <View style={s.group}>
+      <View style={[s.bubble, out ? s.out : s.in]}>
+        <Text color={out ? colors.onBrand : colors.textPrimary} style={[s.bodyText, !m.body && s.italic]}>{m.body ?? (m.media_url ? '[media]' : '')}</Text>
+      </View>
+      <View style={[s.metaRow, out && s.metaOut]}>
+        {failed ? <Icon name="alert-circle" size={13} color={colors.danger} /> : null}
+        <Text size={12} weight={failed ? '600' : '400'} color={failed ? colors.danger : colors.textSecondary}>
+          {time}{label ? `  ·  ${label}` : ''}
+        </Text>
+      </View>
+      {failed ? (
         <>
-          {m.status_message ? <Text style={s.errorText}>{m.status_message}</Text> : null}
-          {(retryAttempt?.state === 'failed' || retryAttempt?.state === 'unconfirmed') && retryAttempt.error ? <Text style={s.errorText}>{retryAttempt.error}</Text> : null}
-          {retryAttempt?.state === 'sending' ? <Text style={s.meta}>Retrying…</Text> : null}
+          {m.status_message ? <Text size={12.5} color={colors.danger} style={[s.metaText, s.metaOutText]}>{m.status_message}</Text> : null}
+          {(retryAttempt?.state === 'failed' || retryAttempt?.state === 'unconfirmed') && retryAttempt.error
+            ? <Text size={12.5} color={colors.danger} style={[s.metaText, s.metaOutText]}>{retryAttempt.error}</Text> : null}
+          {retryAttempt?.state === 'sending' ? <Text size={12} color={colors.textSecondary} style={s.metaOutText}>Retrying…</Text> : null}
           {m.retryable && m.send_uid && retryAttempt?.state !== 'sending' && retryAttempt?.state !== 'unconfirmed'
-            ? <Pressable accessibilityRole="button" onPress={() => onRetry(m.send_uid!, m.body ?? '', 'retry')}><Text style={s.retry}>Retry</Text></Pressable>
+            ? <RetryLink onPress={() => onRetry(m.send_uid!, m.body ?? '', 'retry')} />
             : null}
         </>
       ) : null}
@@ -395,17 +455,35 @@ function Bubble({ item, retryAttempt, onRetry }: {
   );
 }
 
+/** "Tap to retry" under a failed outgoing bubble (32pt high, 44pt with hit slop). */
+function RetryLink({ onPress }: { onPress: () => void }) {
+  return (
+    <Pressable accessibilityRole="button" onPress={onPress} hitSlop={8} style={s.retry}>
+      <Text size={12.5} weight="700" color={colors.brandPressed}>Tap to retry</Text>
+    </Pressable>
+  );
+}
+
 const s = StyleSheet.create({
-  wrap: { flex: 1, backgroundColor: colors.bg },
-  bubble: { maxWidth: '82%', padding: 10, borderRadius: 14, marginBottom: space.sm },
-  in: { alignSelf: 'flex-start', backgroundColor: colors.card, borderColor: colors.line, borderWidth: 1 },
-  out: { alignSelf: 'flex-end', backgroundColor: colors.brand },
-  inText: { color: colors.text }, outText: { color: colors.brandText },
-  meta: { fontSize: 11, color: colors.muted, marginTop: 4 },
-  errorText: { color: colors.danger, marginTop: 4 },
-  retry: { color: colors.brandText, fontWeight: '700', marginTop: 6, textDecorationLine: 'underline' },
-  composer: { flexDirection: 'row', alignItems: 'flex-end', padding: space.sm, gap: space.sm, borderTopColor: colors.line, borderTopWidth: StyleSheet.hairlineWidth, backgroundColor: colors.card },
-  input: { flex: 1, maxHeight: 120, borderColor: colors.line, borderWidth: 1, borderRadius: 18, paddingHorizontal: 14, paddingVertical: 8, fontSize: 16 },
-  send: { backgroundColor: colors.brand, borderRadius: 18, paddingHorizontal: 16, paddingVertical: 10 },
-  sendText: { color: colors.brandText, fontWeight: '700' },
+  wrap: { flex: 1, backgroundColor: colors.background },
+  header: { flexDirection: 'row', alignItems: 'center', gap: space.xs, paddingHorizontal: space.md, paddingBottom: 6, backgroundColor: colors.surface, borderBottomWidth: 1, borderBottomColor: colors.border },
+  titleBox: { flex: 1, minWidth: 0, alignItems: 'center', minHeight: 44, justifyContent: 'center' },
+  subRow: { flexDirection: 'row', alignItems: 'center', gap: 3 },
+  headerSpacer: { width: 44 },
+  thread: { paddingHorizontal: 14, paddingTop: 14, paddingBottom: 10, gap: 6 },
+  day: { alignSelf: 'center', paddingVertical: 4, paddingHorizontal: 10, borderRadius: 10, backgroundColor: colors.dayChip, marginVertical: 4 },
+  group: { gap: 4 },
+  bubble: { maxWidth: '76%', paddingVertical: 10, paddingHorizontal: 14, borderRadius: 20 },
+  in: { alignSelf: 'flex-start', backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.borderSoft, borderBottomLeftRadius: 6 },
+  out: { alignSelf: 'flex-end', backgroundColor: colors.brand, borderBottomRightRadius: 6 },
+  bodyText: { fontSize: 16, lineHeight: 21.6 },
+  italic: { fontStyle: 'italic' },
+  metaRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  metaOut: { alignSelf: 'flex-end', maxWidth: '85%' },
+  metaText: { flexShrink: 1 },
+  metaOutText: { alignSelf: 'flex-end', textAlign: 'right', maxWidth: '85%' },
+  retry: { alignSelf: 'flex-end', minHeight: 32, justifyContent: 'center' },
+  composer: { flexDirection: 'row', alignItems: 'flex-end', gap: 6, paddingTop: space.sm, paddingHorizontal: 10, backgroundColor: colors.surface, borderTopWidth: 1, borderTopColor: colors.border },
+  input: { flex: 1, minHeight: 44, maxHeight: 120, borderRadius: 22, borderWidth: 1, borderColor: colors.borderStrong, backgroundColor: colors.composerFill, paddingHorizontal: 16, paddingTop: 11, paddingBottom: 11, fontSize: 16, color: colors.textPrimary },
+  send: { width: 44, height: 44, borderRadius: 22, backgroundColor: colors.brand, alignItems: 'center', justifyContent: 'center' },
 });

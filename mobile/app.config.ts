@@ -29,7 +29,7 @@ const config: ExpoConfig = {
   android: {
     package: 'com.motiongrove.mobile',
     adaptiveIcon: {
-      backgroundColor: '#E6F4FE',
+      backgroundColor: '#B4514A',
       foregroundImage: './assets/android-icon-foreground.png',
       backgroundImage: './assets/android-icon-background.png',
       monochromeImage: './assets/android-icon-monochrome.png',
@@ -41,7 +41,7 @@ const config: ExpoConfig = {
   plugins: [
     'expo-dev-client',
     'expo-secure-store',
-    ['expo-notifications', { color: '#1F6F5C' }],
+    ['expo-notifications', { icon: './assets/notification-icon.png', color: '#B4514A' }],
     ['expo-build-properties', { android: { usesCleartextTraffic: false } }],
   ],
   extra: {

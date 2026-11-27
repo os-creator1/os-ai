@@ -11,6 +11,8 @@ import { CallsScreen } from '../src/screens/CallsScreen';
 import { ContactProfileScreen } from '../src/screens/ContactProfileScreen';
 import { ConversationDetailScreen } from '../src/screens/ConversationDetailScreen';
 import { ConversationsScreen } from '../src/screens/ConversationsScreen';
+import { NavigationContainer } from '@react-navigation/native';
+import { MainTabsNavigator } from '../src/navigation';
 
 jest.mock('expo-secure-store', () => {
   const m = new Map<string, string>();
@@ -121,7 +123,8 @@ describe('signed-in screens', () => {
     const api = fakeApi({ conversations: jest.fn(async () => { throw new ApiError(404, 'not_found', 'Not found.'); }) });
     await signedIn(() => <ConversationsScreen {...({ navigation: nav, route: { params: undefined } } as any)} />, api);
     await waitFor(() => screen.getByText('Not found.'));
-    expect(screen.getByText('Try again')).toBeTruthy();
+    expect(screen.getByText("Conversations didn't load")).toBeTruthy();
+    expect(screen.getByText('Retry')).toBeTruthy();
   });
 
   it('renders the thread with direction and links to the contact profile', async () => {
@@ -158,7 +161,7 @@ describe('signed-in screens', () => {
   it('shows calls as a placeholder and the server-reported reason', async () => {
     await signedIn(() => <CallsScreen />);
     await waitFor(() => screen.getByText(/Not available yet/));
-    expect(screen.getByText('Voice calling is coming in the next milestone.')).toBeTruthy();
+    expect(screen.getByText('Calling is coming to the app')).toBeTruthy();
   });
 });
 
@@ -168,11 +171,10 @@ describe('bottom bars clear the system navigation bar (edge-to-edge)', () => {
   const withInsets = (ui: React.ReactElement) => <SafeAreaProvider initialMetrics={metrics}>{ui}</SafeAreaProvider>;
   const paddingBottom = (testID: string) => StyleSheet.flatten(screen.getByTestId(testID).props.style).paddingBottom;
 
-  it('lifts the Switch business / Sign out bar above the navigation bar', async () => {
-    await signedIn(() => withInsets(<ConversationsScreen {...({ navigation: nav, route: { params: undefined } } as any)} />));
+  it('lifts the tab bar above the navigation bar', async () => {
+    await signedIn(() => withInsets(<NavigationContainer><MainTabsNavigator /></NavigationContainer>));
     await waitFor(() => screen.getByText('Ann Lee'));
-    expect(paddingBottom('conversations-bottom-bar')).toBe(8 + 48);
-    expect(screen.getByText('Sign out')).toBeTruthy();
+    expect(paddingBottom('tab-bar')).toBe(6 + 48);
   });
 
   it('lifts the business selector Sign out button above the navigation bar', async () => {
@@ -181,9 +183,9 @@ describe('bottom bars clear the system navigation bar (edge-to-edge)', () => {
   });
 
   it('keeps the normal spacing when there is no bottom inset', async () => {
-    await signedIn(() => <ConversationsScreen {...({ navigation: nav, route: { params: undefined } } as any)} />);
+    await signedIn(() => <NavigationContainer><MainTabsNavigator /></NavigationContainer>);
     await waitFor(() => screen.getByText('Ann Lee'));
-    expect(paddingBottom('conversations-bottom-bar')).toBe(8);
+    expect(paddingBottom('tab-bar')).toBe(6);
   });
 });
 
