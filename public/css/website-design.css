@@ -1341,3 +1341,49 @@ body.wd h1, body.wd h2, body.wd h3, body.wd h4 { font-family: var(--wd-font-head
 .wd-reference-booths .wd-band.wd-ref-addons .website-service-price, .wd-reference-booths .wd-band.wd-ref-addons .wd-card p { color: #ffffff; }
 .wd-reference-greenbelt .wd-band.wd-ref-addons .website-service-price { color: #2a1d45; }
 .wd-reference-booths .wd-band.wd-ref-addons .wd-card, .wd-reference-greenbelt .wd-band.wd-ref-addons .wd-card { text-align: left; }
+
+/* ===================================================================================================================
+   Tablet and narrow-mobile corrections (visual review at 768 / 320 px against the references).
+   The references keep their desktop structure at 768px (side-by-side hero, inline header, three event cards per row, two-column
+   rows) and stack only on phones; the shared base collapses the header below 960px and stacks at 900px.
+   =================================================================================================================== */
+/* Inline header from 920px: the nav lists measure 624-675px (plus logo and CTA) and cannot fit 768px; the references themselves overflow there. */
+@media (min-width: 920px) and (max-width: 959px) {
+    .wd-reference-kaleb .wd-menu-toggle, .wd-reference-booths .wd-menu-toggle, .wd-reference-greenbelt .wd-menu-toggle { display: none; }
+    .wd-reference-kaleb .wd-nav, .wd-reference-booths .wd-nav, .wd-reference-greenbelt .wd-nav { display: block; margin-left: auto; }
+    .wd-reference-kaleb .wd-header-inner, .wd-reference-booths .wd-header-inner, .wd-reference-greenbelt .wd-header-inner { flex-wrap: nowrap; }
+    .wd-reference-kaleb .wd-nav-list, .wd-reference-booths .wd-nav-list, .wd-reference-greenbelt .wd-nav-list { flex-direction: row; align-items: center; gap: 0.1rem; }
+    .wd-reference-kaleb .wd-nav-item, .wd-reference-booths .wd-nav-item, .wd-reference-greenbelt .wd-nav-item { flex-wrap: nowrap; border-bottom: 0; }
+    .wd-reference-kaleb .wd-nav-link, .wd-reference-booths .wd-nav-link, .wd-reference-greenbelt .wd-nav-link { flex: 0 0 auto; padding: 0.5rem 0.5rem; font-size: 0.68rem; text-align: center; letter-spacing: 0.03em; }
+    .wd-reference-kaleb .wd-dd, .wd-reference-booths .wd-dd, .wd-reference-greenbelt .wd-dd { position: absolute; min-width: 230px; width: auto; padding: 0.4rem; }
+    .wd-reference-kaleb .wd-has-dd:hover > .wd-dd, .wd-reference-booths .wd-has-dd:hover > .wd-dd, .wd-reference-greenbelt .wd-has-dd:hover > .wd-dd,
+    .wd-reference-kaleb .wd-has-dd:focus-within > .wd-dd, .wd-reference-booths .wd-has-dd:focus-within > .wd-dd, .wd-reference-greenbelt .wd-has-dd:focus-within > .wd-dd { display: block; }
+    .wd-reference-greenbelt .wd-nav-list { background: #fff !important; border-radius: 999px; padding: 0.3rem 0.8rem !important; box-shadow: 0 2px 8px rgba(42, 29, 69, 0.12) !important; }
+    .wd-reference-kaleb .wd-nav-cta, .wd-reference-booths .wd-nav-cta, .wd-reference-greenbelt .wd-nav-cta { margin-left: 0.4rem; }
+    .wd-reference-kaleb .wd-nav-cta .wd-btn, .wd-reference-booths .wd-nav-cta .wd-btn, .wd-reference-greenbelt .wd-nav-cta .wd-btn { padding: 12px 18px; font-size: 0.7rem; }
+}
+@media (min-width: 700px) and (max-width: 959px) {
+    .wd-reference-kaleb .wd-hero-is-split .wd-hero-grid, .wd-reference-greenbelt .wd-hero-is-split .wd-hero-grid { grid-template-columns: minmax(0, 1.1fr) minmax(0, 0.9fr); gap: 2rem; }
+    .wd-reference-booths .wd-ref-events .wd-grid, .wd-reference-greenbelt .wd-ref-events .wd-grid, .wd-reference-booths .wd-ref-addons .wd-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .wd-reference-kaleb .wd-ref-booths .wd-card, .wd-reference-kaleb .wd-ref-feature-rows figure, .wd-reference-booths .wd-ref-feature-rows figure, .wd-reference-booths .wd-ref-intro .website-image-text { grid-template-columns: 1fr 1fr; }
+}
+/* Phones: one column, and the desktop "image in column 1 / text in column 2" placement must not leak into it (it collapsed the image to a dot at 320px). */
+@media (max-width: 699px) {
+    .wd-reference-kaleb .wd-ref-booths .wd-card, .wd-reference-kaleb .wd-ref-feature-rows figure { grid-template-columns: minmax(0, 1fr); }
+    .wd-reference-kaleb .wd-ref-booths .wd-card > img, .wd-reference-kaleb .wd-ref-booths .wd-card > picture,
+    .wd-reference-kaleb .wd-ref-booths .wd-card > :not(img):not(picture),
+    .wd-reference-kaleb .wd-ref-booths .wd-card:nth-child(even) > img, .wd-reference-kaleb .wd-ref-booths .wd-card:nth-child(even) > picture,
+    .wd-reference-kaleb .wd-ref-booths .wd-card:nth-child(even) > :not(img):not(picture) { grid-column: 1; grid-row: auto; }
+    .wd-reference-kaleb .wd-ref-booths .wd-card > img { width: 100%; height: auto; }
+    .wd-reference-kaleb .wd-ref-feature-rows figure:nth-child(even) img, .wd-reference-booths .wd-ref-feature-rows figure:nth-child(even) img { order: 0; }
+}
+
+/* Greenbelt's pill nav + CTA measured ~1040px wide just above the 960px desktop switch; tightened until there is room. */
+@media (min-width: 960px) and (max-width: 1139px) {
+    .wd-reference-greenbelt .wd-header-inner { gap: 0.6rem; }
+    .wd-reference-greenbelt .wd-nav-list { padding: 0.3rem 0.7rem; }
+    .wd-reference-greenbelt .wd-nav-link { padding: 0.5rem 0.45rem; font-size: 0.66rem; letter-spacing: 0.03em; }
+    .wd-reference-greenbelt .wd-nav-cta { margin-left: 0.3rem; }
+    .wd-reference-greenbelt .wd-nav-cta .wd-btn { padding: 12px 18px; font-size: 0.7rem; }
+    .wd-reference-greenbelt .wd-logo img { max-width: 120px; }
+}

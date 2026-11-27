@@ -18,7 +18,7 @@ differ from the references' photographs, so any such number would measure the im
 | Horizontal overflow, all 3 templates × 12 generated pages × 1440/768/390/320 (144 captures) | **Automated, 0 overflows** |
 | Visual side-by-side review at 1440 | Home (full length), Gallery, Backdrops, Event, Service, Check Availability for Kaleb and Booths; Home, Gallery, Event, Check Availability for Greenbelt |
 | Visual side-by-side review at 390 | Home (first 2600 px) for all three. Other mobile pages: overflow check only |
-| Visual review at 768 and 320 | **Not visually reviewed** (overflow check only); screenshots are in the committed set for home |
+| Visual review at 768 and 320 (home, all three templates, side by side with the references) | **Reviewed.** 768: side-by-side heroes, two-column rows and card rows now follow the references. 320: Kaleb booth rows fixed (image had collapsed to a dot). Other pages at 768/320: overflow check only |
 | Packages / About / FAQ pages | Rendered, no reference counterpart exists (the references put these on the homepage); not compared |
 | Location pages (reference has 6–7 per site) | **Not generated in the fixture** (they require area details with real local content); not compared |
 | Legal pages | Not generated; owner-supplied URLs only (unchanged behaviour) |
@@ -73,6 +73,13 @@ Kaleb's decorative review-star glyph (`aria-hidden`) at 3.2:1, above the 3:1 non
 ## Behaviour fixes from independent review (this round)
 - A Check Availability claim now requires that the PUBLIC form would accept a visitor (account active, not locked, **Forms entitlement**, version), not just deployment/form/location state.
 - The inquiry-label normalisation (authored "Check Availability" → the resolved site CTA) applies only to the three reference designs; canonical templates keep the button as written.
+
+## Tablet and narrow-phone findings (visual review at 768 / 320 px)
+- **Fixed:** at 768 the references keep their desktop structure (side-by-side hero, three event cards per row, two-column rows) while the shared base stacked them below 900px; reference designs now keep that structure from 700px.
+- **Fixed:** at 320 Kaleb's booth rows collapsed their image to a dot (desktop grid placement leaking into the single-column layout).
+- **Fixed:** Greenbelt's header overflowed at 960px (1,039px wide); tightened, no overflow at 920/960/1024/1100/1140.
+- **Deliberate deviation:** the inline header starts at 920px; at 768px mine is the hamburger menu. The nav lists need 624–675px plus logo and CTA, and the references themselves overflow horizontally at 768px (measured 818px), so matching them there would reproduce a defect.
+- Overflow check now covers 1440, 1100, 960, 920, 768, 390 and 320: 252 captures, 0 overflows.
 
 ## Cross-cutting facts verified (automated)
 - Answer → section mapping and fixed order for all three templates through the real v3 questionnaire (`ReferenceTemplatesGuidedPathTest`).
