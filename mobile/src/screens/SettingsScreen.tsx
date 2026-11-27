@@ -1,8 +1,12 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { AppState, Linking, ScrollView, StyleSheet, View } from 'react-native';
 import Constants from 'expo-constants';
+import type { CompositeScreenProps } from '@react-navigation/native';
+import type { BottomTabScreenProps } from '@react-navigation/bottom-tabs';
+import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useAuth } from '../auth/AuthContext';
 import { Avatar, Button, LargeTitle, ListGroup, ListRow, Pill, SectionHeader, Text } from '../components';
+import type { MainTabs, RootStack } from '../navigation/types';
 import { getPushPermission, type PushPermission } from '../notifications/permission';
 import { colors, space } from '../theme';
 import { useTopInset } from './ui';
@@ -14,8 +18,10 @@ const PUSH_PILL: Record<PushPermission, { label: string; tone: 'success' | 'warn
   unavailable: { label: 'Not available', tone: 'neutral' },
 };
 
-/** Account, current Business (switch), notification status, app version and sign out. */
-export function SettingsScreen() {
+type Props = Partial<CompositeScreenProps<BottomTabScreenProps<MainTabs, 'Settings'>, NativeStackScreenProps<RootStack>>>;
+
+/** Account, current Business (switch), notification status, app version, sign out — and, in development builds, the Design gallery. */
+export function SettingsScreen({ navigation }: Props = {}) {
   const { me, business, clearBusiness, signOut } = useAuth();
   const topInset = useTopInset();
   const [push, setPush] = useState<PushPermission | null>(null);
@@ -73,6 +79,16 @@ export function SettingsScreen() {
           <ListRow title="Version" value={version} />
         </ListGroup>
       </View>
+
+      {__DEV__ && navigation ? (
+        <View style={s.section}>
+          <SectionHeader title="Developer" />
+          <ListGroup>
+            <ListRow icon={{ name: 'layout', bg: colors.infoSoft, fg: colors.info }} title="Design gallery" subtitle="Planned screens with fake data"
+              chevron onPress={() => navigation.navigate('DesignGallery')} />
+          </ListGroup>
+        </View>
+      ) : null}
 
       <Button
         title="Sign out"

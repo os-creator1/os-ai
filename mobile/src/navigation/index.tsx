@@ -74,6 +74,13 @@ export function Navigation() {
             <Stack.Screen name="Main" component={MainTabsNavigator} />
             <Stack.Screen name="ConversationDetail" component={ConversationDetailScreen} getId={({ params }) => params.uid} />
             <Stack.Screen name="ContactProfile" component={ContactProfileScreen} />
+            {__DEV__ ? (
+              <>
+                {/* Required lazily so release bundles never include the gallery or its fake data. */}
+                <Stack.Screen name="DesignGallery" getComponent={() => require('../gallery/GalleryScreens').DesignGalleryScreen} />
+                <Stack.Screen name="DesignPreview" getComponent={() => require('../gallery/GalleryScreens').DesignPreviewScreen} />
+              </>
+            ) : null}
           </>
         )}
       </Stack.Navigator>

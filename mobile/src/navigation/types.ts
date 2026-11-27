@@ -13,4 +13,7 @@ export type RootStack = {
   Main: NavigatorScreenParams<MainTabs> | undefined;
   ConversationDetail: { uid: string; title: string };
   ContactProfile: { uid: string };
+  /** Development builds only: static previews of planned screens (src/gallery). */
+  DesignGallery: undefined;
+  DesignPreview: { id: string };
 };
