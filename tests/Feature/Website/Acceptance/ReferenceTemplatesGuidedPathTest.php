@@ -161,6 +161,10 @@ final class ReferenceTemplatesGuidedPathTest extends TestCase
             $this->assertSame(['Fixture Hall One', 'Fixture Hall Two'], collect($venues['data']['items'])->pluck('name')->all());
         }
 
+        // The menu's resize reset matches the 920px inline-header breakpoint of the reference designs (an open overlay must never be stranded).
+        $homeHtml = $this->get(route('customer.workspaces.businesses.website.preview', [$this->workspace->uid, $this->business->uid, $home->uid]))->assertOk()->getContent();
+        $this->assertStringContainsString('var desktopFrom = 920;', $homeHtml);
+
         // Home section order is fixed by the template (recorded so a change is deliberate, not accidental).
         fwrite(STDERR, "ORDER {$templateKey}: " . collect($sections)->map(fn ($s) => $s['type'] . (isset($s['data']['ref']) ? ':' . $s['data']['ref'] : ''))->implode(' > ') . "\n");
 
@@ -251,6 +255,10 @@ final class ReferenceTemplatesGuidedPathTest extends TestCase
         Website::where('business_id', $this->business->id)->update(['template_key' => 'photo_booth_modern']);
         $this->post($this->url('generate'), ['answers_revision' => $this->wizardSession()->answers_revision])->assertRedirect();
         $sections = Website::where('business_id', $this->business->id)->firstOrFail()->pages()->where('is_home', true)->firstOrFail()->sections;
+
+        // Other designs keep their exact previous behaviour (reset above 960px).
+        $canonicalHome = Website::where('business_id', $this->business->id)->firstOrFail()->pages()->where('is_home', true)->firstOrFail();
+        $this->assertStringContainsString('var desktopFrom = 961;', $this->get(route('customer.workspaces.businesses.website.preview', [$this->workspace->uid, $this->business->uid, $canonicalHome->uid]))->assertOk()->getContent());
 
         $hero = $sections[0]['data'];
         $this->assertSame('Canonical owner headline', $hero['heading']);

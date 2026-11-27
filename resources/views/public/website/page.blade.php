@@ -283,7 +283,10 @@
                         item.querySelectorAll('[data-wd-dd-toggle]').forEach(function (b) { b.setAttribute('aria-expanded', 'false'); });
                     });
                 });
-                window.addEventListener('resize', function () { if (window.innerWidth > 960) { setMenu(false); } });
+                // The inline header starts at 920px on the three reference designs (see website-design.css) and at 961px elsewhere; an open mobile
+                // menu must close as soon as the toggle disappears, or its full-screen overlay would be left with no way to dismiss it.
+                var desktopFrom = {{ str_starts_with((string) $design->key, 'reference-') ? 920 : 961 }};
+                window.addEventListener('resize', function () { if (window.innerWidth >= desktopFrom) { setMenu(false); } });
             })();
         </script>
     @else
