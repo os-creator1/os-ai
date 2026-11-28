@@ -23,7 +23,7 @@ final class TelnyxCredentialVerifier
     /**
      * @return array{ok: bool, reason: ?string, message: ?string, sms_confirmed: bool}
      */
-    public function verify(string $apiKey, string $messagingProfileId, string $senderDigits): array
+    public function verify(string $apiKey, string $messagingProfileId, string $senderDigits, bool $strict = false): array
     {
         try {
             $profile = Http::withToken($apiKey)->timeout(15)
@@ -72,6 +72,19 @@ final class TelnyxCredentialVerifier
                 // never a guessed pass or fail.
                 $settings = Http::withToken($apiKey)->timeout(15)
                     ->get(self::BASE . '/phone_numbers/' . rawurlencode($numberId) . '/messaging');
+
+                // `$strict` (used only when RECOVERING a blocked sender): a refused or unavailable settings check is
+                // NOT "field not reported" — the number's profile assignment was never re-verified, so it cannot be
+                // read as a pass. Connect/enable flows stay lenient: there it only means "not confirmed".
+                if ($strict) {
+                    if ($early = $this->accessFailure($settings)) {
+                        return $early;
+                    }
+
+                    if ($settings->status() === 429 || $settings->status() >= 500) {
+                        return $this->fail('provider_unavailable', 'Telnyx could not be reached right now. Try again in a few minutes.');
+                    }
+                }
 
                 $data = $settings->successful() ? $settings->json('data') : null;
 

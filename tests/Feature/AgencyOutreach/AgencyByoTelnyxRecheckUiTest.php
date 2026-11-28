@@ -59,6 +59,30 @@ class AgencyByoTelnyxRecheckUiTest extends TestCase
         $this->assertSame('sender_restricted', $channel->fresh()->last_error_code);
     }
 
+    public function test_disable_enable_and_a_failed_verification_never_erase_a_provider_restriction(): void
+    {
+        $agency = $this->outreachAgency('Alpha');
+        $channel = $this->byoChannel($agency['workspace'], ['default' => true]);
+        $channel->forceFill(['last_error_code' => 'sender_restricted', 'last_error_at' => now()])->save();
+        $this->authenticateAs($agency['customer']);
+        $this->telnyx();
+        $ws = $agency['workspace']->uid;
+
+        $this->post(route('customer.workspaces.prospecting.channels.disable', [$ws, $channel->uid]));
+        $this->post(route('customer.workspaces.prospecting.channels.enable', [$ws, $channel->uid]))->assertSessionHas('flash_success');
+
+        $fresh = $channel->fresh();
+        $this->assertSame('active', $fresh->status);
+        $this->assertSame('sender_restricted', $fresh->last_error_code, 'A verification-only action keeps the restriction.');
+        $this->assertFalse(\App\Library\AgencyOutreach\AgencyByoSender::sendReadiness($fresh)['ok']);
+
+        // A failing verification does not overwrite it either.
+        $this->post(route('customer.workspaces.prospecting.channels.disable', [$ws, $channel->uid]));
+        $this->telnyx(401);
+        $this->post(route('customer.workspaces.prospecting.channels.enable', [$ws, $channel->uid]))->assertSessionHas('flash_error');
+        $this->assertSame('sender_restricted', $channel->fresh()->last_error_code);
+    }
+
     public function test_a_foreign_agency_cannot_recheck_my_channel(): void
     {
         $agency = $this->outreachAgency('Alpha');

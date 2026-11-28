@@ -70,7 +70,7 @@ final class AgencyByoConnectionRechecker
 
             Cache::put($stampKey, now()->getTimestamp(), 3600);
 
-            $check = $this->verifier->verify($credentials['api_key'], $credentials['profile_id'], (string) $channel->sender_number);
+            $check = $this->verifier->verify($credentials['api_key'], $credentials['profile_id'], (string) $channel->sender_number, true);
 
             if ($check['ok']) {
                 // Full success is the ONLY thing that restores readiness. A capability field Telnyx omitted keeps the

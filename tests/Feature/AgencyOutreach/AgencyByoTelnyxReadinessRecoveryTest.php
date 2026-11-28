@@ -335,6 +335,30 @@ class AgencyByoTelnyxReadinessRecoveryTest extends TestCase
         $this->assertTrue($channel->fresh()->credentials_verified_at->gt($verifiedAt));
     }
 
+    public function test_an_unavailable_or_forbidden_messaging_settings_check_cannot_recover_a_blocked_number(): void
+    {
+        [, , $workspace] = $this->agency();
+        $channel = $this->byoChannel($workspace, ['default' => true]);
+        $blocked = AgencyByoSender::verificationFailedCode('number_other_profile');
+        $channel->forceFill(['last_error_code' => $blocked])->save();
+
+        foreach ([503, 429, 403] as $i => $status) {
+            Cache::flush();
+            Http::swap(new Factory());
+            Http::fake([
+                'api.telnyx.com/v2/messaging_profiles/*' => Http::response(['data' => ['id' => 'p']], 200),
+                'api.telnyx.com/v2/phone_numbers/*/messaging' => Http::response(['errors' => [['code' => '10010']]], $status),
+                'api.telnyx.com/v2/phone_numbers*' => Http::response(['data' => [['id' => 'n1', 'status' => 'active']]], 200),
+            ]);
+
+            $result = app(AgencyByoConnectionRechecker::class)->recheck($channel->fresh(), true);
+
+            $this->assertSame('inconclusive', $result['status'], "settings HTTP {$status}");
+            $this->assertSame($blocked, $channel->fresh()->last_error_code);
+            $this->assertFalse(AgencyByoSender::sendReadiness($channel->fresh())['ok']);
+        }
+    }
+
     // ------------------------------------------------------------------ L3: SMS confirmation history
 
     public function test_an_omitted_sms_capability_keeps_history_but_an_explicit_restriction_does_not(): void
