@@ -143,6 +143,16 @@ final class ThreeReferenceTemplatesTest extends TestCase
         $this->assertStringNotContainsString('wd-ref-founder { background: #f4a28f; color: #fff; }', $css);
     }
 
+    public function test_greenbelt_promo_strip_heading_stays_dark_plum_on_peach_and_outranks_the_cta_band_rule(): void
+    {
+        $css = (string) file_get_contents(public_path('css/website-design.css'));
+        // `.wd-band-cta h2 { color: #fff }` (2 classes) comes later and would win over a 2-class strip rule: the strip rule needs 3.
+        $this->assertSame(1, preg_match('/\.wd-reference-greenbelt \.wd-band-cta\.wd-ref-strip h2\s*\{([^}]+)\}/', $css, $m));
+        $this->assertStringContainsString('color: #2a1d45;', $m[1], 'white on peach #f4a28f is ~2:1');
+        $this->assertSame(1, preg_match('/\.wd-reference-greenbelt \.wd-cta-has-photo h2\s*\{([^}]+)\}/', $css, $tile));
+        $this->assertStringContainsString('color: #2a1d45;', $tile[1], 'the photo-tile layout heading is dark too');
+    }
+
     public function test_addon_bands_show_a_readable_price_and_no_per_item_button(): void
     {
         $css = (string) file_get_contents(public_path('css/website-design.css'));

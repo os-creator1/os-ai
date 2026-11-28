@@ -1209,7 +1209,7 @@ body.wd h1, body.wd h2, body.wd h3, body.wd h4 { font-family: var(--wd-font-head
 .wd-reference-greenbelt .wd-hero-reviews { margin: 1rem 0 0; font: 700 0.75rem var(--wd-font-body); display: flex; gap: 0.5rem; align-items: center; color: #2a1d45; }
 .wd-reference-greenbelt .wd-hero-reviews .wd-review-stars { color: #f4a28f; letter-spacing: 0.08em; }
 .wd-reference-greenbelt .wd-ref-strip { background: #f4a28f; color: #2a1d45; text-align: center; }
-.wd-reference-greenbelt .wd-ref-strip h2 { color: #2a1d45; font-size: clamp(1.4rem, 2.4vw, 2rem); }
+.wd-reference-greenbelt .wd-band-cta.wd-ref-strip h2 { color: #2a1d45; font-size: clamp(1.4rem, 2.4vw, 2rem); }
 .wd-reference-greenbelt .wd-ref-strip .wd-btn-primary { background: #a79bc8; border-color: #a79bc8; color: #2a1d45; }
 .wd-reference-greenbelt .wd-ref-intro .website-image-text-body { max-width: 46rem; margin-inline: auto; text-align: center; }
 .wd-reference-greenbelt .wd-hero-sub { font-size: 1.125rem; line-height: 1.55; color: rgba(42, 29, 69, 0.8); }
@@ -1432,7 +1432,7 @@ body.wd h1, body.wd h2, body.wd h3, body.wd h4 { font-family: var(--wd-font-head
 .wd-reference-greenbelt .wd-ref-strip .wd-cta-has-photo { width: 100%; max-width: none; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); align-items: stretch; margin: 0; padding: 0; text-align: center; }
 .wd-reference-greenbelt .wd-cta-photo { min-height: 100%; overflow: hidden; }
 .wd-reference-greenbelt .wd-cta-photo img { display: block; width: 100%; height: 100%; object-fit: cover; }
-.wd-reference-greenbelt .wd-cta-has-photo h2 { display: flex; align-items: center; justify-content: center; margin: 0; padding: 1.5rem; background: #f4a28f; font-size: clamp(1.1rem, 2.2vw, 2rem); line-height: 1.15; }
+.wd-reference-greenbelt .wd-cta-has-photo h2 { display: flex; align-items: center; justify-content: center; margin: 0; padding: 1.5rem; background: #f4a28f; color: #2a1d45; font-size: clamp(1.1rem, 2.2vw, 2rem); line-height: 1.15; }
 .wd-reference-greenbelt .wd-cta-has-photo .website-cta-buttons { margin: 0; display: flex; align-items: center; justify-content: center; padding: 1.5rem; background: #a79bc8; }
 .wd-reference-greenbelt .wd-ref-strip .wd-cta-has-photo .wd-btn-primary { background: #f4a28f; border-color: #f4a28f; color: #2a1d45; }
 
