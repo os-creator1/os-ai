@@ -376,7 +376,7 @@ class AgencyProspectingChannelController extends CustomerBaseController
             );
 
             if (! $check['ok']) {
-                $channel->forceFill(['last_error_code' => $check['reason']])->save();
+                $this->recordVerificationFailure($channel, (string) $check['reason']);
 
                 return $back(['api_key' => $check['message']]);
             }
@@ -404,7 +404,8 @@ class AgencyProspectingChannelController extends CustomerBaseController
 
             if ($verifiedNow) {
                 $attributes['credentials_verified_at'] = now();
-                $attributes['last_error_code'] = null;
+                // A provider restriction survives a verification-only action; only a NEW key may reset it.
+                $attributes['last_error_code'] = isset($credentials['api_key']) ? null : $this->retainedRestriction($channel);
                 $attributes['sms_capability_confirmed_at'] = $smsConfirmed ? now() : null;
             }
 
@@ -462,14 +463,14 @@ class AgencyProspectingChannelController extends CustomerBaseController
                 : $this->telnyxVerifier->verify($credentials['api_key'], $credentials['profile_id'], (string) $channel->sender_number);
 
             if (! $check['ok']) {
-                $channel->forceFill(['last_error_code' => $check['reason']])->save();
+                $this->recordVerificationFailure($channel, (string) $check['reason']);
 
                 return $this->channelsError($workspaceUid, 'Channel was not enabled: ' . $check['message']);
             }
 
             $channel->forceFill([
                 'credentials_verified_at' => now(),
-                'last_error_code' => null,
+                'last_error_code' => $this->retainedRestriction($channel),
                 'sms_capability_confirmed_at' => $check['sms_confirmed'] ? now() : null,
             ]);
         }
@@ -499,6 +500,50 @@ class AgencyProspectingChannelController extends CustomerBaseController
         return redirect()->route('customer.workspaces.prospecting.channels.index', $workspaceUid)->with([
             'flash_success' => 'Channel disabled.',
         ]);
+    }
+
+    /** A stored provider restriction is not erased by a read-only verification: only a successful send after the cool-down lifts it. */
+    private function retainedRestriction(AgencyProspectingChannel $channel): ?string
+    {
+        return $channel->last_error_code === 'sender_restricted' ? 'sender_restricted' : null;
+    }
+
+    /** Record a failed verification without forgetting a stored provider restriction. */
+    private function recordVerificationFailure(AgencyProspectingChannel $channel, string $reason): void
+    {
+        if ($channel->last_error_code !== 'sender_restricted') {
+            $channel->forceFill(['last_error_code' => $reason])->save();
+        }
+    }
+
+    /**
+     * Recheck connection: re-verifies the SAVED key with Telnyx (read-only; no re-entry, no test SMS, no
+     * sender or credential change). Only a stale authentication flag can be cleared by it; a provider
+     * restriction can not, and is reported as such.
+     */
+    public function recheck(string $workspaceUid, AgencyProspectingChannel $channel, \App\Library\AgencyOutreach\AgencyByoConnectionRechecker $rechecker): RedirectResponse
+    {
+        $workspace = $this->resolveEntitledWorkspace($workspaceUid);
+        $this->resolveWorkspaceChannel($workspace, $channel);
+
+        $back = fn (string $key, string $message) => redirect()->route('customer.workspaces.prospecting.phone-messaging', $workspaceUid)->with([$key => $message]);
+
+        if ($channel->provider !== SendingServer::TYPE_TELNYX || $channel->status === AgencyProspectingChannel::STATUS_DISCONNECTED) {
+            return $back('flash_error', 'This sender cannot be rechecked. Reconnect it first.');
+        }
+
+        if ($channel->last_error_code === 'sender_restricted') {
+            return $back('flash_error', 'Telnyx is restricting sending from this number. Checking the access key cannot clear that — resolve it in Telnyx (permissions, registration or account status).');
+        }
+
+        $result = $rechecker->recheck($channel, true);
+
+        return match (true) {
+            $result['status'] === 'not_needed' && $channel->fresh()->last_error_code === null => $back('flash_success', 'No connection error is saved for this sender. Sending is not tested here; Telnyx confirms each message when it is sent.'),
+            $result['status'] === 'not_needed' => $back('flash_error', 'Your access key is not marked as rejected, so a recheck has nothing to clear. This sender has a different saved status from an earlier connection attempt; reconnect it to re-verify.'),
+            $result['status'] === 'recovered' => $back('flash_success', 'Telnyx accepted the saved access key and this number. The sender is unblocked.'),
+            default => $back('flash_error', (string) $result['message']),
+        };
     }
 
     /**
@@ -579,7 +624,7 @@ class AgencyProspectingChannelController extends CustomerBaseController
         $check = $this->telnyxVerifier->verify($credentials['api_key'], $credentials['profile_id'], (string) $channel->sender_number);
 
         if (! $check['ok']) {
-            $channel->forceFill(['last_error_code' => $check['reason']])->save();
+            $this->recordVerificationFailure($channel, (string) $check['reason']);
 
             return $back('flash_error', $check['message']);
         }
@@ -589,7 +634,7 @@ class AgencyProspectingChannelController extends CustomerBaseController
             AgencyProspectingChannel::where('workspace_id', $workspace->id)->update(['is_default_sender' => false]);
             $channel->forceFill([
                 'is_default_sender' => true,
-                'last_error_code' => null,
+                'last_error_code' => $this->retainedRestriction($channel),
                 'sms_capability_confirmed_at' => $check['sms_confirmed'] ? now() : null,
             ])->save();
         });

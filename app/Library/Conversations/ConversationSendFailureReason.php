@@ -110,6 +110,8 @@ enum ConversationSendFailureReason: string
             // On the agency's own Telnyx account an authentication rejection is the
             // agency's key, not a platform outage.
             ProviderErrorCategory::Configuration => $byo ? self::ByoCredentialsRejected : self::MessagingUnavailable,
+            // The provider conclusively refused this sender (403 that is not an authentication failure).
+            ProviderErrorCategory::Restricted => $byo ? self::ByoSenderNotReady : self::SendFailed,
             ProviderErrorCategory::Retryable, ProviderErrorCategory::Unknown => self::Ambiguous,
             ProviderErrorCategory::Terminal, null => self::SendFailed,
         };

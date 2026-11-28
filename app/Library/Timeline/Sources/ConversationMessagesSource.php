@@ -77,7 +77,7 @@ final class ConversationMessagesSource implements TimelineSource
                 'm.id', 'm.message', 'm.media_url', 'm.direction', 'm.send_by', 'm.created_at',
                 'm.automation_step_run_id', 'm.source',
                 'm.send_uid', 'm.send_status', 'm.send_failure_reason',
-                'bmo.status as operation_status', 'r.id as report_id', 'r.campaign_id',
+                'bmo.status as operation_status', 'bmo.delivery_unconfirmed_at as operation_delivery_unconfirmed_at', 'r.id as report_id', 'r.campaign_id',
                 'asr.id as step_run_id', 'aw.name as workflow_name', 'c.campaign_name',
             ])
             ->map(function (object $row): TimelineItem {
@@ -135,6 +135,19 @@ final class ConversationMessagesSource implements TimelineSource
     {
         if (! $outbound) {
             return [null, TimelineTone::Neutral, null, false];
+        }
+
+        // The carrier reported `delivery_unconfirmed`: neither delivered nor failed, never retryable, never resent.
+        // Read from the operation's own state, so a later delivered/failed outcome (which changes `status`) wins.
+        if (($row->operation_delivery_unconfirmed_at ?? null) !== null
+            && $row->operation_status === MessagingOperationStatus::Accepted->value
+            && ($row->send_status === null || $row->send_status === ManagedSendStateMachine::SENT)) {
+            return [
+                __('locale.conversations.delivery_unconfirmed_label') . ' — ' . __('locale.conversations.delivery_unconfirmed_detail'),
+                TimelineTone::Warning,
+                null,
+                false,
+            ];
         }
 
         if ($row->send_status !== null) {

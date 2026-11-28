@@ -51,7 +51,7 @@ trait BuildsAgencyByoChannels
     }
 
     /** Mock Telnyx: accepts every message with a fresh id, and answers the read-only checks. */
-    protected function fakeTelnyx(int $messageStatus = 200): void
+    protected function fakeTelnyx(int $messageStatus = 200, ?int $profileStatus = null): void
     {
         $seq = 0;
 
@@ -63,7 +63,10 @@ trait BuildsAgencyByoChannels
                     ? Http::response(['data' => ['id' => 'tx-msg-' . $seq]], 200)
                     : Http::response(['errors' => [['detail' => 'nope']]], $messageStatus);
             },
-            'api.telnyx.com/v2/messaging_profiles/*' => Http::response(['data' => ['id' => 'p']], 200),
+            // A genuinely revoked key is rejected by the read-only checks too (a 401 on /messages defaults to that).
+            'api.telnyx.com/v2/messaging_profiles/*' => ($profileStatus ?? ($messageStatus === 401 ? 401 : 200)) === 200
+                ? Http::response(['data' => ['id' => 'p']], 200)
+                : Http::response(['errors' => [['code' => '10009']]], $profileStatus ?? 401),
             'api.telnyx.com/v2/phone_numbers*' => Http::response(['data' => [['id' => 'n1', 'status' => 'active']]], 200),
         ]);
     }

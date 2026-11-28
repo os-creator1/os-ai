@@ -61,14 +61,21 @@ class AgencyOutreachReadiness
                 // The agency chose its own Telnyx account: readiness is that connection's, and the
                 // MotionGrove wallet plays no part in paying for transport, so it is not a blocker.
                 $phoneUrl = route('customer.workspaces.prospecting.phone-messaging', $workspace->uid);
-                $state = AgencyByoSender::sendReadiness($byo);
+                // A stored authentication error is re-verified (read-only, locked, rate-limited) rather than trusted forever.
+                $state = AgencyByoSender::sendReadinessRecovering($byo);
                 $info['number'] = $byo->sender_number;
                 $info['transport'] = 'byo';
 
-                $items[] = $this->item('number', 'Sending number', $state['ok'], $state['message'], $phoneUrl);
-                $items[] = $state['ok']
-                    ? $this->item('verification', 'Messaging verification', true, null, $phoneUrl)
-                    : $this->item('verification', 'Messaging verification', false, 'Your own Telnyx account must be connected and verified before sending.', $phoneUrl);
+                // CURRENT health only: a past webhook/verification timestamp is never evidence that sending works now.
+                // The sender itself (on, Telnyx, usable) and the connection/restriction state each say what is actually wrong.
+                $connectionCodes = ['missing_credentials', 'unverified', 'invalid_api_key', 'verification_failed', 'sender_restricted'];
+                $connectionBad = ! $state['ok'] && in_array($state['code'], $connectionCodes, true);
+                $senderBad = ! $state['ok'] && ! $connectionBad;
+
+                $items[] = $this->item('number', 'Sending number', ! $senderBad, $senderBad ? $state['message'] : null, $phoneUrl);
+                // `retry_pending`: allowed to retry once, but not verified — say so rather than showing it as healthy.
+                $pending = $state['ok'] && ($state['code'] ?? null) === 'retry_pending';
+                $items[] = $this->item('verification', 'Messaging verification', ! $connectionBad, ($connectionBad || $pending) ? $state['message'] : null, $phoneUrl);
                 $items[] = $this->item('wallet', 'Funds for sending', true, null);
             } else {
                 $situation = $this->messaging->situation($business);

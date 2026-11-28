@@ -138,13 +138,24 @@ class TelnyxAdapterAndKillSwitchTest extends TestCase
         $this->assertSame(ProviderErrorCategory::Unknown, $result->errorCategory);
     }
 
+    public function test_only_a_confirmed_authentication_rejection_is_a_configuration_failure(): void
+    {
+        $this->assertSame(ProviderErrorCategory::Configuration, TelnyxMessagingAdapter::categorizeStatus(401));
+        $this->assertSame(ProviderErrorCategory::Configuration, TelnyxMessagingAdapter::categorizeStatus(403, ['10009']));
+        $this->assertSame(ProviderErrorCategory::Restricted, TelnyxMessagingAdapter::categorizeStatus(403, ['40300']));
+        $this->assertSame(ProviderErrorCategory::Restricted, TelnyxMessagingAdapter::categorizeStatus(403));
+        $this->assertSame(ProviderErrorCategory::Retryable, TelnyxMessagingAdapter::categorizeStatus(429));
+        $this->assertSame(ProviderErrorCategory::Retryable, TelnyxMessagingAdapter::categorizeStatus(503));
+    }
+
     public function test_provider_failures_are_categorized_and_never_accepted(): void
     {
         $this->enableManagedMessaging();
 
         $expectations = [
             401 => ProviderErrorCategory::Configuration,
-            403 => ProviderErrorCategory::Configuration,
+            // A 403 without Telnyx's authentication-failed code is a permission/registration restriction, not a bad key.
+            403 => ProviderErrorCategory::Restricted,
             422 => ProviderErrorCategory::Terminal,
             429 => ProviderErrorCategory::Retryable,
             500 => ProviderErrorCategory::Retryable,

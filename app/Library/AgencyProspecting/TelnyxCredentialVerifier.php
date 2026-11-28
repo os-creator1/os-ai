@@ -2,6 +2,7 @@
 
 namespace App\Library\AgencyProspecting;
 
+use App\Library\Messaging\TelnyxMessagingAdapter;
 use Illuminate\Support\Facades\Http;
 use Throwable;
 
@@ -22,14 +23,14 @@ final class TelnyxCredentialVerifier
     /**
      * @return array{ok: bool, reason: ?string, message: ?string, sms_confirmed: bool}
      */
-    public function verify(string $apiKey, string $messagingProfileId, string $senderDigits): array
+    public function verify(string $apiKey, string $messagingProfileId, string $senderDigits, bool $strict = false): array
     {
         try {
             $profile = Http::withToken($apiKey)->timeout(15)
                 ->get(self::BASE . '/messaging_profiles/' . rawurlencode($messagingProfileId));
 
-            if (in_array($profile->status(), [401, 403], true)) {
-                return $this->fail('invalid_api_key', 'Telnyx rejected this access key. Check that it is a valid, active v2 API key.');
+            if ($early = $this->accessFailure($profile)) {
+                return $early;
             }
 
             if ($profile->status() === 404) {
@@ -42,6 +43,10 @@ final class TelnyxCredentialVerifier
 
             $numbers = Http::withToken($apiKey)->timeout(15)
                 ->get(self::BASE . '/phone_numbers', ['filter' => ['phone_number' => '+' . $senderDigits]]);
+
+            if ($early = $this->accessFailure($numbers)) {
+                return $early;
+            }
 
             if (! $numbers->successful()) {
                 return $this->fail('provider_unavailable', 'Telnyx could not be reached right now. Try again in a few minutes.');
@@ -67,6 +72,19 @@ final class TelnyxCredentialVerifier
                 // never a guessed pass or fail.
                 $settings = Http::withToken($apiKey)->timeout(15)
                     ->get(self::BASE . '/phone_numbers/' . rawurlencode($numberId) . '/messaging');
+
+                // `$strict` (used only when RECOVERING a blocked sender): a refused or unavailable settings check is
+                // NOT "field not reported" — the number's profile assignment was never re-verified, so it cannot be
+                // read as a pass. Connect/enable flows stay lenient: there it only means "not confirmed".
+                if ($strict) {
+                    if ($early = $this->accessFailure($settings)) {
+                        return $early;
+                    }
+
+                    if ($settings->status() === 429 || $settings->status() >= 500) {
+                        return $this->fail('provider_unavailable', 'Telnyx could not be reached right now. Try again in a few minutes.');
+                    }
+                }
 
                 $data = $settings->successful() ? $settings->json('data') : null;
 
@@ -102,6 +120,27 @@ final class TelnyxCredentialVerifier
         }
 
         return ['ok' => true, 'reason' => null, 'message' => null, 'sms_confirmed' => $smsConfirmed];
+    }
+
+    /**
+     * A confirmed authentication rejection is `invalid_api_key`; any other 403 is `permission_denied`
+     * (Telnyx accepted the key but refuses this resource), which says nothing about the key itself.
+     *
+     * @return array{ok: bool, reason: string, message: string, sms_confirmed: bool}|null
+     */
+    private function accessFailure(\Illuminate\Http\Client\Response $response): ?array
+    {
+        $status = $response->status();
+
+        if (TelnyxMessagingAdapter::isAuthenticationRejection($status, TelnyxMessagingAdapter::errorCodes($response->json('errors')))) {
+            return $this->fail('invalid_api_key', 'Telnyx rejected this access key. Check that it is a valid, active v2 API key.');
+        }
+
+        if ($status === 403) {
+            return $this->fail('permission_denied', 'Telnyx accepted the access key but denied access to this account resource. Check the key\'s permissions in Telnyx.');
+        }
+
+        return null;
     }
 
     /** @return array{ok: bool, reason: string, message: string, sms_confirmed: bool} */

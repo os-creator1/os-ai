@@ -1916,6 +1916,8 @@
             ],
             'send_failed_label'    => 'Failed',
             'delivery_failed_label' => 'Delivery failed',
+            'delivery_unconfirmed_label' => 'Delivery unconfirmed',
+            'delivery_unconfirmed_detail' => 'The carrier did not confirm whether this arrived. It may have been delivered; it was not resent.',
             'ambiguous_label'       => 'Status unknown',
             'sending_label'         => 'Sending…',
             'retry'                 => 'Retry',

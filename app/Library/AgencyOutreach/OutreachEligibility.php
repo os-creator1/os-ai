@@ -124,7 +124,7 @@ final class OutreachEligibility
         $byo = AgencyByoSender::selectedChannel($business);
 
         if ($byo !== null) {
-            $readiness = AgencyByoSender::sendReadiness($byo);
+            $readiness = AgencyByoSender::sendReadinessRecovering($byo);
 
             if (! $readiness['ok']) {
                 return OutreachEligibilityResult::refused('byo_' . $readiness['code']);

@@ -75,7 +75,10 @@ class ByoMessageDispatcher
             return self::resultFromRecordedOperation($existing);
         }
 
-        $readiness = AgencyByoSender::sendReadiness($channel);
+        // A stored authentication flag is re-verified (read-only, rate-limited, de-duplicated) instead of
+        // blocking forever. This resends nothing: the idempotency check above already returned any earlier
+        // attempt unchanged, and only this NEW dispatch proceeds.
+        $readiness = AgencyByoSender::sendReadinessRecovering($channel);
 
         if (! $readiness['ok']) {
             throw new ByoSenderNotReadyException((string) $readiness['code'], (string) $readiness['message']);
@@ -91,6 +94,13 @@ class ByoMessageDispatcher
 
         if ($normalizedTo === null) {
             throw new MessagingIdentityConflictException('A message destination must be an explicit, valid international number.');
+        }
+
+        // The ONE bounded retry after a restriction cool-down is claimed here, atomically, only after every local
+        // check (ownership, readiness, credentials, destination) has passed and immediately before the operation row
+        // and provider request: a local validation failure above never consumes it.
+        if (! AgencyByoSender::claimRestrictionRetry($channel)) {
+            throw new ByoSenderNotReadyException('sender_restricted', 'Telnyx refused to send from this number recently. Resolve the restriction in Telnyx; sending is retried once after a cool-down.');
         }
 
         $messageType = $mediaUrls === [] ? 'sms' : 'mms';
@@ -146,10 +156,16 @@ class ByoMessageDispatcher
             operationKey: $operationKey,
         ));
 
-        // A rejected key is a connection problem the agency must fix; remember it
-        // so readiness reports it instead of retrying a revoked key forever.
+        // Only a CONFIRMED authentication rejection (401, or 403 with Telnyx's authentication-failed code)
+        // is remembered as a bad key. A different 403 is a provider restriction on an accepted key: it is
+        // remembered as such and blocks further attempts for a cool-down. Timeouts, 429 and 5xx remember nothing.
         if (! $result->accepted && $result->errorCategory === ProviderErrorCategory::Configuration) {
-            $channel->forceFill(['last_error_code' => 'invalid_api_key'])->save();
+            $channel->forceFill(['last_error_code' => 'invalid_api_key', 'last_error_at' => Carbon::now()])->save();
+        } elseif (! $result->accepted && $result->errorCategory === ProviderErrorCategory::Restricted) {
+            $channel->forceFill(['last_error_code' => 'sender_restricted', 'last_error_at' => Carbon::now()])->save();
+        } elseif ($result->accepted && $channel->last_error_code === 'sender_restricted') {
+            // The one permitted retry after the cool-down went through: the restriction is lifted.
+            $channel->forceFill(['last_error_code' => null, 'last_error_at' => null])->save();
         }
 
         DB::table(ManagedMessageDispatcher::TABLE)->where('id', $operationId)->update([

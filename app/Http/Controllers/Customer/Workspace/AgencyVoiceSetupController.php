@@ -159,7 +159,7 @@ class AgencyVoiceSetupController extends CustomerBaseController
     {
         $channel = $this->channelFor($workspaceUid, $channel);
 
-        $send = AgencyByoSender::sendReadiness($channel);
+        $send = AgencyByoSender::sendReadiness($channel, false);
         if (! $send['ok']) {
             return $this->back($workspaceUid, $channel)->with('flash_error', (string) $send['message']);
         }

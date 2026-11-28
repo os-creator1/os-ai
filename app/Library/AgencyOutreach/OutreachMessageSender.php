@@ -109,7 +109,7 @@ final class OutreachMessageSender
             $byo = AgencyByoSender::selectedChannel($business);
 
             if ($byo !== null) {
-                $readiness = AgencyByoSender::sendReadiness($byo);
+                $readiness = AgencyByoSender::sendReadinessRecovering($byo);
 
                 if (! $readiness['ok']) {
                     return OutreachSendResult::blocked('byo_' . $readiness['code']);
