@@ -502,6 +502,36 @@ class AgencyProspectingChannelController extends CustomerBaseController
     }
 
     /**
+     * Recheck connection: re-verifies the SAVED key with Telnyx (read-only; no re-entry, no test SMS, no
+     * sender or credential change). Only a stale authentication flag can be cleared by it; a provider
+     * restriction can not, and is reported as such.
+     */
+    public function recheck(string $workspaceUid, AgencyProspectingChannel $channel, \App\Library\AgencyOutreach\AgencyByoConnectionRechecker $rechecker): RedirectResponse
+    {
+        $workspace = $this->resolveEntitledWorkspace($workspaceUid);
+        $this->resolveWorkspaceChannel($workspace, $channel);
+
+        $back = fn (string $key, string $message) => redirect()->route('customer.workspaces.prospecting.phone-messaging', $workspaceUid)->with([$key => $message]);
+
+        if ($channel->provider !== SendingServer::TYPE_TELNYX || $channel->status === AgencyProspectingChannel::STATUS_DISCONNECTED) {
+            return $back('flash_error', 'This sender cannot be rechecked. Reconnect it first.');
+        }
+
+        if ($channel->last_error_code === 'sender_restricted') {
+            return $back('flash_error', 'Telnyx is restricting sending from this number. Checking the access key cannot clear that — resolve it in Telnyx (permissions, registration or account status).');
+        }
+
+        $result = $rechecker->recheck($channel, true);
+
+        return match (true) {
+            $result['status'] === 'not_needed' => $back('flash_success', 'No connection error is saved for this sender. Sending is not tested here; Telnyx confirms each message when it is sent.'),
+            $result['status'] === 'recovered' && $result['ok'] => $back('flash_success', 'Telnyx accepted the saved access key. The sender is unblocked.'),
+            $result['status'] === 'recovered' => $back('flash_error', 'Telnyx accepted the saved access key, but: ' . $result['message']),
+            default => $back('flash_error', (string) $result['message']),
+        };
+    }
+
+    /**
      * Permanent disconnect: the stored Telnyx key and webhook key are erased here; the
      * Telnyx account and number themselves are untouched. The row stays only so past
      * messages can still name the sender they used. The current default sender cannot

@@ -124,13 +124,14 @@ class TelnyxMessagingAdapter implements MessagingProviderAdapter
         // — otherwise a rejection can never be diagnosed after the fact.
         \Illuminate\Support\Facades\Log::warning('telnyx.send_rejected', [
             'http_status' => $response->status(),
-            'telnyx_error_codes' => collect((array) $response->json('errors', []))
-                ->map(fn ($e) => is_array($e) ? ($e['code'] ?? null) : null)
-                ->filter()->values()->all(),
+            'telnyx_error_codes' => self::errorCodes($response->json('errors')),
             'operation_key_hash' => hash('sha256', $request->operationKey),
         ]);
 
-        return OutboundMessageResult::rejected(self::categorizeStatus($response->status()));
+        return OutboundMessageResult::rejected(self::categorizeStatus(
+            $response->status(),
+            self::errorCodes($response->json('errors')),
+        ));
     }
 
     public function verifyInboundSignature(string $rawBody, array $headers): bool
@@ -239,14 +240,55 @@ class TelnyxMessagingAdapter implements MessagingProviderAdapter
         );
     }
 
-    public static function categorizeStatus(int $status): ProviderErrorCategory
+    /** Telnyx's own structured code for "Authentication failed" (a bad, revoked or malformed key). */
+    public const AUTHENTICATION_FAILED_CODE = '10009';
+
+    /**
+     * A CONFIRMED rejection of the credentials: HTTP 401, or an HTTP 403 whose structured Telnyx error
+     * code says authentication itself failed. Any other 403 is a permission, registration, profile or
+     * account restriction on an otherwise accepted key — never an invalid key.
+     *
+     * @param list<string> $codes
+     */
+    public static function isAuthenticationRejection(int $status, array $codes): bool
+    {
+        return $status === 401 || ($status === 403 && in_array(self::AUTHENTICATION_FAILED_CODE, $codes, true));
+    }
+
+    /**
+     * @param list<string> $codes Telnyx's structured error codes from the response, when it returned any
+     */
+    public static function categorizeStatus(int $status, array $codes = []): ProviderErrorCategory
     {
         return match (true) {
-            $status === 401, $status === 403 => ProviderErrorCategory::Configuration,
+            self::isAuthenticationRejection($status, $codes) => ProviderErrorCategory::Configuration,
+            $status === 403 => ProviderErrorCategory::Restricted,
             $status === 429, $status >= 500 => ProviderErrorCategory::Retryable,
             $status >= 400 => ProviderErrorCategory::Terminal,
             default => ProviderErrorCategory::Unknown,
         };
+    }
+
+    /**
+     * The structured `errors[].code` values of a Telnyx error body, as strings (never the detail text).
+     *
+     * @return list<string>
+     */
+    public static function errorCodes(mixed $errors): array
+    {
+        if (! is_array($errors)) {
+            return [];
+        }
+
+        $codes = [];
+
+        foreach ($errors as $error) {
+            if (is_array($error) && isset($error['code']) && (is_string($error['code']) || is_int($error['code']))) {
+                $codes[] = (string) $error['code'];
+            }
+        }
+
+        return $codes;
     }
 
     /**

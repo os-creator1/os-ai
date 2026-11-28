@@ -20,16 +20,18 @@
         if (! $hasKey) {
             $chips[] = ['ok' => false, 'label' => 'Replies not set up', 'hint' => 'Add your Telnyx webhook public key so replies can be received.'];
         } elseif ($channel->webhook_verified_at) {
-            $chips[] = ['ok' => true, 'label' => 'Replies working'];
+            // Historical: the last time a correctly signed event arrived. It says nothing about sending now.
+            $chips[] = ['ok' => true, 'label' => 'Reply webhook verified ' . $channel->webhook_verified_at->format('M j')];
         } else {
             $chips[] = ['ok' => false, 'label' => 'Waiting for first event from Telnyx', 'hint' => 'Set the webhook URL on the Manage page in your Telnyx messaging profile.'];
         }
         $chips[] = $channel->sms_capability_confirmed_at
-            ? ['ok' => true, 'label' => 'Text messaging confirmed by Telnyx']
+            ? ['ok' => true, 'label' => 'Text messaging confirmed by Telnyx ' . $channel->sms_capability_confirmed_at->format('M j')]
             : ['ok' => false, 'label' => 'Text messaging not confirmed', 'hint' => "Telnyx did not report this number's text-messaging status. Check in Telnyx that it can send texts."];
         $rows[] = [
             'kind' => 'byo', 'number' => $channel->sender_number, 'provider' => 'Your Telnyx account · billed by Telnyx',
             'current' => (bool) $channel->is_default_sender, 'chips' => $chips, 'sender' => $channel->uid,
+            'recheck' => in_array($channel->last_error_code, ['invalid_api_key'], true) ? route('customer.workspaces.prospecting.channels.recheck', [$workspaceUid, $channel->uid]) : null,
             'manage' => route('customer.workspaces.prospecting.channels.show', [$workspaceUid, $channel->uid]), 'manageLabel' => 'Manage account',
             'disconnect' => route('customer.workspaces.prospecting.channels.disconnect', [$workspaceUid, $channel->uid]),
         ];
@@ -69,6 +71,9 @@
                     @if(! $chip['ok'] && ! empty($chip['hint']))<span class="mut">{{ $chip['hint'] }}</span>@endif
                 @endforeach
             </div>
+            @if(! empty($selected['recheck']))
+                <form method="post" action="{{ $selected['recheck'] }}" data-role="recheck">@csrf<button type="submit" class="btn pri">Recheck connection</button></form>
+            @endif
             <a class="btn out" href="{{ $selected['manage'] }}">{{ $selected['manageLabel'] }}</a>
         </section>
     @else
@@ -100,6 +105,9 @@
                         <form method="post" action="{{ route('customer.workspaces.prospecting.phone-messaging.sender', $workspaceUid) }}">@csrf
                             <input type="hidden" name="sender" value="{{ $row['sender'] }}">
                             <button type="submit" class="btn pri sm">Use as my sender</button></form>
+                        @if(! empty($row['recheck']))
+                            <form method="post" action="{{ $row['recheck'] }}" data-role="recheck">@csrf<button type="submit" class="btn out sm">Recheck connection</button></form>
+                        @endif
                         <a class="btn out sm" href="{{ $row['manage'] }}">{{ $row['kind'] === 'byo' ? 'Manage / change account' : $row['manageLabel'] }}</a>
                         @if($row['disconnect'])
                             <form method="post" action="{{ $row['disconnect'] }}" onsubmit="return confirm('Disconnect this Telnyx account? Its saved credentials will be erased. Your Telnyx account and number are not changed.');">@csrf

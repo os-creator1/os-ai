@@ -101,9 +101,58 @@ final class AgencyByoSender
             $server === null || ! $server->status => self::no('missing_credentials', 'The Telnyx connection is unavailable. Reconnect your account.'),
             self::credentials($channel) === null => self::no('missing_credentials', 'The saved Telnyx credentials can no longer be read. Reconnect your account.'),
             $channel->credentials_verified_at === null => self::no('unverified', 'This Telnyx account has not been verified yet. Reconnect it to verify.'),
-            $channel->last_error_code === 'invalid_api_key' => self::no('invalid_api_key', 'Telnyx rejected the saved access key. Reconnect with a valid key.'),
+            $channel->last_error_code === 'invalid_api_key' => self::no('invalid_api_key', 'Telnyx rejected the saved access key. Use Recheck connection, or reconnect with a valid key.'),
+            self::restrictionActive($channel) => self::no('sender_restricted', 'Telnyx refused to send from this number (a permission, registration or account restriction). Resolve it in Telnyx; sending is retried once after a cool-down.'),
             default => ['ok' => true, 'code' => null, 'message' => null],
         };
+    }
+
+    /**
+     * {@see self::sendReadiness()}, but a stored authentication error is first re-verified (read-only,
+     * locked, rate-limited — see AgencyByoConnectionRechecker) so a stale flag heals instead of blocking forever.
+     * The channel passed in is refreshed in place.
+     *
+     * @return array{ok: bool, code: ?string, message: ?string}
+     */
+    public static function sendReadinessRecovering(AgencyProspectingChannel $channel): array
+    {
+        $state = self::sendReadiness($channel);
+
+        if (! $state['ok'] && $state['code'] === 'invalid_api_key') {
+            app(AgencyByoConnectionRechecker::class)->recheck($channel);
+            $channel->refresh();
+            $state = self::sendReadiness($channel);
+        }
+
+        return $state;
+    }
+
+    /** How long a provider restriction (HTTP 403 that is not an authentication failure) blocks sending before ONE new attempt is allowed. */
+    public const RESTRICTION_COOLDOWN_SECONDS = 43200;
+
+    /** Whether a persisted provider restriction is still inside its cool-down (credential checks never clear it). */
+    public static function restrictionActive(AgencyProspectingChannel $channel): bool
+    {
+        if ($channel->last_error_code !== 'sender_restricted') {
+            return false;
+        }
+
+        return $channel->last_error_at === null
+            || $channel->last_error_at->gt(now()->subSeconds(self::RESTRICTION_COOLDOWN_SECONDS));
+    }
+
+    /**
+     * After the cool-down, exactly ONE sender wins the right to try again (atomic across workers); a
+     * restriction that is still in force re-stamps itself and blocks again, so a prohibited send is
+     * never attempted in a loop.
+     */
+    public static function claimRestrictionRetry(AgencyProspectingChannel $channel): bool
+    {
+        if ($channel->last_error_code !== 'sender_restricted') {
+            return true;
+        }
+
+        return \Illuminate\Support\Facades\Cache::add('byo-telnyx-restriction-retry:' . (int) $channel->id, 1, self::RESTRICTION_COOLDOWN_SECONDS);
     }
 
     /** @return array{api_key: string, profile_id: string}|null */

@@ -386,7 +386,20 @@ class InboundWebhookAttributionResolver
         // The TARGET is a pure function of the payload, so it is parsed here.
         // The CURRENT status is not: it is durable state two callbacks can
         // contend for, and it is therefore read under a lock below.
+        // `delivery_unconfirmed`: the carrier gave no delivered/failed answer. That is a real, valid Telnyx
+        // outcome and an UNCERTAIN one — it must not be rejected (a 400 makes Telnyx retry and flag the
+        // webhook), must not read as delivered, and must not read as a safely retryable failure.
+        if (self::normalizedDeliveryStatus($event->deliveryStatus) === 'delivery_unconfirmed') {
+            return $this->recordUnconfirmedDelivery($operation, $event, $rawBody);
+        }
+
         $target = self::targetStatus($event->deliveryStatus);
+
+        // A well-formed status this platform has no transition for (queued, sending, a future Telnyx
+        // value) is acknowledged without touching any state; an absent or malformed one stays a 400.
+        if ($target === null && preg_match('/^[a-z][a-z_]{0,63}$/', self::normalizedDeliveryStatus($event->deliveryStatus)) === 1) {
+            return response()->json(['status' => 'ignored'], 200);
+        }
 
         if ($target === null) {
             $this->rejections->record(
@@ -834,6 +847,50 @@ class InboundWebhookAttributionResolver
         return true;
     }
 
+    private static function normalizedDeliveryStatus(?string $deliveryStatus): string
+    {
+        return strtolower(trim((string) $deliveryStatus));
+    }
+
+    /**
+     * Record an uncertain delivery outcome WITHOUT moving the operation: it stays `accepted` (so a later
+     * delivered/failed callback can still settle it), and a delivered/failed row is never touched. Nothing
+     * here resends, and nothing here reads or writes sender readiness.
+     */
+    private function recordUnconfirmedDelivery(object $operation, InboundWebhookEvent $event, string $rawBody): JsonResponse
+    {
+        $outcome = DB::transaction(function () use ($operation): string {
+            $locked = DB::table(ManagedMessageDispatcher::TABLE)->where('id', $operation->id)->lockForUpdate()->first();
+
+            if ($locked === null) {
+                return self::TRANSITION_MALFORMED;
+            }
+
+            if ((string) $locked->status !== MessagingOperationStatus::Accepted->value) {
+                // Delivered/failed/rejected is already settled: an uncertain report cannot regress it.
+                return self::TRANSITION_REGRESSIVE;
+            }
+
+            if ($locked->delivery_unconfirmed_at !== null) {
+                return self::TRANSITION_DUPLICATE;
+            }
+
+            DB::table(ManagedMessageDispatcher::TABLE)->where('id', $locked->id)->update([
+                'delivery_unconfirmed_at' => Carbon::now(),
+                'updated_at' => Carbon::now(),
+            ]);
+
+            return self::TRANSITION_APPLIED;
+        });
+
+        return match ($outcome) {
+            self::TRANSITION_MALFORMED => $this->refuseDeliveryStatus(WebhookRejectionReason::MalformedPayload, $event, $rawBody, 'rejected', 400),
+            self::TRANSITION_DUPLICATE => $this->refuseDeliveryStatus(WebhookRejectionReason::Duplicate, $event, $rawBody, 'duplicate', 200),
+            self::TRANSITION_REGRESSIVE => $this->refuseDeliveryStatus(WebhookRejectionReason::RegressiveTransition, $event, $rawBody, 'rejected', 200),
+            default => response()->json(['status' => 'accepted'], 200),
+        };
+    }
+
     private static function targetStatus(?string $deliveryStatus): ?MessagingOperationStatus
     {
         if ($deliveryStatus === null) {
@@ -842,7 +899,7 @@ class InboundWebhookAttributionResolver
 
         return match (strtolower(trim($deliveryStatus))) {
             'delivered' => MessagingOperationStatus::Delivered,
-            'failed', 'delivery_failed', 'undelivered' => MessagingOperationStatus::Failed,
+            'failed', 'delivery_failed', 'sending_failed', 'undelivered' => MessagingOperationStatus::Failed,
             'sent', 'accepted' => MessagingOperationStatus::Accepted,
             default => null,
         };
