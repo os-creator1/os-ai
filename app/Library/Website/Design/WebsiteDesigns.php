@@ -104,7 +104,69 @@ final class WebsiteDesigns
                 announcementBar: true,
                 roleTones: ['events' => 'light', 'booths' => 'tint', 'process' => 'dark', 'advantages' => 'light', 'areas' => 'light'],
             ),
+        ] + self::referenceDesigns();
+    }
+
+    /**
+     * Three opt-in, deterministic photo booth reference families. Their visual
+     * base is reused only for supported components; each has its own frozen
+     * template identity and explicit authored home-section sequence. Existing
+     * sites retain the original four designs (and Emerald) unchanged.
+     *
+     * These are NOT a claim of screenshot parity. The reference-specific
+     * layout and image slots are owned by PhotoBoothBlueprint and require
+     * real customer-approved uploads before visual acceptance.
+     *
+     * @return array<string, WebsiteDesign>
+     */
+    private static function referenceDesigns(): array
+    {
+        $base = self::all();
+        $specs = [
+            'photo_booth_reference_kaleb' => [
+                'photo_booth_modern', 'reference-kaleb', 6,
+                'Luxury Photo Booth', 'Black and gold, cinematic photo hero, features and full event gallery.',
+                'Photo booth rentals highlighting an immersive event experience.',
+                ['#232323', '#fac815'],
+            ],
+            'photo_booth_reference_booths' => [
+                'photo_booth_modern', 'reference-booths', 7,
+                'Event Spotlight', 'Deep blue, event-first imagery, booth features and a prominent inquiry funnel.',
+                'Photo booth rentals selling weddings, parties and corporate experiences.',
+                ['#061633', '#188bf6'],
+            ],
+            'photo_booth_reference_greenbelt' => [
+                'photo_booth_conversion', 'reference-greenbelt', 8,
+                'Party Editorial', 'Plum and peach, strong headings, event cards, package tiers and brand activations.',
+                'Photo booth rentals with real package pricing and corporate-event offerings.',
+                ['#2a1d45', '#f4a28f'],
+            ],
         ];
+
+        $out = [];
+
+        foreach ($specs as $templateKey => [$from, $key, $number, $label, $tagline, $bestFor, $swatch]) {
+            $design = $base[$from];
+            // Measured structure differences from the shared visual base: Kaleb's hero is a split (copy left, photo right)
+            // on a light field; its feature band below stays dark.
+            $variantOverrides = $templateKey === 'photo_booth_reference_kaleb' ? ['hero' => 'split', 'accent_titles' => true] : [];
+            $toneOverrides = $templateKey === 'photo_booth_reference_kaleb' ? ['hero' => 'light'] : [];
+            $out[$templateKey] = new WebsiteDesign(
+                key: $key,
+                templateKey: $templateKey,
+                number: $number,
+                label: $label,
+                tagline: $tagline,
+                bestFor: $bestFor,
+                variants: $variantOverrides + $design->variants + ['visual_base' => $design->key, 'home_sequence' => 'authored'],
+                tones: $toneOverrides + $design->tones,
+                homeOrder: $design->homeOrder,
+                swatch: $swatch,
+                announcementBar: $design->announcementBar,
+            );
+        }
+
+        return $out;
     }
 
     /**

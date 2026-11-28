@@ -190,6 +190,155 @@ class WebsiteLeadFormResolverTest extends TestCase
         $this->assertTrue(collect($bound['warnings'])->contains(fn ($w) => str_contains($w, 'not live on your website yet')));
     }
 
+    public function test_all_three_reference_templates_embed_the_real_form_immediately_after_the_hero(): void
+    {
+        $deployment = $this->offer($this->installed('pb3_form_lead', 'Check Availability'));
+        $keys = ['photo_booth_reference_kaleb', 'photo_booth_reference_booths', 'photo_booth_reference_greenbelt'];
+
+        foreach ($keys as $key) {
+            $this->website->forceFill(['template_key' => $key])->save();
+
+            $bound = app(MediaBindingService::class)->bind($this->website->fresh(), [$this->contactPage()]);
+            $sections = $bound['pages'][0]['sections'];
+
+            $this->assertSame(['hero', 'forms_module_form'], array_slice(array_column($sections, 'type'), 0, 2), $key);
+            $this->assertSame($deployment->uid, $sections[1]['data']['forms_module_deployment_uid']);
+            $this->assertNotContains('form', array_column($sections, 'type'));
+
+            $cta = app(\App\Library\Website\Design\WebsiteCtaResolver::class)->resolve(
+                $this->business,
+                [['slug' => 'photo-booth-contact', 'url' => 'https://example.test/photo-booth-contact', 'has_form' => true]],
+                false,
+                $key,
+            );
+            $this->assertSame(['kind' => 'form', 'label' => 'Check Availability', 'url' => 'https://example.test/photo-booth-contact'], $cta);
+            $button = app(\App\Library\Website\Design\WebsiteCtaResolver::class)->sectionCta(
+                ['label' => 'Contact us', 'url' => '/photo-booth-contact'],
+                $cta,
+                ['photo-booth-contact' => 'https://example.test/photo-booth-contact'],
+                true,
+            );
+            $this->assertSame(['label' => 'Check Availability', 'url' => 'https://example.test/photo-booth-contact'], $button,
+                'All generated primary inquiry buttons must use the actual active Forms funnel label');
+        }
+
+        $this->assertSame(0, WebsiteForm::query()->where('website_id', $this->website->id)->count());
+    }
+
+    public function test_reference_inquiry_buttons_downgrade_if_forms_deployment_is_disabled_before_publish(): void
+    {
+        $resolver = app(\App\Library\Website\Design\WebsiteCtaResolver::class);
+        $urls = ['photo-booth-contact' => 'https://example.test/photo-booth-contact'];
+        $savedButton = ['label' => 'Check Availability', 'url' => '/photo-booth-contact'];
+
+        $validForm = ['kind' => 'form', 'label' => 'Check Availability', 'url' => $urls['photo-booth-contact']];
+        $this->assertSame(['label' => 'Check Availability', 'url' => $urls['photo-booth-contact']],
+            $resolver->sectionCta($savedButton, $validForm, $urls, true));
+
+        foreach ([
+            ['kind' => 'contact_page', 'label' => 'Contact us', 'url' => $urls['photo-booth-contact']],
+            ['kind' => 'booking', 'label' => 'Book now', 'url' => 'https://example.test/booking'],
+            ['kind' => 'phone', 'label' => 'Call us', 'url' => 'tel:+15555550123'],
+        ] as $fallback) {
+            $this->assertSame(['label' => $fallback['label'], 'url' => $fallback['url']],
+                $resolver->sectionCta($savedButton, $fallback, $urls, true),
+                'Never claim an availability inquiry is operational when the form cannot render');
+        }
+
+        $this->assertNull($resolver->sectionCta($savedButton, null, $urls, true),
+            'No working contact path means no primary availability button');
+    }
+
+    public function test_published_reference_navigation_detects_the_real_form_and_uses_check_availability(): void
+    {
+        $deployment = $this->offer($this->installed('pb3_form_lead', 'Check Availability'));
+        $this->website->forceFill(['template_key' => 'photo_booth_reference_kaleb'])->save();
+        $embed = $this->resolver()->resolve($this->business);
+
+        $snapshot = [
+            'website' => ['theme' => ['header_variant' => 'reference-kaleb']],
+            'pages' => [[
+                'uid' => 'inquiry-page',
+                'title' => 'Check Availability',
+                'is_home' => false,
+                'slug' => 'photo-booth-contact',
+                'sections' => [['type' => 'forms_module_form', 'data' => [
+                    'forms_module_deployment_uid' => $deployment->uid,
+                    'resolved' => $embed,
+                ]]],
+            ]],
+        ];
+        $surface = \App\Library\Website\Blog\WebsiteBlogSurface::custom($this->website->fresh(), 'example.test');
+        $pages = app(\App\Library\Website\Blog\WebsiteBlogRenderer::class)
+            ->navigationPages($this->website->fresh(), $snapshot, $surface);
+        $formPage = collect($pages)->firstWhere('slug', 'photo-booth-contact');
+
+        $this->assertTrue($formPage['has_form'], 'The real published navigation must see the Forms-module section');
+        $cta = app(\App\Library\Website\Design\WebsiteCtaResolver::class)
+            ->resolve($this->business, $pages, false, 'photo_booth_reference_kaleb');
+        $this->assertSame('Check Availability', $cta['label']);
+        $this->assertSame('https://example.test/photo-booth-contact', $cta['url']);
+
+        $snapshot['pages'][0]['sections'][0]['data'] = ['forms_module_deployment_uid' => $deployment->uid];
+        $stale = app(\App\Library\Website\Blog\WebsiteBlogRenderer::class)
+            ->navigationPages($this->website->fresh(), $snapshot, $surface);
+        $this->assertFalse(collect($stale)->firstWhere('slug', 'photo-booth-contact')['has_form'],
+            'An unrenderable published form is not falsely advertised as ready');
+    }
+
+    public function test_disabled_published_deployment_a_is_not_validated_by_other_live_lead_deployment_b(): void
+    {
+        $formA = $this->installed('photo_booth_form_availability', 'Availability form A');
+        $deploymentA = $this->offer($formA);
+        $deploymentB = $this->offer($this->installed('pb3_form_lead', 'Availability form B'));
+        $this->website->forceFill(['template_key' => 'photo_booth_reference_kaleb'])->save();
+
+        $references = app(\App\Library\Website\Forms\WebsiteFormsModuleReferences::class);
+        $frozenA = $references->resolve($this->business, $deploymentA->uid);
+        $data = ['forms_module_deployment_uid' => $deploymentA->uid, 'resolved' => $frozenA];
+        $this->assertNotNull($references->renderable($data, $this->website->fresh(), false));
+
+        $snapshot = ['pages' => [[
+            'uid' => 'contact-page',
+            'title' => 'Check Availability',
+            'is_home' => false,
+            'slug' => 'photo-booth-contact',
+            'sections' => [['type' => 'forms_module_form', 'data' => $data]],
+        ]]];
+        $surface = \App\Library\Website\Blog\WebsiteBlogSurface::custom($this->website->fresh(), 'example.test');
+        $navigation = fn () => app(\App\Library\Website\Blog\WebsiteBlogRenderer::class)
+            ->navigationPages($this->website->fresh(), $snapshot, $surface);
+
+        $this->assertTrue($navigation()[0]['has_form']);
+
+        app(FormManager::class)->setDeployment($this->business, $formA, $this->location, false, FormDeploymentSource::Website);
+        $this->assertSame($deploymentB->uid, $this->resolver()->resolve($this->business)['uid']);
+        $this->assertNull($references->renderable($data, $this->website->fresh(), false),
+            'A frozen embed is not usable after its exact deployment is disabled');
+        $this->assertFalse($navigation()[0]['has_form']);
+
+        $fallback = app(\App\Library\Website\Design\WebsiteCtaResolver::class)
+            ->resolve($this->business, $navigation(), false, 'photo_booth_reference_kaleb');
+        $this->assertNotSame('Check Availability', $fallback['label'],
+            'Another live deployment cannot make a broken published inquiry appear ready');
+    }
+
+    public function test_reference_templates_never_create_a_legacy_quote_form_when_the_forms_module_is_not_ready(): void
+    {
+        foreach (['photo_booth_reference_kaleb', 'photo_booth_reference_booths', 'photo_booth_reference_greenbelt'] as $key) {
+            $this->website->forceFill(['template_key' => $key])->save();
+            $bound = app(MediaBindingService::class)->bind($this->website->fresh(), [$this->contactPage()]);
+
+            $types = array_column($bound['pages'][0]['sections'], 'type');
+            $this->assertContains('contact_details', $types);
+            $this->assertNotContains('forms_module_form', $types);
+            $this->assertNotContains('form', $types);
+            $this->assertTrue(collect($bound['warnings'])->contains(fn ($warning) => str_contains($warning, 'Check Availability is not configured')));
+        }
+
+        $this->assertSame(0, WebsiteForm::query()->where('website_id', $this->website->id)->count());
+    }
+
     public function test_a_business_with_no_niche_lead_form_keeps_the_existing_quote_form(): void
     {
         $bound = app(MediaBindingService::class)->bind($this->website->fresh(), [$this->contactPage()]);

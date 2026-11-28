@@ -69,6 +69,10 @@
         <link rel="stylesheet" href="{{ asset('css/website-public.css') }}">
         @if ($design ?? null)
             <link rel="stylesheet" href="{{ asset('css/website-design.css') }}?v={{ is_file(public_path('css/website-design.css')) ? filemtime(public_path('css/website-design.css')) : 1 }}">
+            @if (str_starts_with((string) $design->key, 'reference-'))
+                {{-- Self-hosted OFL fonts for the three Photo Booth reference designs only; no third-party font request. --}}
+                <link rel="stylesheet" href="{{ asset('css/website-reference-fonts.css') }}">
+            @endif
         @endif
     @endif
     {{--
@@ -130,7 +134,7 @@
     @include('public.analytics._script', ['analytics' => $analytics ?? null])
 </head>
 {{-- A template-driven site is styled by its design only; the legacy variant classes (header/button/font) would leak the old generic styles into it. --}}
-<body class="website-body @if ($design ?? null) wd wd-{{ $design->key }}@if (! empty($hasSecondaryBrand)) wd-has-secondary @endif @if (! empty($paletteClasses)) {{ $paletteClasses }} @endif @else website-header-{{ $theme['header_variant'] ?? 'default' }} website-button-{{ $theme['button_style'] ?? 'solid' }} website-font-{{ $theme['font'] ?? 'system' }} @endif"
+<body class="website-body @if ($design ?? null) wd wd-{{ $design->key }}@if (! empty($design->variants['visual_base'] ?? null)) wd-{{ $design->variants['visual_base'] }}@endif @if (! empty($hasSecondaryBrand)) wd-has-secondary @endif @if (! empty($paletteClasses)) {{ $paletteClasses }} @endif @else website-header-{{ $theme['header_variant'] ?? 'default' }} website-button-{{ $theme['button_style'] ?? 'solid' }} website-font-{{ $theme['font'] ?? 'system' }} @endif"
     @if (($design ?? null) && ! empty($brandStyle)) style="{{ $brandStyle }}" @endif>
     @if ($isPreview)
         <div class="website-preview-banner">{{ $previewBannerText ?? 'Preview — draft content, not yet published' }}</div>
@@ -157,6 +161,10 @@
                 $heroImageFallback = $assetsByUid[$heroUid];
             } else {
                 foreach ($sections as $candidate) {
+                    // The awards strip holds badge logos, never photography: it can't stand in for a hero image.
+                    if (($candidate['type'] ?? '') === 'gallery' && ($candidate['data']['ref'] ?? null) === 'badges') {
+                        continue;
+                    }
                     $uid = match ($candidate['type'] ?? '') {
                         'image_text' => $candidate['data']['image'] ?? null,
                         'gallery', 'services' => collect($candidate['data']['items'] ?? [])->pluck('image')->filter()->first(),
@@ -193,8 +201,10 @@
                 @php($componentView = 'public.website.components.' . $type)
                 @php($toneKey = ($type === 'services' && collect($section['data']['items'] ?? [])->contains(fn ($item) => ! empty($item['catalog_item_uid']))) ? 'packages' : $type)
                 @php($sectionRole = $design->roleTones !== [] ? \App\Library\Website\Design\SectionRole::of($section) : null)
+                {{-- Reference designs only: an optional, validated style hook (" wd-ref-x" or nothing — never a stray space for other templates). --}}
+                @php($bandRefClass = is_string($section['data']['ref'] ?? null) && preg_match('/^[a-z0-9-]{1,32}$/', $section['data']['ref']) === 1 ? ' wd-ref-' . $section['data']['ref'] : '')
                 @if (\Illuminate\Support\Facades\View::exists($componentView))
-                    <div class="wd-band wd-tone-{{ $design->toneFor($toneKey, $sectionRole) }} wd-band-{{ $toneKey }}@if ($sectionRole) wd-band-role-{{ $sectionRole }}@endif" data-section="{{ $toneKey }}"@if ($sectionRole) data-role="{{ $sectionRole }}"@endif>
+                    <div class="wd-band wd-tone-{{ $design->toneFor($toneKey, $sectionRole) }} wd-band-{{ $toneKey }}@if ($sectionRole) wd-band-role-{{ $sectionRole }}@endif{{ $bandRefClass }}" data-section="{{ $toneKey }}"@if ($sectionRole) data-role="{{ $sectionRole }}"@endif>
                         @if ($type === 'hero')
                             @include($componentView, ['data' => $section['data'] ?? [], 'website' => $website, 'assetsByUid' => $assetsByUid ?? [], 'formsByUid' => $formsByUid ?? [], 'isPreview' => $isPreview ?? false, 'pageUid' => $page->uid ?? null, 'servicePageUrls' => $servicePageUrls, 'placePageUrls' => $placePageUrls, 'heroImageFallback' => $heroImageFallback])
                         @else
@@ -277,7 +287,10 @@
                         item.querySelectorAll('[data-wd-dd-toggle]').forEach(function (b) { b.setAttribute('aria-expanded', 'false'); });
                     });
                 });
-                window.addEventListener('resize', function () { if (window.innerWidth > 960) { setMenu(false); } });
+                // The inline header starts at 920px on the three reference designs (see website-design.css) and at 961px elsewhere; an open mobile
+                // menu must close as soon as the toggle disappears, or its full-screen overlay would be left with no way to dismiss it.
+                var desktopFrom = {{ str_starts_with((string) $design->key, 'reference-') ? 920 : 961 }};
+                window.addEventListener('resize', function () { if (window.innerWidth >= desktopFrom) { setMenu(false); } });
             })();
         </script>
     @else

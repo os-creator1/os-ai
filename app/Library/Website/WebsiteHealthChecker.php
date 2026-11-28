@@ -132,8 +132,18 @@ final class WebsiteHealthChecker
         $this->contactCheck($add, $pages, $business, $links);
 
         // 10. The main button works.
-        $navigation = $pages->map(fn ($page) => ['uid' => $page->uid, 'slug' => $page->slug, 'url' => '#', 'has_form' => collect($page->sections ?? [])->contains(fn ($section) => ($section['type'] ?? null) === 'form')])->all();
-        $cta = $this->cta->resolve($business, $navigation);
+        $navigation = $pages->map(fn ($page) => [
+            'uid' => $page->uid,
+            'slug' => $page->slug,
+            'url' => '#',
+            'has_form' => collect($page->sections ?? [])->contains(fn ($section) =>
+                ($section['type'] ?? null) === 'form' ||
+                (($section['type'] ?? null) === 'forms_module_form' &&
+                    app(\App\Library\Website\Forms\WebsiteFormsModuleReferences::class)
+                        ->renderable((array) ($section['data'] ?? []), $website, true) !== null)
+            ),
+        ])->all();
+        $cta = $this->cta->resolve($business, $navigation, true, (string) $website->template_key);
         $ctaLabel = ['booking' => 'online booking', 'form' => 'your quote form', 'contact_page' => 'your contact page', 'phone' => 'your phone number', 'email' => 'your email'][$cta['kind'] ?? ''] ?? null;
         $add('cta', $cta === null ? self::FAIL : self::OK, 'Main button', $cta === null ? 'There is no way for a visitor to book or contact you from the main button.' : 'Your main button leads to '.$ctaLabel.'.', $cta === null ? 'Edit your answers' : null, $cta === null ? ($links['answers'] ?? null) : null);
 
@@ -629,7 +639,7 @@ final class WebsiteHealthChecker
             foreach ($page->sections ?? [] as $section) {
                 $data = $section['data'] ?? [];
 
-                foreach (['background_image', 'image'] as $key) {
+                foreach (['background_image', 'image', 'image_secondary'] as $key) {
                     if (! empty($data[$key]) && is_string($data[$key])) {
                         $uids[$data[$key]] = true;
                     }
@@ -638,6 +648,12 @@ final class WebsiteHealthChecker
                 foreach (($data['items'] ?? []) as $item) {
                     if (is_array($item) && ! empty($item['image']) && is_string($item['image'])) {
                         $uids[$item['image']] = true;
+                    }
+
+                    foreach (is_array($item) ? (array) ($item['extra_images'] ?? []) : [] as $extra) {
+                        if (is_string($extra) && $extra !== '') {
+                            $uids[$extra] = true;
+                        }
                     }
                 }
 

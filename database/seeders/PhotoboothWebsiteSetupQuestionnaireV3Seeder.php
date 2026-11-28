@@ -197,7 +197,7 @@ class PhotoboothWebsiteSetupQuestionnaireV3Seeder extends Seeder
                 presets: self::boothPresets(), rowFields: ['name', 'description', 'cover', 'extra_images', 'features', 'price', 'visible'], itemKind: 'service'),
             self::step('event_types', 'What types of events do you serve?', 'repeatable_group', true, 'business_service', null,
                 helpText: 'Tap the events you serve. We write the wording for you — change it any time.',
-                presets: self::eventPresets(), rowFields: ['name', 'description', 'visible'], itemKind: 'event'),
+                presets: self::eventPresets(), rowFields: ['name', 'description', 'cover', 'visible'], itemKind: 'event'),
 
             self::step('pricing_strategy', 'How do you price your photo booth services?', 'select', true, 'answers', null,
                 helpText: 'This decides how prices appear across your website. We never show a price you haven\'t entered.',
@@ -216,8 +216,8 @@ class PhotoboothWebsiteSetupQuestionnaireV3Seeder extends Seeder
                 conditional: ['depends_on' => 'offers_backdrops', 'condition' => 'equals', 'value' => true]),
 
             self::step('gallery', 'Show off your best event photos', 'photo_upload', false, 'gallery', null,
-                helpText: 'Upload real photos from your events, then choose which one is your homepage cover. Your homepage needs at least one real photo before it can be published.',
-                categories: $backdropCategories),
+                helpText: 'Upload real photos from your events, then choose which one is your homepage cover. Your homepage needs at least one real photo before it can be published. If you have award or press badge images you are allowed to show, upload them here too and choose "Award or press badge": the Luxury Photo Booth design shows them as a badge strip, and they never appear in your photo gallery. Never upload an award you have not received.',
+                categories: array_merge($backdropCategories, [['value' => 'award_badge', 'label' => 'Award or press badge']])),
             self::step('photo_rights', 'Confirm your photos', 'multi_select', true, 'answers', null,
                 helpText: 'We never create photos of your equipment or past events for you — your website only shows photos you provide.',
                 options: ['confirmed' => 'I have the right to use every photo I upload, and each photo accurately shows the booth, backdrop or event it is attached to.']),
@@ -227,6 +227,28 @@ class PhotoboothWebsiteSetupQuestionnaireV3Seeder extends Seeder
                 options: ['playful' => 'Playful & fun', 'elegant' => 'Elegant & refined', 'bold' => 'Bold & energetic', 'warm' => 'Warm & friendly'],
                 templateHint: ['playful' => 'photo_booth_conversion', 'elegant' => 'photo_booth_luxury', 'bold' => 'photo_booth_modern', 'warm' => 'photo_booth_editorial']),
             self::step('about_story', 'Tell visitors about your business', 'textarea', true, 'answers', null, defaults: 'about', helpText: 'We wrote a short description from your confirmed details. Keep it, edit it, or try another.'),
+            // Reference-design copy. Every field is optional: left blank, the deterministic default for the chosen
+            // design is used. Stored under `answers` and read by PhotoBoothBlueprint::copy() — nothing is invented.
+            self::step('hero_headline', 'Your homepage headline', 'text', false, 'answers', null, helpText: 'For example: "Luxury Wedding, Corporate & Party Photo Booth Rentals". Up to 120 characters.'),
+            self::step('announcement_text', 'Announcement bar text', 'text', false, 'answers', null, helpText: 'The short line shown above your header on every page, such as "Now booking for 2026 and 2027". Leave blank for none. Up to 160 characters.'),
+            self::step('hero_eyebrow', 'Small line above the homepage headline', 'text', false, 'answers', null, helpText: 'Optional short line shown just above your homepage headline. Up to 80 characters.'),
+            self::step('hero_subtitle', 'Supporting text under the headline', 'text', false, 'answers', null, helpText: 'One or two sentences. Up to 240 characters.'),
+            self::step('hero_focus', 'Where should the hero photo be centred?', 'select', false, 'answers', null, helpText: 'Pick the part of your homepage cover photo that must stay visible when it is cropped on phones and wide screens.',
+                options: ['center' => 'Centre', 'top' => 'Top', 'bottom' => 'Bottom', 'left' => 'Left', 'right' => 'Right']),
+            self::step('intro_heading', 'Introduction heading', 'text', false, 'answers', null, helpText: 'Optional. Used by the introduction band of the Luxury Photo Booth, Event Spotlight and Party Editorial designs; the other designs have no separate introduction, so it is not shown there. Blank uses the design\'s default wording.'),
+            self::step('services_heading', 'Booths section heading', 'text', false, 'answers', null, helpText: 'Optional. Blank uses the design\'s default wording.'),
+            self::step('features_heading', 'Features / inclusions heading', 'text', false, 'answers', null, helpText: 'Optional. Blank uses the design\'s default wording.'),
+            self::step('events_heading', 'Event types heading', 'text', false, 'answers', null, helpText: 'Optional. Blank uses the design\'s default wording.'),
+            self::step('packages_heading', 'Packages heading', 'text', false, 'answers', null, helpText: 'Optional. Blank uses the design\'s default wording.'),
+            self::step('gallery_heading', 'Gallery heading', 'text', false, 'answers', null, helpText: 'Optional. Blank uses the design\'s default wording.'),
+            self::step('reviews_heading', 'Reviews heading', 'text', false, 'answers', null, helpText: 'Optional. Blank uses the design\'s default wording.'),
+            self::step('areas_heading', 'Service areas heading', 'text', false, 'answers', null, helpText: 'Optional. Used by the service-areas section of the Luxury Photo Booth, Event Spotlight and Party Editorial designs; the other designs do not have this section on the homepage.'),
+            self::step('faq_heading', 'FAQ heading', 'text', false, 'answers', null, helpText: 'Optional. Blank uses the design\'s default wording.'),
+            self::step('closing_heading', 'Closing call-to-action heading', 'text', false, 'answers', null, helpText: 'Optional. Blank uses the design\'s default wording.'),
+
+            self::step('founder_name', 'Who should visitors meet?', 'text', false, 'answers', null, helpText: 'The first name of the owner or founder, used for the "Hey, I\'m …" introduction. Leave blank to skip that section.'),
+            self::step('google_rating', 'Your Google rating (optional)', 'text', false, 'answers', null, helpText: 'Only if you want a Google reviews badge, enter your real rating from 1 to 5, such as 4.9. It is never looked up or assumed.'),
+            self::step('google_review_count', 'Your number of Google reviews (optional)', 'text', false, 'answers', null, helpText: 'The real review count that goes with that rating. Leave both blank to show no badge.'),
             self::step('advantages', 'What makes your service special?', 'multi_select', false, 'knowledge_profile', 'differentiators', helpText: 'Choose only what is genuinely true for your business — each one is shown to visitors as a fact about you.', options: self::advantageOptions(), ownerConfirms: true),
 
             self::step('testimonials', 'Would you like to feature customer reviews?', 'repeatable_group', false, 'knowledge_profile', 'testimonials', helpText: 'Add only real reviews. If you have none, this section is simply left out.', ownerConfirms: true),

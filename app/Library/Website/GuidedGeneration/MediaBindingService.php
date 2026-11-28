@@ -182,7 +182,7 @@ final class MediaBindingService
 
             $sections = (array) ($page['sections'] ?? []);
 
-            if (collect($sections)->contains(fn ($section) => ($section['type'] ?? null) === 'trust_strip')) {
+            if (collect($sections)->contains(fn ($section) => ($section['type'] ?? null) === 'trust_strip' || ($section['data']['ref'] ?? null) === 'badges')) {
                 return $pages;
             }
 
@@ -560,7 +560,10 @@ final class MediaBindingService
         // for one narrow, already-bound purpose each — see
         // bindCustomSection()/mirrorPackageImages()). Ordered by the
         // owner's own gallery `sort_order`, not insertion id.
-        $assets = $website->assets()->where('purpose', WebsiteAssetPurpose::Gallery->value)->orderBy('sort_order')->orderBy('id')->get();
+        // An image the owner categorised as an award/press badge belongs to the badge strip only: never the hero, a photo slot or the Gallery.
+        $assets = $website->assets()->where('purpose', WebsiteAssetPurpose::Gallery->value)
+            ->where(fn ($query) => $query->whereNull('category_tag')->orWhere('category_tag', '!=', 'award_badge'))
+            ->orderBy('sort_order')->orderBy('id')->get();
         $warnings = $formWarnings;
 
         if ($assets->isEmpty()) {
@@ -613,6 +616,23 @@ final class MediaBindingService
                     // only open question is whether it had to repeat.
                     $asset = $roundRobinPool[$cursor % $roundRobinPool->count()];
                     $pages[$index]['sections'][$sectionIndex]['data']['image'] = $asset->uid;
+                    $cursor++;
+
+                    // Intro collage: a SECOND, different photo, only when at least two distinct non-hero photos exist; otherwise the
+                    // slot stays a single photo. The same image is never repeated to fill the composition.
+                    if (! empty($section['data']['collage']) && $remainingPool->count() >= 2) {
+                        $second = $roundRobinPool[$cursor % $roundRobinPool->count()];
+
+                        if (! $second->is($asset)) {
+                            $pages[$index]['sections'][$sectionIndex]['data']['image_secondary'] = $second->uid;
+                            $cursor++;
+                        }
+                    }
+                }
+
+                // The photo tile of a promotional strip: an uploaded photo that is not the hero; with none to spare, no tile.
+                if ($type === 'cta' && ($section['data']['ref'] ?? null) === 'strip' && empty($section['data']['image']) && $remainingPool->isNotEmpty()) {
+                    $pages[$index]['sections'][$sectionIndex]['data']['image'] = $remainingPool[$cursor % $remainingPool->count()]->uid;
                     $cursor++;
                 }
             }
@@ -717,7 +737,17 @@ final class MediaBindingService
 
             if ($embed !== null) {
                 // The installed niche lead form: only the stable Website-source deployment uid is stored, never a URL or markup.
-                $pages[$index]['sections'][] = ['type' => 'forms_module_form', 'data' => ['heading' => $dog ? 'Request a stay' : 'Check availability', 'forms_module_deployment_uid' => $embed['uid']]];
+                $moduleSection = ['type' => 'forms_module_form', 'data' => ['heading' => $dog ? 'Request a stay' : 'Check availability', 'forms_module_deployment_uid' => $embed['uid']]];
+                if ($this->isPhotoBoothReferenceTemplate($website)) {
+                    // The dedicated Check Availability page puts the real form
+                    // immediately after its hero; phone/email remain below it.
+                    $sectionsArray = $pages[$index]['sections'] ?? [];
+                    $heroIndex = collect($sectionsArray)->search(fn ($section) => ($section['type'] ?? null) === 'hero');
+                    array_splice($sectionsArray, $heroIndex === false ? 0 : (int) $heroIndex + 1, 0, [$moduleSection]);
+                    $pages[$index]['sections'] = $sectionsArray;
+                } else {
+                    $pages[$index]['sections'][] = $moduleSection;
+                }
                 // Beside the form, the business's real phone and email (a visitor who prefers to call, and the confirmed
                 // facts the site's LocalBusiness data may then state): the same shape as the benchmark's inquiry page.
                 $pages[$index]['sections'] = $this->withContactFallback($pages[$index]['sections']);
@@ -743,12 +773,30 @@ final class MediaBindingService
                 continue;
             }
 
+            if ($this->isPhotoBoothReferenceTemplate($website)) {
+                // A reference site must use the REAL Forms-module inquiry
+                // pipeline. Never conjure a second legacy Website quote form.
+                $pages[$index]['sections'] = $this->withContactFallback($pages[$index]['sections'] ?? []);
+                $warnings[] = 'Check Availability is not configured: install the Photo Booth Business Pack lead form, activate it, and enable its Website deployment in Forms. The website has no live inquiry form until then.';
+
+                continue;
+            }
+
             // No niche lead form is installed (a business outside the blueprint niches): the long-standing quote form.
             $form = WebsiteStarterDraftService::ensurePhotoBoothQuoteForm($website);
             $pages[$index]['sections'][] = ['type' => 'form', 'data' => ['heading' => $dog ? 'Request a stay' : 'Request a quote', 'form_uid' => $form->uid]];
         }
 
         return $pages;
+    }
+
+    private function isPhotoBoothReferenceTemplate(Website $website): bool
+    {
+        return in_array((string) $website->template_key, [
+            'photo_booth_reference_kaleb',
+            'photo_booth_reference_booths',
+            'photo_booth_reference_greenbelt',
+        ], true);
     }
 
     /** @param array<int, array<string, mixed>> $sections */
@@ -988,6 +1036,16 @@ final class MediaBindingService
 
                         if ($cover !== null) {
                             $pages[$index]['sections'][$sectionIndex]['data']['items'][$itemIndex]['image'] = $this->mirroredServiceAsset($website, $cover)->uid;
+                        }
+
+                        // The booth's OWN additional photo (never a gallery photo): the reference pairs two photos beside the text. The data model allows two.
+                        $service = ! empty($item['service_uid']) ? $services->get($item['service_uid']) : null;
+                        $coverId = $service?->coverImage()?->id;
+                        $extras = $service === null ? [] : $service->images->reject(fn ($image) => $image->id === $coverId)->take(1)
+                            ->map(fn (BusinessServiceImage $image) => $this->mirroredServiceAsset($website, $image)->uid)->values()->all();
+
+                        if ($extras !== [] && ! empty($section['data']['editorial'])) {
+                            $pages[$index]['sections'][$sectionIndex]['data']['items'][$itemIndex]['extra_images'] = $extras;
                         }
                     }
                 }

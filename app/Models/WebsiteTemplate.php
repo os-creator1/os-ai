@@ -75,8 +75,8 @@ class WebsiteTemplate extends Model
     public const ALLOWED_THEME_VALUES = [
         'font' => ['system', 'serif', 'display'],
         'button_style' => ['solid', 'rounded', 'outline', 'pill'],
-        'header_variant' => ['default', 'clean', 'bold', 'premium', 'modern', 'editorial', 'luxury', 'conversion', 'emerald'],
-        'footer_variant' => ['default', 'clean', 'bold', 'premium', 'modern', 'editorial', 'luxury', 'conversion', 'emerald'],
+        'header_variant' => ['default', 'clean', 'bold', 'premium', 'modern', 'editorial', 'luxury', 'conversion', 'emerald', 'reference-kaleb', 'reference-booths', 'reference-greenbelt'],
+        'footer_variant' => ['default', 'clean', 'bold', 'premium', 'modern', 'editorial', 'luxury', 'conversion', 'emerald', 'reference-kaleb', 'reference-booths', 'reference-greenbelt'],
     ];
 
     public const REQUIRED_THEME_KEYS = ['primary_color', 'secondary_color', 'content_width'];

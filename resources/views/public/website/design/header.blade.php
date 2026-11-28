@@ -15,7 +15,10 @@
 @endphp
 <a class="wd-skip" href="#wd-main">Skip to content</a>
 
-@if ($design->announcementBar && ($siteCta || $announceParts))
+@if (! empty($announcementText))
+    {{-- Owner announcement text (reference designs), carried on the page's own hero so a published page keeps its published wording. --}}
+    <div class="wd-announce wd-announce-text" data-testid="site-announcement"><div class="wd-announce-inner"><p>{{ $announcementText }}</p></div></div>
+@elseif ($design->announcementBar && ($siteCta || $announceParts))
     <div class="wd-announce" data-testid="site-announcement">
         <div class="wd-announce-inner">
             @if ($announceParts)

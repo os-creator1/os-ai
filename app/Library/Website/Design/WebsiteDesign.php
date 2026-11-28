@@ -69,19 +69,34 @@ final class WebsiteDesign
      */
     public function orderHomeSections(array $sections): array
     {
-        $rank = array_flip($this->homeOrder);
-        $indexed = [];
+        // Reference templates own a fixed, per-block sequence (including
+        // interleaved services, images and testimonials). Sorting only by
+        // section *type* would scramble that sequence and break fidelity.
+        if ($this->variant('home_sequence') === 'authored') {
+            $ordered = array_values($sections);
+        } else {
+            $rank = array_flip($this->homeOrder);
+            $indexed = [];
 
-        foreach (array_values($sections) as $position => $section) {
-            $indexed[] = [$rank[$section['type'] ?? ''] ?? (count($rank) + 1), $position, $section];
+            foreach (array_values($sections) as $position => $section) {
+                $indexed[] = [$rank[$section['type'] ?? ''] ?? (count($rank) + 1), $position, $section];
+            }
+
+            usort($indexed, fn (array $a, array $b) => [$a[0], $a[1]] <=> [$b[0], $b[1]]);
+
+            $ordered = array_map(fn (array $row) => $row[2], $indexed);
         }
 
-        usort($indexed, fn (array $a, array $b) => [$a[0], $a[1]] <=> [$b[0], $b[1]]);
+        // The trust strip belongs directly under the hero, whatever order the template gives the other sections. (The event-category
+        // ticker is a `trust_strip` too, but it is not the facts strip: it keeps the position its design gives it.)
+        $stripAt = false;
+        foreach ($ordered as $position => $candidate) {
+            if (($candidate['type'] ?? null) === 'trust_strip' && ($candidate['data']['ref'] ?? null) !== 'marquee') {
+                $stripAt = $position;
 
-        $ordered = array_map(fn (array $row) => $row[2], $indexed);
-
-        // The trust strip belongs directly under the hero, whatever order the template gives the other sections.
-        $stripAt = array_search('trust_strip', array_column($ordered, 'type'), true);
+                break;
+            }
+        }
 
         if ($stripAt !== false) {
             $strip = array_splice($ordered, (int) $stripAt, 1)[0];
@@ -101,8 +116,13 @@ final class WebsiteDesign
     {
         $heading = trim($heading);
 
-        if ($this->variant('accent') === 'none' || ! str_contains($heading, ' ')) {
+        if ($this->variant('accent') === 'none') {
             return new HtmlString(e($heading));
+        }
+
+        if (! str_contains($heading, ' ')) {
+            // A single word: the Kaleb reference sets it entirely in its script face; every other design leaves it plain.
+            return new HtmlString(($this->variants['accent_titles'] ?? false) ? '<span class="wd-accent-word">' . e($heading) . '</span>' : e($heading));
         }
 
         $cut = (int) mb_strrpos($heading, ' ');

@@ -136,6 +136,44 @@ class PublicBlogTest extends TestCase
         $this->assertStringContainsString('href="https://' . self::DOMAIN . '/blog"', $this->body(self::HOST . '/'));
     }
 
+    public function test_reference_template_blog_navigation_follows_content_autopilot_but_preserves_live_article_urls(): void
+    {
+        [, $business, , $website] = $this->photoBoothContentTenant();
+        $website->forceFill(['template_key' => 'photo_booth_reference_kaleb'])->save();
+        $article = $this->publishedArticle($business);
+        app('cache')->flush();
+
+        $surface = \App\Library\Website\Blog\WebsiteBlogSurface::custom($website->fresh(), self::DOMAIN);
+        $renderer = app(\App\Library\Website\Blog\WebsiteBlogRenderer::class);
+        $this->assertSame('Blog', $renderer->navigationEntry($website->fresh(), $surface)['title'],
+            'Switching only the draft template must not change the original published site');
+
+        // This is the published revision theme a reference site would carry.
+        // The native blog route still serves its existing articles when
+        // discovery is switched off.
+        $referenceRevision = ['website' => ['theme' => ['header_variant' => 'reference-kaleb']]];
+        $this->assertNull($renderer->navigationEntry($website->fresh(), $surface, $referenceRevision));
+
+        $previewWebsite = $website->fresh();
+        $previewWebsite->theme = array_merge((array) $previewWebsite->theme, ['header_variant' => 'reference-kaleb']);
+        $previewSurface = \App\Library\Website\Blog\WebsiteBlogSurface::preview($previewWebsite);
+        $previewNav = fn () => $renderer->navigationPages($previewWebsite, ['pages' => []], $previewSurface);
+        $this->assertSame([], $previewNav(), 'A reference draft must not show Blog while Content Articles is disabled');
+
+        $setting = \App\Models\ContentAutopilotSetting::query()->create(['business_id' => $business->id, 'enabled' => true]);
+        $this->assertSame('Blog', $renderer->navigationEntry($website->fresh(), $surface, $referenceRevision)['title']);
+        $this->assertSame('Blog', $previewNav()[0]['title'], 'A published article appears in enabled reference preview navigation');
+
+        $setting->update(['enabled' => false]);
+        $this->assertNull($renderer->navigationEntry($website->fresh(), $surface, $referenceRevision));
+        $this->assertSame([], $previewNav(), 'Disabling Content Articles hides Blog in reference preview');
+
+        // Hiding the Blog navigation is not an instruction to delete or
+        // unpublish already indexed customer articles.
+        $this->get(self::HOST . '/blog/' . $article->slug)->assertOk();
+        $this->assertStringContainsString('/blog/' . $article->slug, $this->body(self::HOST . '/sitemap.xml'));
+    }
+
     public function test_without_a_published_article_the_blog_is_404_with_no_nav_entry_and_no_sitemap_blog_urls(): void
     {
         [, $business] = $this->photoBoothContentTenant();

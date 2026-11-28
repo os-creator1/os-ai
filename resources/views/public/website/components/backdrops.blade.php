@@ -6,7 +6,7 @@
 --}}
 <section class="website-section website-backdrops @if ($design ?? null) wd-backdrops @endif" data-testid="backdrops-section">
     @if (! empty($data['heading']))
-        <h2 class="wd-section-title">{{ $data['heading'] }}</h2>
+        <h2 class="wd-section-title">{{ ($design ?? null) && ($design->variants['accent_titles'] ?? false) ? $design->accentHeading((string) $data['heading']) : $data['heading'] }}</h2>
     @endif
     <div class="website-backdrops-grid @if ($design ?? null) wd-grid @endif">
         @foreach (($data['items'] ?? []) as $item)

@@ -1,0 +1,12 @@
+/* Self-hosted, SIL OFL-licensed web fonts (Montserrat, Lato, Corinthia, Sen, Comforter, Titillium Web) for the Photo Booth reference designs. Latin subset. */
+@font-face { font-family: 'Comforter'; font-style: normal; font-weight: 400; font-display: swap; src: url('/fonts/website-reference/Comforter-400.woff2') format('woff2'); }
+@font-face { font-family: 'Corinthia'; font-style: normal; font-weight: 400; font-display: swap; src: url('/fonts/website-reference/Corinthia-400.woff2') format('woff2'); }
+@font-face { font-family: 'Lato'; font-style: normal; font-weight: 400; font-display: swap; src: url('/fonts/website-reference/Lato-400.woff2') format('woff2'); }
+@font-face { font-family: 'Lato'; font-style: normal; font-weight: 700; font-display: swap; src: url('/fonts/website-reference/Lato-700.woff2') format('woff2'); }
+@font-face { font-family: 'Montserrat'; font-style: normal; font-weight: 400; font-display: swap; src: url('/fonts/website-reference/Montserrat-400.woff2') format('woff2'); }
+@font-face { font-family: 'Montserrat'; font-style: normal; font-weight: 500; font-display: swap; src: url('/fonts/website-reference/Montserrat-500.woff2') format('woff2'); }
+@font-face { font-family: 'Montserrat'; font-style: normal; font-weight: 700; font-display: swap; src: url('/fonts/website-reference/Montserrat-700.woff2') format('woff2'); }
+@font-face { font-family: 'Montserrat'; font-style: normal; font-weight: 900; font-display: swap; src: url('/fonts/website-reference/Montserrat-900.woff2') format('woff2'); }
+@font-face { font-family: 'Sen'; font-style: normal; font-weight: 500; font-display: swap; src: url('/fonts/website-reference/Sen-500.woff2') format('woff2'); }
+@font-face { font-family: 'Titillium Web'; font-style: normal; font-weight: 400; font-display: swap; src: url('/fonts/website-reference/TitilliumWeb-400.woff2') format('woff2'); }
+@font-face { font-family: 'Titillium Web'; font-style: normal; font-weight: 700; font-display: swap; src: url('/fonts/website-reference/TitilliumWeb-700.woff2') format('woff2'); }

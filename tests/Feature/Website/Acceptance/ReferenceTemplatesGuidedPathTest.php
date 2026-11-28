@@ -1,0 +1,293 @@
+<?php
+
+namespace Tests\Feature\Website\Acceptance;
+
+use App\Library\Website\Setup\ServiceAreaDetails;
+use App\Library\Website\WebsiteAiGenerationClient;
+use App\Models\Website;
+use Tests\Support\WebsiteAcceptance\PhotoBoothFixture;
+use Illuminate\Foundation\Testing\RefreshDatabase;
+use Tests\Feature\Website\Concerns\CreatesWebsiteFixtures;
+use Tests\Feature\Website\Concerns\DrivesGuidedWizard;
+use Tests\TestCase;
+
+/**
+ * The three reference designs through the REAL guided (v3) questionnaire and the deterministic Photo Booth blueprint — no AI
+ * call. Fixture business, fixture photos, isolated tenant: this proves the answer → section mapping and section order. It is
+ * NOT authentic client-account acceptance and NOT a pixel-parity claim.
+ *
+ * Set DUMP_OUT=/some/dir to also write each generated page's rendered preview HTML and its images for screenshot comparison.
+ */
+final class ReferenceTemplatesGuidedPathTest extends TestCase
+{
+    use RefreshDatabase;
+    use CreatesWebsiteFixtures;
+    use DrivesGuidedWizard;
+
+    private string $publicRoot = '';
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+        $this->seedGuidedWizard();
+
+        $this->publicRoot = sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'ref-guided-' . uniqid();
+        mkdir($this->publicRoot, 0755, true);
+        $this->app->usePublicPath($this->publicRoot);
+
+        $ai = \Mockery::mock(WebsiteAiGenerationClient::class);
+        $ai->shouldNotReceive('complete');
+        $ai->shouldReceive('lastCallWasBudgetExhausted')->andReturn(false);
+        $ai->shouldReceive('lastRefusalReason')->andReturn(null);
+        $this->app->instance(WebsiteAiGenerationClient::class, $ai);
+    }
+
+    protected function tearDown(): void
+    {
+        if ($this->publicRoot !== '' && is_dir($this->publicRoot)) {
+            exec('rm -rf ' . escapeshellarg($this->publicRoot));
+        }
+        parent::tearDown();
+    }
+
+    /** Realistic, large JPEG fixtures (not 1px placeholders) so crops and aspect ratios can be judged. */
+    protected function uploadPhoto(string $name = 'photo', string $unique = ''): string
+    {
+        $response = $this->jpost($this->url('backdrop-image.upload'), ['photo' => PhotoBoothFixture::jpeg(1400, 1000, $name, crc32($name . $unique) % 1000), 'name' => $name]);
+        $response->assertOk();
+
+        return (string) $response->json('path');
+    }
+
+    /** @return array<int, string> */
+    protected function uploadGalleryPhotos(int $count = 3): array
+    {
+        $uids = [];
+        for ($i = 0; $i < $count; $i++) {
+            $response = $this->withHeaders(['Accept' => 'application/json'])->post($this->url('gallery.upload'), ['photos' => [PhotoBoothFixture::jpeg(1600, 1067, 'event-' . $i, 200 + $i)]]);
+            $response->assertOk();
+            $uids[] = (string) $response->json('assets.0.uid');
+        }
+        if ($uids !== []) {
+            $this->jpost(route('customer.workspaces.businesses.website.setup.gallery.update', [$this->workspace->uid, $this->business->uid, $uids[0]]), ['is_cover' => '1'])->assertOk();
+        }
+
+        return $uids;
+    }
+
+    /** @return array<string, array{0: string, 1: string}> */
+    public static function templates(): array
+    {
+        return [
+            'kaleb' => ['photo_booth_reference_kaleb', 'Fixture Magic Mirror Co'],
+            'booths' => ['photo_booth_reference_booths', 'Fixture DSLR Booths'],
+            'greenbelt' => ['photo_booth_reference_greenbelt', 'Fixture Luxury Rentals'],
+        ];
+    }
+
+    #[\PHPUnit\Framework\Attributes\DataProvider('templates')]
+    public function test_reference_template_maps_questionnaire_answers_to_its_fixed_homepage(string $templateKey, string $name): void
+    {
+        $this->tenant(['name' => $name], ['city' => 'Boise', 'region' => 'ID']);
+        // Event types carry their own photo (the cards of the Booths and Greenbelt references are photographic).
+        $this->completeGuidedSetup(['event_types' => fn () => $this->continueStep('event_types', ['items' => [
+            ['key' => 'e-w', 'name' => 'Weddings', 'description' => 'Wedding fun.', 'preset' => 'weddings', 'visible' => '1', 'image_path' => $this->uploadPhoto('wedding-event')],
+            ['key' => 'e-c', 'name' => 'Corporate Events', 'description' => 'Company parties.', 'preset' => 'corporate', 'visible' => '1', 'image_path' => $this->uploadPhoto('corporate-event')],
+        ]])]);
+        $this->uploadGalleryPhotos(6);
+
+        $headline = 'Headline from the owner for ' . $name;
+        foreach ([
+            'hero_headline' => $headline,
+            'hero_subtitle' => 'Supporting line typed by the owner.',
+            'hero_eyebrow' => 'Owner tagline',
+            'hero_focus' => 'top',
+            'announcement_text' => 'Now booking 2026 and 2027',
+            'founder_name' => 'Casey',
+            'google_rating' => '4.9',
+            'google_review_count' => '31',
+            'services_heading' => 'Our booth line-up',
+            'faq_heading' => 'Common questions',
+        ] as $key => $value) {
+            $this->continueStep($key, ['value' => $value])->assertOk();
+        }
+        $this->continueStep('testimonials', ['items' => [
+            ['quote' => 'Fixture review one.', 'author_name' => 'A. Person', 'author_title' => 'Wedding'],
+            ['quote' => 'Fixture review two.', 'author_name' => 'B. Person', 'author_title' => 'Corporate'],
+        ]])->assertOk();
+
+        $session = $this->wizardSession();
+        $session->answers = array_merge((array) $session->answers, [ServiceAreaDetails::ANSWER_KEY => [
+            'costa-mesa' => ['name' => 'Costa Mesa, CA', 'venues' => ['Fixture Hall One', 'Fixture Hall Two']],
+        ]]);
+        $session->save();
+
+        Website::where('business_id', $this->business->id)->update(['template_key' => $templateKey]);
+        $this->post($this->url('generate'), ['answers_revision' => $this->wizardSession()->answers_revision])->assertRedirect();
+
+        $website = Website::where('business_id', $this->business->id)->firstOrFail();
+        $home = $website->pages()->where('is_home', true)->firstOrFail();
+        $sections = $home->sections;
+
+        $hero = $sections[0];
+        $this->assertSame('hero', $hero['type']);
+        $this->assertSame($headline, $hero['data']['heading']);
+        $this->assertSame('Supporting line typed by the owner.', $hero['data']['subheading']);
+        $this->assertSame('Owner tagline', $hero['data']['eyebrow']);
+        $this->assertSame('top', $hero['data']['image_focus']);
+        $this->assertSame('Now booking 2026 and 2027', $hero['data']['announcement']);
+
+        // Every page of the site carries the announcement through its own hero (published pages stay self-consistent).
+        foreach ($website->pages()->get() as $page) {
+            $pageHero = collect($page->sections)->firstWhere('type', 'hero');
+            $this->assertSame('Now booking 2026 and 2027', $pageHero['data']['announcement'] ?? null, "Page {$page->slug} lost the announcement");
+        }
+
+        $events = collect($sections)->firstWhere('data.ref', 'events');
+        $this->assertNotNull($events);
+        $this->assertNotEmpty(collect($events['data']['items'])->pluck('image')->filter()->all(), 'event cards carry the owner\'s event photos');
+
+        $reviews = collect($sections)->firstWhere('type', 'testimonials');
+        // Compared by content, not key order: MySQL's JSON column normalises key order, MariaDB keeps insertion order.
+        $this->assertEqualsCanonicalizing(['rating' => '4.9', 'count' => 31, 'source' => 'Google'], $reviews['data']['badge']);
+        $this->assertSame('4.9', $reviews['data']['badge']['rating']);
+        $this->assertSame(31, $reviews['data']['badge']['count']);
+
+        if ($templateKey !== 'photo_booth_reference_kaleb') {
+            $this->assertStringContainsString('Casey', (string) collect($sections)->firstWhere('data.ref', 'founder')['data']['heading']);
+        }
+        if ($templateKey === 'photo_booth_reference_greenbelt') {
+            $venues = collect($sections)->firstWhere('data.ref', 'venues');
+            $this->assertSame(['Fixture Hall One', 'Fixture Hall Two'], collect($venues['data']['items'])->pluck('name')->all());
+        }
+
+        // The menu's resize reset matches the 920px inline-header breakpoint of the reference designs (an open overlay must never be stranded).
+        $homeHtml = $this->get(route('customer.workspaces.businesses.website.preview', [$this->workspace->uid, $this->business->uid, $home->uid]))->assertOk()->getContent();
+        $this->assertStringContainsString('var desktopFrom = 920;', $homeHtml);
+
+        // Home section order is fixed by the template (recorded so a change is deliberate, not accidental).
+        fwrite(STDERR, "ORDER {$templateKey}: " . collect($sections)->map(fn ($s) => $s['type'] . (isset($s['data']['ref']) ? ':' . $s['data']['ref'] : ''))->implode(' > ') . "\n");
+
+        $this->dumpIfRequested($templateKey, $website);
+    }
+
+    public function test_no_badge_founder_or_venues_are_invented_when_the_owner_gave_none(): void
+    {
+        $this->tenant(['name' => 'Plain Booths'], ['city' => 'Boise', 'region' => 'ID']);
+        $this->completeGuidedSetup();
+        $this->uploadGalleryPhotos(6);
+        $this->continueStep('testimonials', ['items' => [['quote' => 'Fixture review.', 'author_name' => 'A. Person', 'author_title' => 'Client']]])->assertOk();
+        // A rating with a zero count (or none) is never shown, and must not fail the whole generation.
+        $this->continueStep('google_rating', ['value' => '4.9'])->assertOk();
+        $this->continueStep('google_review_count', ['value' => '0'])->assertOk();
+
+        Website::where('business_id', $this->business->id)->update(['template_key' => 'photo_booth_reference_greenbelt']);
+        $this->post($this->url('generate'), ['answers_revision' => $this->wizardSession()->answers_revision])->assertRedirect();
+
+        $sections = Website::where('business_id', $this->business->id)->firstOrFail()->pages()->where('is_home', true)->firstOrFail()->sections;
+        $this->assertNull(collect($sections)->firstWhere('type', 'testimonials')['data']['badge'] ?? null);
+        $this->assertNull(collect($sections)->firstWhere('data.ref', 'founder'));
+        $this->assertNull(collect($sections)->firstWhere('data.ref', 'venues'));
+        $this->assertArrayNotHasKey('announcement', collect($sections)->firstWhere('type', 'hero')['data']);
+    }
+
+    public function test_addon_cards_follow_the_catalog_at_render_time_on_the_home_and_packages_pages(): void
+    {
+        $this->tenant(['name' => 'Addon Fixture'], ['city' => 'Boise', 'region' => 'ID']);
+        $this->completeGuidedSetup();
+        $this->uploadGalleryPhotos(6);
+        Website::where('business_id', $this->business->id)->update(['template_key' => 'photo_booth_reference_booths']);
+        $this->post($this->url('generate'), ['answers_revision' => $this->wizardSession()->answers_revision])->assertRedirect();
+        $website = Website::where('business_id', $this->business->id)->firstOrFail();
+
+        $homePage = $website->pages()->where('is_home', true)->firstOrFail();
+        $packagesPage = $website->pages()->where('slug', 'packages')->firstOrFail();
+        foreach ([$homePage, $packagesPage] as $page) {
+            $addons = collect($page->sections)->first(fn ($s) => ($s['type'] ?? null) === 'services' && collect($s['data']['items'] ?? [])->contains(fn ($i) => ($i['name'] ?? '') === 'Extra hours'));
+            $this->assertNotNull($addons, "{$page->slug}: the add-on block is missing");
+            $this->assertNotEmpty(collect($addons['data']['items'])->firstWhere('name', 'Extra hours')['catalog_item_uid'] ?? null, "{$page->slug}: add-on cards must carry catalog_item_uid");
+        }
+
+        $item = \App\Models\CatalogItem::where('business_id', $this->business->id)->where('name', 'Extra hours')->firstOrFail();
+        $preview = fn ($page) => $this->get(route('customer.workspaces.businesses.website.preview', [$this->workspace->uid, $this->business->uid, $page->uid]))->assertOk()->getContent();
+        $this->assertStringContainsString('Extra hours', $preview($homePage));
+
+        // A changed price follows on BOTH pages; an archived add-on disappears from both.
+        $item->forceFill(['price_minor' => 12345])->save();
+        foreach ([$homePage, $packagesPage] as $page) {
+            $this->assertStringContainsString('123.45', $preview($page), "{$page->slug}: the new catalog price must show");
+        }
+        $item->forceFill(['lifecycle_state' => \App\Enums\Catalog\CatalogItemLifecycleState::Archived])->save();
+        foreach ([$homePage, $packagesPage] as $page) {
+            $this->assertStringNotContainsString('Extra hours', $preview($page), "{$page->slug}: an archived add-on must not stay advertised");
+        }
+    }
+
+    public function test_canonical_templates_honor_the_same_copy_answers_and_change_nothing_without_them(): void
+    {
+        // Without any of the optional answers a canonical template keeps its exact default wording and no announcement.
+        $this->tenant(['name' => 'Canonical Fixture'], ['city' => 'Boise', 'region' => 'ID']);
+        $this->completeGuidedSetup();
+        $this->uploadGalleryPhotos(6);
+        Website::where('business_id', $this->business->id)->update(['template_key' => 'photo_booth_modern']);
+        $this->post($this->url('generate'), ['answers_revision' => $this->wizardSession()->answers_revision])->assertRedirect();
+        $plain = Website::where('business_id', $this->business->id)->firstOrFail()->pages()->where('is_home', true)->firstOrFail()->sections;
+        $this->assertSame('Our photo booths', collect($plain)->firstWhere('type', 'services')['data']['heading']);
+        $this->assertArrayNotHasKey('announcement', $plain[0]['data']);
+        $this->assertArrayNotHasKey('eyebrow', $plain[0]['data']);
+        $this->assertNull(collect($plain)->firstWhere('data.heading', "Hey, I'm Casey!"));
+    }
+
+    public function test_canonical_templates_use_the_answers_the_owner_gave(): void
+    {
+        $this->tenant(['name' => 'Canonical Fixture'], ['city' => 'Boise', 'region' => 'ID']);
+        $this->completeGuidedSetup();
+        $this->uploadGalleryPhotos(6);
+        foreach ([
+            'hero_headline' => 'Canonical owner headline', 'hero_subtitle' => 'Canonical supporting line.', 'hero_eyebrow' => 'Canonical tagline',
+            'hero_focus' => 'bottom', 'announcement_text' => 'Canonical announcement', 'founder_name' => 'Casey',
+            'services_heading' => 'Canonical booths', 'faq_heading' => 'Canonical questions', 'google_rating' => '4.8', 'google_review_count' => '12',
+        ] as $key => $value) {
+            $this->continueStep($key, ['value' => $value])->assertOk();
+        }
+        $this->continueStep('testimonials', ['items' => [['quote' => 'Fixture review.', 'author_name' => 'A. Person', 'author_title' => 'Client']]])->assertOk();
+
+        Website::where('business_id', $this->business->id)->update(['template_key' => 'photo_booth_modern']);
+        $this->post($this->url('generate'), ['answers_revision' => $this->wizardSession()->answers_revision])->assertRedirect();
+        $sections = Website::where('business_id', $this->business->id)->firstOrFail()->pages()->where('is_home', true)->firstOrFail()->sections;
+
+        // Other designs keep their exact previous behaviour (reset above 960px).
+        $canonicalHome = Website::where('business_id', $this->business->id)->firstOrFail()->pages()->where('is_home', true)->firstOrFail();
+        $this->assertStringContainsString('var desktopFrom = 961;', $this->get(route('customer.workspaces.businesses.website.preview', [$this->workspace->uid, $this->business->uid, $canonicalHome->uid]))->assertOk()->getContent());
+
+        $hero = $sections[0]['data'];
+        $this->assertSame('Canonical owner headline', $hero['heading']);
+        $this->assertSame('Canonical supporting line.', $hero['subheading']);
+        $this->assertSame('Canonical tagline', $hero['eyebrow']);
+        $this->assertSame('bottom', $hero['image_focus']);
+        $this->assertSame('Canonical announcement', $hero['announcement']);
+        $this->assertSame('Canonical booths', collect($sections)->firstWhere('type', 'services')['data']['heading']);
+        $this->assertSame('Canonical questions', collect($sections)->firstWhere('type', 'faq')['data']['heading']);
+        $this->assertStringContainsString('Casey', (string) collect($sections)->firstWhere('type', 'image_text')['data']['heading']);
+        $badge = collect($sections)->firstWhere('type', 'testimonials')['data']['badge'];
+        $this->assertSame('4.8', $badge['rating']);
+        $this->assertSame(12, $badge['count']);
+        $this->assertSame('Google', $badge['source']);
+    }
+
+    private function dumpIfRequested(string $templateKey, Website $website): void
+    {
+        $out = getenv('DUMP_OUT');
+        if (! is_string($out) || $out === '') {
+            return;
+        }
+
+        $dir = $out . '/' . $templateKey;
+        @mkdir($dir, 0755, true);
+        foreach ($website->pages()->get() as $page) {
+            $response = $this->get(route('customer.workspaces.businesses.website.preview', [$this->workspace->uid, $this->business->uid, $page->uid]));
+            file_put_contents($dir . '/' . ($page->is_home ? 'home' : preg_replace('/[^a-z0-9]+/i', '-', (string) $page->slug)) . '.html', $response->getContent());
+        }
+        exec('cp -r ' . escapeshellarg($this->publicRoot) . '/images ' . escapeshellarg($dir) . '/images 2>&1');
+    }
+}

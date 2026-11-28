@@ -113,6 +113,66 @@ class KalebV3VisualFidelityAcceptanceTest extends TestCase
         $this->assertSame([], WebsiteDesigns::forTemplateKey('photo_booth_editorial')->roleTones);
     }
 
+    public function test_kaleb_reference_renders_its_own_ordered_home_from_confirmed_business_data(): void
+    {
+        $this->assertReferenceFamily('photo_booth_reference_kaleb', 'reference-kaleb', 'modern');
+    }
+
+    public function test_booths_reference_renders_its_own_ordered_home_from_confirmed_business_data(): void
+    {
+        $this->assertReferenceFamily('photo_booth_reference_booths', 'reference-booths', 'modern');
+    }
+
+    public function test_greenbelt_reference_renders_its_own_ordered_home_from_confirmed_business_data(): void
+    {
+        $this->assertReferenceFamily('photo_booth_reference_greenbelt', 'reference-greenbelt', 'conversion');
+    }
+
+    private function assertReferenceFamily(string $template, string $variant, string $base): void
+    {
+        [, $html] = $this->publishWithTemplate($template, true, $variant);
+
+        $this->assertStringContainsString('wd wd-' . $variant . ' wd-' . $base, $html);
+        $this->assertSame(1, substr_count($html, '<h1'));
+        $this->assertStringContainsString('data-section="testimonials"', $html);
+        $this->assertStringContainsString('data-section="faq"', $html);
+        $this->assertStringContainsString('data-section="cta"', $html);
+
+        // The references carry more than one inquiry band (an in-page "check availability" band plus the closing one), but the
+        // funnel is never stacked: no two inquiry bands are adjacent, and the last one closes the page just before the contact block.
+        $this->assertLessThanOrEqual(3, substr_count($html, 'data-section="cta"'));
+        preg_match_all('/data-section="([a-z_]+)"/', $html, $sequence);
+        $types = $sequence[1];
+        foreach ($types as $i => $type) {
+            $this->assertFalse($type === 'cta' && ($types[$i + 1] ?? null) === 'cta', 'two inquiry bands must never be adjacent');
+        }
+        $this->assertSame('cta', $types[array_search('contact_details', $types, true) - 1] ?? null, 'the closing inquiry band sits right before the contact block');
+
+        // The authored introduction (image/text, or Kaleb's centred story band with its one button) stays between hero and booths/events.
+        $hero = strpos($html, 'data-section="hero"');
+        $story = strpos($html, 'wd-ref-intro');
+        $services = strpos($html, 'data-section="services"');
+        $this->assertNotFalse($hero);
+        $this->assertNotFalse($story, 'the reference introduction band is missing');
+        $this->assertNotFalse($services);
+        $this->assertLessThan($story, $hero);
+        $this->assertLessThan($services, $story);
+        $this->assertStringContainsString('data-wd-menu-toggle', $html);
+
+        if ($variant === 'reference-greenbelt') {
+            $this->assertStringNotContainsString('Google reviews', $html,
+                'Manually confirmed testimonials must not be passed off as Google-sourced reviews');
+        }
+
+        // Missing/undeployed Forms-module lead forms must not be advertised
+        // as a functional Check Availability form on the live site.
+        $this->assertStringNotContainsString('forms_module_deployment_uid', $html);
+
+        foreach (['award-winning', 'as seen on', 'guaranteed ranking'] as $invented) {
+            $this->assertStringNotContainsString($invented, mb_strtolower(strip_tags($html)));
+        }
+    }
+
     public function test_section_roles_come_from_the_section_itself_and_packages_are_never_a_role(): void
     {
         $role = fn (string $heading, array $items = [['name' => 'x']]) => SectionRole::of(['type' => 'services', 'data' => ['heading' => $heading, 'items' => $items]]);

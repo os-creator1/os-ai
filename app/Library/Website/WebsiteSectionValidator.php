@@ -92,6 +92,7 @@ final class WebsiteSectionValidator
                 'heading' => 'required|string|max:120',
                 'subheading' => 'nullable|string|max:240',
                 'background_image' => 'nullable|string',
+                'image_focus' => 'nullable|in:center,top,bottom,left,right',
                 'primary_cta' => 'nullable|array',
                 'primary_cta.label' => 'required_with:primary_cta|string|max:40',
                 'primary_cta.url' => 'required_with:primary_cta|string',
@@ -108,6 +109,10 @@ final class WebsiteSectionValidator
                 'body' => 'required|string|max:3000',
                 'image' => $requireImageOnImageText ? 'required|string' : 'nullable|string',
                 'image_position' => 'required|in:left,right',
+                // Reference "Event Spotlight" intro collage: an optional second photo and a derived hashtag accent.
+                'image_secondary' => 'nullable|string',
+                'collage' => 'nullable|boolean',
+                'accent_tag' => 'nullable|string|max:60',
             ],
             WebsiteSectionType::Services => [
                 'heading' => 'nullable|string|max:120',
@@ -116,6 +121,10 @@ final class WebsiteSectionValidator
                 'items.*.description' => 'nullable|string|max:500',
                 'items.*.price_label' => 'nullable|string|max:40',
                 'items.*.image' => 'nullable|string',
+                // A booth's own additional photos (bound from that booth only, never from the gallery); at most two.
+                'items.*.extra_images' => 'nullable|array|max:2',
+                'items.*.extra_images.*' => 'string',
+                'editorial' => 'nullable|boolean',
             ],
             WebsiteSectionType::Testimonials => [
                 'heading' => 'nullable|string|max:120',
@@ -133,6 +142,8 @@ final class WebsiteSectionValidator
             WebsiteSectionType::Cta => [
                 'heading' => 'required|string|max:120',
                 'body' => 'nullable|string|max:300',
+                // Optional photo tile (Greenbelt's "popular dates" strip).
+                'image' => 'nullable|string',
                 'buttons' => 'required|array|min:1|max:2',
                 'buttons.*.label' => 'required|string|max:40',
                 'buttons.*.url' => 'required|string',
@@ -209,6 +220,28 @@ final class WebsiteSectionValidator
             ],
         };
 
+        // Reference-design presentation hooks (all optional, bounded vocabularies; escaped on output).
+        $rules['ref'] = 'nullable|string|regex:/^[a-z0-9-]{1,32}$/';
+        if ($type === WebsiteSectionType::TrustStrip && ($data['ref'] ?? null) === 'marquee') {
+            // The event-category ticker lists the owner's real event types; the plain facts strip stays capped at four.
+            $rules['facts'] = 'required|array|min:1|max:12';
+        }
+        if ($type === WebsiteSectionType::Hero) {
+            $rules['eyebrow'] = 'nullable|string|max:80';
+            $rules['compact'] = 'nullable|boolean';
+            $rules['announcement'] = 'nullable|string|max:160';
+            $rules['review_badge'] = 'nullable|array';
+            $rules['review_badge.rating'] = 'required_with:review_badge|string|regex:/^[1-5](\.\d)?$/';
+            $rules['review_badge.count'] = 'required_with:review_badge|integer|min:1|max:99999';
+            $rules['review_badge.source'] = 'required_with:review_badge|in:Google';
+        }
+        if ($type === WebsiteSectionType::Testimonials) {
+            $rules['badge'] = 'nullable|array';
+            $rules['badge.rating'] = 'required_with:badge|string|regex:/^[1-5](\.\d)?$/';
+            $rules['badge.count'] = 'required_with:badge|integer|min:1|max:99999';
+            $rules['badge.source'] = 'required_with:badge|in:Google';
+        }
+
         $validator = ValidatorFacade::make($data, $rules);
         $validator->validate();
 
@@ -279,7 +312,8 @@ final class WebsiteSectionValidator
     {
         $assetFields = match ($type) {
             WebsiteSectionType::Hero => ['background_image'],
-            WebsiteSectionType::ImageText => ['image'],
+            WebsiteSectionType::ImageText => ['image', 'image_secondary'],
+            WebsiteSectionType::Cta => ['image'],
             default => [],
         };
 
@@ -292,6 +326,10 @@ final class WebsiteSectionValidator
         if ($type === WebsiteSectionType::Services || $type === WebsiteSectionType::Gallery) {
             foreach (($data['items'] ?? []) as $i => $item) {
                 $this->checkAssetValue($item['image'] ?? null, "items.{$i}.image", $validAssetUids, $allowAssetReferences, $errors);
+
+                foreach ((array) ($item['extra_images'] ?? []) as $j => $extra) {
+                    $this->checkAssetValue(is_string($extra) ? $extra : null, "items.{$i}.extra_images.{$j}", $validAssetUids, $allowAssetReferences, $errors);
+                }
             }
         }
 

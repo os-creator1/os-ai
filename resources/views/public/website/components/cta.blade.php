@@ -7,12 +7,17 @@
 @php
     $resolver = app(\App\Library\Website\Design\WebsiteCtaResolver::class);
     $buttons = collect($data['buttons'] ?? [])
-        ->map(fn ($button) => $resolver->sectionCta($button, $siteCta ?? null, $pageUrls ?? []))
+        ->map(fn ($button) => $resolver->sectionCta($button, $siteCta ?? null, $pageUrls ?? [], isset($design) && str_starts_with((string) $design->key, 'reference-')))
         ->filter()
         ->unique('url')
         ->values();
 @endphp
-<section class="website-section website-cta @if ($design ?? null) wd-cta @endif">
+@php($ctaPhoto = ! empty($data['image']) && is_string($data['image']) ? ($assetsByUid[$data['image']] ?? null) : null)
+<section class="website-section website-cta @if ($design ?? null) wd-cta @endif @if ($ctaPhoto) wd-cta-has-photo @endif">
+    @if ($ctaPhoto)
+        {{-- Decorative photo tile of a promotional strip (the heading and the button carry the meaning). --}}
+        <div class="wd-cta-photo">{{ \App\Library\Website\Media\ResponsiveImage::tag($ctaPhoto, '(min-width: 900px) 34vw, 100vw', ['alt' => '']) }}</div>
+    @endif
     <h2>{{ $data['heading'] ?? '' }}</h2>
     @if (! empty($data['body']))
         <p>{{ $data['body'] }}</p>

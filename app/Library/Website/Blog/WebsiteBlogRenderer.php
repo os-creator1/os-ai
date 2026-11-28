@@ -162,8 +162,26 @@ class WebsiteBlogRenderer
     }
 
     /** The "Blog" navigation entry, or null when the site has no published article yet. */
-    public function navigationEntry(Website $website, WebsiteBlogSurface $surface): ?array
+    public function navigationEntry(Website $website, WebsiteBlogSurface $surface, ?array $snapshot = null): ?array
     {
+        // Draft changes never alter a published site's Blog policy. The
+        // public site uses the design frozen inside the published revision;
+        // only the owner's preview may use the draft's template selection.
+        $frozenVariant = $surface->isPreview()
+            ? (string) ($website->theme['header_variant'] ?? '')
+            : (string) (($snapshot ?? \App\Models\WebsiteRevision::find($website->published_revision_id)?->snapshot ?? [])['website']['theme']['header_variant'] ?? '');
+
+        $usesReferencePolicy = in_array($frozenVariant, [
+            'reference-kaleb',
+            'reference-booths',
+            'reference-greenbelt',
+        ], true);
+
+        if ($usesReferencePolicy && ! (bool) \App\Models\ContentAutopilotSetting::query()
+            ->where('business_id', $website->business_id)->value('enabled')) {
+            return null;
+        }
+
         if (! WebsiteArticle::query()->published()->where('website_id', $website->id)->exists()) {
             return null;
         }
@@ -348,7 +366,12 @@ class WebsiteBlogRenderer
             'title' => $candidate['title'],
             'is_home' => $candidate['is_home'],
             'slug' => $candidate['slug'] ?? null,
-            'has_form' => collect($candidate['sections'] ?? [])->contains(fn ($section) => ($section['type'] ?? null) === 'form'),
+            'has_form' => collect($candidate['sections'] ?? [])->contains(fn ($section) =>
+                ($section['type'] ?? null) === 'form' ||
+                (($section['type'] ?? null) === 'forms_module_form' &&
+                    app(\App\Library\Website\Forms\WebsiteFormsModuleReferences::class)
+                        ->renderable((array) ($section['data'] ?? []), $website, $surface->isPreview()) !== null)
+            ),
             // A service-detail page names the catalog service it presents, so a booth card can link to it by id —
             // never by a guessed address.
             'service_uid' => ($candidate['intent']['service_uid'] ?? null)
@@ -361,7 +384,19 @@ class WebsiteBlogRenderer
             'url' => $surface->pageUrl($candidate),
         ])->all();
 
-        $blog = $this->navigationEntry($website, $surface) ?? ($surface->isPreview() ? ['uid' => 'blog', 'title' => 'Blog', 'is_home' => false, 'slug' => 'blog', 'has_form' => false, 'url' => $surface->blogUrl()] : null);
+        $blog = $this->navigationEntry($website, $surface, $snapshot);
+        $referenceDraft = $surface->isPreview() && in_array(
+            (string) ($website->theme['header_variant'] ?? ''),
+            ['reference-kaleb', 'reference-booths', 'reference-greenbelt'],
+            true,
+        );
+
+        // Legacy previews still offer their historical Blog preview link.
+        // Reference previews must honor the Content Articles visibility
+        // policy, including the case where no article is published yet.
+        if ($blog === null && $surface->isPreview() && ! $referenceDraft) {
+            $blog = ['uid' => 'blog', 'title' => 'Blog', 'is_home' => false, 'slug' => 'blog', 'has_form' => false, 'url' => $surface->blogUrl()];
+        }
 
         if ($blog !== null) {
             $pages[] = $blog;

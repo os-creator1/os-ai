@@ -43,10 +43,29 @@ final class WebsiteCtaResolver
      * @param  array<int, array{uid?: string, slug?: ?string, url: string, has_form?: bool}>  $navigationPages
      * @return array{kind: string, label: string, url: string}|null
      */
-    public function resolve(?Business $business, array $navigationPages, bool $isPreview = false): ?array
+    public function resolve(?Business $business, array $navigationPages, bool $isPreview = false, ?string $templateKey = null): ?array
     {
         if ($business === null) {
             return null;
+        }
+
+        // The three reference families have an inquiry-first funnel. Only
+        // an actually deployed, active Forms-module lead form can earn the
+        // "Check Availability" call to action. Other niches and established
+        // templates retain the original booking-first behavior.
+        if (in_array($templateKey, [
+            'photo_booth_reference_kaleb',
+            'photo_booth_reference_booths',
+            'photo_booth_reference_greenbelt',
+        ], true)) {
+            $formPage = collect($navigationPages)->first(fn ($page) =>
+                \App\Library\Website\WebsiteNicheVocabulary::roleForSlug((string) ($page['slug'] ?? '')) === 'contact'
+                && ! empty($page['url']) && ! empty($page['has_form'])
+            );
+
+            if ($formPage !== null && app(\App\Library\Website\Forms\WebsiteLeadFormResolver::class)->resolve($business) !== null) {
+                return ['kind' => 'form', 'label' => 'Check Availability', 'url' => (string) $formPage['url']];
+            }
         }
 
         $bookingUrl = $this->bookingUrl($business);
@@ -73,13 +92,39 @@ final class WebsiteCtaResolver
      *
      * @param  ?array{label?: ?string, url?: ?string}  $cta
      * @param  array{kind: string, label: string, url: string}|null  $siteCta
+     * @param  bool  $referenceInquiry  true only when the page renders with one of the three reference designs
      * @return array{label: string, url: string}|null
      */
-    public function sectionCta(?array $cta, ?array $siteCta, array $pageUrls = []): ?array
+    public function sectionCta(?array $cta, ?array $siteCta, array $pageUrls = [], bool $referenceInquiry = false): ?array
     {
         $url = $this->resolveLink(trim((string) ($cta['url'] ?? '')), $pageUrls);
 
         if ($url !== '' && $url !== '#' && preg_match('#^(https?://|tel:|mailto:|/)#i', $url) === 1) {
+            // For reference templates with a *renderable* Forms-module
+            // inquiry page, the resolved site CTA owns the label. A hero or
+            // CTA band authored earlier may still say "Contact us"; once a
+            // valid form is on the published page all buttons targeting the
+            // same URL consistently read "Check Availability".
+            // Only the three reference families normalise an authored inquiry label; every other template keeps its own button as written.
+            if ($referenceInquiry && $url === ($pageUrls['photo-booth-contact'] ?? null)) {
+                if (($siteCta['kind'] ?? null) === 'form'
+                    && ($siteCta['label'] ?? null) === 'Check Availability'
+                    && $url === ($siteCta['url'] ?? null)) {
+                    return ['label' => 'Check Availability', 'url' => $url];
+                }
+
+                // A previously authored Check Availability CTA must NEVER
+                // advertise a submittable form after its Forms deployment is
+                // disabled or removed. Revert to the currently functional
+                // contact/booking fallback, or hide the CTA entirely.
+                if (strcasecmp(trim((string) ($cta['label'] ?? '')), 'Check Availability') === 0) {
+                    return $siteCta === null ? null : [
+                        'label' => $siteCta['label'],
+                        'url' => $siteCta['url'],
+                    ];
+                }
+            }
+
             return ['label' => (string) (($cta['label'] ?? '') !== '' ? $cta['label'] : ($siteCta['label'] ?? 'Get in touch')), 'url' => $url];
         }
 

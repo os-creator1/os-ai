@@ -92,11 +92,49 @@ final class WebsiteFormsModuleReferences
      */
     public function renderable(array $data, Website $website, bool $isPreview): ?array
     {
+        $uid = (string) ($data['forms_module_deployment_uid'] ?? '');
+
         if ($isPreview) {
-            return $this->resolve($website->business, (string) ($data['forms_module_deployment_uid'] ?? ''));
+            return $uid === '' ? null : $this->resolve($website->business, $uid);
         }
 
-        return is_array($data['resolved'] ?? null) ? $data['resolved'] : null;
+        $frozen = $data['resolved'] ?? null;
+
+        if (! is_array($frozen)) {
+            return null;
+        }
+
+        // Existing published templates intentionally retain their frozen
+        // embed until their owner republishes. The three new reference
+        // templates have an inquiry-first promise: their public CTA may
+        // advertise Check Availability only when the EXACT deployed form
+        // embedded in the page can still receive submissions.
+        //
+        // Read the PUBLISHED revision, not website.template_key, because an
+        // owner may have switched a draft look without publishing it.
+        $reference = $website->published_revision_id === null
+            ? in_array((string) $website->template_key, [
+                'photo_booth_reference_kaleb',
+                'photo_booth_reference_booths',
+                'photo_booth_reference_greenbelt',
+            ], true)
+            : in_array(
+                (string) (\App\Models\WebsiteRevision::find($website->published_revision_id)?->snapshot['website']['theme']['header_variant'] ?? ''),
+                ['reference-kaleb', 'reference-booths', 'reference-greenbelt'],
+                true,
+            );
+
+        if (! $reference) {
+            return $frozen;
+        }
+
+        if ($uid === '' || (string) ($frozen['uid'] ?? '') !== $uid) {
+            return null;
+        }
+
+        // Preserve published styling/version while checking operational
+        // eligibility live; a different active form cannot rescue this UID.
+        return $this->resolve($website->business, $uid) !== null ? $frozen : null;
     }
 
     /** @return ?array{uid: string, url: string, title: string, height: int, form_uid: string, location_uid: string} */

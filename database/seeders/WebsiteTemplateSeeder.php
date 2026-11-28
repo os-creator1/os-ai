@@ -233,7 +233,42 @@ class WebsiteTemplateSeeder extends Seeder
                 'manifest_version' => 1,
                 'is_active' => true,
             ],
+            ...self::referencePhotoBoothTemplates($manifest),
         ];
+    }
+
+    /**
+     * Opt-in reference layouts, additive to existing templates. No existing
+     * template or published revision changes as a result of seeding.
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    private static function referencePhotoBoothTemplates(array $manifest): array
+    {
+        $specs = [
+            ['photo_booth_reference_kaleb', 'Luxury Photo Booth', 'Cinematic black and gold; real booth features, gallery and reviews.', '#fac815', '#232323', 'reference-kaleb', 'serif'],
+            ['photo_booth_reference_booths', 'Event Spotlight', 'Deep blue event-first layout with booth features and event imagery.', '#188bf6', '#061633', 'reference-booths', 'system'],
+            ['photo_booth_reference_greenbelt', 'Party Editorial', 'Plum and peach; event cards, package tiers and corporate experiences.', '#f4a28f', '#2a1d45', 'reference-greenbelt', 'system'],
+        ];
+
+        return array_map(static fn (array $spec): array => [
+            'key' => $spec[0],
+            'niche_key' => 'photo_booth_service',
+            'display_name' => $spec[1],
+            'description' => $spec[2],
+            'theme' => [
+                'font' => $spec[6],
+                'primary_color' => $spec[3],
+                'secondary_color' => $spec[4],
+                'button_style' => 'solid',
+                'content_width' => '1160px',
+                'header_variant' => $spec[5],
+                'footer_variant' => $spec[5],
+            ],
+            'page_manifest' => $manifest,
+            'manifest_version' => 1,
+            'is_active' => true,
+        ], $specs);
     }
 
     /**

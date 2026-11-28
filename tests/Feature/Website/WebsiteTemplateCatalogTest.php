@@ -10,7 +10,7 @@ use Tests\TestCase;
 
 /**
  * Website Generator + Local SEO Completion. Proves the operator-owned
- * template catalog seeds exactly five templates (four canonical + the opt-in Emerald Gold), validates its own
+ * template catalog seeds eight templates (four canonical + Emerald Gold + three opt-in reference looks), validates its own
  * bounded theme/manifest shape at save time (never at request time),
  * and that an inactive template is not selectable.
  */
@@ -18,7 +18,7 @@ class WebsiteTemplateCatalogTest extends TestCase
 {
     use RefreshDatabase;
 
-    public function test_exactly_five_templates_are_seeded(): void
+    public function test_exactly_eight_templates_are_seeded(): void
     {
         $this->seed(WebsiteTemplateSeeder::class);
 
@@ -30,6 +30,9 @@ class WebsiteTemplateCatalogTest extends TestCase
             'photo_booth_emerald',
             'photo_booth_luxury',
             'photo_booth_modern',
+            'photo_booth_reference_booths',
+            'photo_booth_reference_greenbelt',
+            'photo_booth_reference_kaleb',
         ], $keys);
     }
 
@@ -39,7 +42,7 @@ class WebsiteTemplateCatalogTest extends TestCase
 
         $manifests = WebsiteTemplate::pluck('page_manifest')->map(fn ($manifest) => $manifest)->all();
 
-        $this->assertCount(5, $manifests);
+        $this->assertCount(8, $manifests);
         foreach ($manifests as $manifest) {
             $this->assertSame($manifests[0], $manifest, 'SEO architecture (page manifest) must not depend on the visual template.');
         }

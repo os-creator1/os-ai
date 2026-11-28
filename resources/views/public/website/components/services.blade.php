@@ -21,7 +21,7 @@
 @endphp
 <section class="website-section website-services @if ($wd) wd-services wd-services-{{ $variant }} @if ($isPackages) wd-packages @endif @if ($role) wd-role wd-role-{{ $role }} @endif @endif" @if ($isPackages) data-testid="packages-section" @endif>
     @if (! empty($data['heading']))
-        <h2 class="wd-section-title">{{ $data['heading'] }}</h2>
+        <h2 class="wd-section-title">{{ ($design ?? null) && ($design->variants['accent_titles'] ?? false) ? $design->accentHeading((string) $data['heading']) : $data['heading'] }}</h2>
     @endif
     <div class="website-services-grid @if ($wd) wd-grid @endif">
         @foreach (array_values($items) as $itemIndex => $item)
@@ -30,7 +30,16 @@
             @php($detailUrl = $detailUrl ?? (! $isPackages && ! empty($item['place']) ? (($placePageUrls ?? [])[\Illuminate\Support\Str::slug((string) $item['place'])] ?? null) : null))
             @php($itemImage = ! empty($item['image']) && isset($assetsByUid[$item['image']]) ? $assetsByUid[$item['image']] : null)
             <div class="website-service-card @if ($wd) wd-card @endif @if (! empty($item['featured'])) wd-card-featured @endif @if ($detailUrl) wd-card-linked @endif @if ($featureIndex === $itemIndex) wd-card-feature @endif" @if ($isPackages) data-package-uid="{{ $item['catalog_item_uid'] ?? '' }}" @endif>
-                @if ($itemImage)
+                {{-- Editorial presentation: the booth's own extra photos stacked under its main one. Only authentic photos that resolve; no extras, no stack. --}}
+                @php($extraImages = ! empty($data['editorial']) ? collect((array) ($item['extra_images'] ?? []))->map(fn ($uid) => is_string($uid) ? ($assetsByUid[$uid] ?? null) : null)->filter()->take(2)->values() : collect())
+                @if ($itemImage && $extraImages->isNotEmpty())
+                    <div class="wd-card-media wd-card-media-stack">
+                        {{ \App\Library\Website\Media\ResponsiveImage::tag($itemImage, '(min-width: 960px) 360px, 100vw') }}
+                        @foreach ($extraImages as $extraImage)
+                            {{ \App\Library\Website\Media\ResponsiveImage::tag($extraImage, '(min-width: 960px) 360px, 100vw') }}
+                        @endforeach
+                    </div>
+                @elseif ($itemImage)
                     {{ \App\Library\Website\Media\ResponsiveImage::tag($itemImage, '(min-width: 960px) 360px, 100vw') }}
                 @endif
                 @if ($role === 'events' && ! $itemImage)
