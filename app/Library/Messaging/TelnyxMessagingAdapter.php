@@ -240,7 +240,12 @@ class TelnyxMessagingAdapter implements MessagingProviderAdapter
         );
     }
 
-    /** Telnyx's own structured code for "Authentication failed" (a bad, revoked or malformed key). */
+    /**
+     * Telnyx's structured code for "Authentication failed": the credentials were invalid or missing
+     * (https://developers.telnyx.com/api/errors, which documents it with HTTP 401). The sibling code 10010
+     * ("Authorization failed") means a VALID key lacks permission and is deliberately NOT an authentication
+     * failure. Because 10009 is defined by its meaning, it is honoured on any status; no other 403 is treated as one.
+     */
     public const AUTHENTICATION_FAILED_CODE = '10009';
 
     /**

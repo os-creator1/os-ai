@@ -16,22 +16,28 @@
         $state = $readiness[$channel->id] ?? ['ok' => false, 'message' => null];
         $hasKey = trim((string) $channel->webhook_public_key) !== '';
         $chips = [];
-        $chips[] = $state['ok'] ? ['ok' => true, 'label' => 'Can send'] : ['ok' => false, 'label' => 'Needs attention', 'hint' => $state['message']];
+        // Historical checks (below) are shown neutrally unless sending is currently fully healthy.
+        $healthy = $state['ok'] && ($state['code'] ?? null) === null;
+        $chips[] = $healthy
+            ? ['ok' => true, 'label' => 'Can send']
+            : ($state['ok']
+                ? ['ok' => false, 'label' => 'Retry pending', 'hint' => $state['message']]
+                : ['ok' => false, 'label' => 'Needs attention', 'hint' => $state['message']]);
         if (! $hasKey) {
             $chips[] = ['ok' => false, 'label' => 'Replies not set up', 'hint' => 'Add your Telnyx webhook public key so replies can be received.'];
         } elseif ($channel->webhook_verified_at) {
             // Historical: the last time a correctly signed event arrived. It says nothing about sending now.
-            $chips[] = ['ok' => true, 'label' => 'Reply webhook verified ' . $channel->webhook_verified_at->format('M j')];
+            $chips[] = ['ok' => true, 'neutral' => ! $healthy, 'label' => ($healthy ? 'Reply webhook verified ' : 'Reply webhook last verified ') . $channel->webhook_verified_at->format('M j')];
         } else {
             $chips[] = ['ok' => false, 'label' => 'Waiting for first event from Telnyx', 'hint' => 'Set the webhook URL on the Manage page in your Telnyx messaging profile.'];
         }
         $chips[] = $channel->sms_capability_confirmed_at
-            ? ['ok' => true, 'label' => 'Text messaging confirmed by Telnyx ' . $channel->sms_capability_confirmed_at->format('M j')]
+            ? ['ok' => true, 'neutral' => ! $healthy, 'label' => ($healthy ? 'Text messaging confirmed by Telnyx ' : 'Text messaging last confirmed ') . $channel->sms_capability_confirmed_at->format('M j')]
             : ['ok' => false, 'label' => 'Text messaging not confirmed', 'hint' => "Telnyx did not report this number's text-messaging status. Check in Telnyx that it can send texts."];
         $rows[] = [
             'kind' => 'byo', 'number' => $channel->sender_number, 'provider' => 'Your Telnyx account · billed by Telnyx',
             'current' => (bool) $channel->is_default_sender, 'chips' => $chips, 'sender' => $channel->uid,
-            'recheck' => in_array($channel->last_error_code, ['invalid_api_key'], true) ? route('customer.workspaces.prospecting.channels.recheck', [$workspaceUid, $channel->uid]) : null,
+            'recheck' => \App\Library\AgencyOutreach\AgencyByoSender::isRecheckable($channel->last_error_code) ? route('customer.workspaces.prospecting.channels.recheck', [$workspaceUid, $channel->uid]) : null,
             'manage' => route('customer.workspaces.prospecting.channels.show', [$workspaceUid, $channel->uid]), 'manageLabel' => 'Manage account',
             'disconnect' => route('customer.workspaces.prospecting.channels.disconnect', [$workspaceUid, $channel->uid]),
         ];
@@ -64,7 +70,7 @@
                 </div>
                 <div class="chips">
                     @foreach($selected['chips'] as $chip)
-                        <span class="chip {{ $chip['ok'] ? '' : 'no' }}" data-ok="{{ $chip['ok'] ? '1' : '0' }}"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true">{!! $chipSvg($chip['ok']) !!}</svg>{{ $chip['label'] }}</span>
+                        <span class="chip {{ $chip['ok'] || ! empty($chip['neutral']) ? '' : 'no' }}" data-ok="{{ $chip['ok'] && empty($chip['neutral']) ? '1' : '0' }}" @if(! empty($chip['neutral'])) data-neutral="1" style="background:transparent;color:var(--og-neutral);box-shadow:inset 0 0 0 1px currentColor" @endif><svg class="ic" viewBox="0 0 24 24" aria-hidden="true">{!! $chipSvg($chip['ok'] && empty($chip['neutral'])) !!}</svg>{{ $chip['label'] }}</span>
                     @endforeach
                 </div>
                 @foreach($selected['chips'] as $chip)
@@ -96,7 +102,7 @@
                     <div style="display:flex;flex-direction:column;gap:4px">
                         <div class="chips">
                             @foreach($row['chips'] as $chip)
-                                <span class="chip {{ $chip['ok'] ? '' : 'no' }}"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true">{!! $chipSvg($chip['ok']) !!}</svg>{{ $chip['label'] }}</span>
+                                <span class="chip {{ $chip['ok'] || ! empty($chip['neutral']) ? '' : 'no' }}" @if(! empty($chip['neutral'])) data-neutral="1" style="background:transparent;color:var(--og-neutral);box-shadow:inset 0 0 0 1px currentColor" @endif><svg class="ic" viewBox="0 0 24 24" aria-hidden="true">{!! $chipSvg($chip['ok'] && empty($chip['neutral'])) !!}</svg>{{ $chip['label'] }}</span>
                             @endforeach
                         </div>
                         @foreach($row['chips'] as $chip)@if(! $chip['ok'] && ! empty($chip['hint']))<span class="mut">{{ $chip['hint'] }}</span>@endif @endforeach

@@ -80,10 +80,6 @@ class ByoMessageDispatcher
         // attempt unchanged, and only this NEW dispatch proceeds.
         $readiness = AgencyByoSender::sendReadinessRecovering($channel);
 
-        if ($readiness['ok'] && ! AgencyByoSender::claimRestrictionRetry($channel)) {
-            throw new ByoSenderNotReadyException('sender_restricted', 'Telnyx refused to send from this number recently. Resolve the restriction in Telnyx; sending is retried once after a cool-down.');
-        }
-
         if (! $readiness['ok']) {
             throw new ByoSenderNotReadyException((string) $readiness['code'], (string) $readiness['message']);
         }
@@ -98,6 +94,13 @@ class ByoMessageDispatcher
 
         if ($normalizedTo === null) {
             throw new MessagingIdentityConflictException('A message destination must be an explicit, valid international number.');
+        }
+
+        // The ONE bounded retry after a restriction cool-down is claimed here, atomically, only after every local
+        // check (ownership, readiness, credentials, destination) has passed and immediately before the operation row
+        // and provider request: a local validation failure above never consumes it.
+        if (! AgencyByoSender::claimRestrictionRetry($channel)) {
+            throw new ByoSenderNotReadyException('sender_restricted', 'Telnyx refused to send from this number recently. Resolve the restriction in Telnyx; sending is retried once after a cool-down.');
         }
 
         $messageType = $mediaUrls === [] ? 'sms' : 'mms';

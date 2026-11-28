@@ -5,6 +5,14 @@ namespace Tests\Feature\AgencyOutreach;
 use App\Library\AgencyOutreach\AgencyByoConnectionRechecker;
 use App\Library\AgencyOutreach\AgencyByoSender;
 use App\Library\AgencyOutreach\AgencyOutreachReadiness;
+use App\Library\Messaging\ByoMessageDispatcher;
+use App\Library\Messaging\Exceptions\ByoSenderNotReadyException;
+use App\Library\Messaging\ManagedDispatchDelegate;
+use App\Library\Timeline\Sources\ConversationMessagesSource;
+use App\Library\Timeline\TimelineSubject;
+use App\Library\Voice\Byo\AgencyByoVoice;
+use App\Models\ChatBox;
+use App\Models\ChatBoxMessage;
 use App\Library\AgencyOutreach\OutreachMessageSender;
 use App\Models\AgencyProspectingChannel;
 use App\Models\User;
@@ -57,6 +65,26 @@ class AgencyByoTelnyxReadinessRecoveryTest extends TestCase
             },
             'api.telnyx.com/v2/messaging_profiles/*' => Http::response($profileStatus === 200 ? ['data' => ['id' => 'p']] : ['errors' => [['code' => '10009']]], $profileStatus),
             'api.telnyx.com/v2/phone_numbers*' => Http::response(['data' => [['id' => 'n1', 'status' => 'active']]], 200),
+        ]);
+    }
+
+    /** Real verifier, mocked Telnyx GETs: `ok`, `ok_no_sms_field`, or one verifier failure reason. */
+    private function fakeVerify(string $outcome, string $profile): void
+    {
+        Http::swap(new Factory());
+        $numbers = $outcome === 'number_not_owned' ? ['data' => []] : ['data' => [['id' => 'n1', 'status' => $outcome === 'number_not_active' ? 'pending' : 'active']]];
+        $settings = match ($outcome) {
+            'number_no_profile' => ['data' => ['messaging_profile_id' => null]],
+            'number_other_profile' => ['data' => ['messaging_profile_id' => 'some-other-profile']],
+            'number_not_sms_enabled' => ['data' => ['messaging_profile_id' => $profile, 'features' => ['sms' => false]]],
+            'ok_no_sms_field' => ['data' => ['messaging_profile_id' => $profile]],
+            default => ['data' => ['messaging_profile_id' => $profile, 'features' => ['sms' => ['domestic_two_way' => true]]]],
+        };
+
+        Http::fake([
+            'api.telnyx.com/v2/messaging_profiles/*' => $outcome === 'profile_not_found' ? Http::response([], 404) : Http::response(['data' => ['id' => $profile]], 200),
+            'api.telnyx.com/v2/phone_numbers/*/messaging' => Http::response($settings, 200),
+            'api.telnyx.com/v2/phone_numbers*' => Http::response($numbers, 200),
         ]);
     }
 
@@ -244,6 +272,158 @@ class AgencyByoTelnyxReadinessRecoveryTest extends TestCase
         $this->assertCount(0, $this->telnyxMessageRequests(), 'Same keys are answered from their recorded operations; nothing is resent.');
         $this->assertSame(1, DB::table('business_messaging_operations')->where('operation_key', 'dup-accepted')->count());
         $this->assertSame(1, DB::table('business_messaging_operations')->where('operation_key', 'dup-uncertain')->count());
+    }
+
+    // ------------------------------------------------------------------ F1: voice vs SMS restriction
+
+    public function test_an_sms_restriction_does_not_block_voice_but_an_invalid_key_blocks_both(): void
+    {
+        [, , $workspace] = $this->agency();
+        $channel = $this->byoChannel($workspace, ['default' => true]);
+
+        $channel->forceFill(['last_error_code' => 'sender_restricted', 'last_error_at' => now()])->save();
+        $this->assertFalse(AgencyByoSender::sendReadiness($channel->fresh())['ok'], 'SMS stays blocked.');
+        $this->assertTrue(AgencyByoSender::sendReadiness($channel->fresh(), false)['ok'], 'Voice credentials are fine.');
+        $this->assertNotSame('account_sender_restricted', AgencyByoVoice::readiness($channel->fresh())['code']);
+
+        $channel->forceFill(['last_error_code' => 'invalid_api_key'])->save();
+        $this->assertFalse(AgencyByoSender::sendReadiness($channel->fresh(), false)['ok']);
+        $this->assertSame('account_invalid_api_key', AgencyByoVoice::readiness($channel->fresh())['code']);
+
+        $channel->forceFill(['last_error_code' => AgencyByoSender::verificationFailedCode('number_not_sms_enabled')])->save();
+        $this->assertTrue(AgencyByoSender::sendReadiness($channel->fresh(), false)['ok'], 'An SMS-capability failure is not a voice failure.');
+    }
+
+    // ------------------------------------------------------------------ F2: failed verification must not unblock
+
+    /** @return array<string, array{string}> */
+    public static function verifierFailures(): array
+    {
+        return [
+            'profile_not_found' => ['profile_not_found'], 'number_not_owned' => ['number_not_owned'],
+            'number_not_active' => ['number_not_active'], 'number_no_profile' => ['number_no_profile'],
+            'number_other_profile' => ['number_other_profile'], 'number_not_sms_enabled' => ['number_not_sms_enabled'],
+        ];
+    }
+
+    #[\PHPUnit\Framework\Attributes\DataProvider('verifierFailures')]
+    public function test_a_failed_verification_keeps_the_sender_blocked_until_a_later_success(string $reason): void
+    {
+        [, , $workspace] = $this->agency();
+        $verifiedAt = now()->subDays(5)->startOfSecond();
+        $channel = $this->byoChannel($workspace, ['default' => true, 'verified' => $verifiedAt]);
+        $channel->forceFill(['last_error_code' => 'invalid_api_key', 'sms_capability_confirmed_at' => now()->subDays(5)])->save();
+
+        $profile = $channel->sendingServer->c1;
+        $this->fakeVerify($reason, $profile);
+
+        $result = app(AgencyByoConnectionRechecker::class)->recheck($channel, true);
+
+        $this->assertSame(['still_blocked', false], [$result['status'], $result['ok']]);
+        $this->assertNotEmpty($result['message']);
+        $fresh = $channel->fresh();
+        $this->assertSame(AgencyByoSender::verificationFailedCode($reason), $fresh->last_error_code);
+        $this->assertTrue($fresh->credentials_verified_at->equalTo($verifiedAt), 'Full verification success is not stamped.');
+        $state = AgencyByoSender::sendReadiness($fresh);
+        $this->assertSame([false, 'verification_failed'], [$state['ok'], $state['code']]);
+
+        // A later successful verification recovers it (after the rate-limit interval).
+        $this->travel(AgencyByoConnectionRechecker::MANUAL_INTERVAL_SECONDS + 5)->seconds();
+        $this->fakeVerify('ok', $profile);
+        $this->assertSame('recovered', app(AgencyByoConnectionRechecker::class)->recheck($fresh, true)['status']);
+        $this->assertTrue(AgencyByoSender::sendReadiness($channel->fresh())['ok']);
+        $this->assertTrue($channel->fresh()->credentials_verified_at->gt($verifiedAt));
+    }
+
+    // ------------------------------------------------------------------ L3: SMS confirmation history
+
+    public function test_an_omitted_sms_capability_keeps_history_but_an_explicit_restriction_does_not(): void
+    {
+        [, , $workspace] = $this->agency();
+        $earlier = now()->subDays(4)->startOfSecond();
+        $channel = $this->byoChannel($workspace, ['default' => true]);
+        $channel->forceFill(['last_error_code' => 'invalid_api_key', 'sms_capability_confirmed_at' => $earlier])->save();
+
+        $profile = $channel->sendingServer->c1;
+        $this->fakeVerify('ok_no_sms_field', $profile);
+
+        app(AgencyByoConnectionRechecker::class)->recheck($channel, true);
+        $this->assertTrue($channel->fresh()->sms_capability_confirmed_at->equalTo($earlier), 'Omitted by Telnyx: history kept.');
+
+        $channel->fresh()->forceFill(['last_error_code' => 'invalid_api_key'])->save();
+        $this->travel(AgencyByoConnectionRechecker::MANUAL_INTERVAL_SECONDS + 5)->seconds();
+        $this->fakeVerify('number_not_sms_enabled', $profile);
+        app(AgencyByoConnectionRechecker::class)->recheck($channel->fresh(), true);
+        $this->assertNull($channel->fresh()->sms_capability_confirmed_at, 'Explicitly reported as not SMS-enabled: not kept.');
+    }
+
+    // ------------------------------------------------------------------ E1: documented classification
+
+    public function test_an_authorization_failed_403_is_a_restriction_never_an_invalid_key(): void
+    {
+        [, $business, $workspace] = $this->agency();
+        $channel = $this->byoChannel($workspace, ['default' => true]);
+        $this->telnyx(403, [['code' => '10010', 'title' => 'Authorization failed']]);
+
+        $this->send($business, 'authz-1');
+
+        $this->assertSame('sender_restricted', $channel->fresh()->last_error_code);
+        $this->assertFalse(AgencyByoSender::isRecheckable($channel->fresh()->last_error_code), 'A key recheck can never clear it.');
+    }
+
+    // ------------------------------------------------------------------ L4 / L5: bounded retry
+
+    public function test_a_local_validation_failure_does_not_consume_the_restriction_retry(): void
+    {
+        [, $business, $workspace] = $this->agency();
+        $channel = $this->byoChannel($workspace, ['default' => true]);
+        $channel->forceFill(['last_error_code' => 'sender_restricted', 'last_error_at' => now()->subDay()])->save();
+        $this->telnyx();
+        $dispatcher = app(ByoMessageDispatcher::class);
+
+        $state = AgencyByoSender::sendReadiness($channel->fresh());
+        $this->assertSame([true, 'retry_pending'], [$state['ok'], $state['code']], 'Cool-down elapsed: retry pending, not verified.');
+
+        try {
+            $dispatcher->dispatch($business, $channel->fresh(), 'not-a-number', 'Hello', 'local-bad');
+            $this->fail('A malformed destination must fail locally.');
+        } catch (\Throwable $e) {
+            $this->assertNotInstanceOf(ByoSenderNotReadyException::class, $e);
+        }
+        $this->assertFalse(Cache::has('byo-telnyx-restriction-retry:' . $channel->id), 'The retry token was not consumed.');
+        $this->assertCount(0, $this->telnyxMessageRequests());
+
+        // The real attempt still gets exactly one provider request, and a concurrent claimant is refused.
+        $this->assertTrue(AgencyByoSender::claimRestrictionRetry($channel->fresh()));
+        $this->assertFalse(AgencyByoSender::claimRestrictionRetry($channel->fresh()));
+        Cache::forget('byo-telnyx-restriction-retry:' . $channel->id);
+        $dispatcher->dispatch($business, $channel->fresh(), '12025551000', 'Hello', 'local-ok');
+        $this->assertCount(1, $this->telnyxMessageRequests());
+        $this->assertNull($channel->fresh()->last_error_code, 'An accepted retry lifts the restriction.');
+    }
+
+    // ------------------------------------------------------------------ L8: unconfirmed delivery visibility
+
+    public function test_conversations_shows_delivery_unconfirmed_without_delivering_or_retrying_it(): void
+    {
+        [, $business, $workspace] = $this->agency();
+        $channel = $this->byoChannel($workspace, ['default' => true]);
+        $this->telnyx();
+        ManagedDispatchDelegate::attempt((int) $business->id, '12025551000', 'Hi', 'tl-1', [], '1', 'plain', 'manual', 'send-uid-tl');
+        $id = (string) DB::table('business_messaging_operations')->where('operation_key', 'tl-1')->value('provider_message_id');
+        $bubble = ChatBoxMessage::query()->where('send_uid', 'send-uid-tl')->firstOrFail();
+        $subject = new TimelineSubject($business, '12025551000', ChatBox::query()->findOrFail($bubble->box_id));
+        $item = fn () => collect((new ConversationMessagesSource())->recent($subject, 20))->first(fn ($i) => $i->sequence === (int) $bubble->id);
+
+        $this->signedWebhook($channel, $this->deliveryPayload($channel, $id, 'delivery_unconfirmed'))->assertOk();
+        $this->assertStringContainsString('Delivery unconfirmed', (string) $item()->detail);
+        $this->assertFalse($item()->retryable);
+        $this->assertSame('sent', $bubble->fresh()->send_status, 'Not delivered, not failed.');
+        $this->assertCount(1, $this->telnyxMessageRequests());
+
+        // A later confirmed delivery replaces the uncertain label.
+        $this->signedWebhook($channel, $this->deliveryPayload($channel, $id, 'delivered'))->assertOk();
+        $this->assertStringNotContainsString('Delivery unconfirmed', (string) $item()->detail);
     }
 
     // ------------------------------------------------------------------ delivery_unconfirmed

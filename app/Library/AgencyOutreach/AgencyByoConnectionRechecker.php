@@ -7,7 +7,7 @@ use App\Models\AgencyProspectingChannel;
 use Illuminate\Support\Facades\Cache;
 
 /**
- * Bounded recovery of a stale `invalid_api_key` flag, using the existing read-only
+ * Bounded recovery of a stale `invalid_api_key` / failed-verification flag, using the existing read-only
  * {@see TelnyxCredentialVerifier} (GET requests only — it never sends a message and never replaces a key).
  *
  * Bounds: one verification in flight per channel (lock), and a minimum interval between
@@ -36,7 +36,7 @@ final class AgencyByoConnectionRechecker
     {
         $channel = $channel->fresh() ?? $channel;
 
-        if ($channel->last_error_code !== 'invalid_api_key') {
+        if (! AgencyByoSender::isRecheckable($channel->last_error_code)) {
             return ['status' => 'not_needed', 'ok' => $channel->last_error_code === null, 'message' => null];
         }
 
@@ -52,13 +52,13 @@ final class AgencyByoConnectionRechecker
             // Re-read under the lock: a concurrent worker may just have recovered it.
             $channel = $channel->fresh() ?? $channel;
 
-            if ($channel->last_error_code !== 'invalid_api_key') {
+            if (! AgencyByoSender::isRecheckable($channel->last_error_code)) {
                 return ['status' => 'not_needed', 'ok' => $channel->last_error_code === null, 'message' => null];
             }
 
             $last = Cache::get($stampKey);
 
-            if (is_int($last) && (time() - $last) < $interval) {
+            if (is_int($last) && (now()->getTimestamp() - $last) < $interval) {
                 return ['status' => 'throttled', 'ok' => false, 'message' => 'The connection was checked a moment ago. Try again shortly.'];
             }
 
@@ -68,30 +68,43 @@ final class AgencyByoConnectionRechecker
                 return ['status' => 'missing_credentials', 'ok' => false, 'message' => 'The saved Telnyx credentials can no longer be read. Reconnect your account.'];
             }
 
-            Cache::put($stampKey, time(), 3600);
+            Cache::put($stampKey, now()->getTimestamp(), 3600);
 
             $check = $this->verifier->verify($credentials['api_key'], $credentials['profile_id'], (string) $channel->sender_number);
 
-            if ($check['ok'] || ! in_array($check['reason'], array_merge(self::INCONCLUSIVE, ['invalid_api_key']), true)) {
-                // The key got past authentication. Clear ONLY the stale auth flag; a failing number/profile
-                // check is recorded as its own (non-blocking) code, exactly as the connect flows do.
+            if ($check['ok']) {
+                // Full success is the ONLY thing that restores readiness. A capability field Telnyx omitted keeps the
+                // previous confirmation timestamp; it is never invented, and never erased by an omission.
                 $channel->forceFill([
                     'credentials_verified_at' => now(),
-                    'last_error_code' => $check['ok'] ? null : $check['reason'],
-                    'last_error_at' => $check['ok'] ? null : now(),
-                    'sms_capability_confirmed_at' => $check['ok'] ? ($check['sms_confirmed'] ? now() : null) : $channel->sms_capability_confirmed_at,
+                    'last_error_code' => null,
+                    'last_error_at' => null,
+                    'sms_capability_confirmed_at' => $check['sms_confirmed'] ? now() : $channel->sms_capability_confirmed_at,
                 ])->save();
 
-                return ['status' => 'recovered', 'ok' => $check['ok'], 'message' => $check['ok'] ? null : $check['message']];
+                return ['status' => 'recovered', 'ok' => true, 'message' => null];
             }
 
             if ($check['reason'] === 'invalid_api_key') {
-                $channel->forceFill(['last_error_at' => now()])->save();
+                $channel->forceFill(['last_error_code' => 'invalid_api_key', 'last_error_at' => now()])->save();
 
                 return ['status' => 'still_blocked', 'ok' => false, 'message' => $check['message']];
             }
 
-            return ['status' => 'inconclusive', 'ok' => false, 'message' => $check['message']];
+            if (in_array($check['reason'], self::INCONCLUSIVE, true)) {
+                return ['status' => 'inconclusive', 'ok' => false, 'message' => $check['message']];
+            }
+
+            // The key was accepted but the number/profile check failed: the sender stays BLOCKED, with that
+            // reason, and the credential-verified timestamp is not touched. A later successful recheck recovers it.
+            $channel->forceFill([
+                'last_error_code' => AgencyByoSender::verificationFailedCode((string) $check['reason']),
+                'last_error_at' => now(),
+                // Telnyx explicitly reporting "not SMS enabled" is a current restriction, not history to keep.
+                'sms_capability_confirmed_at' => $check['reason'] === 'number_not_sms_enabled' ? null : $channel->sms_capability_confirmed_at,
+            ])->save();
+
+            return ['status' => 'still_blocked', 'ok' => false, 'message' => $check['message']];
         } finally {
             $lock->release();
         }

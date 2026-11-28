@@ -86,6 +86,33 @@ class AgencyByoTelnyxRecheckUiTest extends TestCase
             ->assertSee('Reply webhook verified ' . now()->subDays(3)->format('M j'));
 
         $channel->forceFill(['last_error_code' => 'invalid_api_key', 'last_error_at' => now()])->save();
-        $this->get($url)->assertOk()->assertSee('Recheck connection')->assertSee('Needs attention');
+        $this->get($url)->assertOk()->assertSee('Recheck connection')->assertSee('Needs attention')
+            ->assertSee('Reply webhook last verified', false)->assertSee('data-neutral="1"', false)
+            ->assertDontSee('Reply webhook verified ' . now()->subDays(3)->format('M j'));
+    }
+
+    public function test_the_page_says_retry_pending_after_a_restriction_cooldown_not_verified(): void
+    {
+        $agency = $this->outreachAgency('Alpha');
+        $channel = $this->byoChannel($agency['workspace'], ['default' => true]);
+        $channel->forceFill(['last_error_code' => 'sender_restricted', 'last_error_at' => now()->subDay()])->save();
+        $this->authenticateAs($agency['customer']);
+
+        $this->get(route('customer.workspaces.prospecting.phone-messaging', $agency['workspace']->uid))
+            ->assertOk()->assertSee('Retry pending')->assertDontSee('data-role="recheck"', false);
+    }
+
+    public function test_the_recheck_message_reflects_the_actual_stored_state(): void
+    {
+        $agency = $this->outreachAgency('Alpha');
+        $channel = $this->byoChannel($agency['workspace'], ['default' => true]);
+        $this->authenticateAs($agency['customer']);
+        $this->telnyx();
+        $route = route('customer.workspaces.prospecting.channels.recheck', [$agency['workspace']->uid, $channel->uid]);
+
+        $this->post($route)->assertSessionHas('flash_success', fn ($m) => str_contains($m, 'No connection error is saved'));
+
+        $channel->forceFill(['last_error_code' => 'number_not_active'])->save();
+        $this->post($route)->assertSessionHas('flash_error', fn ($m) => str_contains($m, 'different saved status') && ! str_contains($m, 'No connection error'));
     }
 }

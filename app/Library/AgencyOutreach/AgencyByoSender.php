@@ -85,14 +85,45 @@ final class AgencyByoSender
             ->first();
     }
 
+    /** Prefix of a stored code meaning "the key was accepted but the last verification of the number/profile failed". */
+    public const VERIFICATION_FAILED_PREFIX = 'recheck_failed:';
+
+    /** Customer wording for the verifier reasons that can be stored behind {@see self::VERIFICATION_FAILED_PREFIX}. */
+    private const VERIFICATION_MESSAGES = [
+        'profile_not_found' => 'That Messaging profile ID was not found in this Telnyx account.',
+        'number_not_owned' => 'That sender number is not a number in this Telnyx account.',
+        'number_not_active' => 'That number is not active in your Telnyx account yet.',
+        'number_no_profile' => 'That number is not assigned to a Messaging profile in Telnyx.',
+        'number_other_profile' => 'That number is assigned to a different Messaging profile in Telnyx than the one saved here.',
+        'number_not_sms_enabled' => 'Telnyx reports that number cannot send text messages. Use an SMS-enabled number.',
+    ];
+
+    /** Whether a stored code is one a read-only credential recheck may re-evaluate (never a provider restriction). */
+    public static function isRecheckable(?string $code): bool
+    {
+        return $code === 'invalid_api_key' || ($code !== null && str_starts_with($code, self::VERIFICATION_FAILED_PREFIX));
+    }
+
+    /** The code stored when the key is accepted but verification of the number/profile fails. */
+    public static function verificationFailedCode(string $reason): string
+    {
+        return self::VERIFICATION_FAILED_PREFIX . $reason;
+    }
+
     /**
      * Whether the channel can SEND now. Reason codes are stable; messages are for customers.
      *
+     * `$forSms = false` is the credentials-only view used by Voice: an SMS-specific provider restriction or
+     * messaging-profile/number verification failure must not block calling, but a rejected key still blocks both.
+     * An `ok` result may carry the informational code `retry_pending` (a restriction cool-down has elapsed and ONE
+     * retry is allowed): sending is permitted but is not shown as verified.
+     *
      * @return array{ok: bool, code: ?string, message: ?string}
      */
-    public static function sendReadiness(AgencyProspectingChannel $channel): array
+    public static function sendReadiness(AgencyProspectingChannel $channel, bool $forSms = true): array
     {
         $server = $channel->sendingServer;
+        $code = (string) $channel->last_error_code;
 
         return match (true) {
             $channel->status === AgencyProspectingChannel::STATUS_DISCONNECTED => self::no('disconnected', 'This Telnyx account was disconnected. Reconnect it or choose another sender.'),
@@ -101,8 +132,11 @@ final class AgencyByoSender
             $server === null || ! $server->status => self::no('missing_credentials', 'The Telnyx connection is unavailable. Reconnect your account.'),
             self::credentials($channel) === null => self::no('missing_credentials', 'The saved Telnyx credentials can no longer be read. Reconnect your account.'),
             $channel->credentials_verified_at === null => self::no('unverified', 'This Telnyx account has not been verified yet. Reconnect it to verify.'),
-            $channel->last_error_code === 'invalid_api_key' => self::no('invalid_api_key', 'Telnyx rejected the saved access key. Use Recheck connection, or reconnect with a valid key.'),
+            $code === 'invalid_api_key' => self::no('invalid_api_key', 'Telnyx rejected the saved access key. Use Recheck connection, or reconnect with a valid key.'),
+            ! $forSms => ['ok' => true, 'code' => null, 'message' => null],
+            str_starts_with($code, self::VERIFICATION_FAILED_PREFIX) => self::no('verification_failed', self::VERIFICATION_MESSAGES[substr($code, strlen(self::VERIFICATION_FAILED_PREFIX))] ?? 'The last connection check failed. Use Recheck connection.'),
             self::restrictionActive($channel) => self::no('sender_restricted', 'Telnyx refused to send from this number (a permission, registration or account restriction). Resolve it in Telnyx; sending is retried once after a cool-down.'),
+            $code === 'sender_restricted' => ['ok' => true, 'code' => 'retry_pending', 'message' => 'Telnyx previously refused to send from this number. One retry will be attempted on the next send; sending is not verified until it succeeds.'],
             default => ['ok' => true, 'code' => null, 'message' => null],
         };
     }
@@ -118,7 +152,7 @@ final class AgencyByoSender
     {
         $state = self::sendReadiness($channel);
 
-        if (! $state['ok'] && $state['code'] === 'invalid_api_key') {
+        if (! $state['ok'] && in_array($state['code'], ['invalid_api_key', 'verification_failed'], true)) {
             app(AgencyByoConnectionRechecker::class)->recheck($channel);
             $channel->refresh();
             $state = self::sendReadiness($channel);

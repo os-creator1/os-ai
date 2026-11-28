@@ -524,9 +524,9 @@ class AgencyProspectingChannelController extends CustomerBaseController
         $result = $rechecker->recheck($channel, true);
 
         return match (true) {
-            $result['status'] === 'not_needed' => $back('flash_success', 'No connection error is saved for this sender. Sending is not tested here; Telnyx confirms each message when it is sent.'),
-            $result['status'] === 'recovered' && $result['ok'] => $back('flash_success', 'Telnyx accepted the saved access key. The sender is unblocked.'),
-            $result['status'] === 'recovered' => $back('flash_error', 'Telnyx accepted the saved access key, but: ' . $result['message']),
+            $result['status'] === 'not_needed' && $channel->fresh()->last_error_code === null => $back('flash_success', 'No connection error is saved for this sender. Sending is not tested here; Telnyx confirms each message when it is sent.'),
+            $result['status'] === 'not_needed' => $back('flash_error', 'Your access key is not marked as rejected, so a recheck has nothing to clear. This sender has a different saved status from an earlier connection attempt; reconnect it to re-verify.'),
+            $result['status'] === 'recovered' => $back('flash_success', 'Telnyx accepted the saved access key and this number. The sender is unblocked.'),
             default => $back('flash_error', (string) $result['message']),
         };
     }

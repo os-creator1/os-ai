@@ -72,7 +72,7 @@ final class AgencyByoVoice
     /** @return array{ok: bool, code: ?string, message: ?string} */
     public static function readiness(AgencyProspectingChannel $channel): array
     {
-        $send = AgencyByoSender::sendReadiness($channel);
+        $send = AgencyByoSender::sendReadiness($channel, false);
         if (! $send['ok']) {
             return ['ok' => false, 'code' => 'account_' . $send['code'], 'message' => 'Calling through your own Telnyx account is blocked: ' . $send['message']];
         }
