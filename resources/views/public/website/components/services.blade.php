@@ -30,7 +30,7 @@
             @php($detailUrl = $detailUrl ?? (! $isPackages && ! empty($item['place']) ? (($placePageUrls ?? [])[\Illuminate\Support\Str::slug((string) $item['place'])] ?? null) : null))
             @php($itemImage = ! empty($item['image']) && isset($assetsByUid[$item['image']]) ? $assetsByUid[$item['image']] : null)
             <div class="website-service-card @if ($wd) wd-card @endif @if (! empty($item['featured'])) wd-card-featured @endif @if ($detailUrl) wd-card-linked @endif @if ($featureIndex === $itemIndex) wd-card-feature @endif" @if ($isPackages) data-package-uid="{{ $item['catalog_item_uid'] ?? '' }}" @endif>
-                {{-- Editorial presentation (Kaleb): the booth's own extra photos stacked under its main one. Only authentic photos that resolve; no extras, no stack. --}}
+                {{-- Editorial presentation: the booth's own extra photos stacked under its main one. Only authentic photos that resolve; no extras, no stack. --}}
                 @php($extraImages = ! empty($data['editorial']) ? collect((array) ($item['extra_images'] ?? []))->map(fn ($uid) => is_string($uid) ? ($assetsByUid[$uid] ?? null) : null)->filter()->take(2)->values() : collect())
                 @if ($itemImage && $extraImages->isNotEmpty())
                     <div class="wd-card-media wd-card-media-stack">
