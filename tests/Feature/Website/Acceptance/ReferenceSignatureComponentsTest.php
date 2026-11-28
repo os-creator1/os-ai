@@ -154,6 +154,19 @@ final class ReferenceSignatureComponentsTest extends TestCase
         $this->assertStringContainsString('wd-ref-badges', $html);
     }
 
+    public function test_award_badges_never_become_the_hero_image_fallback_when_there_are_no_photos(): void
+    {
+        [$website, $sections] = $this->generate('photo_booth_reference_kaleb', 0, 3);
+        $this->assertNotNull($this->section($sections, 'badges'));
+
+        $html = $this->homeHtml($website);
+        $main = (int) strpos($html, 'id="wd-main"');
+        $beforeStrip = substr($html, $main, (int) strpos($html, 'wd-ref-badges', $main) - $main);
+        // Nothing above the awards strip (the hero) may be a Website gallery asset: a badge logo is not photography (the hero may still use the business's own photo).
+        $this->assertStringNotContainsString('/images/websites/', $beforeStrip);
+        $this->assertStringContainsString('/images/websites/', substr($html, (int) strpos($html, 'wd-ref-badges')), 'the badges themselves still render');
+    }
+
     public function test_kaleb_without_badge_images_has_no_awards_strip_and_invents_nothing(): void
     {
         [, $sections] = $this->generate('photo_booth_reference_kaleb', 6, 0);

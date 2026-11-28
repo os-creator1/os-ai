@@ -161,6 +161,10 @@
                 $heroImageFallback = $assetsByUid[$heroUid];
             } else {
                 foreach ($sections as $candidate) {
+                    // The awards strip holds badge logos, never photography: it can't stand in for a hero image.
+                    if (($candidate['type'] ?? '') === 'gallery' && ($candidate['data']['ref'] ?? null) === 'badges') {
+                        continue;
+                    }
                     $uid = match ($candidate['type'] ?? '') {
                         'image_text' => $candidate['data']['image'] ?? null,
                         'gallery', 'services' => collect($candidate['data']['items'] ?? [])->pluck('image')->filter()->first(),
