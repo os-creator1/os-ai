@@ -54,6 +54,16 @@ headline/announcement/tagline, founder first name, real Google rating and count)
 default wording; nothing is invented, and a rating without a count (or vice versa) is never shown. Event types also gained a **photo** field (row field `cover`) because the
 Booths and Greenbelt event cards are photographic; it reuses the existing service-photo store.
 
+## Signature-component fixtures (`ReferenceSignatureComponentsTest`)
+Same questions as above, plus these uploads (fixture JPEGs). The gallery question's photo categories gained **"Award or press badge"**: a photo tagged this way is shown only as Kaleb's badge strip, never in the gallery, hero or photo slots.
+
+| Template | Extra input | Where it appears |
+|---|---|---|
+| Kaleb | 3 gallery photos categorised "Award or press badge" (400×400) | awards strip directly under the hero |
+| Kaleb | booth "Mirror Photo Booth": cover + 2 extra photos (only the first extra is shown) | photo-led booth row beside its text |
+| Booths | 6 gallery photos (the cover is the hero) | two distinct non-hero photos in the intro collage; hashtag derived from the business name |
+| Greenbelt | announcement text `Now booking 2026 and 2027`; 6 gallery photos; 2 event types (Weddings, Corporate Events) | promo strip (photo tile + announcement + CTA); event-category ticker |
+
 ## Image checklist used (fixture JPEGs, deterministic seeds)
 | Upload | Where | Position on the site |
 |---|---|---|
