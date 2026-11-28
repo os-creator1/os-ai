@@ -80,6 +80,11 @@ final class ReferenceSignatureComponentsTest extends TestCase
     private function generate(string $templateKey, int $photos = 6, int $badges = 0, array $setup = [], ?string $announcement = null): array
     {
         $this->tenant(['name' => 'Signature Fixture'], ['city' => 'Boise', 'region' => 'ID']);
+        // Event types carry the owner's own event photographs (as in the guided-path fixture), so the event cards are realistic.
+        $setup += ['event_types' => fn () => $this->continueStep('event_types', ['items' => [
+            ['key' => 'e-w', 'name' => 'Weddings', 'description' => 'Wedding fun.', 'preset' => 'weddings', 'visible' => '1', 'image_path' => $this->uploadPhoto('wedding-event')],
+            ['key' => 'e-c', 'name' => 'Corporate Events', 'description' => 'Company parties.', 'preset' => 'corporate', 'visible' => '1', 'image_path' => $this->uploadPhoto('corporate-event')],
+        ]])];
         $this->completeGuidedSetup($setup);
         $gallery = $photos > 0 ? $this->uploadGallery($photos) : [];
         if ($badges > 0) {
@@ -165,6 +170,34 @@ final class ReferenceSignatureComponentsTest extends TestCase
         // Nothing above the awards strip (the hero) may be a Website gallery asset: a badge logo is not photography (the hero may still use the business's own photo).
         $this->assertStringNotContainsString('/images/websites/', $beforeStrip);
         $this->assertStringContainsString('/images/websites/', substr($html, (int) strpos($html, 'wd-ref-badges')), 'the badges themselves still render');
+    }
+
+    #[\PHPUnit\Framework\Attributes\DataProvider('referenceTemplates')]
+    public function test_homepage_event_cards_show_the_owners_event_photos_and_only_those(string $templateKey): void
+    {
+        [$website, $sections] = $this->generate($templateKey, 6, 2);
+
+        $events = collect($sections)->firstWhere('data.ref', 'events');
+        $this->assertNotNull($events, 'the events band is missing');
+        $images = collect($events['data']['items'])->pluck('image')->all();
+        $this->assertCount(2, $images);
+        $this->assertNotContains(null, $images, 'every event card carries its own photo');
+        $this->assertCount(2, array_unique($images));
+        // Never a gallery photo or an award badge standing in for an event photo.
+        $this->assertSame([], array_values(array_intersect($images, [...$this->galleryUids, ...$this->badgeUids])));
+
+        // Rendered: both event photographs are real <img> tags inside the events band.
+        $html = $this->homeHtml($website);
+        $start = (int) strpos($html, 'wd-ref-events');
+        $this->assertGreaterThan(0, $start, 'the events band renders');
+        $band = substr($html, $start, 6000);
+        $this->assertGreaterThanOrEqual(2, substr_count($band, '<img'));
+    }
+
+    /** @return array<string, array{0: string}> */
+    public static function referenceTemplates(): array
+    {
+        return ['booths' => ['photo_booth_reference_booths'], 'greenbelt' => ['photo_booth_reference_greenbelt']];
     }
 
     public function test_kaleb_without_badge_images_has_no_awards_strip_and_invents_nothing(): void
