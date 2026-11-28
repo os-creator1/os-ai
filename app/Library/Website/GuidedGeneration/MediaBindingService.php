@@ -182,7 +182,7 @@ final class MediaBindingService
 
             $sections = (array) ($page['sections'] ?? []);
 
-            if (collect($sections)->contains(fn ($section) => ($section['type'] ?? null) === 'trust_strip')) {
+            if (collect($sections)->contains(fn ($section) => ($section['type'] ?? null) === 'trust_strip' || ($section['data']['ref'] ?? null) === 'badges')) {
                 return $pages;
             }
 
@@ -560,7 +560,10 @@ final class MediaBindingService
         // for one narrow, already-bound purpose each — see
         // bindCustomSection()/mirrorPackageImages()). Ordered by the
         // owner's own gallery `sort_order`, not insertion id.
-        $assets = $website->assets()->where('purpose', WebsiteAssetPurpose::Gallery->value)->orderBy('sort_order')->orderBy('id')->get();
+        // An image the owner categorised as an award/press badge belongs to the badge strip only: never the hero, a photo slot or the Gallery.
+        $assets = $website->assets()->where('purpose', WebsiteAssetPurpose::Gallery->value)
+            ->where(fn ($query) => $query->whereNull('category_tag')->orWhere('category_tag', '!=', 'award_badge'))
+            ->orderBy('sort_order')->orderBy('id')->get();
         $warnings = $formWarnings;
 
         if ($assets->isEmpty()) {
@@ -613,6 +616,23 @@ final class MediaBindingService
                     // only open question is whether it had to repeat.
                     $asset = $roundRobinPool[$cursor % $roundRobinPool->count()];
                     $pages[$index]['sections'][$sectionIndex]['data']['image'] = $asset->uid;
+                    $cursor++;
+
+                    // Intro collage: a SECOND, different photo, only when at least two distinct non-hero photos exist; otherwise the
+                    // slot stays a single photo. The same image is never repeated to fill the composition.
+                    if (! empty($section['data']['collage']) && $remainingPool->count() >= 2) {
+                        $second = $roundRobinPool[$cursor % $roundRobinPool->count()];
+
+                        if (! $second->is($asset)) {
+                            $pages[$index]['sections'][$sectionIndex]['data']['image_secondary'] = $second->uid;
+                            $cursor++;
+                        }
+                    }
+                }
+
+                // The photo tile of a promotional strip: an uploaded photo that is not the hero; with none to spare, no tile.
+                if ($type === 'cta' && ($section['data']['ref'] ?? null) === 'strip' && empty($section['data']['image']) && $remainingPool->isNotEmpty()) {
+                    $pages[$index]['sections'][$sectionIndex]['data']['image'] = $remainingPool[$cursor % $remainingPool->count()]->uid;
                     $cursor++;
                 }
             }
@@ -1016,6 +1036,16 @@ final class MediaBindingService
 
                         if ($cover !== null) {
                             $pages[$index]['sections'][$sectionIndex]['data']['items'][$itemIndex]['image'] = $this->mirroredServiceAsset($website, $cover)->uid;
+                        }
+
+                        // The booth's OWN additional photo (never a gallery photo): the reference pairs two photos beside the text. The data model allows two.
+                        $service = ! empty($item['service_uid']) ? $services->get($item['service_uid']) : null;
+                        $coverId = $service?->coverImage()?->id;
+                        $extras = $service === null ? [] : $service->images->reject(fn ($image) => $image->id === $coverId)->take(1)
+                            ->map(fn (BusinessServiceImage $image) => $this->mirroredServiceAsset($website, $image)->uid)->values()->all();
+
+                        if ($extras !== [] && ! empty($section['data']['editorial'])) {
+                            $pages[$index]['sections'][$sectionIndex]['data']['items'][$itemIndex]['extra_images'] = $extras;
                         }
                     }
                 }

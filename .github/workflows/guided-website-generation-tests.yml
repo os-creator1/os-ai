@@ -125,8 +125,8 @@ jobs:
       - name: Run reference templates through the real v3 guided path and the Forms funnel
         shell: bash
         run: |
-          php artisan test tests/Feature/Website/Acceptance/ReferenceTemplatesGuidedPathTest.php tests/Feature/Website/Acceptance/ReferenceTemplatesFormsFunnelTest.php tests/Unit/Website/ThreeReferenceTemplatesTest.php --log-junit /tmp/reference-guided-funnel.xml
-          php -r '$x = simplexml_load_file("/tmp/reference-guided-funnel.xml"); $n = count($x->xpath("//testcase")); $s = count($x->xpath("//testcase/skipped")); fwrite(STDOUT, "Discovered reference guided/funnel tests: $n (skipped: $s)\\n"); if ($n !== 24 || $s !== 0) exit(1);'
+          php artisan test tests/Feature/Website/Acceptance/ReferenceTemplatesGuidedPathTest.php tests/Feature/Website/Acceptance/ReferenceTemplatesFormsFunnelTest.php tests/Feature/Website/Acceptance/ReferenceSignatureComponentsTest.php tests/Unit/Website/ThreeReferenceTemplatesTest.php --log-junit /tmp/reference-guided-funnel.xml
+          php -r '$x = simplexml_load_file("/tmp/reference-guided-funnel.xml"); $n = count($x->xpath("//testcase")); $s = count($x->xpath("//testcase/skipped")); fwrite(STDOUT, "Discovered reference guided/funnel tests: $n (skipped: $s)\\n"); if ($n !== 37 || $s !== 0) exit(1);'
       - name: Run guided generation and affected page-budget regressions
         run: >-
           php artisan test

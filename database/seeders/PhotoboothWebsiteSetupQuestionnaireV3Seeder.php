@@ -216,8 +216,8 @@ class PhotoboothWebsiteSetupQuestionnaireV3Seeder extends Seeder
                 conditional: ['depends_on' => 'offers_backdrops', 'condition' => 'equals', 'value' => true]),
 
             self::step('gallery', 'Show off your best event photos', 'photo_upload', false, 'gallery', null,
-                helpText: 'Upload real photos from your events, then choose which one is your homepage cover. Your homepage needs at least one real photo before it can be published.',
-                categories: $backdropCategories),
+                helpText: 'Upload real photos from your events, then choose which one is your homepage cover. Your homepage needs at least one real photo before it can be published. If you have award or press badge images you are allowed to show, upload them here too and choose "Award or press badge": the Luxury Photo Booth design shows them as a badge strip, and they never appear in your photo gallery. Never upload an award you have not received.',
+                categories: array_merge($backdropCategories, [['value' => 'award_badge', 'label' => 'Award or press badge']])),
             self::step('photo_rights', 'Confirm your photos', 'multi_select', true, 'answers', null,
                 helpText: 'We never create photos of your equipment or past events for you — your website only shows photos you provide.',
                 options: ['confirmed' => 'I have the right to use every photo I upload, and each photo accurately shows the booth, backdrop or event it is attached to.']),

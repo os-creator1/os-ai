@@ -254,6 +254,14 @@ final class WebsiteSnapshotBuilder
             $uids[] = $data['image'];
         }
 
+        if ($type === WebsiteSectionType::ImageText && ! empty($data['image_secondary']) && is_string($data['image_secondary'])) {
+            $uids[] = $data['image_secondary'];
+        }
+
+        if ($type === WebsiteSectionType::Cta && ! empty($data['image']) && is_string($data['image'])) {
+            $uids[] = $data['image'];
+        }
+
         if ($type === WebsiteSectionType::Video) {
             foreach (($data['items'] ?? []) as $item) {
                 foreach (['video', 'poster'] as $key) {
@@ -268,6 +276,12 @@ final class WebsiteSnapshotBuilder
             foreach (($data['items'] ?? []) as $item) {
                 if (! empty($item['image'])) {
                     $uids[] = $item['image'];
+                }
+
+                foreach ((array) ($item['extra_images'] ?? []) as $extra) {
+                    if (is_string($extra) && $extra !== '') {
+                        $uids[] = $extra;
+                    }
                 }
             }
         }

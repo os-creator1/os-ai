@@ -161,4 +161,25 @@ final class ThreeReferenceTemplatesTest extends TestCase
         // The inline header only starts where it fits (the nav lists measure 624-675px).
         $this->assertStringContainsString('@media (min-width: 920px) and (max-width: 959px)', $css);
     }
+
+    public function test_signature_components_have_their_reduced_motion_fallback_and_no_overflow_guards(): void
+    {
+        $css = (string) file_get_contents(public_path('css/website-design.css'));
+
+        // Ticker: motion is transform-only and stops (static, wrapped, loop copy hidden) for prefers-reduced-motion.
+        $this->assertStringContainsString('@keyframes wd-marquee-scroll', $css);
+        $this->assertStringContainsString('animation: wd-marquee-scroll', $css);
+        $this->assertMatchesRegularExpression('/@media \(prefers-reduced-motion: reduce\)\s*\{[^@]*\.wd-marquee-track \{ animation: none;[^}]*\}[^@]*\.wd-marquee-copy \{ display: none; \}/s', $css);
+        $this->assertStringContainsString('.wd-marquee { overflow: hidden;', $css);
+
+        // Awards strip: badges are shown whole (contain), never cropped, and wrap instead of overflowing.
+        $this->assertMatchesRegularExpression('/\.wd-ref-badges \.website-gallery-item img \{[^}]*object-fit: contain;/', $css);
+        $this->assertMatchesRegularExpression('/\.wd-ref-badges \.website-gallery-grid \{[^}]*flex-wrap: wrap;/', $css);
+
+        // Collage: grid placement inside its own box (cannot overlap the text or overflow).
+        $this->assertMatchesRegularExpression('/website-image-text-media\.wd-collage \{[^}]*display: grid;[^}]*aspect-ratio: 11 \/ 9;/', $css);
+
+        // Promo strip: stacks on phones.
+        $this->assertMatchesRegularExpression('/@media \(max-width: 699px\)\s*\{[^@]*wd-cta-has-photo \{ grid-template-columns: minmax\(0, 1fr\); \}/s', $css);
+    }
 }

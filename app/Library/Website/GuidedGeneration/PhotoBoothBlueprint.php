@@ -245,7 +245,11 @@ final class PhotoBoothBlueprint
                 'image' => null,
                 'image_position' => $greenbelt ? 'left' : 'right',
                 'ref' => 'intro',
-            ],
+            ] + ($booths ? [
+                // Two-photo collage (second photo only when two distinct non-hero photos exist) and the business's own name as a hashtag.
+                'collage' => true,
+                'accent_tag' => $this->hashtag((string) $f['name']),
+            ] : []),
         ];
 
         // Kaleb's intro is a centred dark band with ONE button; the CTA section holds a 300-character body, so the owner's story is
@@ -269,6 +273,8 @@ final class PhotoBoothBlueprint
                 'heading' => $this->copy($f, 'services_heading', $greenbelt ? 'Our photo booths' : 'Our photo booth experience'),
                 'role' => 'booths',
                 'ref' => 'booths',
+                // Kaleb's photo-led presentation: the booth's own additional photos are shown beside its main one.
+                'editorial' => $kaleb,
                 'items' => $this->serviceItems($f, array_slice($f['services'], 0, 6)),
             ],
         ];
@@ -395,6 +401,16 @@ final class PhotoBoothBlueprint
             ],
         ];
 
+        // Kaleb's awards/recognition strip: ONLY the owner's own approved badge images; none uploaded -> no strip at all.
+        $badges = $kaleb && $f['badges'] !== [] ? ['type' => 'gallery', 'data' => [
+            'items' => array_map(fn (string $uid) => ['image' => $uid], array_slice($f['badges'], 0, 8)),
+            'ref' => 'badges',
+        ]] : null;
+
+        // Greenbelt's event-category ticker: the owner's real event types (two or more), never invented offerings.
+        $eventNames = array_values(array_filter(array_map(fn (BusinessService $e) => Str::limit(trim($e->name), 70, ''), array_slice($f['events'], 0, 12))));
+        $marquee = $greenbelt && count($eventNames) >= 2 ? ['type' => 'trust_strip', 'data' => ['facts' => $eventNames, 'ref' => 'marquee']] : null;
+
         // Greenbelt's "popular dates" strip: the owner's own announcement text beside one inquiry button (nothing invented).
         $strip = $greenbelt && ($f['announcement'] ?? '') !== '' ? ['type' => 'cta', 'data' => [
             'heading' => Str::limit((string) $f['announcement'], 120, ''),
@@ -405,9 +421,9 @@ final class PhotoBoothBlueprint
 
         // Section order follows each reference homepage as captured (see docs/acceptance/.../VISUAL-COMPARISON-REPORT.md).
         $sections = match (true) {
-            $kaleb => [$hero, $intro, $boothCards, $quote, $backdropRows, $featureCards, $gallery, $reviews, $events, $places, $faq],
+            $kaleb => [$hero, $badges, $intro, $boothCards, $quote, $backdropRows, $featureCards, $gallery, $reviews, $events, $places, $faq],
             $booths => [$hero, $intro, $addons, $boothCards, $backdropRows, $different, $events, $founder, $quote, $reviews, $places, $faq],
-            default => [$hero, $intro, $strip, $events, $reviews, $packages, $corporatePanel, $addons, $gallery, $different, $founder, $faq, $places, $venues],
+            default => [$hero, $intro, $strip, $events, $marquee, $reviews, $packages, $corporatePanel, $addons, $gallery, $different, $founder, $faq, $places, $venues],
         };
 
         $closing = $this->closingCta($f);
@@ -466,6 +482,14 @@ final class PhotoBoothBlueprint
         }
 
         return $out === '' ? null : $out;
+    }
+
+    /** "#" + the business name reduced to letters and digits, upper-cased (derived from the canonical name, never invented). */
+    private function hashtag(string $name): ?string
+    {
+        $tag = strtoupper((string) preg_replace('/[^A-Za-z0-9]+/', '', $name));
+
+        return $tag === '' ? null : '#' . Str::limit($tag, 40, '');
     }
 
     /** @param array<string, mixed> $f */
@@ -961,7 +985,10 @@ final class PhotoBoothBlueprint
         $customerFaq = (array) ($context['customer_faq'] ?? []);
         $faq = $customerFaq !== [] ? $customerFaq : array_map(fn (array $i) => ['question' => $i['question'], 'answer' => $i['answer']], $this->defaults->faq($business, $answers));
 
-        $gallery = $website->assets()->where('purpose', WebsiteAssetPurpose::Gallery->value)->orderBy('sort_order')->orderBy('id')->pluck('uid')->all();
+        // Award/press badge images (owner-categorised) are a strip of their own, never part of the photo gallery.
+        $notBadge = fn ($query) => $query->whereNull('category_tag')->orWhere('category_tag', '!=', 'award_badge');
+        $gallery = $website->assets()->where('purpose', WebsiteAssetPurpose::Gallery->value)->where($notBadge)->orderBy('sort_order')->orderBy('id')->pluck('uid')->all();
+        $badges = $website->assets()->where('purpose', WebsiteAssetPurpose::Gallery->value)->where('category_tag', 'award_badge')->orderBy('sort_order')->orderBy('id')->limit(8)->pluck('uid')->all();
 
         $backdrops = BusinessBackdrop::where('business_id', $business->id)->where('availability', true)->orderBy('position')->with('images')->get()
             ->map(fn (BusinessBackdrop $b) => [
@@ -994,6 +1021,7 @@ final class PhotoBoothBlueprint
             'customer_faq' => $customerFaq,
             'faq' => $faq,
             'gallery' => $gallery,
+            'badges' => $badges,
             'backdrops' => $backdrops,
             'about' => $about,
             'package_links' => (array) ($context['package_links'] ?? []),

@@ -12,7 +12,12 @@
         ->unique('url')
         ->values();
 @endphp
-<section class="website-section website-cta @if ($design ?? null) wd-cta @endif">
+@php($ctaPhoto = ! empty($data['image']) && is_string($data['image']) ? ($assetsByUid[$data['image']] ?? null) : null)
+<section class="website-section website-cta @if ($design ?? null) wd-cta @endif @if ($ctaPhoto) wd-cta-has-photo @endif">
+    @if ($ctaPhoto)
+        {{-- Decorative photo tile of a promotional strip (the heading and the button carry the meaning). --}}
+        <div class="wd-cta-photo">{{ \App\Library\Website\Media\ResponsiveImage::tag($ctaPhoto, '(min-width: 900px) 34vw, 100vw', ['alt' => '']) }}</div>
+    @endif
     <h2>{{ $data['heading'] ?? '' }}</h2>
     @if (! empty($data['body']))
         <p>{{ $data['body'] }}</p>

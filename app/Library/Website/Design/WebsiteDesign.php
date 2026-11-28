@@ -87,8 +87,16 @@ final class WebsiteDesign
             $ordered = array_map(fn (array $row) => $row[2], $indexed);
         }
 
-        // The trust strip belongs directly under the hero, whatever order the template gives the other sections.
-        $stripAt = array_search('trust_strip', array_column($ordered, 'type'), true);
+        // The trust strip belongs directly under the hero, whatever order the template gives the other sections. (The event-category
+        // ticker is a `trust_strip` too, but it is not the facts strip: it keeps the position its design gives it.)
+        $stripAt = false;
+        foreach ($ordered as $position => $candidate) {
+            if (($candidate['type'] ?? null) === 'trust_strip' && ($candidate['data']['ref'] ?? null) !== 'marquee') {
+                $stripAt = $position;
+
+                break;
+            }
+        }
 
         if ($stripAt !== false) {
             $strip = array_splice($ordered, (int) $stripAt, 1)[0];

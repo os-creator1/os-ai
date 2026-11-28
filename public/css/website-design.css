@@ -1387,3 +1387,67 @@ body.wd h1, body.wd h2, body.wd h3, body.wd h4 { font-family: var(--wd-font-head
     .wd-reference-greenbelt .wd-nav-cta .wd-btn { padding: 12px 18px; font-size: 0.7rem; }
     .wd-reference-greenbelt .wd-logo img { max-width: 120px; }
 }
+
+/* ===================================================================================================================
+   Signature components (owner-supplied media only; each degrades to nothing/a single image when the media is missing).
+   =================================================================================================================== */
+/* --- Kaleb: awards / recognition strip (owner-approved badge images, shown whole, never cropped) --- */
+.wd-reference-kaleb .wd-band.wd-ref-badges { background: #ffffff; padding: 0 0 clamp(1.5rem, 4vw, 3.5rem); margin-top: clamp(-5rem, -5vw, -1.5rem); }
+.wd-reference-kaleb .wd-ref-badges .website-gallery-grid { display: flex; flex-wrap: wrap; justify-content: center; align-items: center; gap: 1.1rem 2rem; column-count: auto; }
+.wd-reference-kaleb .wd-ref-badges .website-gallery-item { flex: 0 0 auto; max-width: 100%; }
+.wd-reference-kaleb .wd-ref-badges .website-gallery-item img { height: clamp(80px, 11vw, 160px); width: auto; max-width: 100%; aspect-ratio: auto; object-fit: contain; border-radius: 0; box-shadow: none; }
+
+/* --- Kaleb: photo-led booth presentation (the booth's own main photo with its own extra photos stacked beneath) --- */
+.wd-reference-kaleb .wd-ref-booths .wd-card > .wd-card-media { grid-column: 1; grid-row: 1 / span 6; display: grid; gap: 0.75rem; align-content: start; }
+.wd-reference-kaleb .wd-ref-booths .wd-card:nth-child(even) > .wd-card-media { grid-column: 2; }
+.wd-reference-kaleb .wd-ref-booths .wd-card:nth-child(even) > :not(img):not(picture):not(.wd-card-media) { grid-column: 1; }
+.wd-reference-kaleb .wd-card-media img { width: 100%; height: auto; aspect-ratio: 3 / 2; object-fit: cover; border: 2px solid #000; }
+
+/* --- Booths: two-photo intro collage (grid placement, so it can never overlap the text or overflow) --- */
+.wd-reference-booths .website-image-text-media.wd-collage { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); grid-template-rows: repeat(10, minmax(0, 1fr)); aspect-ratio: 11 / 9; width: 100%; }
+.wd-reference-booths .wd-collage img { width: 100%; height: 100%; max-height: none; aspect-ratio: auto; object-fit: cover; border-radius: 0; box-shadow: 0 6px 16px rgba(0, 0, 0, 0.22); }
+.wd-reference-booths .wd-collage > img:first-child, .wd-reference-booths .wd-collage > picture:first-child { grid-column: 1 / span 8; grid-row: 1 / span 6; }
+.wd-reference-booths .wd-collage > .wd-collage-second, .wd-reference-booths .wd-collage > picture:nth-child(2) { grid-column: 5 / span 8; grid-row: 5 / span 6; border: 4px solid #fff; z-index: 1; }
+.wd-reference-booths .wd-collage-tag { margin: 1rem 0 0; text-align: right; font: 400 clamp(1rem, 2vw, 1.5rem) var(--wd-font-body); letter-spacing: 3px; color: #000; transform: rotate(-2deg); overflow-wrap: anywhere; }
+
+/* --- Greenbelt: event-category ticker (real event types; transform-only motion = no layout shift) --- */
+.wd-reference-greenbelt .wd-band-trust_strip.wd-ref-marquee { display: block; background: #382456; padding: 0; }
+.wd-reference-greenbelt .wd-ref-marquee .wd-container { max-width: none; padding: 0; }
+.wd-marquee { overflow: hidden; padding: 0.85rem 0; }
+.wd-marquee-track { display: flex; width: max-content; animation: wd-marquee-scroll 45s linear infinite; }
+.wd-marquee:hover .wd-marquee-track, .wd-marquee:focus-within .wd-marquee-track { animation-play-state: paused; }
+.wd-marquee-list { display: flex; flex: none; margin: 0; padding: 0; list-style: none; }
+.wd-marquee-list li { flex: none; padding: 0 1.4rem; font: 700 0.7rem/1 var(--wd-font-body); text-transform: uppercase; letter-spacing: 0.14em; color: #d9cfe8; white-space: nowrap; }
+.wd-marquee-list li::before { content: "\2726"; margin-right: 1.4rem; opacity: 0.7; }
+@keyframes wd-marquee-scroll { from { transform: translateX(0); } to { transform: translateX(-50%); } }
+@media (prefers-reduced-motion: reduce) {
+    .wd-marquee-track { animation: none; width: auto; flex-wrap: wrap; justify-content: center; }
+    .wd-marquee-copy { display: none; }
+    .wd-marquee-list { flex-wrap: wrap; justify-content: center; gap: 0.6rem 0; padding: 0 1rem; }
+}
+
+/* --- Greenbelt: "popular dates" strip with a photo tile (photo | announcement | button) --- */
+.wd-reference-greenbelt .wd-band.wd-band-cta.wd-ref-strip { background: #f4a28f; }
+.wd-reference-greenbelt .wd-ref-strip .wd-container:has(.wd-cta-has-photo) { max-width: none; width: 100%; padding: 0; }
+.wd-reference-greenbelt .wd-ref-strip .wd-cta-has-photo { width: 100%; max-width: none; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); align-items: stretch; margin: 0; padding: 0; text-align: center; }
+.wd-reference-greenbelt .wd-cta-photo { min-height: 100%; overflow: hidden; }
+.wd-reference-greenbelt .wd-cta-photo img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.wd-reference-greenbelt .wd-cta-has-photo h2 { display: flex; align-items: center; justify-content: center; margin: 0; padding: 1.5rem; background: #f4a28f; font-size: clamp(1.1rem, 2.2vw, 2rem); line-height: 1.15; }
+.wd-reference-greenbelt .wd-cta-has-photo .website-cta-buttons { margin: 0; display: flex; align-items: center; justify-content: center; padding: 1.5rem; background: #a79bc8; }
+.wd-reference-greenbelt .wd-ref-strip .wd-cta-has-photo .wd-btn-primary { background: #f4a28f; border-color: #f4a28f; color: #2a1d45; }
+
+@media (max-width: 699px) {
+    .wd-reference-kaleb .wd-ref-booths .wd-card > .wd-card-media, .wd-reference-kaleb .wd-ref-booths .wd-card:nth-child(even) > .wd-card-media { grid-column: 1; grid-row: auto; }
+    .wd-reference-greenbelt .wd-ref-strip .wd-cta-has-photo { grid-template-columns: minmax(0, 1fr); }
+    .wd-reference-greenbelt .wd-cta-photo { aspect-ratio: 16 / 9; min-height: 0; }
+}
+
+/* A booth card with a photo stack: the text block is centred against the whole stack (spacer rows), not pinned to its first photo. */
+.wd-reference-kaleb .wd-ref-booths .wd-card:has(> .wd-card-media) { grid-template-rows: 1fr repeat(5, auto) 1fr; }
+.wd-reference-kaleb .wd-ref-booths .wd-card:has(> .wd-card-media) > .wd-card-media { grid-row: 1 / -1; }
+.wd-reference-kaleb .wd-ref-booths .wd-card:has(> .wd-card-media) > h3 { grid-row: 2; }
+.wd-reference-kaleb .wd-ref-booths .wd-card:has(> .wd-card-media) > p { grid-row: 3; }
+@media (max-width: 699px) {
+    .wd-reference-kaleb .wd-ref-booths .wd-card:has(> .wd-card-media) { grid-template-rows: none; }
+    .wd-reference-kaleb .wd-ref-booths .wd-card:has(> .wd-card-media) > .wd-card-media, .wd-reference-kaleb .wd-ref-booths .wd-card:has(> .wd-card-media) > h3, .wd-reference-kaleb .wd-ref-booths .wd-card:has(> .wd-card-media) > p { grid-row: auto; }
+}

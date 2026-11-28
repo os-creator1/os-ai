@@ -639,7 +639,7 @@ final class WebsiteHealthChecker
             foreach ($page->sections ?? [] as $section) {
                 $data = $section['data'] ?? [];
 
-                foreach (['background_image', 'image'] as $key) {
+                foreach (['background_image', 'image', 'image_secondary'] as $key) {
                     if (! empty($data[$key]) && is_string($data[$key])) {
                         $uids[$data[$key]] = true;
                     }
@@ -648,6 +648,12 @@ final class WebsiteHealthChecker
                 foreach (($data['items'] ?? []) as $item) {
                     if (is_array($item) && ! empty($item['image']) && is_string($item['image'])) {
                         $uids[$item['image']] = true;
+                    }
+
+                    foreach (is_array($item) ? (array) ($item['extra_images'] ?? []) : [] as $extra) {
+                        if (is_string($extra) && $extra !== '') {
+                            $uids[$extra] = true;
+                        }
                     }
                 }
 
